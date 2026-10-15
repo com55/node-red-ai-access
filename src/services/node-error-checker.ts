@@ -163,7 +163,6 @@ async function collectStatuses(
 export class NodeErrorChecker {
   constructor(private readonly apiClient: NodeRedAPIClient) {}
 
-  // eslint-disable-next-line complexity -- aggregates WS statuses across flows/nodes
   async check(
     opts: {
       includeWarnings?: boolean;
