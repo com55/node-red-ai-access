@@ -184,9 +184,10 @@ errors mark it **failed**. Reject never mutates flows.
    TTL **4 hours**). Copy the full URL
    `http(s)://<host><httpAdminRoot>/mcp/a/<token>` (or **Copy link for AI**).
 2. The AI opens that URL for markdown docs, then uses GET-only routes under the
-   same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose`,
-   chunked `/draft/…` for large HTML/fields; URL soft-cap ~8KB; prefer ~4–5 KB
-   raw chunks — base64url adds ~33%). Patch / `mode=json` drafts support
+   same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose` with
+   preferred `replace_text` for small string edits, chunked `/draft/…` for large
+   HTML/fields; URL soft-cap ~8KB; prefer ~4–5 KB raw chunks — base64url adds
+   ~33%). Patch / `mode=json` drafts support
    `nodes:[{op:'add'|'remove'|'set',...}]` (or a full `replace_flow` document).
    Field drafts validate node/field at `draft/new`. Unknown `/mcp/a/*` paths
    return JSON `not_found` without echoing the token.

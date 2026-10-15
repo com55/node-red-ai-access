@@ -185,13 +185,15 @@ function registerProposalTools(
     {
       description:
         'Submit a replace_flow proposal for owner approval (does not deploy). ' +
-        'Call get_flow first and reuse that nested shape: payload.flow should be the get_flow ' +
-        'result (id, type, label?, nodes[], optional configs[]) for the tab you are replacing. ' +
-        'Inputs: type="replace_flow", expectedRev (required; from get_flow/list_flows; expected_rev alias accepted), ' +
-        'optional title (≤80 chars, human-friendly), ' +
-        `payload: { flowId, flow } with flow.nodes required. ` +
+        'Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", ' +
+        'node, field, find, replace, occurrence? }] } — find must be unique unless occurrence ' +
+        '(1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. ' +
+        'Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). ' +
+        'Inputs: type="replace_flow", expectedRev (required; expected_rev alias accepted), ' +
+        'optional title (≤80 chars), payload: { flowId, flow? } and/or payload.nodes / top-level nodes. ' +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
+        'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Returns the pending proposal with title, displayName (title · server-local datetime with offset), ' +
         'reviewUrl (absolute when Host is known), and reviewPath (relative /mcp#proposal=<id>). ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
@@ -214,6 +216,12 @@ function registerProposalTools(
           .describe(
             'Optional short human title (≤80 chars). Auto-generated from changes when omitted.'
           ),
+        nodes: z
+          .array(z.record(z.string(), z.unknown()))
+          .optional()
+          .describe(
+            'Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted.'
+          ),
         payload: z
           .object({
             flowId: z.string().min(1).describe('Tab id to replace'),
@@ -224,13 +232,21 @@ function registerProposalTools(
                 label: z.string().optional(),
                 nodes: z
                   .array(z.record(z.string(), z.unknown()))
-                  .describe('Child nodes for the tab (required; from get_flow.nodes)'),
+                  .optional()
+                  .describe('Child nodes for the tab (from get_flow.nodes)'),
                 configs: z.array(z.record(z.string(), z.unknown())).optional(),
               })
               .passthrough()
-              .describe('Nested get_flow tab object (id, type, label?, nodes[], configs?)'),
+              .optional()
+              .describe('Full tab from get_flow; omit when using nodes ops'),
+            nodes: z
+              .array(z.record(z.string(), z.unknown()))
+              .optional()
+              .describe(
+                'Node ops applied to the live tab (prefer replace_text for small string edits)'
+              ),
           })
-          .describe('Replacement flow payload'),
+          .describe('Replacement flow payload and/or node ops'),
       },
     },
     async args => {

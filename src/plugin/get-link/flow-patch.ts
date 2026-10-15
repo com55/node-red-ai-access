@@ -14,7 +14,16 @@ export interface NodePropertyEdit {
 export type FlowNodeOp =
   | { op: 'set'; nodeId: string; set: Record<string, unknown> }
   | { op: 'add'; node: FlowNode }
-  | { op: 'remove'; nodeId: string };
+  | { op: 'remove'; nodeId: string }
+  | {
+      op: 'replace_text';
+      nodeId: string;
+      field: string;
+      find: string;
+      replace: string;
+      /** 1-based occurrence when `find` matches more than once. */
+      occurrence?: number;
+    };
 
 /** Identity fields that cannot be changed via set (wires are validated separately). */
 const PROTECTED_KEYS = new Set(['id', 'type', 'z']);
@@ -36,7 +45,93 @@ export async function buildPatchedFlowTab(
 }
 
 /**
- * Apply set / add / remove ops onto a live flow tab.
+ * Count non-overlapping occurrences of `find` in `haystack`.
+ * Returns start indexes (for applying a single occurrence replace).
+ */
+export function findTextOccurrences(haystack: string, find: string): number[] {
+  if (!find) {
+    return [];
+  }
+  const matches: number[] = [];
+  let from = 0;
+  while (from <= haystack.length) {
+    const idx = haystack.indexOf(find, from);
+    if (idx < 0) {
+      break;
+    }
+    matches.push(idx);
+    from = idx + find.length;
+  }
+  return matches;
+}
+
+/**
+ * Replace one occurrence of `find` inside a string field.
+ * `occurrence` is 1-based when the find text is not unique.
+ */
+export function applyReplaceTextToValue(
+  current: unknown,
+  field: string,
+  find: string,
+  replace: string,
+  occurrence?: number
+): string {
+  if (PROTECTED_KEYS.has(field)) {
+    throw new AiOpsValidationError(
+      `Cannot change protected node property '${field}' via replace_text`,
+      'protected_property'
+    );
+  }
+  if (typeof find !== 'string' || find.length === 0) {
+    throw new AiOpsValidationError('find must be a non-empty string', 'missing_find');
+  }
+  if (typeof replace !== 'string') {
+    throw new AiOpsValidationError('replace must be a string', 'invalid_replace');
+  }
+  if (typeof current !== 'string') {
+    throw new AiOpsValidationError(
+      `Field '${field}' is not a string (got ${current === null ? 'null' : typeof current})`,
+      'field_not_string'
+    );
+  }
+  const matches = findTextOccurrences(current, find);
+  if (matches.length === 0) {
+    throw new AiOpsValidationError(`Text not found in field '${field}'`, 'text_not_found', {
+      details: { matchCount: 0 },
+    });
+  }
+  let pick = occurrence;
+  if (pick === undefined) {
+    if (matches.length > 1) {
+      throw new AiOpsValidationError(
+        `Found ${matches.length} matches in '${field}'; pass occurrence (1-based) to pick one`,
+        'ambiguous_match',
+        { statusCode: 409, details: { matchCount: matches.length } }
+      );
+    }
+    pick = 1;
+  }
+  if (!Number.isInteger(pick) || pick < 1 || pick > matches.length) {
+    throw new AiOpsValidationError(
+      `occurrence must be an integer from 1 to ${matches.length}`,
+      'invalid_occurrence',
+      { details: { matchCount: matches.length } }
+    );
+  }
+  const at = matches[pick - 1];
+  if (at === undefined) {
+    throw new AiOpsValidationError(
+      `occurrence must be an integer from 1 to ${matches.length}`,
+      'invalid_occurrence',
+      { details: { matchCount: matches.length } }
+    );
+  }
+  return current.slice(0, at) + replace + current.slice(at + find.length);
+}
+
+/**
+ * Apply set / add / remove / replace_text ops onto a live flow tab.
+ * Multiple ops apply in order (later ops see earlier results).
  */
 export async function applyFlowNodeOps(
   adapter: FlowAdapter,
@@ -60,81 +155,92 @@ export async function applyFlowNodeOps(
   };
 
   for (const op of ops) {
-    if (op.op === 'add') {
-      const node = op.node;
-      if (!node.id || typeof node.id !== 'string') {
-        throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
-      }
-      if (!node.type || typeof node.type !== 'string') {
-        throw new AiOpsValidationError('add op needs node.type', 'missing_node_type');
-      }
-      if (nodes.some(n => n.id === node.id)) {
-        throw new AiOpsValidationError(
-          `Node '${node.id}' already exists in flow '${flowId}'`,
-          'node_already_exists'
-        );
-      }
-      const next: FlowNode = {
-        ...node,
-        id: node.id,
-        type: node.type,
-        z: typeof node.z === 'string' && node.z ? node.z : flowId,
-      };
-      nodes.push(next);
-      continue;
-    }
-
-    if (op.op === 'remove') {
-      if (!op.nodeId || typeof op.nodeId !== 'string') {
-        throw new AiOpsValidationError('remove op needs id', 'missing_node_id');
-      }
-      const idx = nodes.findIndex(n => n.id === op.nodeId);
-      if (idx < 0) {
-        throw new AiOpsValidationError(
-          `Node '${op.nodeId}' was not found in flow '${flowId}'`,
-          'node_not_found'
-        );
-      }
-      nodes.splice(idx, 1);
-      continue;
-    }
-
-    // set
-    if (!op.nodeId || typeof op.nodeId !== 'string') {
-      throw new AiOpsValidationError('Each edit needs a node id', 'missing_node_id');
-    }
-    const idx = nodes.findIndex(n => n.id === op.nodeId);
-    if (idx < 0) {
-      throw new AiOpsValidationError(
-        `Node '${op.nodeId}' was not found in flow '${flowId}'`,
-        'node_not_found'
-      );
-    }
-    const current = nodes[idx];
-    if (!current) {
-      throw new AiOpsValidationError(
-        `Node '${op.nodeId}' was not found in flow '${flowId}'`,
-        'node_not_found'
-      );
-    }
-    const next: FlowNode = { ...current, id: current.id, type: current.type };
-    for (const [key, value] of Object.entries(op.set)) {
-      if (PROTECTED_KEYS.has(key)) {
-        throw new AiOpsValidationError(
-          `Cannot change protected node property '${key}' via GET propose`,
-          'protected_property'
-        );
-      }
-      if (key === 'wires') {
-        assertValidWiresValue(value);
-      }
-      next[key] = value;
-    }
-    nodes[idx] = next;
+    applyOneNodeOp(nodes, flowId, op);
   }
 
   assertWireTargetsExist(nodes);
   return { expectedRev: snapshot.rev, flow };
+}
+
+function requireNodeIndex(nodes: FlowNode[], nodeId: string, flowId: string): number {
+  if (!nodeId || typeof nodeId !== 'string') {
+    throw new AiOpsValidationError('Each edit needs a node id', 'missing_node_id');
+  }
+  const idx = nodes.findIndex(n => n.id === nodeId);
+  if (idx < 0 || !nodes[idx]) {
+    throw new AiOpsValidationError(
+      `Node '${nodeId}' was not found in flow '${flowId}'`,
+      'node_not_found'
+    );
+  }
+  return idx;
+}
+
+function applyOneNodeOp(nodes: FlowNode[], flowId: string, op: FlowNodeOp): void {
+  if (op.op === 'add') {
+    const node = op.node;
+    if (!node.id || typeof node.id !== 'string') {
+      throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
+    }
+    if (!node.type || typeof node.type !== 'string') {
+      throw new AiOpsValidationError('add op needs node.type', 'missing_node_type');
+    }
+    if (nodes.some(n => n.id === node.id)) {
+      throw new AiOpsValidationError(
+        `Node '${node.id}' already exists in flow '${flowId}'`,
+        'node_already_exists'
+      );
+    }
+    nodes.push({
+      ...node,
+      id: node.id,
+      type: node.type,
+      z: typeof node.z === 'string' && node.z ? node.z : flowId,
+    });
+    return;
+  }
+
+  if (op.op === 'remove') {
+    const idx = requireNodeIndex(nodes, op.nodeId, flowId);
+    nodes.splice(idx, 1);
+    return;
+  }
+
+  const idx = requireNodeIndex(nodes, op.nodeId, flowId);
+  const current = nodes[idx];
+  if (!current) {
+    throw new AiOpsValidationError(
+      `Node '${op.nodeId}' was not found in flow '${flowId}'`,
+      'node_not_found'
+    );
+  }
+
+  if (op.op === 'replace_text') {
+    const nextValue = applyReplaceTextToValue(
+      current[op.field],
+      op.field,
+      op.find,
+      op.replace,
+      op.occurrence
+    );
+    nodes[idx] = { ...current, id: current.id, type: current.type, [op.field]: nextValue };
+    return;
+  }
+
+  const next: FlowNode = { ...current, id: current.id, type: current.type };
+  for (const [key, value] of Object.entries(op.set)) {
+    if (PROTECTED_KEYS.has(key)) {
+      throw new AiOpsValidationError(
+        `Cannot change protected node property '${key}' via GET propose`,
+        'protected_property'
+      );
+    }
+    if (key === 'wires') {
+      assertValidWiresValue(value);
+    }
+    next[key] = value;
+  }
+  nodes[idx] = next;
 }
 
 function assertValidWiresValue(value: unknown): void {
@@ -257,39 +363,80 @@ function resolveReplaceFlowId(
   return fallbackFlowId;
 }
 
-function parseNodeOp(entry: Record<string, unknown>): FlowNodeOp {
-  const rawOp = typeof entry.op === 'string' ? entry.op.toLowerCase() : 'set';
-
-  if (rawOp === 'add') {
-    const nested = entry.node;
-    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-      const node = nested as FlowNode;
-      return { op: 'add', node };
-    }
-    const rest: Record<string, unknown> = { ...entry };
-    delete rest.op;
-    return { op: 'add', node: rest as FlowNode };
+function resolveNodeId(entry: Record<string, unknown>): string {
+  if (typeof entry.id === 'string' && entry.id) {
+    return entry.id;
   }
-
-  if (rawOp === 'remove') {
-    const nodeId =
-      typeof entry.id === 'string'
-        ? entry.id
-        : typeof entry.nodeId === 'string'
-          ? entry.nodeId
-          : '';
-    if (!nodeId) {
-      throw new AiOpsValidationError('remove op needs id', 'missing_node_id');
-    }
-    return { op: 'remove', nodeId };
+  if (typeof entry.nodeId === 'string' && entry.nodeId) {
+    return entry.nodeId;
   }
-
-  if (rawOp !== 'set') {
-    throw new AiOpsValidationError("nodes[].op must be 'add', 'remove', or 'set'", 'invalid_patch');
+  if (typeof entry.node === 'string' && entry.node) {
+    return entry.node;
   }
+  return '';
+}
 
-  const nodeId =
-    typeof entry.id === 'string' ? entry.id : typeof entry.nodeId === 'string' ? entry.nodeId : '';
+function parseOccurrence(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') {
+    return undefined;
+  }
+  let n: number;
+  if (typeof raw === 'number') {
+    n = raw;
+  } else if (typeof raw === 'string') {
+    n = Number(raw);
+  } else if (typeof raw === 'boolean' || typeof raw === 'bigint') {
+    n = Number(raw);
+  } else {
+    throw new AiOpsValidationError('occurrence must be a positive integer', 'invalid_occurrence');
+  }
+  if (!Number.isFinite(n)) {
+    throw new AiOpsValidationError('occurrence must be a positive integer', 'invalid_occurrence');
+  }
+  return Math.trunc(n);
+}
+
+function parseAddOp(entry: Record<string, unknown>): FlowNodeOp {
+  const nested = entry.node;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return { op: 'add', node: nested as FlowNode };
+  }
+  const rest: Record<string, unknown> = { ...entry };
+  delete rest.op;
+  return { op: 'add', node: rest as FlowNode };
+}
+
+function parseReplaceTextOp(entry: Record<string, unknown>): FlowNodeOp {
+  const nodeId = resolveNodeId(entry);
+  if (!nodeId) {
+    throw new AiOpsValidationError('replace_text op needs node id', 'missing_node_id');
+  }
+  const field = typeof entry.field === 'string' ? entry.field : '';
+  if (!field) {
+    throw new AiOpsValidationError('replace_text op needs field', 'missing_field');
+  }
+  if (typeof entry.find !== 'string') {
+    throw new AiOpsValidationError('replace_text op needs find string', 'missing_find');
+  }
+  if (typeof entry.replace !== 'string') {
+    throw new AiOpsValidationError('replace_text op needs replace string', 'invalid_replace');
+  }
+  const occurrence = parseOccurrence(entry.occurrence);
+  const op: Extract<FlowNodeOp, { op: 'replace_text' }> = {
+    op: 'replace_text',
+    nodeId,
+    field,
+    find: entry.find,
+    replace: entry.replace,
+  };
+  if (occurrence !== undefined) {
+    op.occurrence = occurrence;
+  }
+  return op;
+}
+
+function parseSetOp(entry: Record<string, unknown>): FlowNodeOp {
+  const nodeId = resolveNodeId(entry);
   if (!nodeId) {
     throw new AiOpsValidationError('Each patch.nodes entry needs id', 'missing_node_id');
   }
@@ -299,11 +446,35 @@ function parseNodeOp(entry: Record<string, unknown>): FlowNodeOp {
     Object.assign(set, setRaw);
   } else {
     for (const [k, v] of Object.entries(entry)) {
-      if (k === 'id' || k === 'nodeId' || k === 'set' || k === 'op') continue;
+      if (k === 'id' || k === 'nodeId' || k === 'node' || k === 'set' || k === 'op') continue;
       set[k] = v;
     }
   }
   return { op: 'set', nodeId, set };
+}
+
+function parseNodeOp(entry: Record<string, unknown>): FlowNodeOp {
+  const rawOp = typeof entry.op === 'string' ? entry.op.toLowerCase() : 'set';
+  if (rawOp === 'add') {
+    return parseAddOp(entry);
+  }
+  if (rawOp === 'remove') {
+    const nodeId = resolveNodeId(entry);
+    if (!nodeId) {
+      throw new AiOpsValidationError('remove op needs id', 'missing_node_id');
+    }
+    return { op: 'remove', nodeId };
+  }
+  if (rawOp === 'replace_text') {
+    return parseReplaceTextOp(entry);
+  }
+  if (rawOp !== 'set') {
+    throw new AiOpsValidationError(
+      "nodes[].op must be 'add', 'remove', 'set', or 'replace_text'",
+      'invalid_patch'
+    );
+  }
+  return parseSetOp(entry);
 }
 
 /** Result of decoding a GET patch / mode=json draft document. */
@@ -318,6 +489,8 @@ export type InterpretedPatch =
  * - `{ "nodes": [ { "op":"set", "id":"n1", "set":{ "name":"Hi" } }, … ] }`
  * - `{ "nodes": [ { "op":"add", "node":{ "id":"n3", "type":"debug", … } } ] }`
  * - `{ "nodes": [ { "op":"remove", "id":"n2" } ] }`
+ * - `{ "nodes": [ { "op":"replace_text", "node":"n1", "field":"template",
+ *     "find":"old", "replace":"new", "occurrence":1 } ] }` (ops apply in order)
  * - Legacy set without `op`: `{ "nodes": [ { "id":"n1", "set":{…} } ] }`
  * - Full replace: `{ "type":"replace_flow", "flowId":"tab1", "flow":{…} }`
  */

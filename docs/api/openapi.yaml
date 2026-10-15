@@ -23,15 +23,20 @@ info:
 
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
     2. `GET {url}/status`, `/flows`, `/flows/{id}`, `/proposals`, …
-    3. Small edits: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
-    4. Larger / multi-node / add / remove: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
-       where the JSON is either `nodes:[{op:'set'|'add'|'remove',...}]` or a
+    3. Small string edits (preferred): `GET {url}/propose?flow=&rev=&node=&field=&find=&replace=`
+       (`occurrence` 1-based if find is not unique). Same as patch
+       `{op:'replace_text',...}` / REST·MCP `payload.nodes`.
+    4. Whole property: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
+    5. Multi-node / add / remove / replace_text: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
+       where the JSON is `nodes:[{op:'set'|'add'|'remove'|'replace_text',...}]` or a
        full `replace_flow` document (URL soft-cap ~8KB → use chunked drafts;
        prefer ~4–5 KB raw chunks; base64url adds ~33%).
-    5. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
+    6. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
        `…/draft/{id}/submit?sha256=` (30 min expiry, 1.5MB **decoded** bytes;
        field mode validates node/field at `draft/new`; `mode=json` may add nodes).
-    6. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
+       Last resort if still too large: placeholder propose → human deploy → user pastes
+       full content in the editor (not reviewed via diff).
+    7. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
        Unknown paths under `/mcp/a/*` return JSON `not_found` (never echo the token).
 
     ### Bearer REST (clients that can send headers)
@@ -46,7 +51,7 @@ info:
     3. Send `Authorization: Bearer <token>` on every authenticated call.
     4. Read flows: `GET /flows`, then `GET /flows/{id}` (response always
        includes `flow.type`, defaulting to `tab`).
-    5. Submit a proposal:
+    5. Submit a proposal. Prefer targeted `replace_text` for small string edits:
 
     ```json
     {
@@ -54,15 +59,20 @@ info:
       "expectedRev": "<rev from GET /flows or /flows/{id}>",
       "payload": {
         "flowId": "tab1",
-        "flow": {
-          "id": "tab1",
-          "type": "tab",
-          "label": "Flow 1",
-          "nodes": [{ "id": "n1", "type": "inject", "z": "tab1", "wires": [[]] }]
-        }
+        "nodes": [
+          {
+            "op": "replace_text",
+            "node": "n1",
+            "field": "template",
+            "find": "Hello",
+            "replace": "Hi"
+          }
+        ]
       }
     }
     ```
+
+    Or a full tab via `payload.flow` (from `GET /flows/{id}`).
 
     Missing tokens return **401** `access_link_missing`; invalid/expired/revoked
     tokens return **401** `access_link_invalid`. Both tell you to ask the user

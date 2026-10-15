@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Targeted \`replace_text\` op for string fields (\`template\`, \`func\`, …):
+  unique \`find\` or 1-based \`occurrence\`; errors \`400 text_not_found\` /
+  \`409 ambiguous_match\` (with \`matchCount\`). Available via GET propose
+  (\`node=&field=&find=&replace=\`), patch JSON, and REST/MCP
+  \`submit_proposal\` (\`payload.nodes\` without a full tab). Multiple ops apply
+  in order. AI guide recommends it for small edits to long fields and documents
+  a last-resort placeholder→paste workflow when content exceeds draft limits.
+
 ### Changed
 
 - `/mcp/api` and `/mcp/a` use dual in-memory rate limits (per IP and per access
