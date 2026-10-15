@@ -8,13 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Removed
+
+- Legacy standalone MCP server (Express/OAuth/SSE entrypoints, Docker images,
+  Playwright e2e against `/health`, and related dependencies). The Node-RED
+  plugin (`/mcp`, `/mcp/api/v1`, `/mcp/rpc`) is the supported surface.
+
 ### Added
 
 - Node-RED plugin scaffold (`ai-access.cjs` / `dist/plugin.cjs`) with `GET /mcp`
   admin page and `GET /mcp/api/v1/status`.
 - `aiAccess` settings hook (`allowWithoutAdminAuth` and reserved fields for
   later link TTL, max links, and deployment type).
-- Optional `node-red` peerDependency (`>=4.0.0`); standalone MCP server kept.
+- Optional `node-red` peerDependency (`>=4.0.0`).
+- MCP Streamable HTTP endpoint at `POST /mcp/rpc` (access-link Bearer tools
+  mirroring the AI-facing REST API).
 - Flow runtime adapter (`RedAdapter` via `RED.runtime`, `HttpAdapter` Admin API
   fallback, factory selection) with rev-checked `updateFlow` (default deployment
   type `nodes`).
