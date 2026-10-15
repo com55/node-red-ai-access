@@ -148,7 +148,7 @@ function createFakeJQuery() {
 describe('ai-access.html sidebar tab', () => {
   it('registers RED.sidebar.addTab with content element and no userSettings', () => {
     const html = readFileSync(htmlPath, 'utf8');
-    const scriptMatch = /<script>([\s\S]*?)<\/script>/.exec(html);
+    const scriptMatch = /<script\b[^>]*>([\s\S]*?)<\/script>/i.exec(html);
     expect(scriptMatch).toBeTruthy();
     expect(html).toMatch(/RED\.sidebar\.addTab/);
     expect(html).not.toMatch(/RED\.userSettings\.add/);
