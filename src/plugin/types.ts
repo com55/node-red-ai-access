@@ -14,9 +14,9 @@ export interface AiAccessSettings {
    * (intended for local-only setups).
    */
   allowWithoutAdminAuth?: boolean;
-  /** Reserved: default access-link TTL in seconds (planned default: 86400). */
+  /** Default access-link TTL in seconds (default: 86400). */
   defaultLinkTtlSeconds?: number;
-  /** Reserved: maximum concurrent active access links (planned default: 10). */
+  /** Maximum concurrent active access links (default: 10). */
   maxActiveLinks?: number;
   /** Reserved: deployment type used when approving proposals. */
   defaultDeploymentType?: 'nodes' | 'flows' | 'full';
@@ -66,6 +66,14 @@ export interface NodeRedPluginAPI {
   };
 }
 
+export interface AccessLinkAuthInfo {
+  id: string;
+  label?: string;
+  createdAt: string;
+  expiresAt: string;
+  createdBy?: string;
+}
+
 export interface AuthenticatedRequest extends Request {
   user?: {
     username?: string;
@@ -74,4 +82,6 @@ export interface AuthenticatedRequest extends Request {
   authInfo?: {
     scope?: string | string[];
   };
+  /** Set by the Bearer access-link middleware when a valid token is presented. */
+  accessLink?: AccessLinkAuthInfo;
 }

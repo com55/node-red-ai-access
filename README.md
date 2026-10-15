@@ -19,10 +19,13 @@
 Install the package into your Node-RED user directory (or via the palette), then
 restart Node-RED. Open **`/mcp`** on the editor admin root after logging in.
 
-| Path                     | Purpose                               |
-| ------------------------ | ------------------------------------- |
-| `GET /mcp`               | Admin page (requires adminAuth login) |
-| `GET /mcp/api/v1/status` | Plugin status JSON                    |
+| Path                           | Purpose                                   |
+| ------------------------------ | ----------------------------------------- |
+| `GET /mcp`                     | Admin page (requires adminAuth login)     |
+| `GET /mcp/api/v1/status`       | Plugin status JSON                        |
+| `GET /mcp/api/v1/links`        | List active access links (`*` only)       |
+| `POST /mcp/api/v1/links`       | Create access link (`*` only; token once) |
+| `DELETE /mcp/api/v1/links/:id` | Revoke access link (`*` only)             |
 
 **Permissions:** users with `read` get a read-only view; users with `*` get full
 access. Unauthenticated visits to `/mcp` redirect to the editor login
@@ -36,15 +39,22 @@ module.exports = {
   // ...
   aiAccess: {
     allowWithoutAdminAuth: true,
-    // Reserved for later PRs:
     // defaultLinkTtlSeconds: 86400,
     // maxActiveLinks: 10,
-    // defaultDeploymentType: "nodes", // or "flows" | "full"
+    // defaultDeploymentType: "nodes", // or "flows" | "full" (later PRs)
   },
 };
 ```
 
 Data for later proposal/log features is stored under `<userDir>/.ai-access`.
+
+### Access links (in memory)
+
+Owners with `*` can mint temporary Bearer tokens for AI clients. Links live only
+in process memory (default TTL 24h, max 10 active; creator may set
+`ttlSeconds`). The raw token is returned once at creation; after a restart every
+old token is invalid and the AI should ask the user for a new link. Users with
+`read` permission cannot manage links (403).
 
 ### Flow runtime adapter
 
