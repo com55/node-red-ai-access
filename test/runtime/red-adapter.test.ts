@@ -109,13 +109,29 @@ describe('RedAdapter', () => {
     expect(setFlows).toHaveBeenCalledOnce();
     const arg = setFlows.mock.calls[0]?.[0] as {
       deploymentType: string;
-      flows: FlowNode[];
+      flows: { flows: FlowNode[]; rev?: string };
     };
     expect(arg.deploymentType).toBe('nodes');
-    expect(arg.flows.find(n => n.id === 'tab-1')).toMatchObject({ label: 'Main' });
-    expect(arg.flows.find(n => n.id === 'n2')).toMatchObject({ type: 'debug', z: 'tab-1' });
-    expect(arg.flows.find(n => n.id === 'n1')).toBeUndefined();
-    expect(arg.flows.find(n => n.id === 'tab-2')).toBeDefined();
+    expect(arg.flows.rev).toBe('rev-1');
+    expect(arg.flows.flows.find(n => n.id === 'tab-1')).toMatchObject({ label: 'Main' });
+    expect(arg.flows.flows.find(n => n.id === 'n2')).toMatchObject({ type: 'debug', z: 'tab-1' });
+    expect(arg.flows.flows.find(n => n.id === 'n1')).toBeUndefined();
+    expect(arg.flows.flows.find(n => n.id === 'tab-2')).toBeDefined();
+  });
+
+  it('getFlow fills type:tab when Node-RED omits type', async () => {
+    const { RED } = createMockRed({
+      getFlow: () =>
+        Promise.resolve({
+          id: 'tab-1',
+          label: 'Main',
+          nodes: [{ id: 'n1', type: 'inject', z: 'tab-1' }],
+        }),
+    });
+    const adapter = new RedAdapter(RED);
+    const result = await adapter.getFlow('tab-1');
+    expect(result.flow).toMatchObject({ id: 'tab-1', type: 'tab' });
+    expect(result.flow.nodes).toHaveLength(1);
   });
 
   it('updateFlow forwards deploymentType flows|full', async () => {

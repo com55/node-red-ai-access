@@ -3,10 +3,11 @@
  *
  * Uses createNodeApi-style RED (`runtime.adminApp`, no `.runtime`) while
  * requests hit the parent editor-api app (body-parser). Verifies adapter
- * selection, malformed JSON → JSON/JSON-RPC (not HTML), and API 401 JSON.
+ * selection, malformed JSON → JSON/JSON-RPC (not HTML), API 401 JSON, and
+ * replace_flow approve (setFlows shape) for deploymentType nodes|flows|full.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -33,7 +34,7 @@ interface NodeRedEmbed {
   log?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
 
-describe('Node-RED 4.x in-process plugin integration', () => {
+describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () => {
   let userDir: string;
   let server: Server;
   let RED: NodeRedEmbed;
@@ -117,6 +118,31 @@ describe('Node-RED 4.x in-process plugin integration', () => {
 
     RED.init(server, settings);
     await RED.start();
+
+    // Wait until in-process flows API is ready (activeConfig can be null briefly
+    // after start under CI load, which made early list_flows return 502).
+    const runtimeFlows = (
+      requireCjs('@node-red/runtime') as {
+        flows: { getFlows: (opts?: object) => Promise<unknown> };
+      }
+    ).flows;
+    const readyDeadline = Date.now() + 30_000;
+    for (;;) {
+      const snapshot = await runtimeFlows.getFlows({});
+      if (
+        snapshot &&
+        typeof snapshot === 'object' &&
+        !Array.isArray(snapshot) &&
+        typeof (snapshot as { rev?: unknown }).rev === 'string' &&
+        Array.isArray((snapshot as { flows?: unknown }).flows)
+      ) {
+        break;
+      }
+      if (Date.now() > readyDeadline) {
+        throw new Error(`Node-RED flows API not ready: ${JSON.stringify(snapshot)}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
 
     runtimeHttpAdmin = runtime.httpAdmin;
     expect(runtimeHttpAdmin).not.toBe(RED.httpAdmin);
@@ -281,5 +307,198 @@ describe('Node-RED 4.x in-process plugin integration', () => {
     expect(links.headers['content-type']).toMatch(/json/);
     expect(links.body).toEqual({ error: 'Invalid JSON body', code: 'invalid_json' });
     expect(links.text).not.toMatch(/<!DOCTYPE|<html|SyntaxError|body-parser/i);
+  });
+
+  it('get_flow includes type:tab even when Node-RED omits type', async () => {
+    const link = linkStore.create({ label: 'get-flow-type' });
+    const res = await request(RED.httpAdmin)
+      .get('/mcp/api/v1/flows/tab1')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.flow).toMatchObject({ id: 'tab1', type: 'tab' });
+    expect(Array.isArray(res.body.flow.nodes)).toBe(true);
+    expect(typeof res.body.rev).toBe('string');
+  });
+
+  it('admin editor Bearer works on status/links/logs/proposals (page routes)', async () => {
+    // Same token shape the /mcp page reads from editor localStorage.
+    const auth = { Authorization: `Bearer ${adminToken}` };
+
+    const status = await request(RED.httpAdmin).get('/mcp/api/v1/status').set(auth);
+    expect(status.status).toBe(200);
+    expect(status.body.aiFeaturesEnabled).toBe(true);
+
+    const links = await request(RED.httpAdmin).get('/mcp/api/v1/links').set(auth);
+    expect(links.status).toBe(200);
+    expect(Array.isArray(links.body.links)).toBe(true);
+
+    const logs = await request(RED.httpAdmin).get('/mcp/api/v1/logs?limit=100').set(auth);
+    expect(logs.status).toBe(200);
+    expect(Array.isArray(logs.body.logs)).toBe(true);
+
+    // Regression: editor Bearer was mis-classified as an access-link token → 401.
+    const proposals = await request(RED.httpAdmin).get('/mcp/api/v1/proposals').set(auth);
+    expect(proposals.status).toBe(200);
+    expect(Array.isArray(proposals.body.proposals)).toBe(true);
+    expect(proposals.body.code).not.toBe('access_link_invalid');
+  });
+
+  it.each(['nodes', 'flows', 'full'] as const)(
+    'approve replace_flow with deploymentType=%s deploys nested get_flow shape',
+    async deploymentType => {
+      const link = linkStore.create({ label: `approve-${deploymentType}` });
+
+      const snapshot = await request(RED.httpAdmin)
+        .get('/mcp/api/v1/flows/tab1')
+        .set('Authorization', `Bearer ${link.token}`);
+      expect(snapshot.status).toBe(200);
+      const rev = snapshot.body.rev as string;
+      expect(rev.length).toBeGreaterThan(0);
+
+      // Exact nested get_flow shape from the real-world blocker: no `type`, no `configs`.
+      const label = `Test Flow ${deploymentType}`;
+      const nestedFlow = {
+        id: 'tab1',
+        label,
+        nodes: [
+          {
+            id: `inj-${deploymentType}`,
+            type: 'inject',
+            z: 'tab1',
+            name: '',
+            props: [],
+            once: false,
+            x: 120,
+            y: 120,
+            wires: [[`fn-${deploymentType}`]],
+          },
+          {
+            id: `fn-${deploymentType}`,
+            type: 'function',
+            z: 'tab1',
+            name: 'pass',
+            func: 'return msg;',
+            outputs: 1,
+            x: 300,
+            y: 120,
+            wires: [[`dbg-${deploymentType}`]],
+          },
+          {
+            id: `dbg-${deploymentType}`,
+            type: 'debug',
+            z: 'tab1',
+            name: 'out',
+            x: 480,
+            y: 120,
+            wires: [[]],
+          },
+        ],
+      };
+
+      const created = await request(RED.httpAdmin)
+        .post('/mcp/api/v1/proposals')
+        .set('Authorization', `Bearer ${link.token}`)
+        .send({
+          type: 'replace_flow',
+          expectedRev: rev,
+          payload: { flowId: 'tab1', flow: nestedFlow },
+        });
+      expect(created.status).toBe(201);
+      expect(created.body.status).toBe('pending');
+
+      const approved = await request(RED.httpAdmin)
+        .post(`/mcp/api/v1/proposals/${created.body.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(deploymentType === 'nodes' ? {} : { deploymentType });
+      expect(approved.status).toBe(200);
+      expect(approved.body.status).toBe('approved');
+      expect(approved.body.reason).toBeUndefined();
+      expect(typeof approved.body.resultRev).toBe('string');
+      expect(approved.body.resultRev).not.toBe(rev);
+
+      const flowsOnDisk = JSON.parse(readFileSync(join(userDir, 'flows.json'), 'utf8')) as {
+        id?: string;
+        type?: string;
+        label?: string;
+        z?: string;
+      }[];
+      expect(flowsOnDisk.find(n => n.id === 'tab1')).toMatchObject({
+        type: 'tab',
+        label,
+      });
+      expect(flowsOnDisk.some(n => n.id === `inj-${deploymentType}` && n.z === 'tab1')).toBe(true);
+      expect(flowsOnDisk.some(n => n.id === `fn-${deploymentType}` && n.z === 'tab1')).toBe(true);
+      expect(flowsOnDisk.some(n => n.id === `dbg-${deploymentType}` && n.z === 'tab1')).toBe(true);
+
+      const after = await request(RED.httpAdmin)
+        .get('/mcp/api/v1/flows/tab1')
+        .set('Authorization', `Bearer ${link.token}`);
+      expect(after.status).toBe(200);
+      expect(after.body.rev).toBe(approved.body.resultRev);
+      expect(after.body.flow).toMatchObject({ id: 'tab1', type: 'tab', label });
+      expect(after.body.flow.nodes.map((n: { id: string }) => n.id).sort()).toEqual(
+        [`dbg-${deploymentType}`, `fn-${deploymentType}`, `inj-${deploymentType}`].sort()
+      );
+    }
+  );
+
+  it('stale expectedRev at approve marks proposal rejected (not failed)', async () => {
+    const link = linkStore.create({ label: 'stale-approve' });
+
+    const snap = await request(RED.httpAdmin)
+      .get('/mcp/api/v1/flows/tab1')
+      .set('Authorization', `Bearer ${link.token}`);
+    const rev = snap.body.rev as string;
+
+    const staleCandidate = await request(RED.httpAdmin)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: rev,
+        payload: {
+          flowId: 'tab1',
+          flow: {
+            id: 'tab1',
+            label: 'Should stay pending then reject',
+            nodes: [{ id: 'stale-n1', type: 'inject', z: 'tab1', wires: [[]] }],
+          },
+        },
+      });
+    expect(staleCandidate.status).toBe(201);
+
+    // Bump live rev by approving a different proposal first.
+    const winner = await request(RED.httpAdmin)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: rev,
+        payload: {
+          flowId: 'tab1',
+          flow: {
+            id: 'tab1',
+            label: 'Winner deploy',
+            nodes: [{ id: 'win-n1', type: 'inject', z: 'tab1', wires: [[]] }],
+          },
+        },
+      });
+    expect(winner.status).toBe(201);
+
+    const winnerApproved = await request(RED.httpAdmin)
+      .post(`/mcp/api/v1/proposals/${winner.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(winnerApproved.status).toBe(200);
+    expect(winnerApproved.body.status).toBe('approved');
+
+    const staleApproved = await request(RED.httpAdmin)
+      .post(`/mcp/api/v1/proposals/${staleCandidate.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(staleApproved.status).toBe(200);
+    expect(staleApproved.body.status).toBe('rejected');
+    expect(staleApproved.body.reason).toMatch(/resubmit|stale|revision/i);
+    expect(staleApproved.body.status).not.toBe('failed');
   });
 });

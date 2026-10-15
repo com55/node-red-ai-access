@@ -66,8 +66,13 @@ export class RedAdapter implements FlowAdapter {
     }
 
     const merged = replaceFlowTabInFlatFlows(current.flows, params.flowId, params.flow);
+    // Node-RED runtime API expects opts.flows = { flows: [...], rev?, credentials? }
+    // (not a bare array). Passing the array made setFlows call forEach on undefined.
     const result = await this.flows.setFlows({
-      flows: merged,
+      flows: {
+        flows: merged,
+        rev: params.expectedRev,
+      },
       deploymentType,
     });
 

@@ -51,6 +51,10 @@ function pageClientScriptPartA(): string {
     window.location.replace(target);
   }
 
+  function isStatusPath(path) {
+    return path === '/status' || path.indexOf('/status?') === 0;
+  }
+
   async function api(path, options) {
     var headers = {
       'Accept': 'application/json',
@@ -68,7 +72,10 @@ function pageClientScriptPartA(): string {
     if (text) {
       try { body = JSON.parse(text); } catch (e) { body = { error: text }; }
     }
-    if (res.status === 401) {
+    // Only the auth bootstrap (/status) redirects on 401. Other endpoints
+    // (e.g. /proposals) show an inline error so a single failing route cannot
+    // bounce the admin back to the editor.
+    if (res.status === 401 && isStatusPath(path)) {
       redirectToEditorLogin();
       throw new Error((body && body.error) || 'Authentication required');
     }

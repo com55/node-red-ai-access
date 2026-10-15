@@ -74,7 +74,7 @@ describe('mcpJsonErrorHandler', () => {
       .send(JSON.stringify({ pad: 'x'.repeat(200) }));
 
     expect(res.status).toBe(413);
-    expect(res.body.code).toBe('storage_payload_too_large');
+    expect(res.body.code).toBe('payload_too_large');
     expect(res.body.error).toContain(String(MAX_PROPOSAL_JSON_BYTES));
   });
 });

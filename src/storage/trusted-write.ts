@@ -19,7 +19,7 @@ export const MAX_PROPOSAL_JSON_BYTES = 1_500_000;
 export const MAX_AUDIT_APPEND_BYTES = 8_192;
 
 export class StoragePayloadTooLargeError extends Error {
-  readonly code = 'storage_payload_too_large' as const;
+  readonly code = 'payload_too_large' as const;
   readonly statusCode = 413;
 
   constructor(

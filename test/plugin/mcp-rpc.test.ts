@@ -284,11 +284,38 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       ].sort()
     );
     const tools = (res.body.result as { tools: { name: string; description?: string }[] }).tools;
-    const submit = tools.find(t => t.name === 'submit_proposal');
+    const submit = tools.find(t => t.name === 'submit_proposal') as {
+      name: string;
+      description?: string;
+      inputSchema?: {
+        required?: string[];
+        properties?: {
+          expectedRev?: unknown;
+          payload?: {
+            properties?: {
+              flow?: {
+                required?: string[];
+                properties?: { nodes?: { type?: string } };
+              };
+            };
+          };
+        };
+      };
+    };
     expect(submit?.description).toMatch(/expectedRev/);
+    expect(submit?.description).toMatch(/nested get_flow|get_flow/i);
     expect(submit?.description).toMatch(/nodes\[\]/);
     expect(submit?.description).toMatch(/413/);
     expect(submit?.description).toMatch(/get_flow|list_flows/);
+    expect(submit.inputSchema?.required).toEqual(
+      expect.arrayContaining(['type', 'expectedRev', 'payload'])
+    );
+    expect(submit.inputSchema?.properties?.payload?.properties?.flow?.required).toEqual(
+      expect.arrayContaining(['nodes'])
+    );
+    expect(submit.inputSchema?.properties?.payload?.properties?.flow?.properties?.nodes?.type).toBe(
+      'array'
+    );
     const getStatus = tools.find(t => t.name === 'get_status');
     expect(getStatus?.description).toMatch(/permission is null|permission.*null/i);
   });
@@ -324,7 +351,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
 
     const submitted = await callTool(app, link.token, 'submit_proposal', {
       type: 'replace_flow',
-      expected_rev: flowsJson.rev,
+      expectedRev: flowsJson.rev,
       payload: {
         flowId: 'tab-1',
         flow: {

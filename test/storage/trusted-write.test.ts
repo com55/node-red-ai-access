@@ -154,7 +154,7 @@ describe('proposal and audit size caps', () => {
       expect(error).toBeInstanceOf(StoragePayloadTooLargeError);
       const err = error as StoragePayloadTooLargeError;
       expect(err.statusCode).toBe(413);
-      expect(err.code).toBe('storage_payload_too_large');
+      expect(err.code).toBe('payload_too_large');
       expect(err.message).toMatch(/proposal/i);
       expect(err.message).toMatch(/exceeds/i);
     }
