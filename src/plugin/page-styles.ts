@@ -213,18 +213,50 @@ table.audit-table {
   table-layout: fixed;
   width: 100%;
 }
-.audit-table .col-when { width: 9.5rem; white-space: nowrap; }
-.audit-table .col-action { width: 8.5rem; }
-.audit-table .col-actor { width: 8rem; }
-.audit-table .col-details { width: auto; }
-.audit-table td, .audit-table th {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
 .audit-table .col-when {
+  width: 9.5rem;
+  min-width: 9.5rem;
+  white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
 }
+.audit-table .col-action {
+  width: 6.5rem;
+  min-width: 6.5rem;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.audit-table .col-actor {
+  width: 9rem;
+  min-width: 8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.audit-table .col-details { width: auto; }
+.audit-table td.col-details, .audit-table th.col-details {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.action-badge {
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: #eef2f5;
+  color: var(--ink);
+}
+.action-badge.action-created { background: #e8f1fb; color: #1a4a7a; }
+.action-badge.action-approved { background: #e8f6ef; color: var(--ok); }
+.action-badge.action-rejected { background: #f4efe6; color: #6a4a14; }
+.action-badge.action-failed { background: #fdeceb; color: var(--danger); }
 .audit-summary { line-height: 1.4; }
 .audit-raw {
   margin-top: 0.25rem;
@@ -302,8 +334,9 @@ table.audit-table {
 .diff-after { color: var(--ok); }
 @media (max-width: 640px) {
   dl.status { grid-template-columns: 1fr; }
-  .audit-table .col-when { width: 7.5rem; }
-  .audit-table .col-action, .audit-table .col-actor { width: 6.5rem; }
+  .audit-table .col-when { width: 7.5rem; min-width: 7.5rem; }
+  .audit-table .col-action { width: 5.5rem; min-width: 5.5rem; }
+  .audit-table .col-actor { width: 7rem; min-width: 6rem; }
 }
 `;
 }

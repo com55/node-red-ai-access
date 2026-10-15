@@ -107,7 +107,7 @@ export function registerRoutes(
   // Documentation only — no admin session required.
   RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
 
-  // User Settings / editor tab — admin session; PUT requires *.
+  // Settings API (sidebar AI Access tab) — admin session; PUT requires *.
   RED.httpAdmin.get(
     '/mcp/api/v1/settings',
     limiter,
