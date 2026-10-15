@@ -1,5 +1,7 @@
 /** Inline client script for the /mcp admin page (editor localStorage Bearer). */
 
+import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
+
 function pageClientScriptPartA(): string {
   return `
 (function () {
@@ -381,14 +383,20 @@ function pageClientScriptPartB(): string {
 function pageClientScriptPartBDiff(): string {
   return `
   var DIFF_MODE_KEY = 'ai-access-diff-mode';
+  var DIFF_SPLIT_MIN_PX = ${DIFF_SPLIT_MIN_PX};
+  var PRESENCE_SHORT_TEXT_MAX = ${PRESENCE_SHORT_TEXT_MAX};
+  function defaultDiffModeFromViewport() {
+    // Side-by-side on wide screens; unified only below the narrow breakpoint.
+    if (typeof window === 'undefined' || !window.matchMedia) return 'unified';
+    return window.matchMedia('(min-width: ' + DIFF_SPLIT_MIN_PX + 'px)').matches
+      ? 'split' : 'unified';
+  }
   function getDiffMode() {
     try {
       var v = localStorage.getItem(DIFF_MODE_KEY);
       if (v === 'unified' || v === 'split') return v;
     } catch (e) { /* ignore */ }
-    // Prefer side-by-side on wide screens; unified stays easier to read when narrow.
-    return (typeof window !== 'undefined' && window.matchMedia &&
-      window.matchMedia('(min-width: 900px)').matches) ? 'split' : 'unified';
+    return defaultDiffModeFromViewport();
   }
   function setDiffMode(mode) {
     try { localStorage.setItem(DIFF_MODE_KEY, mode); } catch (e) { /* ignore */ }
@@ -465,15 +473,26 @@ function pageClientScriptPartBDiffView(): string {
     return (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
   }
 
+  function isCollapsiblePresenceText(value) {
+    var s = String(value == null ? '' : value);
+    if (s.indexOf('\\n') >= 0) return true;
+    return s.length > PRESENCE_SHORT_TEXT_MAX;
+  }
+
   function renderPresenceProperty(p) {
     if (p.kind === 'text') {
       var text = String(p.value == null ? '' : p.value);
-      return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
-        ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
-        '<pre class="presence-pre">' + esc(text) + '</pre></details>';
+      if (isCollapsiblePresenceText(text)) {
+        return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
+          ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
+          '<pre class="presence-pre">' + esc(text) + '</pre></details>';
+      }
+      // Short single-line fields (format, syntax, …) stay inline expanded.
+      return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+        '<code class="presence-inline">' + esc(text) + '</code></div>';
     }
     return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
-      '<code>' + esc(JSON.stringify(p.value)) + '</code></div>';
+      '<code class="presence-inline">' + esc(JSON.stringify(p.value)) + '</code></div>';
   }
 
   function renderPresenceNode(n, kind) {

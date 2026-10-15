@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- `/mcp` proposal diffs default to side-by-side on wide screens (unified below
+  the narrow breakpoint) and remember the toggle in `localStorage`; short
+  single-line fields in Node added/removed blocks stay inline (only long
+  multi-line text collapses).
 - Proposal diffs compare against the **base flow snapshot** stored at submit
   (`baseFlow`), so later approvals no longer make unrelated nodes look
   “removed”. Pending+stale still warns and may include `vsCurrent`;

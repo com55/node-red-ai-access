@@ -1,4 +1,7 @@
 /** CSS for the /mcp admin page. */
+
+import { DIFF_SPLIT_MIN_PX } from './diff-ui.js';
+
 function pageStylesPartA(): string {
   return `
 :root {
@@ -503,7 +506,7 @@ function pageStylesPartE(): string {
   font-size: 0.9rem;
   user-select: none;
 }
-@media (max-width: 900px) {
+@media (max-width: ${DIFF_SPLIT_MIN_PX}px) {
   .diff-split { grid-template-columns: 1fr; }
   .diff-split .diff-pane + .diff-pane { border-left: 0; border-top: 1px solid var(--line); }
   .prop-change-scalar.split {
