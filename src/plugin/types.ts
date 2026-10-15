@@ -18,7 +18,7 @@ export interface AiAccessSettings {
    * (intended for local-only setups).
    */
   allowWithoutAdminAuth?: boolean;
-  /** Default access-link TTL in seconds (default: 86400). */
+  /** Default access-link TTL in seconds (default: 14400 = 4h). */
   defaultLinkTtlSeconds?: number;
   /** Maximum concurrent active access links (default: 10). */
   maxActiveLinks?: number;

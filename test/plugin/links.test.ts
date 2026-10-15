@@ -117,6 +117,7 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
       id: expect.any(String),
       token: expect.stringMatching(/^aia_/),
       label: 'agent',
+      url: expect.stringMatching(/\/mcp\/a\/aia_/),
     });
 
     const listed = await request(app).get('/mcp/api/v1/links');

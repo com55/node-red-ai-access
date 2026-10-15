@@ -41,7 +41,7 @@ export interface CreateAccessLinkInput {
 }
 
 export interface AccessLinkStoreOptions {
-  /** Defaults to 86400 (24h). */
+  /** Defaults to 14400 (4h). */
   defaultTtlSeconds?: number;
   /** Defaults to 10. */
   maxActiveLinks?: number;
@@ -89,7 +89,7 @@ export class AccessLinkStore {
   private readonly randomToken: () => string;
 
   constructor(options: AccessLinkStoreOptions = {}) {
-    this.defaultTtlSeconds = options.defaultTtlSeconds ?? 86_400;
+    this.defaultTtlSeconds = options.defaultTtlSeconds ?? 14_400;
     this.maxActiveLinks = options.maxActiveLinks ?? 10;
     this.now = options.now ?? (() => Date.now());
     this.randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));

@@ -58,8 +58,8 @@ module.exports = {
     enabled: true,
     // Local-only opt-in when adminAuth is disabled (default: false)
     allowWithoutAdminAuth: false,
-    // Access-link default TTL in seconds (default: 86400 = 24h)
-    defaultLinkTtlSeconds: 86400,
+    // Access-link default TTL in seconds (default: 14400 = 4h)
+    defaultLinkTtlSeconds: 14400,
     // Max concurrent active access links (default: 10)
     maxActiveLinks: 10,
     // Deploy type used on approve (default: "nodes"; also "flows" | "full")
@@ -103,6 +103,8 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | Path                                     | Purpose                                          |
 | ---------------------------------------- | ------------------------------------------------ |
 | `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
+| `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)          |
+| `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts     |
 | `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
 | `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint) |
 | `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
@@ -142,8 +144,9 @@ invalid/expired/revoked tokens return **401** `access_link_invalid` (both with
 `WWW-Authenticate`) telling the AI to ask the user for a new access link. Every
 error JSON includes a `code`.
 
-Access links are **in memory** (default TTL 24h, max 10). The raw token is
-returned once at creation; after a restart every old token is invalid.
+Access links are **in memory** (default TTL **4h**, max 10). Creating a link
+returns the raw token once plus a self-contained `url` (`/mcp/a/<token>`). After
+a restart every old token is invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
 `expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
@@ -162,12 +165,22 @@ errors mark it **failed**. Reject never mutates flows.
 
 ## AI quickstart
 
-1. An owner with `*` opens `/mcp` → **Access links** → create a link. Use **Copy
-   link for AI** (token + API base URL + docs hint) or copy the token once.
-2. Optional: `GET /mcp/api/v1` (no auth) lists endpoints, auth scheme, OpenAPI,
-   and MCP URLs. Spec: `GET /mcp/api/v1/openapi.yaml` (includes a Quick start
-   for access-link clients).
-3. The AI client sends `Authorization: Bearer <token>` to REST and/or MCP:
+### Self-contained GET link (chat AIs that can only HTTP GET)
+
+1. An owner with `*` opens `/mcp` → **Access links** → create a link (default
+   TTL **4 hours**). Copy the full URL
+   `http(s)://<host><httpAdminRoot>/mcp/a/<token>` (or **Copy link for AI**).
+2. The AI opens that URL for markdown docs, then uses GET-only routes under the
+   same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose`,
+   chunked `/draft/…` for large HTML/fields; URL soft-cap ~8KB).
+3. Changes become **pending proposals**; a human approves on `/mcp`. JSON
+   responses use `Cache-Control: no-store`.
+
+### Bearer REST / MCP
+
+1. Optional: `GET /mcp/api/v1` (no auth) lists endpoints, auth scheme, OpenAPI,
+   and MCP URLs. Spec: `GET /mcp/api/v1/openapi.yaml`.
+2. Send `Authorization: Bearer <token>` to REST and/or MCP:
 
    - REST: `GET /mcp/api/v1/status`, `GET /mcp/api/v1/flows`,
      `GET /mcp/api/v1/flows/{id}`, `POST /mcp/api/v1/proposals`,
@@ -175,8 +188,8 @@ errors mark it **failed**. Reject never mutates flows.
    - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow`, `submit_proposal`,
      `list_my_proposals` (same access-link auth and limits)
 
-4. The owner reviews the proposal on `/mcp` and approves or rejects it.
-5. If the token is invalid, expired, revoked, or cleared by a restart, the API
+3. The owner reviews the proposal on `/mcp` and approves or rejects it.
+4. If the token is invalid, expired, revoked, or cleared by a restart, the API
    returns **401** telling the AI to **ask the user for a new access link**.
 
 Example create body:

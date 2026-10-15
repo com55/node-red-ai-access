@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Self-contained GET access links at `/mcp/a/<token>` for chat AIs that can only
+  HTTP GET (markdown docs; scoped status/flows/proposals/propose/drafts; chunked
+  drafts for large fields; `Cache-Control: no-store`; per-link rate limit; token
+  redaction in paths). Create-link responses include the full `url`; default
+  link TTL is **4 hours** (configurable).
+
 ### Fixed
 
 - Shared-read REST routes (`/flows`, `/proposals`, …) return

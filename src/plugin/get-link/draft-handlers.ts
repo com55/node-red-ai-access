@@ -1,0 +1,341 @@
+/**
+ * Chunked draft handlers for GET access links.
+ */
+
+import { createHash } from 'node:crypto';
+
+import type { Response } from 'express';
+
+import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
+import type { AuditLog } from '../../storage/audit-log.js';
+import type { ProposalStore } from '../../storage/proposals.js';
+import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
+import { aiOpsErrorToHttp, submitReplaceFlowProposal } from '../ai-ops.js';
+import type { AuthenticatedRequest } from '../types.js';
+
+import { DraftNotFoundError, DraftStore, DraftValidationError } from './draft-store.js';
+import { buildPatchedFlowTab, decodeBase64UrlJson, interpretPatch } from './flow-patch.js';
+import { jsonError, rejectOversizedGetUrl, setNoStore } from './middleware.js';
+import { queryString } from './query.js';
+
+export function getLinkDraftNewHandler(draftStore: DraftStore) {
+  return (req: AuthenticatedRequest, res: Response): void => {
+    if (rejectOversizedGetUrl(req, res)) return;
+    setNoStore(res);
+
+    const flowId = queryString(req.query, 'flow');
+    const rev = queryString(req.query, 'rev');
+    const nodeId = queryString(req.query, 'node');
+    const field = queryString(req.query, 'field');
+    const summary = queryString(req.query, 'summary');
+    const modeParam = queryString(req.query, 'mode');
+    const targetsEncoded = queryString(req.query, 'targets');
+
+    if (!flowId || !rev) {
+      jsonError(
+        res,
+        400,
+        'flow and rev query parameters are required',
+        'missing_draft_params',
+        'Example: …/draft/new?flow=tab1&rev=abc&node=n1&field=template'
+      );
+      return;
+    }
+    if (!req.accessLink) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
+
+    let mode: 'field' | 'json' = 'field';
+    let targets: { nodeId: string; field: string }[] | undefined;
+
+    if (targetsEncoded) {
+      try {
+        const parsed = decodeBase64UrlJson(targetsEncoded);
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          throw new Error('targets must be a non-empty array');
+        }
+        targets = parsed.map(entry => {
+          if (!entry || typeof entry !== 'object') {
+            throw new Error('bad target');
+          }
+          const t = entry as { node?: unknown; nodeId?: unknown; field?: unknown };
+          const n =
+            typeof t.nodeId === 'string' ? t.nodeId : typeof t.node === 'string' ? t.node : '';
+          const f = typeof t.field === 'string' ? t.field : '';
+          if (!n || !f) throw new Error('bad target');
+          return { nodeId: n, field: f };
+        });
+        mode = 'field';
+      } catch {
+        jsonError(
+          res,
+          400,
+          'targets must be base64url JSON array of {nodeId,field}',
+          'invalid_targets'
+        );
+        return;
+      }
+    } else if (modeParam === 'json' || (!nodeId && !field)) {
+      mode = 'json';
+    } else if (!nodeId || !field) {
+      jsonError(
+        res,
+        400,
+        'node and field are required for field drafts (or pass mode=json)',
+        'missing_draft_params'
+      );
+      return;
+    }
+
+    const draft = draftStore.create({
+      linkId: req.accessLink.id,
+      flowId,
+      expectedRev: rev,
+      mode,
+      ...(nodeId ? { nodeId } : {}),
+      ...(field ? { field } : {}),
+      ...(targets ? { targets } : {}),
+      ...(summary ? { summary } : {}),
+    });
+
+    res.status(201).json({
+      ok: true,
+      draftId: draft.id,
+      mode: draft.mode,
+      expiresAt: new Date(draft.expiresAtMs).toISOString(),
+      maxBytes: MAX_PROPOSAL_JSON_BYTES,
+      hint: 'Upload base64url chunks with GET …/draft/<draftId>/append?seq=N&data=… then submit with sha256.',
+    });
+  };
+}
+
+export function getLinkDraftAppendHandler(draftStore: DraftStore) {
+  return (req: AuthenticatedRequest, res: Response): void => {
+    if (rejectOversizedGetUrl(req, res)) return;
+    setNoStore(res);
+    const draftId = req.params.draftId;
+    const seqRaw = queryString(req.query, 'seq');
+    const data = queryString(req.query, 'data');
+    if (typeof draftId !== 'string' || !draftId) {
+      jsonError(res, 400, 'Missing draft id', 'missing_draft_id');
+      return;
+    }
+    if (!req.accessLink) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
+    if (seqRaw === undefined || data === undefined) {
+      jsonError(
+        res,
+        400,
+        'seq and data query parameters are required',
+        'missing_chunk_params',
+        'data must be base64url of the raw chunk bytes.'
+      );
+      return;
+    }
+    const seq = Number(seqRaw);
+    try {
+      const result = draftStore.append(draftId, req.accessLink.id, seq, data);
+      res.json({
+        ok: true,
+        draftId,
+        receivedSeqs: result.receivedSeqs,
+        missingSeqs: result.missingSeqs,
+        totalBytes: result.totalBytes,
+        hint:
+          result.missingSeqs.length === 0
+            ? 'All seqs through max are present. Call …/submit?sha256=<hex> when done.'
+            : `Upload missing seqs: ${result.missingSeqs.join(',')}`,
+      });
+    } catch (error) {
+      if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
+        jsonError(
+          res,
+          error.statusCode,
+          error.message,
+          error.code,
+          'Start a new draft if expired.'
+        );
+        return;
+      }
+      throw error;
+    }
+  };
+}
+
+function editsFromFieldDraft(
+  draft: {
+    nodeId?: string;
+    field?: string;
+    targets?: { nodeId: string; field: string }[];
+  },
+  assembled: string
+): { nodeId: string; set: Record<string, unknown> }[] {
+  const edits: { nodeId: string; set: Record<string, unknown> }[] = [];
+  if (draft.targets && draft.targets.length > 0) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(assembled);
+    } catch {
+      if (draft.targets.length === 1) {
+        const t = draft.targets[0]!;
+        return [{ nodeId: t.nodeId, set: { [t.field]: assembled } }];
+      }
+      throw new DraftValidationError('Multi-target draft body must be JSON', 'invalid_draft_body');
+    }
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        const e = entry as { nodeId?: string; field?: string; value?: unknown };
+        if (!e.nodeId || !e.field) {
+          throw new DraftValidationError('Invalid multi-target entry', 'invalid_draft_body');
+        }
+        edits.push({ nodeId: e.nodeId, set: { [e.field]: e.value } });
+      }
+      return edits;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      for (const t of draft.targets) {
+        const key = `${t.nodeId}.${t.field}`;
+        if (!(key in obj) && !(t.field in obj)) {
+          throw new DraftValidationError(
+            `Missing value for ${key} in draft JSON`,
+            'invalid_draft_body'
+          );
+        }
+        edits.push({
+          nodeId: t.nodeId,
+          set: { [t.field]: key in obj ? obj[key] : obj[t.field] },
+        });
+      }
+      return edits;
+    }
+    throw new DraftValidationError('Invalid multi-target draft JSON', 'invalid_draft_body');
+  }
+  if (draft.nodeId && draft.field) {
+    return [{ nodeId: draft.nodeId, set: { [draft.field]: assembled } }];
+  }
+  throw new DraftValidationError('Field draft missing node/field', 'invalid_draft');
+}
+
+export function getLinkDraftSubmitHandler(
+  draftStore: DraftStore,
+  proposalStore: ProposalStore,
+  auditLog: AuditLog,
+  flowAdapter: FlowAdapter
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (rejectOversizedGetUrl(req, res)) return;
+    setNoStore(res);
+    const draftId = req.params.draftId;
+    const sha256 = queryString(req.query, 'sha256');
+    if (typeof draftId !== 'string' || !draftId) {
+      jsonError(res, 400, 'Missing draft id', 'missing_draft_id');
+      return;
+    }
+    if (!req.accessLink) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
+    if (!sha256) {
+      jsonError(
+        res,
+        400,
+        'sha256 query parameter is required',
+        'missing_sha256',
+        'Pass sha256 hex of the assembled UTF-8 bytes (before base64url).'
+      );
+      return;
+    }
+
+    try {
+      const { draft, assembled } = draftStore.assembleAndVerify(draftId, req.accessLink.id, sha256);
+
+      let builtFlowId = draft.flowId;
+      let builtFlow: FlowTab;
+      let expectedRev = draft.expectedRev;
+
+      if (draft.mode === 'field') {
+        const edits = editsFromFieldDraft(draft, assembled);
+        const patched = await buildPatchedFlowTab(flowAdapter, draft.flowId, edits);
+        if (patched.expectedRev !== draft.expectedRev) {
+          res.status(409).json({
+            error: 'Flow revision mismatch',
+            code: 'version_mismatch',
+            expectedRev: draft.expectedRev,
+            currentRev: patched.expectedRev,
+            hint: 'Start a new draft with the current rev.',
+          });
+          return;
+        }
+        builtFlow = patched.flow;
+        expectedRev = patched.expectedRev;
+      } else {
+        const interpreted = interpretPatch(JSON.parse(assembled) as unknown, draft.flowId);
+        builtFlowId = interpreted.flowId;
+        if (interpreted.kind === 'replace_flow' && interpreted.flow) {
+          builtFlow = {
+            ...interpreted.flow,
+            id: interpreted.flow.id ?? builtFlowId,
+            type: interpreted.flow.type ?? 'tab',
+            nodes: interpreted.flow.nodes ?? [],
+          };
+        } else {
+          const patched = await buildPatchedFlowTab(
+            flowAdapter,
+            builtFlowId,
+            interpreted.edits ?? []
+          );
+          if (patched.expectedRev !== draft.expectedRev) {
+            res.status(409).json({
+              error: 'Flow revision mismatch',
+              code: 'version_mismatch',
+              expectedRev: draft.expectedRev,
+              currentRev: patched.expectedRev,
+              hint: 'Start a new draft with the current rev.',
+            });
+            return;
+          }
+          builtFlow = patched.flow;
+          expectedRev = patched.expectedRev;
+        }
+      }
+
+      const proposal = await submitReplaceFlowProposal(
+        proposalStore,
+        auditLog,
+        req.accessLink,
+        {
+          type: 'replace_flow',
+          expectedRev,
+          payload: { flowId: builtFlowId, flow: builtFlow },
+        },
+        flowAdapter
+      );
+
+      res.status(201).json({
+        ok: true,
+        proposal,
+        sha256: createHash('sha256').update(Buffer.from(assembled, 'utf8')).digest('hex'),
+        hint: 'Waiting for human approval on /mcp. Poll GET …/proposals/<id>.',
+      });
+    } catch (error) {
+      if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
+        jsonError(res, error.statusCode, error.message, error.code);
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        jsonError(res, 400, 'Assembled draft is not valid JSON', 'invalid_draft_body');
+        return;
+      }
+      const mapped = aiOpsErrorToHttp(error);
+      if (mapped) {
+        res.status(mapped.statusCode).json(mapped.body);
+        return;
+      }
+      throw error;
+    }
+  };
+}

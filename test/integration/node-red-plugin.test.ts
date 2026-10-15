@@ -376,6 +376,72 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(missing.text).not.toMatch(/Cannot GET|<html/i);
   });
 
+  it('GET /mcp/a/<token> docs, flows, propose, and chunked HTML draft (adminAuth on)', async () => {
+    const { createHash } = await import('node:crypto');
+    // Free a slot if the shared in-memory store is at capacity from earlier tests.
+    for (const existing of linkStore.list()) {
+      if (linkStore.list().length < 10) break;
+      linkStore.revoke(existing.id);
+    }
+    const created = await request(RED.httpAdmin)
+      .post('/mcp/api/v1/links')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .set('Host', '127.0.0.1')
+      .send({ label: 'get-link-int' });
+    expect(created.status).toBe(201);
+    expect(created.body.url).toMatch(/\/mcp\/a\/aia_/);
+    const token = created.body.token as string;
+
+    const docs = await request(RED.httpAdmin).get(`/mcp/a/${token}`);
+    expect(docs.status).toBe(200);
+    expect(docs.headers['content-type']).toMatch(/markdown/);
+    expect(docs.headers['cache-control']).toMatch(/no-store/);
+    expect(docs.text).toMatch(/pending proposal/i);
+
+    const flows = await request(RED.httpAdmin).get(`/mcp/a/${token}/flows`);
+    expect(flows.status).toBe(200);
+    expect(typeof flows.body.rev).toBe('string');
+    const rev = flows.body.rev as string;
+
+    const one = await request(RED.httpAdmin).get(`/mcp/a/${token}/flows/tab1`);
+    expect(one.status).toBe(200);
+    expect(one.body.flow).toMatchObject({ id: 'tab1', type: 'tab' });
+
+    const proposed = await request(RED.httpAdmin).get(
+      `/mcp/a/${token}/propose?flow=tab1&rev=${encodeURIComponent(rev)}&node=n1&set.name=ViaGet`
+    );
+    expect(proposed.status).toBe(201);
+    expect(proposed.body.proposal.status).toBe('pending');
+
+    const html = `<html><body>${'x'.repeat(500)}<h1>chunked</h1></body></html>`;
+    const htmlBuf = Buffer.from(html, 'utf8');
+    const sha256 = createHash('sha256').update(htmlBuf).digest('hex');
+    const draft = await request(RED.httpAdmin).get(
+      `/mcp/a/${token}/draft/new?flow=tab1&rev=${encodeURIComponent(rev)}&node=n1&field=name`
+    );
+    expect(draft.status).toBe(201);
+    const draftId = draft.body.draftId as string;
+    const mid = Math.ceil(htmlBuf.length / 2);
+    const parts = [htmlBuf.subarray(0, mid), htmlBuf.subarray(mid)];
+    for (let seq = 0; seq < parts.length; seq += 1) {
+      const data = parts[seq]!.toString('base64url');
+      const append = await request(RED.httpAdmin).get(
+        `/mcp/a/${token}/draft/${draftId}/append?seq=${seq}&data=${data}`
+      );
+      expect(append.status).toBe(200);
+    }
+    const submitted = await request(RED.httpAdmin).get(
+      `/mcp/a/${token}/draft/${draftId}/submit?sha256=${sha256}`
+    );
+    expect(submitted.status).toBe(201);
+    expect(submitted.body.proposal.status).toBe('pending');
+    expect(
+      submitted.body.proposal.payload.flow.nodes.find((n: { id: string }) => n.id === 'n1').name
+    ).toBe(html);
+
+    linkStore.revoke(created.body.id);
+  });
+
   it('admin editor Bearer works on status/links/logs/proposals (page routes)', async () => {
     // Same token shape the /mcp page reads from editor localStorage.
     const auth = { Authorization: `Bearer ${adminToken}` };

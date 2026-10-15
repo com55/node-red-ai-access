@@ -15,12 +15,29 @@ info:
 
     ## Quick start for access-link clients
 
-    Plain HTTP AI clients (no MCP required) only need an access-link token and
-    this REST API:
+    ### Self-contained GET link (no headers)
+
+    Prefer this when the AI can only issue HTTP GET (no `Authorization` header,
+    no MCP). Creating a link returns `url` like
+    `http(s)://{host}{httpAdminRoot}/mcp/a/{token}` (default TTL **4h**).
+
+    1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
+    2. `GET {url}/status`, `/flows`, `/flows/{id}`, `/proposals`, …
+    3. Small edits: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
+    4. Larger / multi-node: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
+       (URL soft-cap ~8KB → use chunked drafts).
+    5. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
+       `…/draft/{id}/submit?sha256=` (30 min expiry, 1.5MB cap).
+    6. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
+
+    ### Bearer REST (clients that can send headers)
+
+    Plain HTTP AI clients (no MCP required) can also use an access-link token
+    and this REST API:
 
     1. Ask the user for an access link from the `/mcp` admin page (**Access
-       links** → Create). Prefer the copy-link output that includes the API
-       base URL and docs hint alongside the token.
+       links** → Create). Prefer the copy-link output (full GET `url` + Bearer
+       token + docs hint).
     2. Discover endpoints (no auth): `GET {httpAdminRoot}/mcp/api/v1`.
     3. Send `Authorization: Bearer <token>` on every authenticated call.
     4. Read flows: `GET /flows`, then `GET /flows/{id}` (response always
@@ -287,7 +304,8 @@ paths:
       summary: Create an access link
       description: |
         Requires full admin permission (`*`). The raw `token` is returned
-        **once** in this response. Default TTL is 86400 seconds (24h); max
+        **once** in this response (plus a self-contained `url` for GET-only
+        clients at `/mcp/a/<token>`). Default TTL is 14400 seconds (4h); max
         active links defaults to 10 (`aiAccess.maxActiveLinks`).
       operationId: createLink
       security:
@@ -1007,11 +1025,16 @@ components:
       allOf:
         - $ref: '#/components/schemas/AccessLinkPublic'
         - type: object
-          required: [token]
+          required: [token, url]
           properties:
             token:
               type: string
               description: Raw bearer token (returned only at creation)
+            url:
+              type: string
+              description: >
+                Self-contained GET link (`http(s)://{host}{httpAdminRoot}/mcp/a/{token}`).
+                Preferred for chat AIs that can only HTTP GET.
 
     CreateLinkRequest:
       type: object
@@ -1019,7 +1042,7 @@ components:
         ttlSeconds:
           type: number
           exclusiveMinimum: 0
-          description: Lifetime in seconds (default 86400)
+          description: Lifetime in seconds (default 14400 = 4h)
         label:
           type: string
 
