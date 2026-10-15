@@ -1,63 +1,66 @@
 import { defineConfig } from 'tsup';
 import { readFileSync } from 'node:fs';
 
-const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
+const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8')) as {
+  version: string;
+  dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+};
 
-export default defineConfig({
-  // Entry points
-  entry: ['src/index.ts'],
+const sharedExternal = [
+  ...Object.keys(packageJson.dependencies || {}),
+  ...Object.keys(packageJson.peerDependencies || {}),
+];
 
-  // Output formats - support both ESM and CJS for maximum compatibility
-  format: ['esm', 'cjs'],
-
-  // TypeScript declaration files
-  dts: true,
-
-  // Code splitting for better optimization
-  splitting: true,
-
-  // Source maps for debugging
-  sourcemap: true,
-
-  // Clean output directory before each build
-  clean: true,
-
-  // Target ES2022 to match tsconfig
-  target: 'es2022',
-
-  // Minify for production
-  minify: process.env.NODE_ENV === 'production',
-
-  // External dependencies - don't bundle production dependencies
-  external: [
-    ...Object.keys(packageJson.dependencies || {}),
-    ...Object.keys(packageJson.peerDependencies || {}),
-  ],
-
-  // Bundle dev dependencies but exclude Node.js built-ins
-  noExternal: [],
-
-  // Use proper extensions for Node.js module resolution
-  outExtension({ format }) {
-    return {
-      js: format === 'cjs' ? '.cjs' : '.mjs',
-    };
+export default defineConfig([
+  {
+    // Standalone MCP server (unchanged entry)
+    entry: ['src/index.ts'],
+    format: ['esm', 'cjs'],
+    dts: true,
+    splitting: true,
+    sourcemap: true,
+    clean: true,
+    target: 'es2022',
+    minify: process.env.NODE_ENV === 'production',
+    external: sharedExternal,
+    outExtension({ format }) {
+      return {
+        js: format === 'cjs' ? '.cjs' : '.mjs',
+      };
+    },
+    platform: 'node',
+    keepNames: true,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+    },
+    metafile: process.env.NODE_ENV !== 'production',
+    watch: process.env.NODE_ENV === 'development',
   },
-
-  // Platform targeting
-  platform: 'node',
-
-  // Keep names for better debugging
-  keepNames: true,
-
-  // Define environment variables
-  define: {
-    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+  {
+    // Node-RED plugin entry (CommonJS for require())
+    entry: {
+      plugin: 'src/plugin/index.ts',
+    },
+    format: ['cjs'],
+    dts: true,
+    splitting: false,
+    sourcemap: true,
+    clean: false,
+    target: 'es2022',
+    minify: process.env.NODE_ENV === 'production',
+    external: sharedExternal,
+    outExtension() {
+      return { js: '.cjs' };
+    },
+    platform: 'node',
+    keepNames: true,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+      __AI_ACCESS_VERSION__: JSON.stringify(packageJson.version),
+    },
+    esbuildOptions(options) {
+      options.packages = 'external';
+    },
   },
-
-  // Bundle analysis in development
-  metafile: process.env.NODE_ENV !== 'production',
-
-  // Watch mode configuration
-  watch: process.env.NODE_ENV === 'development',
-});
+]);

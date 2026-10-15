@@ -10,8 +10,41 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7%2B-blue.svg)](https://www.typescriptlang.org/)
 [![CI](https://github.com/com55/node-red-ai-access/actions/workflows/ci.yml/badge.svg)](https://github.com/com55/node-red-ai-access/actions)
 
-> Temporary, owner-approved Node-RED access for AI clients, exposed via the
-> Model Context Protocol (MCP).
+> Temporary, owner-approved Node-RED access for AI clients. Shipping as a
+> Node-RED plugin (Phase 1 REST admin surface) while the standalone MCP server
+> remains available.
+
+## 🔌 Node-RED plugin (Phase 1 scaffold)
+
+Install the package into your Node-RED user directory (or via the palette), then
+restart Node-RED. Open **`/mcp`** on the editor admin root after logging in.
+
+| Path                     | Purpose                               |
+| ------------------------ | ------------------------------------- |
+| `GET /mcp`               | Admin page (requires adminAuth login) |
+| `GET /mcp/api/v1/status` | Plugin status JSON                    |
+
+**Permissions:** users with `read` get a read-only view; users with `*` get full
+access. Unauthenticated visits to `/mcp` redirect to the editor login
+(`httpAdminRoot`).
+
+**Without `adminAuth`:** AI features stay off and `/mcp` shows a warning. For
+local-only setups you can opt in in `settings.js`:
+
+```js
+module.exports = {
+  // ...
+  aiAccess: {
+    allowWithoutAdminAuth: true,
+    // Reserved for later PRs:
+    // defaultLinkTtlSeconds: 86400,
+    // maxActiveLinks: 10,
+    // defaultDeploymentType: "nodes", // or "flows" | "full"
+  },
+};
+```
+
+Data for later proposal/log features is stored under `<userDir>/.ai-access`.
 
 ## 🌟 Features
 

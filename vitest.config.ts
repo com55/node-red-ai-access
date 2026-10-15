@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
+  define: {
+    __AI_ACCESS_VERSION__: JSON.stringify('0.1.0'),
+  },
   test: {
     // Test files location
     include: ['src/**/*.test.{js,ts}', 'test/**/*.test.{js,ts}', 'tests/**/*.spec.{js,ts}'],
