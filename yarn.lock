@@ -91,6 +91,11 @@ __metadata:
     vitest: "npm:^5.0.3"
     ws: "npm:^8.20.1"
     zod: "npm:^4.4.3"
+  peerDependencies:
+    node-red: ">=4.0.0"
+  peerDependenciesMeta:
+    node-red:
+      optional: true
   languageName: unknown
   linkType: soft
 
