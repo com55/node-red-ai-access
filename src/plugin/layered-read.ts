@@ -141,10 +141,7 @@ export async function findNodeInFlows(
     const configs = Array.isArray(tab.configs) ? tab.configs : [];
     const node = [...nodes, ...configs].find(n => n.id === nodeId);
     if (!node) {
-      throw new AiOpsValidationError(
-        `Node '${nodeId}' was not found in flow '${flowId}'`,
-        'node_not_found'
-      );
+      throw new AiOpsValidationError('Node was not found in the given flow', 'node_not_found');
     }
     return { rev, flowId, node };
   }
@@ -183,7 +180,7 @@ export async function findNodeInFlows(
     }
   }
   if (!found) {
-    throw new AiOpsValidationError(`Node '${nodeId}' was not found`, 'node_not_found');
+    throw new AiOpsValidationError('Node was not found', 'node_not_found');
   }
   return { rev, flowId: owner, node: found };
 }
@@ -233,14 +230,11 @@ export async function getNodeField(
   }
   const found = await findNodeInFlows(adapter, nodeId, options.flowId);
   if (!(field in found.node)) {
-    throw new AiOpsValidationError(
-      `Field '${field}' was not found on node '${nodeId}'`,
-      'field_not_found'
-    );
+    throw new AiOpsValidationError('Field was not found on the node', 'field_not_found');
   }
   const raw = found.node[field];
   if (typeof raw !== 'string') {
-    throw new AiOpsValidationError(`Field '${field}' is not a string`, 'field_not_string');
+    throw new AiOpsValidationError('Field is not a string', 'field_not_string');
   }
   const allLines = raw.split('\n');
   const totalLines = allLines.length;
