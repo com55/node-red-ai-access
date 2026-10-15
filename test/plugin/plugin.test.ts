@@ -236,9 +236,10 @@ describe('AI Access plugin scaffold', () => {
   });
 
   it('resolves storage under RED.settings.userDir/.ai-access', async () => {
+    const userDir = '/tmp/node-red-user-storage-check';
     const { app } = createMockRed({
       adminAuth: { type: 'credentials' },
-      userDir: '/var/lib/nodered',
+      userDir,
       authenticate: (req, _res, next) => {
         (req as Request & { user?: MockUser }).user = {
           username: 'admin',
@@ -249,6 +250,6 @@ describe('AI Access plugin scaffold', () => {
     });
 
     const status = await request(app).get('/mcp/api/v1/status');
-    expect(status.body.storageDir).toBe('/var/lib/nodered/.ai-access');
+    expect(status.body.storageDir).toBe(`${userDir}/.ai-access`);
   });
 });
