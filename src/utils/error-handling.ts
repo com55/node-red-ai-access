@@ -2,17 +2,23 @@
  * Comprehensive error handling utilities
  */
 
+import axios from 'axios';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
-import { ApiResponse, LogEntry, LogLevel } from '../types/mcp-extensions.js';
+import { ApiResponse, LogEntry } from '../types/mcp-extensions.js';
+
+/** Express request with an optional request-correlation id. */
+export interface RequestWithId extends Request {
+  requestId?: string;
+}
 
 export class AppError extends Error {
   public readonly statusCode: number;
   public readonly code: string;
   public readonly isOperational: boolean;
   public readonly timestamp: string;
-  public readonly requestId?: string;
+  public requestId?: string;
 
   constructor(message: string, statusCode = 500, code = 'INTERNAL_ERROR', isOperational = true) {
     super(message);
@@ -27,16 +33,16 @@ export class AppError extends Error {
   }
 
   setRequestId(requestId: string): this {
-    (this as any).requestId = requestId;
+    this.requestId = requestId;
     return this;
   }
 }
 
 export class ValidationError extends AppError {
   public readonly field?: string | undefined;
-  public readonly value?: any;
+  public readonly value?: unknown;
 
-  constructor(message: string, field?: string, value?: any) {
+  constructor(message: string, field?: string, value?: unknown) {
     super(message, 400, 'VALIDATION_ERROR');
     this.field = field ?? undefined;
     this.value = value;
@@ -64,13 +70,13 @@ export class AuthorizationError extends AppError {
 
 export class NodeRedError extends AppError {
   public readonly nodeRedStatusCode?: number | undefined;
-  public readonly nodeRedResponse?: any;
+  public readonly nodeRedResponse?: unknown;
 
   constructor(
     message: string,
     statusCode = 500,
     nodeRedStatusCode?: number,
-    nodeRedResponse?: any
+    nodeRedResponse?: unknown
   ) {
     super(message, statusCode, 'NODERED_ERROR');
     this.nodeRedStatusCode = nodeRedStatusCode ?? undefined;
@@ -156,8 +162,13 @@ export function createErrorResponse<T = never>(
 /**
  * Express error handling middleware
  */
-export function errorHandler(error: Error, req: Request, res: Response, next: NextFunction): void {
-  const requestId = (req as any).requestId || uuidv4();
+export function errorHandler(
+  error: Error,
+  req: Request,
+  res: Response,
+  _next: NextFunction
+): void {
+  const requestId = (req as RequestWithId).requestId ?? uuidv4();
 
   // Log the error
   logError(error, {
@@ -189,8 +200,13 @@ export function errorHandler(error: Error, req: Request, res: Response, next: Ne
 /**
  * Async error wrapper for Express handlers
  */
-export function asyncHandler<T extends any[]>(
-  fn: (req: Request, res: Response, next: NextFunction, ...args: T) => Promise<any>
+export function asyncHandler<T extends unknown[]>(
+  fn: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+    ...args: T
+  ) => Promise<unknown> | void
 ) {
   return (req: Request, res: Response, next: NextFunction, ...args: T) => {
     Promise.resolve(fn(req, res, next, ...args)).catch(next);
@@ -203,10 +219,11 @@ const RESPONSE_PREVIEW_LIMIT = 500;
  * Describe the request an Axios error came from, e.g. `GET /flows`.
  * Returns undefined when the error carries no request config.
  */
-function describeRequest(error: any): string | undefined {
-  const config = error?.config;
+function describeRequest(error: unknown): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const config = error.config;
   if (!config?.url) return undefined;
-  const method = String(config.method || 'get').toUpperCase();
+  const method = String(config.method ?? 'get').toUpperCase();
   return `${method} ${config.url}`;
 }
 
@@ -225,7 +242,7 @@ function summarizeResponseBody(data: unknown): string | undefined {
   }
 
   if (typeof data === 'object') {
-    const body = data as Record<string, any>;
+    const body = data as Record<string, unknown>;
     // Prefer a meaningful message, but Node-RED often returns
     // `{ code: "version_mismatch", message: "Error" }` — skip the generic
     // "Error" string so the machine-readable code surfaces instead.
@@ -252,17 +269,18 @@ function summarizeResponseBody(data: unknown): string | undefined {
 /**
  * Handle Node-RED API errors
  */
-export function handleNodeRedError(error: any, context: string): never {
+export function handleNodeRedError(error: unknown, context: string): never {
   const request = describeRequest(error);
   const requestSuffix = request ? ` [${request}]` : '';
 
-  if (error.response) {
+  if (axios.isAxiosError(error) && error.response) {
     // Axios error with response
-    const { status, statusText, data } = error.response;
+    const { status, statusText } = error.response;
+    const data: unknown = error.response.data;
 
     // Check if this is a JSON parse error due to HTML response
-    const contentType = error.response.headers?.['content-type'] || '';
-    if (error.message?.includes('Unexpected token') && contentType.includes('text/html')) {
+    const contentType = String(error.response.headers['content-type'] ?? '');
+    if (error.message.includes('Unexpected token') && contentType.includes('text/html')) {
       throw new NodeRedError(
         `Node-RED returned HTML instead of JSON in ${context}${requestSuffix} (HTTP ${status}). This usually indicates an authentication redirect or configuration issue. Check your Node-RED admin settings and authentication.`,
         502,
@@ -303,14 +321,14 @@ export function handleNodeRedError(error: any, context: string): never {
       status,
       data
     );
-  } else if (error.request) {
+  } else if (axios.isAxiosError(error) && error.request) {
     // Network error
     const code = error.code ? ` (${error.code})` : '';
     throw new NodeRedError(
       `Failed to connect to Node-RED in ${context}${requestSuffix}: ${error.message}${code}`,
       503 // Service Unavailable
     );
-  } else if (error.message?.includes('Node-RED returned HTML')) {
+  } else if (error instanceof Error && error.message.includes('Node-RED returned HTML')) {
     // Our custom validation error
     throw new NodeRedError(
       `${error.message} (Context: ${context})`,
@@ -318,14 +336,15 @@ export function handleNodeRedError(error: any, context: string): never {
     );
   } else {
     // Other error
-    throw new NodeRedError(`Error in ${context}${requestSuffix}: ${error.message}`, 500);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new NodeRedError(`Error in ${context}${requestSuffix}: ${message}`, 500);
   }
 }
 
 /**
  * Validate required fields
  */
-export function validateRequired(data: Record<string, any>, requiredFields: string[]): void {
+export function validateRequired(data: Record<string, unknown>, requiredFields: string[]): void {
   for (const field of requiredFields) {
     if (data[field] === undefined || data[field] === null || data[field] === '') {
       throw new ValidationError(`Field '${field}' is required`, field, data[field]);
@@ -336,7 +355,10 @@ export function validateRequired(data: Record<string, any>, requiredFields: stri
 /**
  * Validate field types
  */
-export function validateTypes(data: Record<string, any>, fieldTypes: Record<string, string>): void {
+export function validateTypes(
+  data: Record<string, unknown>,
+  fieldTypes: Record<string, string>
+): void {
   for (const [field, expectedType] of Object.entries(fieldTypes)) {
     if (data[field] !== undefined) {
       const actualType = typeof data[field];
@@ -364,7 +386,7 @@ export function isDebugLoggingEnabled(): boolean {
  * Writes to stderr, never stdout: stdout carries the JSON-RPC stream under the
  * stdio transport and any stray write there corrupts it.
  */
-export function logDebug(message: string, context?: Record<string, any>): void {
+export function logDebug(message: string, context?: Record<string, unknown>): void {
   if (!isDebugLoggingEnabled()) return;
 
   process.stderr.write(
@@ -380,7 +402,7 @@ export function logDebug(message: string, context?: Record<string, any>): void {
 /**
  * Log error with context
  */
-export function logError(error: Error, context?: Record<string, any>): void {
+export function logError(error: Error, context?: Record<string, unknown>): void {
   const logEntry: LogEntry = {
     level: 'error',
     message: error.message,
@@ -406,7 +428,7 @@ export function logError(error: Error, context?: Record<string, any>): void {
  */
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
   const requestId = uuidv4();
-  (req as any).requestId = requestId;
+  (req as RequestWithId).requestId = requestId;
   res.set('X-Request-ID', requestId);
   next();
 }
@@ -414,7 +436,11 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
 /**
  * Sanitize error for client response
  */
-export function sanitizeError(error: any): any {
+export function sanitizeError(error: unknown): {
+  code: string;
+  message: string;
+  statusCode: number;
+} {
   if (error instanceof AppError) {
     return {
       code: error.code,
@@ -443,11 +469,11 @@ export function isOperationalError(error: Error): boolean {
 /**
  * Safe JSON stringify that handles circular references and errors
  */
-export function safeStringify(obj: any): string {
+export function safeStringify(obj: unknown): string {
   try {
     return JSON.stringify(
       obj,
-      (key, value) => {
+      (_key, value: unknown) => {
         if (value instanceof Error) {
           return {
             name: value.name,
@@ -459,7 +485,7 @@ export function safeStringify(obj: any): string {
       },
       2
     );
-  } catch (error) {
+  } catch {
     return '[Unable to stringify object]';
   }
 }

@@ -225,9 +225,10 @@ describe('createErrorResponse', () => {
     process.env.NODE_ENV = 'development';
     const error = new AppError('Test error');
     const response = createErrorResponse(error);
+    const details = response.error?.details as Record<string, unknown> | undefined;
 
-    expect(response.error?.details).toBeDefined();
-    expect(response.error?.details?.stack).toBeDefined();
+    expect(details).toBeDefined();
+    expect(details?.stack).toBeDefined();
   });
 
   it('should exclude details in production mode', () => {
@@ -242,26 +243,29 @@ describe('createErrorResponse', () => {
     process.env.NODE_ENV = 'development';
     const error = new NodeRedError('API error', 502, 404, { data: 'test' });
     const response = createErrorResponse(error);
+    const details = response.error?.details as Record<string, unknown> | undefined;
 
-    expect(response.error?.details?.nodeRedStatusCode).toBe(404);
-    expect(response.error?.details?.nodeRedResponse).toEqual({ data: 'test' });
+    expect(details?.nodeRedStatusCode).toBe(404);
+    expect(details?.nodeRedResponse).toEqual({ data: 'test' });
   });
 
   it('should include ValidationError specific details', () => {
     process.env.NODE_ENV = 'development';
     const error = new ValidationError('Invalid field', 'email', 'bad-email');
     const response = createErrorResponse(error);
+    const details = response.error?.details as Record<string, unknown> | undefined;
 
-    expect(response.error?.details?.field).toBe('email');
-    expect(response.error?.details?.value).toBe('bad-email');
+    expect(details?.field).toBe('email');
+    expect(details?.value).toBe('bad-email');
   });
 
   it('should include SSEError specific details', () => {
     process.env.NODE_ENV = 'development';
     const error = new SSEError('Connection lost', 'conn-123');
     const response = createErrorResponse(error);
+    const details = response.error?.details as Record<string, unknown> | undefined;
 
-    expect(response.error?.details?.connectionId).toBe('conn-123');
+    expect(details?.connectionId).toBe('conn-123');
   });
 
   it('should include request ID', () => {
@@ -385,7 +389,7 @@ describe('asyncHandler', () => {
     const asyncFn = vi.fn().mockResolvedValue('success');
     const wrapped = asyncHandler(asyncFn);
 
-    await wrapped(mockReq as Request, mockRes as Response, mockNext);
+    wrapped(mockReq as Request, mockRes as Response, mockNext);
 
     expect(asyncFn).toHaveBeenCalledWith(mockReq, mockRes, mockNext);
     expect(mockNext).not.toHaveBeenCalled();
@@ -396,7 +400,7 @@ describe('asyncHandler', () => {
     const asyncFn = vi.fn().mockRejectedValue(error);
     const wrapped = asyncHandler(asyncFn);
 
-    await wrapped(mockReq as Request, mockRes as Response, mockNext);
+    wrapped(mockReq as Request, mockRes as Response, mockNext);
 
     expect(mockNext).toHaveBeenCalledWith(error);
   });
