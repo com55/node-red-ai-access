@@ -228,10 +228,11 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
       .get('/mcp/api/v1/flows')
       .set('Authorization', 'Bearer aia_not-real');
     expect(invalid.status).toBe(401);
-    expect(invalid.body).toEqual({
+    expect(invalid.body).toMatchObject({
       error: ACCESS_LINK_INVALID_MESSAGE,
       code: ACCESS_LINK_INVALID_CODE,
     });
+    expect(String(invalid.body.hint ?? '')).toMatch(/truncated/i);
     expect(invalid.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
   });
 

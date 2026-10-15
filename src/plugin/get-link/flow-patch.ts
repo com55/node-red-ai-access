@@ -16,7 +16,8 @@ export type FlowNodeOp =
   | { op: 'add'; node: FlowNode }
   | { op: 'remove'; nodeId: string };
 
-const PROTECTED_KEYS = new Set(['id', 'type', 'z', 'wires']);
+/** Identity fields that cannot be changed via set (wires are validated separately). */
+const PROTECTED_KEYS = new Set(['id', 'type', 'z']);
 
 /**
  * Load a flow, apply property edits to named nodes, return the full tab
@@ -124,12 +125,64 @@ export async function applyFlowNodeOps(
           'protected_property'
         );
       }
+      if (key === 'wires') {
+        assertValidWiresValue(value);
+      }
       next[key] = value;
     }
     nodes[idx] = next;
   }
 
+  assertWireTargetsExist(nodes);
   return { expectedRev: snapshot.rev, flow };
+}
+
+function assertValidWiresValue(value: unknown): void {
+  if (!Array.isArray(value)) {
+    throw new AiOpsValidationError(
+      'wires must be an array of output ports (each a list of node ids)',
+      'invalid_wires'
+    );
+  }
+  for (const port of value) {
+    if (!Array.isArray(port)) {
+      throw new AiOpsValidationError(
+        'wires must be an array of output ports (each a list of node ids)',
+        'invalid_wires'
+      );
+    }
+    for (const target of port) {
+      if (typeof target !== 'string' || target.length === 0) {
+        throw new AiOpsValidationError(
+          'wires targets must be non-empty node id strings',
+          'invalid_wires'
+        );
+      }
+    }
+  }
+}
+
+/** Every wire target must refer to a node present after this patch. */
+function assertWireTargetsExist(nodes: FlowNode[]): void {
+  const ids = new Set(nodes.map(n => n.id));
+  for (const node of nodes) {
+    if (!('wires' in node)) {
+      continue;
+    }
+    assertValidWiresValue(node.wires);
+    const wires = node.wires as unknown[][];
+    for (const port of wires) {
+      for (const target of port) {
+        const id = String(target);
+        if (!ids.has(id)) {
+          throw new AiOpsValidationError(
+            `Wire target '${id}' on node '${node.id}' was not found in this flow (add the node in the same patch or use an existing id)`,
+            'invalid_wires'
+          );
+        }
+      }
+    }
+  }
 }
 
 function stringifyQueryValue(value: unknown): string | undefined {

@@ -150,11 +150,22 @@ describe('REST access-link UX', () => {
       .get('/mcp/api/v1/flows')
       .set('Authorization', 'Bearer aia_not-real');
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       error: ACCESS_LINK_INVALID_MESSAGE,
       code: ACCESS_LINK_INVALID_CODE,
     });
+    expect(String(res.body.hint ?? '')).toMatch(/truncated/i);
     expect(res.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
+  });
+
+  it('GET /flows with Bearer bogus returns access_link_invalid (not missing)', async () => {
+    const { app } = createApp({ userDir, passportStyle401: true });
+
+    const res = await request(app).get('/mcp/api/v1/flows').set('Authorization', 'Bearer bogus');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe(ACCESS_LINK_INVALID_CODE);
+    expect(res.body.code).not.toBe(ACCESS_LINK_MISSING_CODE);
+    expect(String(res.body.hint ?? '')).toMatch(/truncated/i);
   });
 
   it('GET /flows still allows admin session without Bearer', async () => {

@@ -11,6 +11,7 @@ import type { ProposalStore } from '../storage/proposals.js';
 
 import { aiOpsErrorToHttp, getFlow, getMyProposal, listFlows, listMyProposals } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
+import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
 import {
   getLinkDraftAppendHandler,
@@ -26,6 +27,7 @@ import {
   setNoStore,
 } from './get-link/middleware.js';
 import { getLinkProposeHandler } from './get-link/propose-handler.js';
+import { queryString } from './get-link/query.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -105,7 +107,10 @@ export function registerGetLinkRoutes(
       if (mapped) {
         res.status(mapped.statusCode).json({
           ...mapped.body,
-          hint: 'Call GET …/flows to list valid ids.',
+          hint:
+            mapped.body.code === 'flow_not_found'
+              ? 'Use an id from GET ./flows'
+              : 'Call GET …/flows to list valid ids.',
         });
         return;
       }
@@ -193,7 +198,8 @@ function registerGetLinkProposalRoutes(
       }
       try {
         const proposal = getMyProposal(options.proposalStore, link, id);
-        res.json(await computeProposalDiff(proposal, options.flowAdapter));
+        const format = resolveDiffFormat(queryString(req.query, 'format'));
+        res.json(applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter), format));
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error);
         if (mapped) {

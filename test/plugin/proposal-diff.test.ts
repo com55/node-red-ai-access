@@ -164,7 +164,11 @@ describe('buildProposalDiff', () => {
                 field: 'payload',
                 format: 'html',
                 template: html,
+                x: 140,
+                y: 220,
+                wires: [['nOut']],
               },
+              { id: 'nOut', type: 'debug', name: 'sink', wires: [[]] },
             ],
           },
         },
@@ -172,24 +176,29 @@ describe('buildProposalDiff', () => {
       { rev: 'rev-1', flow: { nodes: [] } },
       { compareAgainst: 'base' }
     );
-    expect(diff.added).toHaveLength(1);
-    expect(diff.added[0]?.summary).toBe(
+    expect(diff.added.length).toBeGreaterThanOrEqual(1);
+    const added = diff.added.find(n => n.id === 'nNew');
+    expect(added?.summary).toBe(
       'Adds template node "demo-html" to flow "Test Flow", output to msg.payload'
     );
-    const keyTpl = diff.added[0]?.keyFields.find(p => p.key === 'template');
+    const keyTpl = added?.keyFields.find(p => p.key === 'template');
     expect(keyTpl).toEqual({
       key: 'template',
       kind: 'text',
       value: html,
       preview: 'html',
     });
-    const tpl = diff.added[0]?.properties.find(p => p.key === 'template');
+    const tpl = added?.properties.find(p => p.key === 'template');
     expect(tpl).toEqual({
       key: 'template',
       kind: 'text',
       value: html,
       preview: 'html',
     });
+    expect(added?.properties.some(p => p.key === 'x' && p.value === 140)).toBe(true);
+    expect(added?.properties.some(p => p.key === 'y' && p.value === 220)).toBe(true);
+    expect(added?.keyFields.find(p => p.key === 'wires')?.value).toBe('sink');
+    expect(added?.properties.find(p => p.key === 'wires')?.value).toBe('sink');
   });
 
   it('includes line diffs for function func changes', () => {

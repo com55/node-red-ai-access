@@ -604,6 +604,11 @@ function pageClientScriptPartBDiffPresence(): string {
       return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
         '<code class="presence-inline">' + esc(text) + '</code></div>';
     }
+    // Wires (and other readable strings) stay as plain text, not JSON-quoted.
+    if (typeof p.value === 'string') {
+      return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+        '<code class="presence-inline">' + esc(p.value) + '</code></div>';
+    }
     return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
       '<code class="presence-inline">' + esc(JSON.stringify(p.value)) + '</code></div>';
   }
@@ -665,7 +670,14 @@ function pageClientScriptPartBDiffView(): string {
   function renderPropertyChange(ch, mode) {
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
-      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' + body + '</div>';
+      var sizeHint = '';
+      if (typeof ch.beforeBytes === 'number' && typeof ch.afterBytes === 'number') {
+        sizeHint = ' <span class="muted">(' + ch.beforeBytes + ' → ' + ch.afterBytes + ' bytes)</span>';
+      }
+      if (ch.truncated) {
+        sizeHint += ' <span class="muted">(summary; ?format=full for complete text)</span>';
+      }
+      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' + sizeHint + body + '</div>';
     }
     if (mode === 'split') {
       return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' +

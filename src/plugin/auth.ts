@@ -236,6 +236,29 @@ function looksLikeAccessLinkToken(token: string): boolean {
   return token.startsWith('aia_');
 }
 
+/**
+ * Treat as a (failed) access-link attempt rather than an editor session token:
+ * - `aia_…` (minted access-link prefix)
+ * - short/garbled tokens (e.g. `bogus`, truncated URL fragments)
+ *
+ * Longer opaque tokens (Node-RED editor Bearer from localStorage) and JWTs
+ * must fall through to admin session auth.
+ */
+function looksLikeFailedAccessLinkAttempt(token: string): boolean {
+  if (looksLikeAccessLinkToken(token)) {
+    return true;
+  }
+  // Short / truncated garbage — not a plausible editor session token.
+  return token.length < 24;
+}
+
+function truncatedTokenHint(token: string): string | undefined {
+  if (token.length < 24 || (token.startsWith('aia_') && token.length < 40)) {
+    return 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.';
+  }
+  return undefined;
+}
+
 export type AccessLinkValidator = (token: string) => AccessLinkAuthInfo | null;
 
 function continueAsAdminSession(
@@ -325,11 +348,13 @@ function tryAccessLinkBearer(
     req.accessLink = link;
     return 'ok';
   }
-  if (looksLikeAccessLinkToken(token)) {
+  if (looksLikeFailedAccessLinkAttempt(token)) {
     res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+    const hint = truncatedTokenHint(token);
     res.status(401).json({
       error: ACCESS_LINK_INVALID_MESSAGE,
       code: ACCESS_LINK_INVALID_CODE,
+      ...(hint ? { hint } : {}),
     });
     return 'invalid';
   }
@@ -341,8 +366,9 @@ function tryAccessLinkBearer(
  * least `read` permission. Used for shared read surfaces (flows, proposals).
  *
  * Editor admin Bearer tokens (from localStorage) must fall through to
- * `requireAdminSession` — they are not access-link tokens. Only tokens that
- * look like access links (`aia_…`) return `access_link_invalid` when unknown.
+ * `requireAdminSession` — they are not access-link tokens. Unknown `aia_…`
+ * tokens and short/garbled Bearers return `access_link_invalid`; longer
+ * opaque editor tokens continue to admin auth.
  *
  * When no admin session is present, failed auth returns `access_link_missing`
  * (not passport `auth_required` / realm="Users") so plain HTTP AI clients get

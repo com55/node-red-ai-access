@@ -25,6 +25,8 @@ export function listFlowsHandler(adapter: FlowAdapter) {
   };
 }
 
+const FLOW_NOT_FOUND_HINT = 'Use an id from GET /flows (or GET ./flows on an access link).';
+
 export function getFlowHandler(adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const flowId = req.params.id;
@@ -37,11 +39,14 @@ export function getFlowHandler(adapter: FlowAdapter) {
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
-        res.status(mapped.statusCode).json(mapped.body);
+        res.status(mapped.statusCode).json({
+          ...mapped.body,
+          ...(mapped.body.code === 'flow_not_found' ? { hint: FLOW_NOT_FOUND_HINT } : {}),
+        });
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      res.status(502).json({ error: message });
+      res.status(502).json({ error: message, code: 'upstream_error' });
     }
   };
 }

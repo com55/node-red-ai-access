@@ -28,8 +28,10 @@ import {
   aiOpsErrorToHttp,
   getMyProposal,
   listMyProposals,
+  siblingsOnSameRev,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentProposal, presentProposals } from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
@@ -65,7 +67,11 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog, ada
         },
         adapter
       );
-      res.status(201).json(proposal);
+      const siblings = siblingsOnSameRev(store, proposal);
+      res.status(201).json({
+        ...proposal,
+        ...(siblings.length > 0 ? { siblingsOnSameRev: siblings } : {}),
+      });
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
@@ -193,7 +199,8 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
     }
     try {
       const proposal = req.accessLink ? getMyProposal(store, req.accessLink, id) : store.get(id);
-      const diff = await computeProposalDiff(proposal, adapter);
+      const format = resolveDiffFormat(req.query.format);
+      const diff = applyDiffFormat(await computeProposalDiff(proposal, adapter), format);
       res.json(diff);
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
