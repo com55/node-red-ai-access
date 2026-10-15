@@ -195,7 +195,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
   it('returns 403 when AI features are disabled (adminAuth off, no opt-in)', async () => {
     const { app, linkStore } = createApp({
       userDir,
-      adminAuth: null,
+      omitAdminAuth: true,
       aiAccess: { allowWithoutAdminAuth: false },
     });
     // Link store still works in-memory; middleware checks AI features first.
