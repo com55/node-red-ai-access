@@ -7,6 +7,7 @@ function pageClientScriptPartA(): string {
   if (!root) return;
   var cfg = JSON.parse(root.getAttribute('data-config') || '{}');
   var apiBase = cfg.apiBase || '/mcp/api/v1';
+  var mcpRpc = cfg.mcpRpc || '/mcp/rpc';
   var editorRoot = cfg.editorRoot || '/';
   var authTokenKey = cfg.authTokenKey || 'auth-tokens';
   var canManage = false;
@@ -222,7 +223,12 @@ function pageClientScriptPartATabs(): string {
       '<label>TTL (hours)<input id="link-ttl" type="number" min="1" step="1" value="' + ttlHoursDefault + '" /></label>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
       '<button type="submit" class="action">Create access link</button></form>' +
-      '<div id="token-once" class="token-once" hidden><strong>Token (shown once)</strong><code id="token-value"></code></div>';
+      '<div id="token-once" class="token-once" hidden>' +
+      '<strong>Token (shown once)</strong><code id="token-value"></code>' +
+      '<pre id="token-copy-block" class="token-copy-block" hidden></pre>' +
+      '<button type="button" class="action" id="token-copy-btn">Copy link for AI</button>' +
+      '<p class="muted" id="token-docs-hint"></p>' +
+      '</div>';
     var createForm = $('create-link-form');
     if (createForm) {
       createForm.addEventListener('submit', onCreateLink);
@@ -281,6 +287,22 @@ function pageClientScriptPartA2(): string {
 function pageClientScriptPartB(): string {
   return `
 
+  function accessLinkCopyText(token) {
+    var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
+    var base = origin + apiBase;
+    return [
+      'Access link token (Authorization: Bearer <token>):',
+      token,
+      '',
+      'REST API base: ' + base,
+      'Discovery (no auth): GET ' + base,
+      'OpenAPI: GET ' + base + '/openapi.yaml',
+      'MCP (optional): POST ' + origin + mcpRpc,
+      '',
+      'Send Authorization: Bearer <token> on authenticated calls. If you get 401 access_link_missing or access_link_invalid, ask the user for a new link.'
+    ].join('\\n');
+  }
+
   async function onCreateLink(ev) {
     ev.preventDefault();
     var flash = $('links-flash');
@@ -295,6 +317,30 @@ function pageClientScriptPartB(): string {
       var box = $('token-once');
       box.hidden = false;
       $('token-value').textContent = created.token;
+      var copyBlock = $('token-copy-block');
+      var copyText = accessLinkCopyText(created.token);
+      if (copyBlock) {
+        copyBlock.hidden = false;
+        copyBlock.textContent = copyText;
+      }
+      var hint = $('token-docs-hint');
+      if (hint) {
+        hint.textContent = 'Includes API base URL + docs hint. Paste into your AI client with the token.';
+      }
+      var copyBtn = $('token-copy-btn');
+      if (copyBtn) {
+        copyBtn.onclick = function () {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(copyText).then(function () {
+              showFlash(flash, 'Copied token + API base + docs hint.', true);
+            }).catch(function () {
+              showFlash(flash, 'Copy failed — select the text below manually.', false);
+            });
+          } else {
+            showFlash(flash, 'Clipboard unavailable — select the text below manually.', false);
+          }
+        };
+      }
       showFlash(flash, 'Link created. Copy the token now — it will not be shown again.', true);
       loadLinks();
     } catch (e) {

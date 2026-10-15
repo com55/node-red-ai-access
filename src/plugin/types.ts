@@ -39,10 +39,30 @@ export interface AiAccessStatusCallerAdmin {
   permission?: AiAccessPermission;
 }
 
+export interface AiAccessStatusCallerBaseUrls {
+  /** REST API base (`{httpAdminRoot}/mcp/api/v1`). */
+  api: string;
+  /** MCP Streamable HTTP endpoint (`{httpAdminRoot}/mcp/rpc`). */
+  rpc: string;
+  /** OpenAPI YAML URL. */
+  openapi: string;
+  /** Unauthenticated JSON discovery index. */
+  discovery: string;
+}
+
 export interface AiAccessStatusCallerAccessLink {
   kind: 'access-link';
   linkId: string;
   label?: string;
+  /** ISO-8601 expiry of this access link. */
+  expiresAt?: string;
+  /**
+   * Capabilities granted to this access link (not admin scopes).
+   * Example: `status:read`, `flows:read`, `proposals:create`, `proposals:read-own`.
+   */
+  permissions?: string[];
+  /** Absolute admin paths for REST, MCP, OpenAPI, and discovery. */
+  baseUrls?: AiAccessStatusCallerBaseUrls;
 }
 
 export type AiAccessStatusCaller = AiAccessStatusCallerAdmin | AiAccessStatusCallerAccessLink;

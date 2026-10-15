@@ -11,12 +11,15 @@ import { requireAccessLink } from './access-link-auth.js';
 import { editorAuthTokenKey } from './auth-token-key.js';
 import {
   mcpApiBase,
+  mcpRpcPath,
   normalizeHttpAdminRoot,
   requireAdminReadOrAccessLink,
   requireAdminSession,
+  requireAdminSessionOrAccessLink,
   requireAiFeatures,
   requireStarPermission,
 } from './auth.js';
+import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
 import { getFlowHandler, listFlowsHandler } from './flows-routes.js';
 import { attachMcpJsonErrorHandlers } from './json-errors.js';
 import {
@@ -89,16 +92,21 @@ export function registerRoutes(
       .send(
         renderMcpPage({
           apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
           editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
           authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
         })
       );
   });
 
+  // Discovery index — no auth (plain HTTP AI clients start here).
+  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
+
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
     limiter,
-    requireAdminSession(RED, 'api'),
+    requireAdminSessionOrAccessLink(RED, token => services.linkStore.validate(token)),
     (req: AuthenticatedRequest, res: Response) => {
       res.json(buildStatus(RED, req));
     }
@@ -196,6 +204,10 @@ export function registerRoutes(
     requireAiFeatures(RED),
     listLogsHandler(services.auditLog)
   );
+
+  // JSON 404 for unmatched /mcp/api/v1 routes (never HTML "Cannot GET").
+  // Must be registered after all concrete /mcp/api/v1 handlers.
+  RED.httpAdmin.use('/mcp/api/v1', mcpApiNotFoundHandler());
 
   // JSON / JSON-RPC errors for /mcp* on plugin + parent editor-api apps
   // (body-parser lives on the parent; nested runtime.adminApp alone never sees it).

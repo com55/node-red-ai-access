@@ -320,6 +320,62 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(typeof res.body.rev).toBe('string');
   });
 
+  it('GET /flows missing/invalid token returns access_link_* (not Users realm)', async () => {
+    const missing = await request(RED.httpAdmin).get('/mcp/api/v1/flows');
+    expect(missing.status).toBe(401);
+    expect(missing.headers['content-type']).toMatch(/json/);
+    expect(missing.body.code).toBe('access_link_missing');
+    expect(String(missing.body.error)).toMatch(/ask the user for a new access link/i);
+    expect(missing.headers['www-authenticate']).toMatch(/Bearer/);
+    expect(missing.headers['www-authenticate'] ?? '').not.toMatch(/Users/);
+    expect(missing.text).not.toBe('Unauthorized');
+
+    const invalid = await request(RED.httpAdmin)
+      .get('/mcp/api/v1/flows')
+      .set('Authorization', 'Bearer aia_not-a-real-token');
+    expect(invalid.status).toBe(401);
+    expect(invalid.body.code).toBe('access_link_invalid');
+    expect(invalid.headers['www-authenticate']).toMatch(/Bearer/);
+    expect(invalid.headers['www-authenticate'] ?? '').not.toMatch(/Users/);
+  });
+
+  it('GET /status accepts access-link Bearer with caller info', async () => {
+    const link = linkStore.create({ label: 'status-link', ttlSeconds: 7200 });
+    const res = await request(RED.httpAdmin)
+      .get('/mcp/api/v1/status')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.permission).toBeNull();
+    expect(res.body.caller).toMatchObject({
+      kind: 'access-link',
+      linkId: link.id,
+      label: 'status-link',
+    });
+    expect(typeof res.body.caller.expiresAt).toBe('string');
+    expect(Array.isArray(res.body.caller.permissions)).toBe(true);
+    expect(res.body.caller.baseUrls).toMatchObject({
+      api: '/mcp/api/v1',
+      rpc: '/mcp/rpc',
+      openapi: '/mcp/api/v1/openapi.yaml',
+      discovery: '/mcp/api/v1',
+    });
+  });
+
+  it('discovery index and unknown /mcp/api/v1 routes are JSON', async () => {
+    const index = await request(RED.httpAdmin).get('/mcp/api/v1');
+    expect(index.status).toBe(200);
+    expect(index.body.ok).toBe(true);
+    expect(index.body.auth.header).toBe('Authorization: Bearer <token>');
+    expect(index.body.openapi).toBe('/mcp/api/v1/openapi.yaml');
+    expect(index.body.mcp).toBe('/mcp/rpc');
+
+    const missing = await request(RED.httpAdmin).get('/mcp/api/v1/does-not-exist');
+    expect(missing.status).toBe(404);
+    expect(missing.headers['content-type']).toMatch(/json/);
+    expect(missing.body).toEqual({ error: 'Not found', code: 'not_found' });
+    expect(missing.text).not.toMatch(/Cannot GET|<html/i);
+  });
+
   it('admin editor Bearer works on status/links/logs/proposals (page routes)', async () => {
     // Same token shape the /mcp page reads from editor localStorage.
     const auth = { Authorization: `Bearer ${adminToken}` };

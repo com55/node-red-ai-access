@@ -239,11 +239,20 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ label: 'claude' });
 
-    // Status requires admin session in routes — access links use shared read on flows.
-    // MCP get_status uses buildStatus with accessLink; exercise via REST proposals list +
-    // direct build through flows auth path is covered in mcp-rpc. Here verify status for
-    // access-link is not available on admin-only /status, but list_flows works and
-    // buildStatus shape is asserted in mcp-rpc / unit below via importing buildStatus.
+    const status = await request(app)
+      .get('/mcp/api/v1/status')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(status.status).toBe(200);
+    expect(status.body.permission).toBeNull();
+    expect(status.body.caller).toMatchObject({
+      kind: 'access-link',
+      linkId: link.id,
+      label: 'claude',
+    });
+    expect(status.body.caller.expiresAt).toBeTruthy();
+    expect(status.body.caller.permissions).toContain('flows:read');
+    expect(status.body.caller.baseUrls.api).toBe('/mcp/api/v1');
+
     const flows = await request(app)
       .get('/mcp/api/v1/flows')
       .set('Authorization', `Bearer ${link.token}`);

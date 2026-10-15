@@ -174,6 +174,18 @@ th { color: var(--muted); font-weight: 600; }
   word-break: break-all;
 }
 .token-once strong { display: block; margin-bottom: 0.35rem; }
+.token-once .token-copy-block {
+  margin: 0.6rem 0;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.token-once #token-copy-btn { margin-top: 0.35rem; }
+.token-once #token-docs-hint { margin: 0.45rem 0 0; }
 .flash {
   margin: 0.5rem 0 0.85rem;
   padding: 0.55rem 0.7rem;

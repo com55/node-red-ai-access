@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared-read REST routes (`/flows`, `/proposals`, …) return
+  `access_link_missing` / `access_link_invalid` with Bearer `WWW-Authenticate`
+  (not passport `auth_required` / realm=`Users`) when an access-link token is
+  missing or invalid.
+- `GET /flows/{id}` always includes `flow.type` (defaults to `tab`) so REST
+  matches OpenAPI `FlowTab` and MCP `get_flow`.
+- Unknown paths under `/mcp/api/v1` return JSON `{ code: not_found }` instead of
+  HTML `Cannot GET`.
+
+### Added
+
+- `GET /mcp/api/v1` unauthenticated discovery index (endpoints, auth scheme,
+  OpenAPI URL, MCP endpoint).
+- `GET /status` accepts access-link Bearer and returns caller label, expiry,
+  permissions, and base URLs.
+- OpenAPI “Quick start for access-link clients” with example
+  `CreateProposalRequest`; `/mcp` **Copy link for AI** includes API base + docs
+  hint with the token.
+
 ### Removed
 
 - Legacy standalone MCP server (Express/OAuth/SSE entrypoints, Docker images,

@@ -2,10 +2,18 @@
  * Build the `/mcp/api/v1/status` payload.
  */
 
-import { describeAccess } from './auth.js';
+import { describeAccess, mcpApiBase, mcpRpcPath } from './auth.js';
 import { resolveAiAccessSettings } from './settings.js';
 import { getStorageDir } from './storage.js';
 import type { AiAccessStatus, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
+
+/** Fixed capabilities granted to a valid access-link Bearer. */
+export const ACCESS_LINK_PERMISSIONS = [
+  'status:read',
+  'flows:read',
+  'proposals:create',
+  'proposals:read-own',
+] as const;
 
 /** Injected by tsup / vitest define. */
 declare const __AI_ACCESS_VERSION__: string | undefined;
@@ -33,6 +41,7 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
   // Access-link callers are not admin sessions: permission stays null; caller
   // identifies the AI token so clients do not treat null as "logged out".
   if (req.accessLink) {
+    const api = mcpApiBase(RED.settings.httpAdminRoot);
     return {
       ok: true,
       version: readPackageVersion(),
@@ -50,6 +59,14 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
         kind: 'access-link',
         linkId: req.accessLink.id,
         ...(req.accessLink.label !== undefined ? { label: req.accessLink.label } : {}),
+        expiresAt: req.accessLink.expiresAt,
+        permissions: [...ACCESS_LINK_PERMISSIONS],
+        baseUrls: {
+          api,
+          rpc: mcpRpcPath(RED.settings.httpAdminRoot),
+          openapi: `${api}/openapi.yaml`,
+          discovery: api,
+        },
       },
     };
   }
