@@ -390,7 +390,7 @@ function pageStylesPartE(): string {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.4;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
   max-height: 18rem;
   border: 1px solid var(--line);
@@ -401,8 +401,8 @@ function pageStylesPartE(): string {
   display: grid;
   grid-template-columns: 2.6rem 1.1rem minmax(0, 1fr);
   column-gap: 0.2rem;
-  white-space: pre;
-  min-width: max-content;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   width: 100%;
   padding: 0 0.35rem 0 0;
 }
@@ -418,7 +418,13 @@ function pageStylesPartE(): string {
   user-select: none;
   font-weight: 650;
 }
-.diff-line .code { padding-left: 0.35rem; }
+.diff-line .code {
+  padding-left: 0.35rem;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .diff-add { background: #e6f6ec; color: #145a32; }
 .diff-remove { background: #fdeceb; color: #7a1f1f; }
 .diff-eq { color: var(--muted); }
@@ -434,7 +440,7 @@ function pageStylesPartE(): string {
 }
 .diff-split .diff-pane {
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
   max-height: 18rem;
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;

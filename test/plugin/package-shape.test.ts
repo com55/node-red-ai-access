@@ -69,8 +69,9 @@ describe('/mcp audit log page client', () => {
     expect(styles).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
     expect(styles).toMatch(/\.diff-split/);
     expect(styles).toMatch(/\.diff-mode-toggle/);
-    expect(styles).toMatch(/overflow-x:\s*auto/);
     expect(styles).toMatch(/\.diff-line/);
+    expect(styles).toMatch(/white-space:\s*pre-wrap/);
+    expect(styles).toMatch(/overflow-wrap:\s*anywhere/);
     expect(styles).toMatch(/DIFF_SPLIT_MIN_PX/);
     const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
     expect(client).toMatch(/data-diff-mode="split"/);
