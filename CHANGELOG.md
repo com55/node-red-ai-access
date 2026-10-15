@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Changed
 
+- `/mcp/api` and `/mcp/a` use dual in-memory rate limits (per IP and per access
+  token) with configurable `aiAccess.rateLimitWindowMs` / `rateLimitMaxPerIp` /
+  `rateLimitMaxPerToken` (generous defaults: 600/min IP, 300/min token).
+  Exceeded limits return **429** `{ code: 'rate_limited', retryAfter }` and a
+  `Retry-After` header.
 - Proposal `reviewUrl` is now an **absolute** URL from the request Host/protocol
   (`X-Forwarded-*` only when Express `trust proxy` is set). Responses also
   include relative `reviewPath` (`/mcp#proposal=<id>`).

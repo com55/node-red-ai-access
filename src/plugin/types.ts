@@ -24,6 +24,20 @@ export interface AiAccessSettings {
   maxActiveLinks?: number;
   /** Deployment type used when approving proposals (default: nodes). */
   defaultDeploymentType?: 'nodes' | 'flows' | 'full';
+  /**
+   * Rate-limit window in milliseconds for `/mcp/api` and `/mcp/a`
+   * (default: 60000).
+   */
+  rateLimitWindowMs?: number;
+  /**
+   * Max requests per IP per window (default: 600 — generous for editor + AI
+   * polling).
+   */
+  rateLimitMaxPerIp?: number;
+  /**
+   * Max requests per access-link token per window (default: 300).
+   */
+  rateLimitMaxPerToken?: number;
 }
 
 export type AiAccessPermission = 'read' | '*';

@@ -3,7 +3,6 @@
  */
 
 import type { NextFunction, Request, Response } from 'express';
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import type { AccessLinkStore } from '../../access/link-store.js';
 import {
@@ -13,8 +12,11 @@ import {
   ACCESS_LINK_MISSING_MESSAGE,
 } from '../access-link-auth.js';
 import { MAX_GET_ACCESS_URL_BYTES, redactAccessLinkTokenInPath } from '../access-path.js';
+import { createGetLinkRateLimiter } from '../rate-limit.js';
 import { areAiFeaturesEnabled } from '../settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from '../types.js';
+
+export { createGetLinkRateLimiter };
 
 export function setNoStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store');
@@ -40,27 +42,6 @@ export function redactTokenFromRequestUrl(req: Request): void {
       });
     }
   }
-}
-
-export function createGetLinkRateLimiter() {
-  return rateLimit({
-    windowMs: 60_000,
-    max: 60,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req: Request) => {
-      const linkId = (req as AuthenticatedRequest).accessLink?.id;
-      if (linkId) {
-        return `getlink:${linkId}`;
-      }
-      return `getlink:ip:${ipKeyGenerator(req.ip ?? 'unknown')}`;
-    },
-    message: {
-      error: 'Too many requests for this access link. Slow down and retry.',
-      code: 'rate_limited',
-      hint: 'Wait about a minute, then continue. Prefer draft chunking for large content.',
-    },
-  });
 }
 
 /**

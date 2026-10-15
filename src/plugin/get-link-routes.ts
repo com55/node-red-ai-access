@@ -20,7 +20,6 @@ import {
 } from './get-link/draft-handlers.js';
 import { DraftStore } from './get-link/draft-store.js';
 import {
-  createGetLinkRateLimiter,
   getLinkNotFoundHandler,
   jsonError,
   requireGetLinkToken,
@@ -30,8 +29,9 @@ import { getLinkProposeHandler } from './get-link/propose-handler.js';
 import { queryString } from './get-link/query.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor } from './proposal-present.js';
+import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { buildStatus } from './status.js';
-import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
+import type { AiAccessSettings, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
 export interface RegisterGetLinkRoutesOptions {
   linkStore: AccessLinkStore;
@@ -39,7 +39,10 @@ export interface RegisterGetLinkRoutesOptions {
   auditLog: AuditLog;
   flowAdapter: FlowAdapter;
   draftStore?: DraftStore;
-  limiter?: ReturnType<typeof createGetLinkRateLimiter>;
+  /** Optional dual rate-limit stack override (tests). */
+  rateLimiters?: ReturnType<typeof createAiAccessDualRateLimiters>;
+  /** Optional limits from `aiAccess` settings or test overrides. */
+  rateLimit?: AiAccessSettings;
 }
 
 export function registerGetLinkRoutes(
@@ -47,10 +50,13 @@ export function registerGetLinkRoutes(
   options: RegisterGetLinkRoutesOptions
 ): DraftStore {
   const draftStore = options.draftStore ?? new DraftStore();
-  const perLinkLimiter = options.limiter ?? createGetLinkRateLimiter();
+  const dual =
+    options.rateLimiters ??
+    createAiAccessDualRateLimiters(options.rateLimit ?? RED.settings.aiAccess);
   const app: Express = RED.httpAdmin;
   const base = '/mcp/a/:token';
-  const gate = [requireGetLinkToken(RED, options.linkStore), perLinkLimiter];
+  // IP first (always), then token auth, then per-token bucket.
+  const gate = [dual.ip, requireGetLinkToken(RED, options.linkStore), dual.token];
 
   app.get(base, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
@@ -142,7 +148,7 @@ export function registerGetLinkRoutes(
 }
 
 type GetLinkGate = (
-  ReturnType<typeof requireGetLinkToken> | ReturnType<typeof createGetLinkRateLimiter>
+  ReturnType<typeof requireGetLinkToken> | ReturnType<typeof createAiAccessDualRateLimiters>['ip']
 )[];
 
 function registerGetLinkProposalRoutes(
