@@ -34,7 +34,7 @@ interface NodeRedEmbed {
   log?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
 
-describe('Node-RED 4.x in-process plugin integration', () => {
+describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () => {
   let userDir: string;
   let server: Server;
   let RED: NodeRedEmbed;
@@ -118,6 +118,31 @@ describe('Node-RED 4.x in-process plugin integration', () => {
 
     RED.init(server, settings);
     await RED.start();
+
+    // Wait until in-process flows API is ready (activeConfig can be null briefly
+    // after start under CI load, which made early list_flows return 502).
+    const runtimeFlows = (
+      requireCjs('@node-red/runtime') as {
+        flows: { getFlows: (opts?: object) => Promise<unknown> };
+      }
+    ).flows;
+    const readyDeadline = Date.now() + 30_000;
+    for (;;) {
+      const snapshot = await runtimeFlows.getFlows({});
+      if (
+        snapshot &&
+        typeof snapshot === 'object' &&
+        !Array.isArray(snapshot) &&
+        typeof (snapshot as { rev?: unknown }).rev === 'string' &&
+        Array.isArray((snapshot as { flows?: unknown }).flows)
+      ) {
+        break;
+      }
+      if (Date.now() > readyDeadline) {
+        throw new Error(`Node-RED flows API not ready: ${JSON.stringify(snapshot)}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
 
     runtimeHttpAdmin = runtime.httpAdmin;
     expect(runtimeHttpAdmin).not.toBe(RED.httpAdmin);
