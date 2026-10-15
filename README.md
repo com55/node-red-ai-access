@@ -104,8 +104,9 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | ---------------------------------------- | ------------------------------------------------ |
 | `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
 | `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
+| `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint) |
 | `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
-| `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
+| `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)        |
 | `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)      |
 | `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)     |
 | `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
@@ -161,17 +162,21 @@ errors mark it **failed**. Reject never mutates flows.
 
 ## AI quickstart
 
-1. An owner with `*` opens `/mcp` → **Access links** → create a link (copy the
-   token once).
-2. The AI client sends `Authorization: Bearer <token>` to REST and/or MCP:
+1. An owner with `*` opens `/mcp` → **Access links** → create a link. Use **Copy
+   link for AI** (token + API base URL + docs hint) or copy the token once.
+2. Optional: `GET /mcp/api/v1` (no auth) lists endpoints, auth scheme, OpenAPI,
+   and MCP URLs. Spec: `GET /mcp/api/v1/openapi.yaml` (includes a Quick start
+   for access-link clients).
+3. The AI client sends `Authorization: Bearer <token>` to REST and/or MCP:
 
-   - REST: `GET /mcp/api/v1/flows`, `GET /mcp/api/v1/flows/{id}`,
-     `POST /mcp/api/v1/proposals`, `GET /mcp/api/v1/proposals`
+   - REST: `GET /mcp/api/v1/status`, `GET /mcp/api/v1/flows`,
+     `GET /mcp/api/v1/flows/{id}`, `POST /mcp/api/v1/proposals`,
+     `GET /mcp/api/v1/proposals`
    - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow`, `submit_proposal`,
      `list_my_proposals` (same access-link auth and limits)
 
-3. The owner reviews the proposal on `/mcp` and approves or rejects it.
-4. If the token is invalid, expired, revoked, or cleared by a restart, the API
+4. The owner reviews the proposal on `/mcp` and approves or rejects it.
+5. If the token is invalid, expired, revoked, or cleared by a restart, the API
    returns **401** telling the AI to **ask the user for a new access link**.
 
 Example create body:

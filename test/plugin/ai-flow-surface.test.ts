@@ -163,6 +163,13 @@ describe('AI flow surface (access-link Bearer)', () => {
   it('returns 401 that tells the AI to ask for a new access link', async () => {
     const { app, linkStore } = createApp({ userDir });
 
+    // Shared read with no token: access_link_missing (not passport auth_required).
+    const noToken = await request(app).get('/mcp/api/v1/flows');
+    expect(noToken.status).toBe(401);
+    expect(noToken.body.error).toBe(ACCESS_LINK_MISSING_MESSAGE);
+    expect(noToken.body.code).toBe(ACCESS_LINK_MISSING_CODE);
+    expect(noToken.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
+
     // Shared read routes: unknown aia_ tokens get access_link_invalid (editor
     // Bearer tokens fall through to admin session instead).
     const bad = await request(app)

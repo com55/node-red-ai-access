@@ -134,6 +134,8 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/id="logs-filter"/);
     expect(res.text).toMatch(/auditSummary|audit-summary|fmtCompact/);
     expect(res.text).toMatch(/proposals\/.*\/diff|loadProposalDiff/);
+    expect(res.text).toMatch(/accessLinkCopyText|Copy link for AI|token-copy-btn/);
+    expect(res.text).toMatch(/mcpRpc|openapi\.yaml|Discovery \(no auth\)/);
   });
 
   it('keeps /mcp/api/v1/status behind admin auth', async () => {

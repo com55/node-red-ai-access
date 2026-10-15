@@ -13,6 +13,41 @@ info:
     All routes are under `{httpAdminRoot}/mcp/api/v1`
     (for example `/mcp/api/v1` when `httpAdminRoot` is `/`).
 
+    ## Quick start for access-link clients
+
+    Plain HTTP AI clients (no MCP required) only need an access-link token and
+    this REST API:
+
+    1. Ask the user for an access link from the `/mcp` admin page (**Access
+       links** → Create). Prefer the copy-link output that includes the API
+       base URL and docs hint alongside the token.
+    2. Discover endpoints (no auth): `GET {httpAdminRoot}/mcp/api/v1`.
+    3. Send `Authorization: Bearer <token>` on every authenticated call.
+    4. Read flows: `GET /flows`, then `GET /flows/{id}` (response always
+       includes `flow.type`, defaulting to `tab`).
+    5. Submit a proposal:
+
+    ```json
+    {
+      "type": "replace_flow",
+      "expectedRev": "<rev from GET /flows or /flows/{id}>",
+      "payload": {
+        "flowId": "tab1",
+        "flow": {
+          "id": "tab1",
+          "type": "tab",
+          "label": "Flow 1",
+          "nodes": [{ "id": "n1", "type": "inject", "z": "tab1", "wires": [[]] }]
+        }
+      }
+    }
+    ```
+
+    Missing tokens return **401** `access_link_missing`; invalid/expired/revoked
+    tokens return **401** `access_link_invalid`. Both tell you to ask the user
+    for a new link. OpenAPI: `GET /openapi.yaml`. MCP (optional):
+    `POST {httpAdminRoot}/mcp/rpc` with the same Bearer token.
+
     ## MCP JSON-RPC
 
     AI clients may also use MCP Streamable HTTP at `{httpAdminRoot}/mcp/rpc`
@@ -77,6 +112,63 @@ tags:
   - name: Spec
 
 paths:
+  /:
+    get:
+      tags: [Spec]
+      summary: Discovery index (no auth)
+      description: |
+        Unauthenticated JSON index listing auth scheme, OpenAPI URL, MCP
+        endpoint, and available REST paths. Intended for plain HTTP AI clients.
+      operationId: getDiscoveryIndex
+      security: []
+      responses:
+        '200':
+          description: Discovery payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, auth, openapi, mcp, endpoints]
+                properties:
+                  ok:
+                    type: boolean
+                  name:
+                    type: string
+                  version:
+                    type: string
+                  auth:
+                    type: object
+                    required: [scheme, header]
+                    properties:
+                      scheme:
+                        type: string
+                        const: Bearer
+                      header:
+                        type: string
+                        example: 'Authorization: Bearer <token>'
+                      description:
+                        type: string
+                  openapi:
+                    type: string
+                  mcp:
+                    type: string
+                  apiBase:
+                    type: string
+                  endpoints:
+                    type: array
+                    items:
+                      type: object
+                      required: [method, path, auth, summary]
+                      properties:
+                        method:
+                          type: string
+                        path:
+                          type: string
+                        auth:
+                          type: string
+                        summary:
+                          type: string
+
   /openapi.yaml:
     get:
       tags: [Spec]
@@ -95,9 +187,14 @@ paths:
     get:
       tags: [Status]
       summary: Plugin status
+      description: |
+        Accepts an **admin session** or a valid **access-link Bearer**.
+        Access-link callers receive `permission: null` and a `caller` object
+        with link label, expiry, permissions, and base URLs.
       operationId: getStatus
       security:
         - AdminSession: []
+        - AccessLinkBearer: []
       responses:
         '200':
           description: Status payload
@@ -850,6 +947,28 @@ components:
                   type: string
                 label:
                   type: string
+                expiresAt:
+                  type: string
+                  format: date-time
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    Access-link capabilities (e.g. status:read, flows:read,
+                    proposals:create, proposals:read-own)
+                baseUrls:
+                  type: object
+                  required: [api, rpc, openapi, discovery]
+                  properties:
+                    api:
+                      type: string
+                    rpc:
+                      type: string
+                    openapi:
+                      type: string
+                    discovery:
+                      type: string
 
     Capabilities:
       type: object
@@ -1054,6 +1173,21 @@ components:
           description: Alias for expectedRev
         payload:
           $ref: '#/components/schemas/ReplaceFlowPayload'
+      example:
+        type: replace_flow
+        expectedRev: 'abc123rev'
+        payload:
+          flowId: tab1
+          flow:
+            id: tab1
+            type: tab
+            label: Flow 1
+            nodes:
+              - id: n1
+                type: inject
+                z: tab1
+                wires:
+                  - []
 
     ApproveProposalRequest:
       type: object

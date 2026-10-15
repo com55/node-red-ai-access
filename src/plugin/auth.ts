@@ -7,10 +7,13 @@ import type { NextFunction, Response } from 'express';
 import {
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
+  ACCESS_LINK_MISSING_MESSAGE,
   ACCESS_LINK_WWW_AUTHENTICATE,
 } from './access-link-auth.js';
 import { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type {
+  AccessLinkAuthInfo,
   AiAccessCapabilities,
   AiAccessPermission,
   AuthenticatedRequest,
@@ -81,7 +84,14 @@ export function capabilitiesFor(
  * plain-text `Unauthorized` via `res.end` and never calls next. For API mode,
  * intercept that 401 and rewrite it as JSON with a stable `code`.
  */
-function interceptNeedsPermissionUnauthorized(res: Response): () => void {
+function interceptNeedsPermissionUnauthorized(
+  res: Response,
+  body: { error: string; code: string } = {
+    error: 'Authentication required',
+    code: 'auth_required',
+  },
+  wwwAuthenticate?: string
+): () => void {
   const originalEnd = res.end.bind(res) as (...args: unknown[]) => unknown;
   let active = true;
 
@@ -89,9 +99,10 @@ function interceptNeedsPermissionUnauthorized(res: Response): () => void {
     if (active && res.statusCode === 401 && !res.headersSent) {
       active = false;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return originalEnd(
-        JSON.stringify({ error: 'Authentication required', code: 'auth_required' })
-      );
+      if (wwwAuthenticate) {
+        res.setHeader('WWW-Authenticate', wwwAuthenticate);
+      }
+      return originalEnd(JSON.stringify(body));
     }
     return originalEnd(...args);
   }) as typeof res.end;
@@ -225,6 +236,8 @@ function looksLikeAccessLinkToken(token: string): boolean {
   return token.startsWith('aia_');
 }
 
+export type AccessLinkValidator = (token: string) => AccessLinkAuthInfo | null;
+
 function continueAsAdminSession(
   RED: NodeRedPluginAPI,
   req: AuthenticatedRequest,
@@ -249,22 +262,95 @@ function continueAsAdminSession(
 }
 
 /**
+ * Like continueAsAdminSession, but when admin auth fails, return
+ * `access_link_missing` (with Bearer WWW-Authenticate for AI clients) instead
+ * of passport's `auth_required` / realm="Users". Successful admin sessions
+ * (cookie or editor Bearer) still proceed.
+ */
+function continueAsAdminSessionOrAccessLinkMissing(
+  RED: NodeRedPluginAPI,
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  if (!isAdminAuthEnabled(RED.settings)) {
+    next();
+    return;
+  }
+
+  const accessLinkMissingBody = {
+    error: ACCESS_LINK_MISSING_MESSAGE,
+    code: ACCESS_LINK_MISSING_CODE,
+  };
+
+  // Do not go through requireAdminSession — its interceptor would rewrite to
+  // auth_required / leave passport's realm="Users".
+  const restoreEnd = interceptNeedsPermissionUnauthorized(
+    res,
+    accessLinkMissingBody,
+    ACCESS_LINK_WWW_AUTHENTICATE
+  );
+
+  RED.auth.needsPermission('read')(req, res, (err?: unknown) => {
+    restoreEnd();
+    if (err) {
+      next(err as Error);
+      return;
+    }
+    if (!req.user || !resolvePermission(req)) {
+      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+      res.status(401).json(accessLinkMissingBody);
+      return;
+    }
+    next();
+  });
+}
+
+function tryAccessLinkBearer(
+  req: AuthenticatedRequest,
+  res: Response,
+  validateAccessLink: AccessLinkValidator
+): 'ok' | 'invalid' | 'continue' {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader !== 'string' || !/^Bearer\s+\S+/i.test(authHeader.trim())) {
+    return 'continue';
+  }
+  const match = /^Bearer\s+(\S+)$/i.exec(authHeader.trim());
+  const token = match?.[1];
+  if (!token) {
+    return 'continue';
+  }
+  const link = validateAccessLink(token);
+  if (link) {
+    req.accessLink = link;
+    return 'ok';
+  }
+  if (looksLikeAccessLinkToken(token)) {
+    res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+    res.status(401).json({
+      error: ACCESS_LINK_INVALID_MESSAGE,
+      code: ACCESS_LINK_INVALID_CODE,
+    });
+    return 'invalid';
+  }
+  return 'continue';
+}
+
+/**
  * Accept either a valid access-link Bearer token or an admin session with at
  * least `read` permission. Used for shared read surfaces (flows, proposals).
  *
  * Editor admin Bearer tokens (from localStorage) must fall through to
  * `requireAdminSession` — they are not access-link tokens. Only tokens that
  * look like access links (`aia_…`) return `access_link_invalid` when unknown.
+ *
+ * When no admin session is present, failed auth returns `access_link_missing`
+ * (not passport `auth_required` / realm="Users") so plain HTTP AI clients get
+ * actionable guidance.
  */
 export function requireAdminReadOrAccessLink(
   RED: NodeRedPluginAPI,
-  validateAccessLink: (token: string) => {
-    id: string;
-    label?: string;
-    createdAt: string;
-    expiresAt: string;
-    createdBy?: string;
-  } | null
+  validateAccessLink: AccessLinkValidator
 ) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!areAiFeaturesEnabled(RED.settings)) {
@@ -276,32 +362,39 @@ export function requireAdminReadOrAccessLink(
       return;
     }
 
-    const authHeader = req.headers.authorization;
-    if (typeof authHeader === 'string' && /^Bearer\s+\S+/i.test(authHeader.trim())) {
-      const match = /^Bearer\s+(\S+)$/i.exec(authHeader.trim());
-      const token = match?.[1];
-      if (token) {
-        const link = validateAccessLink(token);
-        if (link) {
-          req.accessLink = link;
-          next();
-          return;
-        }
-        // Unknown aia_ token → clear access-link error (do not try admin session).
-        if (looksLikeAccessLinkToken(token)) {
-          res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-          res.status(401).json({
-            error: ACCESS_LINK_INVALID_MESSAGE,
-            code: ACCESS_LINK_INVALID_CODE,
-          });
-          return;
-        }
-        // Editor / other Bearer → admin session (Node-RED passport).
-        continueAsAdminSession(RED, req, res, next);
-        return;
-      }
+    const access = tryAccessLinkBearer(req, res, validateAccessLink);
+    if (access === 'ok') {
+      next();
+      return;
+    }
+    if (access === 'invalid') {
+      return;
     }
 
+    // Editor / other Bearer, cookie session, or missing token → try admin;
+    // on failure prefer access_link_missing for AI clients.
+    continueAsAdminSessionOrAccessLinkMissing(RED, req, res, next);
+  };
+}
+
+/**
+ * Admin session (page bootstrap) or a valid access-link Bearer.
+ * Missing/invalid non-link tokens keep `auth_required` for the /mcp UI.
+ * Unknown `aia_` tokens return `access_link_invalid`.
+ */
+export function requireAdminSessionOrAccessLink(
+  RED: NodeRedPluginAPI,
+  validateAccessLink: AccessLinkValidator
+) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    const access = tryAccessLinkBearer(req, res, validateAccessLink);
+    if (access === 'ok') {
+      next();
+      return;
+    }
+    if (access === 'invalid') {
+      return;
+    }
     continueAsAdminSession(RED, req, res, next);
   };
 }

@@ -11,6 +11,8 @@ import { pageStyles } from './page-styles.js';
 export interface RenderMcpPageOptions {
   /** Absolute path prefix for `/mcp/api/v1` (respects httpAdminRoot). */
   apiBase: string;
+  /** Absolute path for `/mcp/rpc` (respects httpAdminRoot). */
+  mcpRpc?: string;
   /** Editor root for login redirect (httpAdminRoot). */
   editorRoot: string;
   /** localStorage key matching the Node-RED editor auth token. */
@@ -32,6 +34,7 @@ function escapeHtml(value: string): string {
 export function renderMcpPage(options: RenderMcpPageOptions): string {
   const config = {
     apiBase: options.apiBase,
+    mcpRpc: options.mcpRpc ?? '/mcp/rpc',
     editorRoot: options.editorRoot,
     authTokenKey: options.authTokenKey,
   };

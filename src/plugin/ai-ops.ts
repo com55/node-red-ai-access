@@ -9,6 +9,7 @@ import {
   FlowRevisionConflictError,
   PluginMisconfiguredError,
 } from '../runtime/errors.js';
+import { normalizeFlowTab } from '../runtime/flows-util.js';
 import type { FlowAdapter, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../storage/proposals.js';
@@ -49,7 +50,9 @@ export async function getFlow(adapter: FlowAdapter, flowId: string): Promise<Get
     throw new AiOpsValidationError('Missing flow id', 'missing_flow_id');
   }
   const snapshot = await adapter.getFlow(flowId);
-  return { rev: snapshot.rev, flow: snapshot.flow };
+  // Always normalize so REST/MCP match OpenAPI FlowTab (id + type), even when
+  // Node-RED or a thin adapter omits `type`.
+  return { rev: snapshot.rev, flow: normalizeFlowTab(flowId, snapshot.flow) };
 }
 
 export interface SubmitReplaceFlowInput {
