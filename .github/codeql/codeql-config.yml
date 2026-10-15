@@ -1,0 +1,10 @@
+name: "Node-RED AI Access CodeQL"
+queries:
+  - uses: security-and-quality
+query-filters:
+  # Intentional Node-RED /comms in-band auth handshake (TLS to NODERED_URL is the
+  # real trust boundary). Documented in-source with codeql[js/user-controlled-bypass].
+  - exclude:
+      id: js/user-controlled-bypass
+      paths:
+        - src/services/node-error-checker.ts
