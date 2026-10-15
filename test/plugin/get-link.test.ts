@@ -247,7 +247,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ label: 'html-draft' });
 
-    // Keep under the per-link rate limit (60/min) while still exercising chunking.
+    // Keep under the per-token rate limit while still exercising chunking.
     const html = `<!DOCTYPE html><html><body>${'<!-- pad -->'.repeat(40)}<h1>Hello</h1></body></html>`;
     const htmlBuf = Buffer.from(html, 'utf8');
     const sha256 = createHash('sha256').update(htmlBuf).digest('hex');

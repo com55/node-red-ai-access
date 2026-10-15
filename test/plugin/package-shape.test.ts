@@ -99,6 +99,9 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/presence-preview-toggle|Preview/);
     expect(client).toMatch(/sandbox=""/);
     expect(client).toMatch(/displayName|proposal-heading|proposalHeading|fmtLocalShort/);
+    expect(client).toMatch(/Intl\.DateTimeFormat/);
+    expect(client).toMatch(/titleFromDisplayName/);
+    expect(client).toMatch(/Never render API displayName/);
     expect(client).toMatch(/alignSplitDiffLines/);
     expect(client).toMatch(/#proposal=/);
     expect(client).toMatch(/focusProposalFromHash|proposal-highlight/);

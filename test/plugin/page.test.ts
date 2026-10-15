@@ -130,6 +130,9 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/history\.replaceState/);
     expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
     expect(res.text).toMatch(/initialTabFromHash/);
+    expect(res.text).toMatch(/Intl\.DateTimeFormat/);
+    expect(res.text).toMatch(/titleFromDisplayName/);
+    expect(res.text).toMatch(/Never render API displayName/);
     expect(res.text).toMatch(/data-config=/);
     expect(res.text).toMatch(/editorRoot/);
     expect(res.text).toMatch(/auth-tokens-editor/);

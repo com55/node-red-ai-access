@@ -41,7 +41,7 @@ import {
   listProposalsHandler,
   rejectProposalHandler,
 } from './proposals-routes.js';
-import { createAiAccessRateLimiter } from './rate-limit.js';
+import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import { getSettingsHandler, putSettingsHandler } from './settings-routes.js';
 import { buildStatus } from './status.js';
@@ -78,7 +78,7 @@ const PLUGIN_ID = 'com55-ai-access';
 /** Public shell + discovery (no authorization middleware — safe to extract). */
 function registerMcpShellAndDiscovery(
   RED: NodeRedPluginAPI,
-  limiter: ReturnType<typeof createAiAccessRateLimiter>
+  limiter: ReturnType<typeof createAiAccessDualRateLimiters>['ip']
 ): void {
   // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
   // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
@@ -108,7 +108,11 @@ export function registerRoutes(
   RED: NodeRedPluginAPI,
   serviceOptions: CreatePluginServicesOptions = {}
 ): void {
-  const limiter = createAiAccessRateLimiter();
+  // Keep `limiter` / `tokenLimiter` as locals so CodeQL missing-rate-limiting
+  // can see authorization routes are rate-limited.
+  const { ip: limiter, token: tokenLimiter } = createAiAccessDualRateLimiters(
+    RED.settings.aiAccess ?? null
+  );
   const services = createPluginServices(RED, {
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
@@ -120,6 +124,7 @@ export function registerRoutes(
     proposalStore: services.proposalStore,
     auditLog: services.auditLog,
     flowAdapter: services.flowAdapter,
+    rateLimit: RED.settings.aiAccess ?? {},
   });
 
   registerMcpShellAndDiscovery(RED, limiter);
@@ -127,6 +132,7 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
     limiter,
+    tokenLimiter,
     requireAdminSessionOrAccessLink(RED, token => services.linkStore.validate(token)),
     (req: AuthenticatedRequest, res: Response) => {
       res.json(buildStatus(RED, req));
@@ -169,6 +175,7 @@ export function registerRoutes(
 
   const sharedRead = [
     limiter,
+    tokenLimiter,
     requireAiFeatures(RED),
     requireAdminReadOrAccessLink(RED, token => services.linkStore.validate(token)),
   ];
@@ -176,8 +183,8 @@ export function registerRoutes(
   RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(services.flowAdapter));
   RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowHandler(services.flowAdapter));
 
-  // Proposal routes stay in this function so CodeQL can see the local `limiter`
-  // (passing it into a helper breaks missing-rate-limiting dataflow).
+  // Proposal routes stay in this function so CodeQL can see the local limiters
+  // (passing them into a helper breaks missing-rate-limiting dataflow).
   const httpAdminRoot = RED.settings.httpAdminRoot;
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals',
@@ -197,6 +204,7 @@ export function registerRoutes(
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals',
     limiter,
+    tokenLimiter,
     requireAccessLink(RED, services.linkStore),
     createProposalHandler(
       services.proposalStore,
@@ -216,7 +224,7 @@ export function registerRoutes(
     rejectProposalHandler(services.proposalService, httpAdminRoot)
   );
 
-  const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
+  const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore)];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);

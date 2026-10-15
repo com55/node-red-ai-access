@@ -208,7 +208,7 @@ function docsErrorsAndAlso(rest: string, openapi: string, rpc: string): string {
 | \`chunk_conflict\` | Same seq, different data | Re-send identical data or new draft |
 | \`draft_hash_mismatch\` / \`missing_chunks\` | Draft incomplete | Fix seqs / sha256 |
 | \`payload_too_large\` | Over decoded size cap | Shrink content |
-| \`rate_limited\` | Too many calls | Wait and retry |
+| \`rate_limited\` | Too many calls (per IP or per token) | Wait \`retryAfter\` seconds (\`Retry-After\` header) |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
 
 All JSON responses use \`Cache-Control: no-store\`. Never put secrets in query

@@ -64,6 +64,10 @@ module.exports = {
     maxActiveLinks: 10,
     // Deploy type used on approve (default: "nodes"; also "flows" | "full")
     defaultDeploymentType: 'nodes',
+    // In-memory rate limits for /mcp/api and /mcp/a (per IP + per access token)
+    rateLimitWindowMs: 60000,
+    rateLimitMaxPerIp: 600,
+    rateLimitMaxPerToken: 300,
   },
 };
 ```
