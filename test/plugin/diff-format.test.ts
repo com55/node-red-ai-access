@@ -10,13 +10,21 @@ function sampleDiff(linesEqualCount: number): ProposalDiffResult {
   }));
   return {
     compareAgainst: 'base',
-    summary: { added: 0, removed: 0, modified: 1, tabChanges: [] },
+    summary: {
+      added: 0,
+      removed: 0,
+      modified: 1,
+      tabChanges: [],
+      beforeNodeCount: 1,
+      afterNodeCount: 1,
+    },
     added: [],
     removed: [],
     modified: [
       {
         id: 'n1',
         type: 'function',
+        summary: 'Changes function node (1 field)',
         changes: [
           {
             key: 'func',

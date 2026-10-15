@@ -231,7 +231,10 @@ describe('ai-access.html sidebar tab', () => {
     expect(html).toMatch(/ai-access-deploy/);
     expect(html).toMatch(/ai-access-ttl/);
     expect(html).toMatch(/ai-access-save/);
-    expect(html).toMatch(/Open \/mcp/);
+    expect(html).toMatch(/Open AI Access dashboard/);
+    expect(html).toMatch(/only changed nodes restart, recommended/);
+    expect(html).toMatch(/ai-access-pending-count|Review/);
+    expect(html).toMatch(/ai-access-ttl-presets|data-hours/);
     expect(html).toMatch(/canEdit|readonly|\*/);
     expect(html).toMatch(/red-ui-settings-row stacked/);
     expect(html).toMatch(/flex-direction:\s*column/);

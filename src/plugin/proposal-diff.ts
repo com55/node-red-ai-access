@@ -57,6 +57,8 @@ export interface ModifiedNodeDiff {
   id: string;
   type: string;
   name?: string;
+  /** Human sentence, e.g. Changes template node "Tpl" in "Test Flow" (2 fields). */
+  summary: string;
   changes: PropertyChange[];
 }
 
@@ -90,6 +92,10 @@ export interface DiffSectionSummary {
   removed: number;
   modified: number;
   tabChanges: string[];
+  /** Node count in the before snapshot (for delete-ratio warnings). */
+  beforeNodeCount: number;
+  /** Node count in the after/proposed snapshot. */
+  afterNodeCount: number;
 }
 
 export interface DiffSections {
@@ -271,6 +277,15 @@ function buildKeyFields(node: FlowNode, allNodes: Map<string, FlowNode>): Presen
   return fields;
 }
 
+function buildModifiedSummary(node: FlowNode, flowLabel: string, changeCount: number): string {
+  const type = node.type || 'node';
+  const name = nodeName(node);
+  const named = name ? ` "${name}"` : '';
+  const where = flowLabel ? ` in "${flowLabel}"` : '';
+  const fields = changeCount === 1 ? '1 field' : `${changeCount} fields`;
+  return `Changes ${type} node${named}${where} (${fields})`;
+}
+
 function buildPresenceSummary(
   node: FlowNode,
   kind: 'added' | 'removed',
@@ -400,6 +415,7 @@ export function buildDiffSections(
       const entry: ModifiedNodeDiff = {
         id,
         type: after.type || before.type,
+        summary: buildModifiedSummary(after, afterLabel || beforeLabel, changes.length),
         changes,
       };
       const name = nodeName(after) ?? nodeName(before);
@@ -420,6 +436,8 @@ export function buildDiffSections(
       removed: removed.length,
       modified: modified.length,
       tabChanges: compareTabMeta(beforeFlow, afterFlow),
+      beforeNodeCount: beforeNodes.size,
+      afterNodeCount: afterNodes.size,
     },
     added,
     removed,

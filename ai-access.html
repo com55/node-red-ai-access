@@ -51,6 +51,14 @@
       return API_BASE;
     }
 
+    function mcpPageUrl(hash) {
+      var url = (LAST && LAST.mcpPageUrl) || '/mcp';
+      if (hash) {
+        return url.split('#')[0] + '#' + hash.replace(/^#/, '');
+      }
+      return url;
+    }
+
     function api(path, options) {
       return fetch(
         resolveApiBase() + path,
@@ -89,6 +97,30 @@
       $el.toggle(!!message);
     }
 
+    function hoursFromSeconds(seconds) {
+      var s = Number(seconds);
+      if (!Number.isFinite(s) || s <= 0) return 4;
+      return Math.max(1, Math.round(s / 3600));
+    }
+
+    function selectedTtlHours() {
+      var pressed = $('#' + CONTENT_ID + ' .ai-access-ttl-presets button[aria-pressed="true"]');
+      if (pressed.length) {
+        return Number(pressed.attr('data-hours')) || 4;
+      }
+      return Number($('#ai-access-ttl').val()) || 4;
+    }
+
+    function setTtlHours(hours) {
+      var h = Number(hours);
+      if ([1, 4, 24].indexOf(h) < 0) h = 4;
+      $('#ai-access-ttl').val(h);
+      $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').each(function () {
+        var btn = $(this);
+        btn.attr('aria-pressed', Number(btn.attr('data-hours')) === h ? 'true' : 'false');
+      });
+    }
+
     function applyForm(data) {
       LAST = data;
       CAN_EDIT = !!(data && data.canEdit);
@@ -97,8 +129,9 @@
 
       $('#ai-access-enabled').prop('checked', s.enabled !== false);
       $('#ai-access-allow-without').prop('checked', !!s.allowWithoutAdminAuth);
-      $('#ai-access-ttl').val(s.defaultLinkTtlSeconds || 14400);
+      setTtlHours(hoursFromSeconds(s.defaultLinkTtlSeconds || 14400));
       $('#ai-access-deploy').val(s.defaultDeploymentType || 'nodes');
+      $('#ai-access-full-warn').toggle($('#ai-access-deploy').val() === 'full');
 
       $('#ai-access-adminauth-row').toggle(ADMIN_AUTH);
       $('#ai-access-local-row').toggle(!ADMIN_AUTH);
@@ -106,14 +139,33 @@
 
       var readonly = !CAN_EDIT;
       $('#' + CONTENT_ID + ' input, #' + CONTENT_ID + ' select').prop('disabled', readonly);
+      $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').prop('disabled', readonly);
       $('#ai-access-save').toggle(!readonly);
       $('#ai-access-readonly-note').toggle(readonly);
+    }
+
+    function refreshPending() {
+      api('/proposals')
+        .then(function (data) {
+          var proposals = (data && data.proposals) || [];
+          var pending = proposals.filter(function (p) {
+            return p.status === 'pending';
+          }).length;
+          $('#ai-access-pending-count').text(String(pending));
+          $('#ai-access-status-block').show();
+        })
+        .catch(function () {
+          $('#ai-access-pending-count').text('—');
+        });
     }
 
     function loadSettings() {
       setFlash($('#ai-access-flash'), '', true);
       api('/settings')
-        .then(applyForm)
+        .then(function (data) {
+          applyForm(data);
+          refreshPending();
+        })
         .catch(function (err) {
           setFlash($('#ai-access-flash'), err.message || String(err), false);
         });
@@ -139,6 +191,21 @@
       var flash = $(
         '<div id="ai-access-flash" class="form-tips" style="display:none;margin-bottom:8px;"></div>'
       ).appendTo(body);
+
+      var status = $(
+        '<div id="ai-access-status-block" class="ai-access-status-block" style="display:none;"></div>'
+      ).appendTo(body);
+      $('<p></p>')
+        .html(
+          '<strong id="ai-access-pending-count">0</strong> proposal(s) waiting for review'
+        )
+        .appendTo(status);
+      $('<button type="button" id="ai-access-review" class="red-ui-button"></button>')
+        .text('Review')
+        .appendTo(status)
+        .on('click', function () {
+          window.open(mcpPageUrl('proposals'), '_blank');
+        });
 
       var row;
 
@@ -174,26 +241,41 @@
       $('<option value="nodes">nodes</option>').appendTo(select);
       $('<option value="flows">flows</option>').appendTo(select);
       $('<option value="full">full</option>').appendTo(select);
+      $('<p class="form-tips ai-access-deploy-hint"></p>')
+        .text('nodes = only changed nodes restart, recommended')
+        .appendTo(row);
+      $('<p id="ai-access-full-warn" class="form-tips" style="display:none;color:#b33;"></p>')
+        .text('Warning: full restarts the entire runtime.')
+        .appendTo(row);
+      select.on('change', function () {
+        $('#ai-access-full-warn').toggle(select.val() === 'full');
+      });
 
       row = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
       $('<label for="ai-access-ttl"></label>')
-        .text('Default access-link TTL (seconds)')
+        .text('Default link expiry (hours)')
         .appendTo(row);
-      $('<input id="ai-access-ttl" type="number" min="1" step="1">').appendTo(row);
+      var presets = $('<div class="ai-access-ttl-presets" role="group" aria-label="Link expiry"></div>').appendTo(
+        row
+      );
+      [1, 4, 24].forEach(function (h) {
+        $('<button type="button" class="red-ui-button"></button>')
+          .attr('data-hours', String(h))
+          .attr('aria-pressed', h === 4 ? 'true' : 'false')
+          .text(h === 1 ? '1 hour' : h + ' hours')
+          .appendTo(presets)
+          .on('click', function () {
+            setTtlHours(h);
+          });
+      });
+      $('<input id="ai-access-ttl" type="hidden" value="4">').appendTo(row);
 
       row = $(
         '<div class="red-ui-settings-row" style="margin-top:12px;flex-wrap:wrap;"></div>'
       ).appendTo(body);
-      $('<button type="button" id="ai-access-open-mcp" class="red-ui-button"></button>')
-        .text('Open /mcp page')
-        .appendTo(row)
-        .on('click', function () {
-          var url = (LAST && LAST.mcpPageUrl) || '/mcp';
-          window.open(url, '_blank');
-        });
 
       $(
-        '<button type="button" id="ai-access-save" class="red-ui-button" style="margin-left:8px;"></button>'
+        '<button type="button" id="ai-access-save" class="red-ui-button" style="margin-right:8px;"></button>'
       )
         .text('Save')
         .appendTo(row)
@@ -201,17 +283,25 @@
           var payload = {
             enabled: $('#ai-access-enabled').is(':checked'),
             allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
-            defaultLinkTtlSeconds: Number($('#ai-access-ttl').val()),
+            defaultLinkTtlSeconds: Math.max(1, Math.floor(selectedTtlHours() * 3600)),
             defaultDeploymentType: $('#ai-access-deploy').val(),
           };
           api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
             .then(function (data) {
               applyForm(data);
               setFlash(flash, 'Settings saved.', true);
+              refreshPending();
             })
             .catch(function (err) {
               setFlash(flash, err.message || String(err), false);
             });
+        });
+
+      $('<button type="button" id="ai-access-open-mcp" class="red-ui-button"></button>')
+        .text('Open AI Access dashboard')
+        .appendTo(row)
+        .on('click', function () {
+          window.open(mcpPageUrl(), '_blank');
         });
 
       $(
@@ -265,6 +355,28 @@
     color: var(--red-ui-secondary-text-color, #666);
     margin-bottom: 10px;
     line-height: 1.4;
+  }
+  #red-ui-sidebar-ai-access .ai-access-status-block {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    background: var(--red-ui-secondary-background, #f3f3f3);
+    border-radius: 4px;
+  }
+  #red-ui-sidebar-ai-access .ai-access-status-block p {
+    margin: 0 0 6px;
+  }
+  #red-ui-sidebar-ai-access .ai-access-ttl-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  #red-ui-sidebar-ai-access .ai-access-ttl-presets button[aria-pressed='true'] {
+    font-weight: 700;
+    border-color: var(--red-ui-form-input-focus-color, #999);
+  }
+  #red-ui-sidebar-ai-access .ai-access-deploy-hint {
+    margin: 4px 0 0;
   }
   #red-ui-sidebar-ai-access .red-ui-settings-row {
     display: flex;
