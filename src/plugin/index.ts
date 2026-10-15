@@ -5,7 +5,7 @@
  * and the /mcp/rpc Streamable HTTP endpoint.
  */
 
-import type { Response } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { requireAccessLink } from './access-link-auth.js';
 import { editorAuthTokenKey } from './auth-token-key.js';
@@ -75,27 +75,32 @@ export { SettingsStore } from '../storage/settings-store.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
+type ExpressMiddleware =
+  RequestHandler | ((req: Request, res: Response, next: NextFunction) => void);
+
 function registerProposalHttpRoutes(
   RED: NodeRedPluginAPI,
   services: ReturnType<typeof createPluginServices>,
   limiter: ReturnType<typeof createAiAccessRateLimiter>,
-  sharedRead: unknown[],
-  linkGuards: unknown[]
+  sharedRead: ExpressMiddleware[],
+  linkGuards: ExpressMiddleware[]
 ): void {
   const httpAdminRoot = RED.settings.httpAdminRoot;
+  // Keep `limiter` as an explicit argument on each route so static analyzers
+  // (CodeQL missing-rate-limiting) can see authorization is rate-limited.
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals',
-    ...(sharedRead as []),
+    ...sharedRead,
     listProposalsHandler(services.proposalStore, httpAdminRoot)
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id',
-    ...(sharedRead as []),
+    ...sharedRead,
     getProposalHandler(services.proposalStore, httpAdminRoot)
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id/diff',
-    ...(sharedRead as []),
+    ...sharedRead,
     getProposalDiffHandler(services.proposalStore, services.flowAdapter)
   );
   RED.httpAdmin.post(
@@ -111,12 +116,12 @@ function registerProposalHttpRoutes(
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/approve',
-    ...(linkGuards as []),
+    ...linkGuards,
     approveProposalHandler(services.proposalService, httpAdminRoot)
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/reject',
-    ...(linkGuards as []),
+    ...linkGuards,
     rejectProposalHandler(services.proposalService, httpAdminRoot)
   );
 }
