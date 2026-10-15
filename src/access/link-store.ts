@@ -82,8 +82,8 @@ function toPublic(record: AccessLinkRecord): AccessLinkPublic {
 
 export class AccessLinkStore {
   private readonly links = new Map<string, AccessLinkRecord>();
-  private readonly defaultTtlSeconds: number;
-  private readonly maxActiveLinks: number;
+  private defaultTtlSeconds: number;
+  private maxActiveLinks: number;
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly randomToken: () => string;
@@ -95,6 +95,24 @@ export class AccessLinkStore {
     this.randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));
     this.randomToken =
       options.randomToken ?? (() => `aia_${randomBytes(32).toString('base64url')}`);
+  }
+
+  /** Hot-update defaults from AI Access settings (no restart). */
+  configureDefaults(options: { defaultTtlSeconds?: number; maxActiveLinks?: number }): void {
+    if (
+      typeof options.defaultTtlSeconds === 'number' &&
+      Number.isFinite(options.defaultTtlSeconds) &&
+      options.defaultTtlSeconds > 0
+    ) {
+      this.defaultTtlSeconds = Math.floor(options.defaultTtlSeconds);
+    }
+    if (
+      typeof options.maxActiveLinks === 'number' &&
+      Number.isFinite(options.maxActiveLinks) &&
+      options.maxActiveLinks > 0
+    ) {
+      this.maxActiveLinks = Math.floor(options.maxActiveLinks);
+    }
   }
 
   /** Active = not revoked and not past expiresAt. */

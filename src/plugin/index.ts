@@ -38,6 +38,7 @@ import {
 } from './proposals-routes.js';
 import { createAiAccessRateLimiter } from './rate-limit.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
+import { getSettingsHandler, putSettingsHandler } from './settings-routes.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -57,9 +58,15 @@ export {
   requireAccessLink,
 } from './access-link-auth.js';
 export { getStorageDir } from './storage.js';
-export { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
+export {
+  areAiFeaturesEnabled,
+  bindSettingsStore,
+  isAdminAuthEnabled,
+  resolveAiAccessSettings,
+} from './settings.js';
 export { createPluginServices } from './services.js';
 export { MAX_PROPOSAL_JSON_BYTES } from './ai-ops.js';
+export { SettingsStore } from '../storage/settings-store.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
@@ -98,6 +105,21 @@ export function registerRoutes(
 
   // Documentation only — no admin session required.
   RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
+
+  // User Settings / editor tab — admin session; PUT requires *.
+  RED.httpAdmin.get(
+    '/mcp/api/v1/settings',
+    limiter,
+    requireAdminSession(RED, 'api'),
+    getSettingsHandler(RED, services.settingsStore)
+  );
+  RED.httpAdmin.put(
+    '/mcp/api/v1/settings',
+    limiter,
+    requireAdminSession(RED, 'api'),
+    requireStarPermission(RED),
+    putSettingsHandler(RED, services.settingsStore, services.linkStore)
+  );
 
   const linkGuards = [
     limiter,

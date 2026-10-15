@@ -11,6 +11,8 @@ export interface AiAccessPaths {
   root: string;
   proposals: string;
   logs: string;
+  /** Persisted AI Access settings (`settings.json`). */
+  settings: string;
 }
 
 export function resolveAiAccessPaths(userDir: string): AiAccessPaths {
@@ -19,6 +21,7 @@ export function resolveAiAccessPaths(userDir: string): AiAccessPaths {
     root,
     proposals: join(root, 'proposals'),
     logs: join(root, 'logs'),
+    settings: join(root, 'settings.json'),
   };
 }
 

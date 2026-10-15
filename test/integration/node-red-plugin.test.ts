@@ -343,6 +343,38 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(proposals.body.code).not.toBe('access_link_invalid');
   });
 
+  it('GET/PUT /settings: * can persist; changes apply without restart', async () => {
+    const auth = { Authorization: `Bearer ${adminToken}` };
+
+    const got = await request(RED.httpAdmin).get('/mcp/api/v1/settings').set(auth);
+    expect(got.status).toBe(200);
+    expect(got.body.canEdit).toBe(true);
+    expect(got.body.adminAuthEnabled).toBe(true);
+    expect(got.body.settings.enabled).toBe(true);
+    expect(got.body.precedence[0]).toBe('disk');
+
+    const put = await request(RED.httpAdmin).put('/mcp/api/v1/settings').set(auth).send({
+      defaultDeploymentType: 'full',
+      defaultLinkTtlSeconds: 7200,
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.settings.defaultDeploymentType).toBe('full');
+    expect(put.body.settings.defaultLinkTtlSeconds).toBe(7200);
+    expect(put.body.sources.defaultDeploymentType).toBe('disk');
+
+    const settingsFile = join(userDir, '.ai-access', 'settings.json');
+    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({
+      defaultDeploymentType: 'full',
+      defaultLinkTtlSeconds: 7200,
+    });
+
+    const status = await request(RED.httpAdmin).get('/mcp/api/v1/status').set(auth);
+    expect(status.status).toBe(200);
+    expect(status.body.defaultDeploymentType).toBe('full');
+    expect(status.body.defaultLinkTtlSeconds).toBe(7200);
+    expect(status.body.aiAccessEnabled).toBe(true);
+  });
+
   it.each(['nodes', 'flows', 'full'] as const)(
     'approve replace_flow with deploymentType=%s deploys nested get_flow shape',
     async deploymentType => {

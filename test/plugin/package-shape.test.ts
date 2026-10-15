@@ -2,7 +2,7 @@
  * Package metadata contract for the Node-RED plugin entry.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   name: string;
+  files?: string[];
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   'node-red'?: {
@@ -34,5 +35,14 @@ describe('package.json Node-RED plugin shape', () => {
     expect(packageJson['node-red']?.plugins).toEqual({
       'ai-access': 'ai-access.cjs',
     });
+  });
+
+  it('ships companion ai-access.html for the User Settings editor tab', () => {
+    expect(packageJson.files).toContain('ai-access.html');
+    expect(existsSync(join(root, 'ai-access.html'))).toBe(true);
+    const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
+    expect(html).toMatch(/RED\.userSettings\.add/);
+    expect(html).toMatch(/ai-access/);
+    expect(html).toMatch(/\/settings/);
   });
 });

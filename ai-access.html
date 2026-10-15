@@ -1,0 +1,218 @@
+<script>
+  /**
+   * Editor User Settings tab: AI Access.
+   * Loaded by Node-RED as the companion HTML for ai-access.cjs.
+   */
+  (function () {
+    if (typeof RED === 'undefined' || !RED.userSettings || !RED.userSettings.add) {
+      return;
+    }
+
+    var API_BASE = null;
+    var CAN_EDIT = false;
+    var ADMIN_AUTH = true;
+    var LAST = null;
+
+    function authHeaders() {
+      var headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
+      try {
+        var key = 'auth-tokens';
+        var root = (RED.settings.httpAdminRoot || '/').replace(/\/$/, '');
+        if (root && root !== '/') {
+          key = 'auth-tokens' + root.replace(/\//g, '-');
+        }
+        var raw = localStorage.getItem(key);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.access_token) {
+            headers.Authorization = 'Bearer ' + parsed.access_token;
+          }
+        }
+      } catch (e) {
+        /* ignore */
+      }
+      return headers;
+    }
+
+    function resolveApiBase() {
+      if (API_BASE) return API_BASE;
+      var root = RED.settings.httpAdminRoot || '/';
+      if (!root || root === '/') {
+        API_BASE = '/mcp/api/v1';
+      } else {
+        API_BASE = root.replace(/\/$/, '') + '/mcp/api/v1';
+      }
+      return API_BASE;
+    }
+
+    function api(path, options) {
+      return fetch(
+        resolveApiBase() + path,
+        Object.assign(
+          {
+            credentials: 'same-origin',
+            headers: authHeaders(),
+          },
+          options || {}
+        )
+      ).then(function (res) {
+        return res.text().then(function (text) {
+          var body = null;
+          if (text) {
+            try {
+              body = JSON.parse(text);
+            } catch (e) {
+              body = { error: text };
+            }
+          }
+          if (!res.ok) {
+            var err = new Error((body && body.error) || 'HTTP ' + res.status);
+            err.status = res.status;
+            err.body = body;
+            throw err;
+          }
+          return body;
+        });
+      });
+    }
+
+    function setFlash($el, message, ok) {
+      if (!$el || !$el.length) return;
+      $el.toggleClass('ok', !!ok).toggleClass('error', !ok);
+      $el.text(message || '');
+      $el.toggle(!!message);
+    }
+
+    function applyForm(data) {
+      LAST = data;
+      CAN_EDIT = !!(data && data.canEdit);
+      ADMIN_AUTH = !!(data && data.adminAuthEnabled);
+      var s = (data && data.settings) || {};
+
+      $('#ai-access-enabled').prop('checked', s.enabled !== false);
+      $('#ai-access-allow-without').prop('checked', !!s.allowWithoutAdminAuth);
+      $('#ai-access-ttl').val(s.defaultLinkTtlSeconds || 86400);
+      $('#ai-access-deploy').val(s.defaultDeploymentType || 'nodes');
+
+      $('#ai-access-adminauth-row').toggle(ADMIN_AUTH);
+      $('#ai-access-local-row').toggle(!ADMIN_AUTH);
+      $('#ai-access-local-warn').toggle(!ADMIN_AUTH);
+
+      var readonly = !CAN_EDIT;
+      $('#ai-access-pane input, #ai-access-pane select').prop('disabled', readonly);
+      $('#ai-access-save').toggle(!readonly);
+      $('#ai-access-readonly-note').toggle(readonly);
+    }
+
+    function buildPane() {
+      var pane = $('<div id="ai-access-pane" class="red-ui-help"></div>');
+      $('<h3></h3>').text('AI Access').appendTo(pane);
+      $('<div class="red-ui-settings-section-description"></div>')
+        .text('Configure temporary AI access features. Changes apply immediately (no restart).')
+        .appendTo(pane);
+
+      $('<p id="ai-access-readonly-note" class="form-tips" style="display:none;"></p>')
+        .text('Read-only: full admin permission (*) is required to change these settings.')
+        .appendTo(pane);
+
+      var flash = $(
+        '<div id="ai-access-flash" class="form-tips" style="display:none;margin-bottom:8px;"></div>'
+      ).appendTo(pane);
+
+      var row;
+
+      row = $('<div class="red-ui-settings-row" id="ai-access-adminauth-row"></div>').appendTo(
+        pane
+      );
+      $('<input id="ai-access-enabled" type="checkbox">').appendTo(row);
+      $('<label for="ai-access-enabled"></label>')
+        .html(
+          '<p>Enable AI Access features</p>When off, access links, proposals, and MCP tools are disabled.'
+        )
+        .appendTo(row);
+
+      row = $(
+        '<div class="red-ui-settings-row" id="ai-access-local-row" style="display:none;"></div>'
+      ).appendTo(pane);
+      $('<input id="ai-access-allow-without" type="checkbox">').appendTo(row);
+      $('<label for="ai-access-allow-without"></label>')
+        .html(
+          '<p>Allow AI Access without adminAuth (local-only)</p>Not for production. Anyone who can reach the editor admin port can use AI features.'
+        )
+        .appendTo(row);
+
+      $('<div id="ai-access-local-warn" class="form-tips" style="display:none;color:#b33;"></div>')
+        .text(
+          'Warning: adminAuth is disabled. Enabling this opt-in exposes AI Access without login.'
+        )
+        .appendTo(pane);
+
+      row = $('<div class="red-ui-settings-row"></div>').appendTo(pane);
+      $('<label for="ai-access-deploy"></label>').text('Default deploy type').appendTo(row);
+      var select = $('<select id="ai-access-deploy"></select>').appendTo(row);
+      $('<option value="nodes">nodes</option>').appendTo(select);
+      $('<option value="flows">flows</option>').appendTo(select);
+      $('<option value="full">full</option>').appendTo(select);
+
+      row = $('<div class="red-ui-settings-row"></div>').appendTo(pane);
+      $('<label for="ai-access-ttl"></label>')
+        .text('Default access-link TTL (seconds)')
+        .appendTo(row);
+      $('<input id="ai-access-ttl" type="number" min="1" step="1">').appendTo(row);
+
+      row = $('<div class="red-ui-settings-row" style="margin-top:12px;"></div>').appendTo(pane);
+      $('<button type="button" id="ai-access-open-mcp" class="red-ui-button"></button>')
+        .text('Open AI Access page (/mcp)')
+        .appendTo(row)
+        .on('click', function () {
+          var url = (LAST && LAST.mcpPageUrl) || '/mcp';
+          window.open(url, '_blank');
+        });
+
+      $(
+        '<button type="button" id="ai-access-save" class="red-ui-button" style="margin-left:8px;"></button>'
+      )
+        .text('Save')
+        .appendTo(row)
+        .on('click', function () {
+          var payload = {
+            enabled: $('#ai-access-enabled').is(':checked'),
+            allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
+            defaultLinkTtlSeconds: Number($('#ai-access-ttl').val()),
+            defaultDeploymentType: $('#ai-access-deploy').val(),
+          };
+          api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
+            .then(function (data) {
+              applyForm(data);
+              setFlash(flash, 'Settings saved.', true);
+            })
+            .catch(function (err) {
+              setFlash(flash, err.message || String(err), false);
+            });
+        });
+
+      return pane;
+    }
+
+    var paneEl = null;
+
+    RED.userSettings.add({
+      id: 'ai-access',
+      title: 'AI Access',
+      get: function () {
+        if (!paneEl) {
+          paneEl = buildPane();
+        }
+        return paneEl;
+      },
+      focus: function () {
+        setFlash($('#ai-access-flash'), '', true);
+        api('/settings')
+          .then(applyForm)
+          .catch(function (err) {
+            setFlash($('#ai-access-flash'), err.message || String(err), false);
+          });
+      },
+    });
+  })();
+</script>

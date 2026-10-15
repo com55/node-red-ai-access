@@ -53,6 +53,8 @@ In `settings.js`:
 module.exports = {
   // adminAuth: { ... }, // required for AI features in normal setups
   aiAccess: {
+    // Master switch (default: true). Also editable in editor User Settings.
+    enabled: true,
     // Local-only opt-in when adminAuth is disabled (default: false)
     allowWithoutAdminAuth: false,
     // Access-link default TTL in seconds (default: 86400 = 24h)
@@ -65,14 +67,30 @@ module.exports = {
 };
 ```
 
-Storage lives under **`<userDir>/.ai-access`** (`proposals/*.json` and
-append-only `logs/audit.jsonl`). Directories use mode `0700`, files `0600`.
-Proposal JSON is capped at **1_500_000 bytes**; oversized proposal JSON or audit
-lines return HTTP **413** with `code: payload_too_large` (never silently
-truncated). Malformed JSON returns **400** JSON (REST `invalid_json`, MCP
-JSON-RPC `-32700`) — never HTML stack traces (middleware is attached to the
-editor-api app that owns body-parser, not only the nested plugin `httpAdmin`).
-Unauthenticated `/mcp/api/v1` admin calls return JSON
+### Settings precedence
+
+Effective values are resolved **without restart** in this order (highest wins):
+
+1. **Disk** — `<userDir>/.ai-access/settings.json` (User Settings → **AI
+   Access** tab, or `PUT /mcp/api/v1/settings`)
+2. **`settings.js`** — `aiAccess` block (install / bootstrap defaults)
+3. **Built-in defaults** — as documented above
+
+Only keys present on disk override; omitted keys fall through to `settings.js`,
+then defaults. The editor tab (Users → User Settings → **AI Access**) lets `*`
+admins change enable/disable, default deploy type, and default access-link TTL;
+`read` users see the same values read-only. A button opens the `/mcp` page. When
+`adminAuth` is off, the tab exposes the `allowWithoutAdminAuth` opt-in with a
+clear local-only warning.
+
+Storage lives under **`<userDir>/.ai-access`** (`settings.json`,
+`proposals/*.json`, and append-only `logs/audit.jsonl`). Directories use mode
+`0700`, files `0600`. Proposal JSON is capped at **1_500_000 bytes**; oversized
+proposal JSON or audit lines return HTTP **413** with `code: payload_too_large`
+(never silently truncated). Malformed JSON returns **400** JSON (REST
+`invalid_json`, MCP JSON-RPC `-32700`) — never HTML stack traces (middleware is
+attached to the editor-api app that owns body-parser, not only the nested plugin
+`httpAdmin`). Unauthenticated `/mcp/api/v1` admin calls return JSON
 `{ code: "auth_required" }` rather than plain-text `Unauthorized`.
 
 ## REST API
@@ -86,6 +104,8 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
 | `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
 | `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
+| `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)      |
+| `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)     |
 | `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
 | `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)        |
 | `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                    |
