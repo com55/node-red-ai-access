@@ -123,6 +123,40 @@ describe('proposals / flows / logs HTTP API', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
+  it('approve accepts deploymentType override in the body', async () => {
+    const updateFlow = vi.fn(async () => ({ rev: 'rev-9' }));
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: {
+        kind: 'red',
+        getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+        getFlow: () =>
+          Promise.resolve({
+            rev: 'rev-1',
+            flow: { id: 'tab-1', type: 'tab', nodes: [] },
+          }),
+        updateFlow,
+      },
+    });
+    const createdLink = linkStore.create({ label: 'deploy-type' });
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${createdLink.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+
+    const approved = await request(app)
+      .post(`/mcp/api/v1/proposals/${created.body.id}/approve`)
+      .send({ deploymentType: 'full' });
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe('approved');
+    expect(updateFlow).toHaveBeenCalledWith(expect.objectContaining({ deploymentType: 'full' }));
+  });
+
   it('access link can read flows (with rev), create proposal; * can approve', async () => {
     const updateFlow = vi.fn(() => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }));
     const { app, linkStore } = createApp({

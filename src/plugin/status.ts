@@ -3,6 +3,7 @@
  */
 
 import { describeAccess } from './auth.js';
+import { resolveAiAccessSettings } from './settings.js';
 import { getStorageDir } from './storage.js';
 import type { AiAccessStatus, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -27,6 +28,7 @@ function readPackageVersion(): string {
 
 export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): AiAccessStatus {
   const access = describeAccess(RED, req);
+  const aiSettings = resolveAiAccessSettings(RED.settings);
   return {
     ok: true,
     version: readPackageVersion(),
@@ -36,5 +38,8 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
     permission: access.permission,
     capabilities: access.capabilities,
     storageDir: getStorageDir(RED.settings),
+    defaultLinkTtlSeconds: aiSettings.defaultLinkTtlSeconds,
+    maxActiveLinks: aiSettings.maxActiveLinks,
+    defaultDeploymentType: aiSettings.defaultDeploymentType,
   };
 }

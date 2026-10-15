@@ -28,6 +28,10 @@ and this project adheres to
   removed; sole trust-boundary annotations live in the helper): directory mode
   `0o700`, file mode `0o600`, and size caps on proposal JSON and audit appends
   (`413` when exceeded).
+- `/mcp` admin UI for access links (TTL, show-once token, revoke), proposals
+  (summary, approve with deploy type, reject, rev-conflict messages), audit log,
+  and status. Read-only for `read` users; mutating controls for `*` only.
+  Optional `deploymentType` on approve; status exposes link/deploy defaults.
 
 ## [0.1.0] - 2026-10-15
 

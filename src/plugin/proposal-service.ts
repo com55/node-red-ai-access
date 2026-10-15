@@ -23,8 +23,13 @@ export class ProposalService {
     private readonly getDeploymentType: () => DeploymentType
   ) {}
 
-  async approve(id: string, decidedBy: ProposalDecisionBy): Promise<Proposal> {
+  async approve(
+    id: string,
+    decidedBy: ProposalDecisionBy,
+    options: { deploymentType?: DeploymentType } = {}
+  ): Promise<Proposal> {
     const proposal = this.proposals.beginApprove(id);
+    const deploymentType = options.deploymentType ?? this.getDeploymentType();
     try {
       // Guard for future proposal types (today only replace_flow exists).
       const proposalType: string = proposal.type;
@@ -46,7 +51,7 @@ export class ProposalService {
           flowId: proposal.payload.flowId,
           flow: proposal.payload.flow,
           expectedRev: proposal.expectedRev,
-          deploymentType: this.getDeploymentType(),
+          deploymentType,
         });
         const approved = this.proposals.markApproved(id, decidedBy, result.rev);
         this.audit.append('proposal.approved', decidedBy, {

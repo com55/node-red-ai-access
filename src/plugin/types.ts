@@ -6,7 +6,6 @@ import type { Express, NextFunction, Request, Response } from 'express';
 
 /**
  * Plugin settings read from settings.js (`aiAccess: { ... }`).
- * Fields beyond allowWithoutAdminAuth are reserved for later PRs.
  */
 export interface AiAccessSettings {
   /**
@@ -39,6 +38,12 @@ export interface AiAccessStatus {
   permission: AiAccessPermission | null;
   capabilities: AiAccessCapabilities;
   storageDir: string;
+  /** Effective default access-link TTL (seconds). */
+  defaultLinkTtlSeconds: number;
+  /** Effective max concurrent active access links. */
+  maxActiveLinks: number;
+  /** Deployment type used when approving proposals. */
+  defaultDeploymentType: 'nodes' | 'flows' | 'full';
 }
 
 export interface NodeRedPluginSettings {
