@@ -15,6 +15,7 @@ import {
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
+import { ACCESS_LINK_INVALID_MESSAGE } from './access-link-auth.js';
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
 
@@ -29,7 +30,7 @@ function adminActor(req: AuthenticatedRequest) {
 export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
   return (req: AuthenticatedRequest, res: Response): void => {
     if (!req.accessLink) {
-      res.status(401).json({ error: 'Access link authentication required' });
+      res.status(401).json({ error: ACCESS_LINK_INVALID_MESSAGE });
       return;
     }
 

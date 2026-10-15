@@ -1,28 +1,74 @@
-> **Note:** This project is derived from
-> [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It is
-> being developed as **Node-RED AI Access** — a Node-RED plugin that gives AI
-> clients temporary, owner-approved access.
-
-# 🚀 Node-RED AI Access
+# Node-RED AI Access
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7%2B-blue.svg)](https://www.typescriptlang.org/)
 [![CI](https://github.com/com55/node-red-ai-access/actions/workflows/ci.yml/badge.svg)](https://github.com/com55/node-red-ai-access/actions)
 
-> Temporary, owner-approved Node-RED access for AI clients. Shipping as a
-> Node-RED plugin (Phase 1 REST admin surface) while the standalone MCP server
-> remains available.
+Temporary, owner-approved Node-RED access for AI clients. Phase 1 ships as a
+**Node-RED 4.x+ plugin** with an admin page at `/mcp` and a versioned REST API
+under `/mcp/api/v1`. A standalone MCP server remains available for advanced use.
 
-## 🔌 Node-RED plugin (Phase 1)
+Derived from
+[ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
 
-Install the package into your Node-RED user directory (or via the palette), then
-restart Node-RED. Open **`/mcp`** on the editor admin root after logging in to
-manage access links, review proposals, and read the audit log.
+## Install (Node-RED plugin)
+
+Requirements: **Node-RED 4.x or newer**, Node.js 22+, and **`adminAuth`
+enabled** (recommended). Without `adminAuth`, AI features stay off unless you
+opt in (see Configuration).
+
+1. Install into your Node-RED user directory (or via the palette):
+
+   ```bash
+   cd ~/.node-red
+   npm install @com55/node-red-ai-access
+   ```
+
+2. Restart Node-RED.
+3. Log in to the editor, then open **`/mcp`** on the admin root (for example
+   `http://localhost:1880/mcp`, or `{httpAdminRoot}/mcp` when `httpAdminRoot` is
+   set).
+
+On `/mcp` you can create access links, review proposals, approve or reject
+changes, and read the audit log. Users with `read` (including guest, if
+configured) get a read-only view; only users with `*` can create/revoke links
+and approve/reject proposals. Unauthenticated visits redirect to the editor
+login.
+
+## Configuration
+
+In `settings.js`:
+
+```js
+module.exports = {
+  // adminAuth: { ... }, // required for AI features in normal setups
+  aiAccess: {
+    // Local-only opt-in when adminAuth is disabled (default: false)
+    allowWithoutAdminAuth: false,
+    // Access-link default TTL in seconds (default: 86400 = 24h)
+    defaultLinkTtlSeconds: 86400,
+    // Max concurrent active access links (default: 10)
+    maxActiveLinks: 10,
+    // Deploy type used on approve (default: "nodes"; also "flows" | "full")
+    defaultDeploymentType: 'nodes',
+  },
+};
+```
+
+Storage lives under **`<userDir>/.ai-access`** (`proposals/*.json` and
+append-only `logs/audit.jsonl`). Directories use mode `0700`, files `0600`.
+Oversized proposal JSON or audit lines return HTTP **413**.
+
+## REST API
+
+OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
+[`docs/api/openapi.yaml`](docs/api/openapi.yaml)).
 
 | Path                                     | Purpose                                          |
 | ---------------------------------------- | ------------------------------------------------ |
 | `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
+| `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
 | `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
 | `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
 | `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)        |
@@ -32,64 +78,56 @@ manage access links, review proposals, and read the audit log.
 | `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)        |
 | `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)           |
 | `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)             |
-| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy via FlowAdapter (`*` only)      |
-| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*` only; no flow mutate)    |
+| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)  |
+| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)         |
 | `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |
 
-**Permissions:** users with `read` (including guest, if configured) get a
-read-only admin page; users with `*` can create/revoke access links and
-approve/reject proposals. Unauthenticated visits to `/mcp` redirect to the
-editor login (`httpAdminRoot`). Approve may send `deploymentType` of `nodes`
-(default), `flows`, or `full`.
+Access links are **in memory** (default TTL 24h, max 10). The raw token is
+returned once at creation; after a restart every old token is invalid.
 
-**Without `adminAuth`:** AI features stay off and `/mcp` shows a warning. For
-local-only setups you can opt in in `settings.js`:
-
-```js
-module.exports = {
-  // ...
-  aiAccess: {
-    allowWithoutAdminAuth: true,
-    // defaultLinkTtlSeconds: 86400,
-    // maxActiveLinks: 10,
-    // defaultDeploymentType: "nodes", // or "flows" | "full"
-  },
-};
-```
-
-Data lives under `<userDir>/.ai-access` (`proposals/*.json` and append-only
-`logs/audit.jsonl`). Directories are created mode `0700` and files `0600`.
-Proposal JSON and each audit line are size-capped (HTTP `413` when exceeded).
-
-### Access links (in memory)
-
-Owners with `*` can mint temporary Bearer tokens for AI clients. Links live only
-in process memory (default TTL 24h, max 10 active; creator may set
-`ttlSeconds`). The raw token is returned once at creation; after a restart every
-old token is invalid and the AI should ask the user for a new link. Users with
-`read` permission cannot manage links (403).
+Approve may send `deploymentType`: `nodes` (default), `flows`, or `full`. A
+stale `expectedRev` marks the proposal **rejected** with a resubmit message;
+other deploy errors mark it **failed**. Reject never mutates flows.
 
 ### Flow runtime adapter
 
-Phase 1 includes a `FlowAdapter` used by proposal approve:
-
-- **RedAdapter** — in-process `RED.runtime.flows` (`getFlows` / `getFlow` /
-  `setFlows`)
+- **RedAdapter** — in-process `RED.runtime.flows`
 - **HttpAdapter** — localhost Admin API v2 fallback
-- **Factory** — prefers RED; falls back to HTTP when runtime methods are missing
-- **`updateFlow`** — requires `expectedRev`; default deployment type is `nodes`
-  (also `flows` | `full`); stale rev → `FlowRevisionConflictError` (HTTP 409
-  semantics)
+- **`updateFlow`** — requires `expectedRev`; default deployment type `nodes`
 
-### Proposals and audit log
+## AI quickstart
 
-Access-link clients submit `replace_flow` proposals with an `expectedRev`.
-Lifecycle: `pending` → `approved` | `rejected` | `failed`. Approve deploys
-through the FlowAdapter using `aiAccess.defaultDeploymentType` (default
-`nodes`). A rev conflict marks the proposal **rejected** with a resubmit
-message; other deploy errors mark it **failed**. Concurrent approve of the same
-id is rejected with 409. Reject never mutates flows. Every action is appended to
-the audit log.
+1. An owner with `*` opens `/mcp` → **Access links** → create a link (copy the
+   token once).
+2. The AI client sends `Authorization: Bearer <token>` to:
+
+   - `GET /mcp/api/v1/flows` and `GET /mcp/api/v1/flows/{id}` — read flows and
+     the current `rev`
+   - `POST /mcp/api/v1/proposals` — submit a `replace_flow` proposal with
+     `expectedRev` (or `expected_rev`) and `payload: { flowId, flow }`
+   - `GET /mcp/api/v1/proposals` — list that link’s own proposals
+
+3. The owner reviews the proposal on `/mcp` and approves or rejects it.
+4. If the token is invalid, expired, revoked, or cleared by a restart, the API
+   returns **401** telling the AI to **ask the user for a new access link**.
+
+Example create body:
+
+```json
+{
+  "type": "replace_flow",
+  "expectedRev": "abc123",
+  "payload": {
+    "flowId": "tab-1",
+    "flow": {
+      "id": "tab-1",
+      "type": "tab",
+      "label": "Main",
+      "nodes": []
+    }
+  }
+}
+```
 
 ## 🌟 Features
 

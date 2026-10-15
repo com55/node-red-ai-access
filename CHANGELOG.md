@@ -32,6 +32,9 @@ and this project adheres to
   (summary, approve with deploy type, reject, rev-conflict messages), audit log,
   and status. Read-only for `read` users; mutating controls for `*` only.
   Optional `deploymentType` on approve; status exposes link/deploy defaults.
+- OpenAPI 3.1 spec for `/mcp/api/v1` (status, links, flows, proposals, logs,
+  auth, 413 limits) served at `GET /mcp/api/v1/openapi.yaml`; README install,
+  config, `/mcp` usage, and AI quickstart.
 
 ## [0.1.0] - 2026-10-15
 

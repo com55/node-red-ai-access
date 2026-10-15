@@ -1,5 +1,10 @@
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'tsup';
-import { readFileSync } from 'node:fs';
+
+const repoRoot = dirname(fileURLToPath(import.meta.url));
 
 const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8')) as {
   version: string;
@@ -61,6 +66,12 @@ export default defineConfig([
     },
     esbuildOptions(options) {
       options.packages = 'external';
+    },
+    async onSuccess() {
+      const from = join(repoRoot, 'docs', 'api', 'openapi.yaml');
+      const toDir = join(repoRoot, 'dist');
+      mkdirSync(toDir, { recursive: true });
+      copyFileSync(from, join(toDir, 'openapi.yaml'));
     },
   },
 ]);
