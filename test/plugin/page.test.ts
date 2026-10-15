@@ -183,4 +183,83 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
     expect(res.text).toMatch(/location\.replace/);
   });
+
+  it('client only redirects on /status 401, not on other API 401s', async () => {
+    const { app } = createApp({
+      userDir,
+      adminAuth: { type: 'credentials' },
+    });
+    const res = await request(app).get('/mcp');
+    expect(res.text).toMatch(/isStatusPath/);
+    expect(res.text).toMatch(/Only the auth bootstrap/);
+    // Must not redirect on every 401 (that caused an /mcp ↔ editor loop).
+    expect(res.text).not.toMatch(/if \(res\.status === 401\) \{\s*redirectToEditorLogin/);
+  });
+
+  it('admin session Bearer works on every /mcp/api/v1 route the page uses', async () => {
+    // Simulates Chrome editor localStorage Bearer (not an aia_ access-link token).
+    const editorBearer = 'nr-editor-access-token-not-an-access-link';
+    const { app, linkStore } = createApp({
+      userDir,
+      adminAuth: { type: 'credentials' },
+      authenticate: (req, _res, next) => {
+        const auth = req.headers.authorization;
+        if (auth === `Bearer ${editorBearer}`) {
+          (req as Request & { user?: MockUser }).user = {
+            username: 'admin',
+            permissions: '*',
+          };
+        }
+        next();
+      },
+    });
+
+    // Seed a proposal via access link so GET /proposals has something to list.
+    const link = linkStore.create({ label: 'seed' });
+    const seeded = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: {
+          flowId: 'tab-1',
+          flow: { id: 'tab-1', type: 'tab', label: 'Main', nodes: [] },
+        },
+      });
+    expect(seeded.status).toBe(201);
+
+    const auth = { Authorization: `Bearer ${editorBearer}` };
+
+    const status = await request(app).get('/mcp/api/v1/status').set(auth);
+    expect(status.status).toBe(200);
+    expect(status.body.caller).toMatchObject({ kind: 'admin', permission: '*' });
+
+    const links = await request(app).get('/mcp/api/v1/links').set(auth);
+    expect(links.status).toBe(200);
+    expect(Array.isArray(links.body.links)).toBe(true);
+
+    const logs = await request(app).get('/mcp/api/v1/logs?limit=100').set(auth);
+    expect(logs.status).toBe(200);
+    expect(Array.isArray(logs.body.logs)).toBe(true);
+
+    // Regression: previously returned 401 access_link_invalid for editor Bearer.
+    const proposals = await request(app).get('/mcp/api/v1/proposals').set(auth);
+    expect(proposals.status).toBe(200);
+    expect(proposals.body.proposals).toHaveLength(1);
+    expect(proposals.body.code).toBeUndefined();
+  });
+
+  it('unknown aia_ Bearer on /proposals still returns access_link_invalid', async () => {
+    const { app } = createApp({
+      userDir,
+      adminAuth: { type: 'credentials' },
+      authenticate: asUser('*', 'admin'),
+    });
+    const res = await request(app)
+      .get('/mcp/api/v1/proposals')
+      .set('Authorization', 'Bearer aia_not-a-real-link-token');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('access_link_invalid');
+  });
 });

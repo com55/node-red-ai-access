@@ -295,6 +295,29 @@ describe('Node-RED 4.x in-process plugin integration', () => {
     expect(typeof res.body.rev).toBe('string');
   });
 
+  it('admin editor Bearer works on status/links/logs/proposals (page routes)', async () => {
+    // Same token shape the /mcp page reads from editor localStorage.
+    const auth = { Authorization: `Bearer ${adminToken}` };
+
+    const status = await request(RED.httpAdmin).get('/mcp/api/v1/status').set(auth);
+    expect(status.status).toBe(200);
+    expect(status.body.aiFeaturesEnabled).toBe(true);
+
+    const links = await request(RED.httpAdmin).get('/mcp/api/v1/links').set(auth);
+    expect(links.status).toBe(200);
+    expect(Array.isArray(links.body.links)).toBe(true);
+
+    const logs = await request(RED.httpAdmin).get('/mcp/api/v1/logs?limit=100').set(auth);
+    expect(logs.status).toBe(200);
+    expect(Array.isArray(logs.body.logs)).toBe(true);
+
+    // Regression: editor Bearer was mis-classified as an access-link token → 401.
+    const proposals = await request(RED.httpAdmin).get('/mcp/api/v1/proposals').set(auth);
+    expect(proposals.status).toBe(200);
+    expect(Array.isArray(proposals.body.proposals)).toBe(true);
+    expect(proposals.body.code).not.toBe('access_link_invalid');
+  });
+
   it.each(['nodes', 'flows', 'full'] as const)(
     'approve replace_flow with deploymentType=%s deploys nested get_flow shape',
     async deploymentType => {

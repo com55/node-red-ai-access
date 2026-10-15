@@ -163,9 +163,11 @@ describe('AI flow surface (access-link Bearer)', () => {
   it('returns 401 that tells the AI to ask for a new access link', async () => {
     const { app, linkStore } = createApp({ userDir });
 
+    // Shared read routes: unknown aia_ tokens get access_link_invalid (editor
+    // Bearer tokens fall through to admin session instead).
     const bad = await request(app)
       .get('/mcp/api/v1/flows')
-      .set('Authorization', 'Bearer not-a-real-token');
+      .set('Authorization', 'Bearer aia_not-a-real-token');
     expect(bad.status).toBe(401);
     expect(bad.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
     expect(bad.body.code).toBe(ACCESS_LINK_INVALID_CODE);
@@ -173,7 +175,7 @@ describe('AI flow surface (access-link Bearer)', () => {
 
     const create = await request(app)
       .post('/mcp/api/v1/proposals')
-      .set('Authorization', 'Bearer expired-or-revoked')
+      .set('Authorization', 'Bearer aia_expired-or-revoked')
       .send({
         type: 'replace_flow',
         expectedRev: 'rev-1',

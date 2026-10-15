@@ -220,9 +220,41 @@ export function requireStarPermission(RED: NodeRedPluginAPI) {
   };
 }
 
+/** Access-link tokens are minted with an `aia_` prefix (see AccessLinkStore). */
+function looksLikeAccessLinkToken(token: string): boolean {
+  return token.startsWith('aia_');
+}
+
+function continueAsAdminSession(
+  RED: NodeRedPluginAPI,
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  requireAdminSession(RED, 'api')(req, res, (err?: unknown) => {
+    if (err) {
+      next(err as Error);
+      return;
+    }
+    if (!isAdminAuthEnabled(RED.settings)) {
+      next();
+      return;
+    }
+    if (!resolvePermission(req)) {
+      res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
+      return;
+    }
+    next();
+  });
+}
+
 /**
  * Accept either a valid access-link Bearer token or an admin session with at
  * least `read` permission. Used for shared read surfaces (flows, proposals).
+ *
+ * Editor admin Bearer tokens (from localStorage) must fall through to
+ * `requireAdminSession` — they are not access-link tokens. Only tokens that
+ * look like access links (`aia_…`) return `access_link_invalid` when unknown.
  */
 export function requireAdminReadOrAccessLink(
   RED: NodeRedPluginAPI,
@@ -248,42 +280,28 @@ export function requireAdminReadOrAccessLink(
     if (typeof authHeader === 'string' && /^Bearer\s+\S+/i.test(authHeader.trim())) {
       const match = /^Bearer\s+(\S+)$/i.exec(authHeader.trim());
       const token = match?.[1];
-      if (!token) {
-        res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-        res.status(401).json({
-          error: ACCESS_LINK_INVALID_MESSAGE,
-          code: ACCESS_LINK_INVALID_CODE,
-        });
+      if (token) {
+        const link = validateAccessLink(token);
+        if (link) {
+          req.accessLink = link;
+          next();
+          return;
+        }
+        // Unknown aia_ token → clear access-link error (do not try admin session).
+        if (looksLikeAccessLinkToken(token)) {
+          res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+          res.status(401).json({
+            error: ACCESS_LINK_INVALID_MESSAGE,
+            code: ACCESS_LINK_INVALID_CODE,
+          });
+          return;
+        }
+        // Editor / other Bearer → admin session (Node-RED passport).
+        continueAsAdminSession(RED, req, res, next);
         return;
       }
-      const link = validateAccessLink(token);
-      if (!link) {
-        res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-        res.status(401).json({
-          error: ACCESS_LINK_INVALID_MESSAGE,
-          code: ACCESS_LINK_INVALID_CODE,
-        });
-        return;
-      }
-      req.accessLink = link;
-      next();
-      return;
     }
 
-    requireAdminSession(RED, 'api')(req, res, (err?: unknown) => {
-      if (err) {
-        next(err as Error);
-        return;
-      }
-      if (!isAdminAuthEnabled(RED.settings)) {
-        next();
-        return;
-      }
-      if (!resolvePermission(req)) {
-        res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
-        return;
-      }
-      next();
-    });
+    continueAsAdminSession(RED, req, res, next);
   };
 }

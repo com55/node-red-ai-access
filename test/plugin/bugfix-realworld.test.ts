@@ -222,9 +222,11 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
     });
     expect(missing.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
 
+    // Shared read: unknown aia_ tokens → access_link_invalid; other Bearer
+    // (editor session) falls through to admin auth instead.
     const invalid = await request(app)
       .get('/mcp/api/v1/flows')
-      .set('Authorization', 'Bearer not-real');
+      .set('Authorization', 'Bearer aia_not-real');
     expect(invalid.status).toBe(401);
     expect(invalid.body).toEqual({
       error: ACCESS_LINK_INVALID_MESSAGE,
