@@ -1,0 +1,125 @@
+{
+  "name": "mcp-nodered-server",
+  "version": "2.0.0",
+  "description": "Model Context Protocol server for Node-RED integration with SSE support",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:prod": "NODE_ENV=production tsup",
+    "dev": "tsx src/index.ts",
+    "dev:build": "NODE_ENV=development tsup --watch",
+    "start": "node dist/index.mjs",
+    "start:cjs": "node dist/index.cjs",
+    "clean": "rimraf dist",
+    "prebuild": "yarn clean",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "quality": "yarn type-check && yarn lint && yarn format:check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui --open",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:ui": "vitest --ui --coverage --open",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:debug": "playwright test --debug",
+    "docker:build": "docker build -t mcp-nodered-server .",
+    "docker:run": "docker run -p 3000:3000 mcp-nodered-server",
+    "prepare": "husky"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "node-red",
+    "sse",
+    "server-sent-events",
+    "typescript",
+    "automation"
+  ],
+  "author": "ziv-daniel",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.16.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "uuid": "^14.0.0",
+    "ws": "^8.20.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.1.2",
+    "@types/supertest": "^7.2.0",
+    "@types/uuid": "^11.0.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.59.3",
+    "@typescript-eslint/parser": "^8.59.3",
+    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/ui": "^4.1.6",
+    "eslint": "^10",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "prettier": "^3.8.3",
+    "rimraf": "^6.1.3",
+    "supertest": "^7.2.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^4.1.6"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/com55/node-red-ai-access.git"
+  },
+  "bugs": {
+    "url": "https://github.com/com55/node-red-ai-access/issues"
+  },
+  "homepage": "https://github.com/com55/node-red-ai-access#readme",
+  "packageManager": "yarn@4.9.4+sha512.7b1cb0b62abba6a537b3a2ce00811a843bea02bcf53138581a6ae5b1bf563f734872bd47de49ce32a9ca9dcaff995aa789577ffb16811da7c603dcf69e73750b",
+  "lint-staged": {
+    "*.{js,ts}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  }
+}

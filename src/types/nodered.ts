@@ -1,0 +1,290 @@
+/**
+ * Node-RED type definitions for flows, nodes, and API responses
+ */
+
+export interface NodeRedFlow {
+  id: string;
+  type?: string; // Type of flow: 'tab', 'subflow', or config node types
+  label?: string;
+  nodes: NodeRedNode[];
+  configs?: NodeRedConfig[];
+  subflows?: NodeRedSubflow[];
+  disabled?: boolean;
+  info?: string;
+  env?: {
+    name: string;
+    value: string;
+    type: string;
+  }[];
+}
+
+/**
+ * Lightweight flow summary for efficient token usage
+ * Only includes meaningful properties to reduce token consumption
+ */
+export interface NodeRedFlowSummary {
+  id: string;
+  label?: string; // Only included if not empty
+  disabled?: boolean;
+  status?: 'active' | 'inactive' | 'error';
+  nodeCount?: number; // Only included if > 0
+  info?: string; // Only included if not empty
+}
+
+export interface NodeRedNode {
+  id: string;
+  type: string;
+  z?: string; // flow id
+  name?: string;
+  x?: number;
+  y?: number;
+  wires?: string[][];
+  info?: string;
+  disabled?: boolean;
+  [key: string]: any; // Additional node-specific properties
+}
+
+export interface NodeRedConfig {
+  id: string;
+  type: string;
+  name?: string;
+  [key: string]: any;
+}
+
+export interface NodeRedSubflow {
+  id: string;
+  name: string;
+  info?: string;
+  category?: string;
+  in: {
+    x: number;
+    y: number;
+    wires: {
+      id: string;
+    }[];
+  }[];
+  out: {
+    x: number;
+    y: number;
+    wires: {
+      id: string;
+      port: number;
+    }[];
+  }[];
+  env?: {
+    name: string;
+    type: string;
+    value?: string;
+    ui?: {
+      icon?: string;
+      label?: {
+        en: string;
+      };
+      type?: string;
+    };
+  }[];
+}
+
+export interface NodeRedNodeType {
+  id: string;
+  name: string;
+  types: string[];
+  enabled: boolean;
+  local: boolean;
+  module?: string;
+  version?: string;
+  loaded?: boolean;
+  err?: string;
+}
+
+export interface NodeRedSettings {
+  /** Node-RED version; GET /settings reports it via getRuntimeSettings. */
+  version?: string;
+  httpNodeRoot: string;
+  httpAdminRoot: string;
+  httpStatic?: string;
+  httpStaticRoot?: string;
+  uiHost?: string;
+  uiPort?: number;
+  mqttReconnectTime?: number;
+  serialReconnectTime?: number;
+  debugMaxLength?: number;
+  functionGlobalContext?: Record<string, any>;
+  exportGlobalContextKeys?: boolean;
+  contextStorage?: Record<string, any>;
+  adminAuth?: {
+    type: string;
+    users?: {
+      username: string;
+      password: string;
+      permissions: string[];
+    }[];
+  };
+  logging?: {
+    console?: {
+      level: string;
+      metrics?: boolean;
+      audit?: boolean;
+    };
+  };
+}
+
+export interface NodeRedRuntimeInfo {
+  version: string;
+  git?: {
+    total: number;
+    count: number;
+  };
+  nodes: Record<
+    string,
+    {
+      count: number;
+    }
+  >;
+  modules: Record<
+    string,
+    {
+      version: string;
+    }
+  >;
+  memory: {
+    rss: number;
+    heapTotal: number;
+    heapUsed: number;
+    external: number;
+  };
+  flowFile?: string;
+
+  // Everything below is additive — sourced from GET /diagnostics, which the
+  // fields above predate. All optional, so the /settings fallback (and the
+  // existing fixtures) still satisfy the type.
+
+  /** Which endpoint the report came from. `settings` means diagnostics were
+   *  unavailable, and `modules`/`memory` above are empty rather than measured. */
+  source?: 'diagnostics' | 'settings';
+  /** Whether the Node-RED runtime has finished starting. */
+  isStarted?: boolean;
+  flows?: {
+    state?: string;
+    started?: boolean;
+  };
+  nodejs?: {
+    version?: string;
+    arch?: string;
+    platform?: string;
+    memoryUsage?: Record<string, number>;
+  };
+  os?: {
+    type?: string;
+    release?: string;
+    version?: string;
+    arch?: string;
+    platform?: string;
+    totalmem?: number;
+    freemem?: number;
+    uptime?: number;
+    loadavg?: number[];
+    containerised?: boolean | string;
+    wsl?: boolean;
+  };
+}
+
+export interface NodeRedFlowStatus {
+  state: 'start' | 'stop' | 'safe';
+  flows: {
+    id: string;
+    type: string;
+    state?: 'start' | 'stop';
+  }[];
+}
+
+export interface NodeRedDeploymentOptions {
+  type: 'full' | 'nodes' | 'flows' | 'reload';
+  /** @deprecated Unused; retained for compatibility. */
+  nodes?: string[];
+  /**
+   * Pre-built flat Admin API v2 flows array. When omitted (and type is not
+   * `reload`), the current flows are fetched and re-posted.
+   */
+  flows?: NodeRedNode[];
+  /**
+   * Flow revision for conditional deploy. When omitted together with `flows`,
+   * Node-RED forces the deploy. Ignored for `reload`.
+   */
+  rev?: string;
+  /** Optional top-level v2 credentials object (per-node map or encrypted `$`). */
+  credentials?: Record<string, unknown>;
+}
+
+export interface NodeRedAPIError {
+  error: string;
+  message: string;
+  code?: string;
+  statusCode?: number;
+}
+
+// Event types for SSE
+export interface NodeRedEvent {
+  type: 'node' | 'flow' | 'runtime' | 'error' | 'status';
+  timestamp: string;
+  data: any;
+}
+
+export interface NodeRedNodeEvent extends NodeRedEvent {
+  type: 'node';
+  data: {
+    id: string;
+    type: string;
+    event: 'input' | 'output' | 'error' | 'status';
+    msg?: any;
+    error?: string;
+  };
+}
+
+export interface NodeRedFlowEvent extends NodeRedEvent {
+  type: 'flow';
+  data: {
+    id: string;
+    event: 'start' | 'stop' | 'deploy' | 'error';
+    message?: string;
+  };
+}
+
+export interface NodeRedRuntimeEvent extends NodeRedEvent {
+  type: 'runtime';
+  data: {
+    event: 'start' | 'stop' | 'restart' | 'error';
+    message?: string;
+    memory?: {
+      rss: number;
+      heapTotal: number;
+      heapUsed: number;
+    };
+  };
+}
+
+export interface NodeRedStatusEvent extends NodeRedEvent {
+  type: 'status';
+  data: {
+    id: string;
+    status: {
+      fill?: 'red' | 'green' | 'yellow' | 'blue' | 'grey' | undefined;
+      shape?: 'ring' | 'dot' | undefined;
+      text?: string | undefined;
+    };
+  };
+}
+
+export interface NodeRedErrorEvent extends NodeRedEvent {
+  type: 'error';
+  data: {
+    id?: string;
+    type?: string;
+    error: string;
+    source?: {
+      id: string;
+      type: string;
+      name?: string;
+    };
+  };
+}

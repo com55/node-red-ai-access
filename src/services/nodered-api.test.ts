@@ -1,0 +1,1885 @@
+/**
+ * Tests for NodeRedAPIClient
+ *
+ * Comprehensive tests for the Node-RED API client service
+ */
+
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
+
+import {
+  mockFlows,
+  mockFlowTab,
+  mockFlowSummaries,
+  mockFlowStatus,
+  mockCreatedFlow,
+  mockDisabledFlow,
+  mockFlowWithoutLabel,
+  mockConfigNode,
+  mockFlatFlows,
+} from '../../test/fixtures/flows.js';
+import {
+  mockSettings,
+  mockRuntimeInfo,
+  mockDiagnosticsReport,
+  mockNodeTypes,
+  mockInstalledModules,
+  mockSearchResult,
+  mockInstallSuccess,
+  mockNpmSearchResponse,
+  mockErrorResponses,
+  mockGlobalContext,
+  mockLibraryEntries,
+  mockHealthCheck,
+  mockAuthToken,
+  mockAuthStatus,
+} from '../../test/fixtures/responses.js';
+import {
+  resolveNodeRedAuthHeader,
+  isNodeRedAdminAuthEnabled,
+  validateNodeRedAuth,
+  getNodeRedAuthScope,
+} from '../utils/auth.js';
+import { NodeRedError } from '../utils/error-handling.js';
+
+import {
+  NodeRedAPIClient,
+  assertExpectedFlowRev,
+  replaceFlowTabInFlatFlows,
+} from './nodered-api.js';
+
+// Mock axios
+vi.mock('axios', () => {
+  // Callable so tests can exercise `this.client(config)` retry calls made
+  // from inside the response interceptor's error handler.
+  const mockAxiosInstance: any = vi.fn();
+  Object.assign(mockAxiosInstance, {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    interceptors: {
+      request: { use: vi.fn() },
+      response: { use: vi.fn() },
+    },
+  });
+
+  return {
+    default: {
+      create: vi.fn(() => mockAxiosInstance),
+      get: vi.fn(),
+      isAxiosError: vi.fn((error: any) => error?.isAxiosError === true),
+    },
+  };
+});
+
+// Mock auth utility
+vi.mock('../utils/auth.js', () => ({
+  resolveNodeRedAuthHeader: vi.fn(async () => ({})),
+  isNodeRedAdminAuthEnabled: vi.fn(() => true),
+  validateNodeRedAuth: vi.fn(() => ({ type: 'none' })),
+  getTlsRejectUnauthorized: vi.fn(() => true),
+  getNodeRedAuthScope: vi.fn(() => '*'),
+}));
+
+describe('NodeRedAPIClient', () => {
+  let client: NodeRedAPIClient;
+  let mockAxiosInstance: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Setup environment
+    process.env.NODERED_URL = 'http://localhost:1880';
+    process.env.NODERED_TIMEOUT = '5000';
+    process.env.NODERED_RETRIES = '3';
+
+    // Get the mock instance
+    client = new NodeRedAPIClient();
+    mockAxiosInstance = (axios.create as Mock).mock.results[0]?.value;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('Constructor and Configuration', () => {
+    it('should create client with default configuration', () => {
+      expect(client).toBeDefined();
+      expect(axios.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: 'http://localhost:1880',
+          timeout: 5000,
+        })
+      );
+    });
+
+    it('should create client with custom configuration', () => {
+      const customClient = new NodeRedAPIClient({
+        baseURL: 'http://custom:8080',
+        timeout: 10000,
+        retries: 5,
+      });
+
+      expect(customClient).toBeDefined();
+      expect(axios.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: 'http://custom:8080',
+          timeout: 10000,
+        })
+      );
+    });
+
+    it('should setup interceptors', () => {
+      expect(mockAxiosInstance.interceptors.request.use).toHaveBeenCalled();
+      expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalled();
+    });
+  });
+
+  describe('Connection Testing', () => {
+    it('should return true when connection succeeds', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: 'OK' });
+
+      const result = await client.testConnection();
+
+      expect(result).toBe(true);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/');
+    });
+
+    it('should return false when connection fails', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(new Error('Connection refused'));
+
+      const result = await client.testConnection();
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('Flow Management', () => {
+    describe('getFlows', () => {
+      it('should return all flows', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockFlows });
+
+        const flows = await client.getFlows();
+
+        expect(flows).toEqual(mockFlows);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flows');
+      });
+
+      it('should throw error when response is HTML', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: '<!DOCTYPE html><html>Node-RED</html>',
+        });
+
+        await expect(client.getFlows()).rejects.toThrow(/HTML content instead of flow data/);
+      });
+    });
+
+    describe('getFlowSummaries', () => {
+      it('should return flow summaries', async () => {
+        mockAxiosInstance.get
+          .mockResolvedValueOnce({ data: mockFlows }) // getFlows call
+          .mockResolvedValueOnce({ data: mockFlowStatus }); // getFlowStatus call
+
+        const summaries = await client.getFlowSummaries();
+
+        expect(summaries).toBeDefined();
+        expect(Array.isArray(summaries)).toBe(true);
+      });
+
+      it('should filter by requested types', async () => {
+        mockAxiosInstance.get
+          .mockResolvedValueOnce({ data: mockFlows })
+          .mockResolvedValueOnce({ data: mockFlowStatus });
+
+        const summaries = await client.getFlowSummaries(['tab']);
+
+        expect(summaries).toBeDefined();
+        // Should only include 'tab' type flows
+        summaries.forEach(summary => {
+          expect(summary).toBeDefined();
+        });
+      });
+
+      it('should gracefully handle flow status errors', async () => {
+        mockAxiosInstance.get
+          .mockResolvedValueOnce({ data: mockFlows })
+          .mockRejectedValueOnce(new Error('Status unavailable'));
+
+        const summaries = await client.getFlowSummaries();
+
+        expect(summaries).toBeDefined();
+        expect(Array.isArray(summaries)).toBe(true);
+      });
+    });
+
+    describe('getFlow', () => {
+      it('should return specific flow by ID', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockFlowTab });
+
+        const flow = await client.getFlow('flow-1');
+
+        expect(flow).toEqual(mockFlowTab);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flow/flow-1');
+      });
+
+      it('should throw error when flow not found', async () => {
+        const error = {
+          isAxiosError: true,
+          response: mockErrorResponses.notFound,
+        };
+        mockAxiosInstance.get.mockRejectedValueOnce(error);
+
+        await expect(client.getFlow('nonexistent')).rejects.toThrow();
+      });
+    });
+
+    describe('createFlow', () => {
+      it('should create a new flow', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockCreatedFlow });
+
+        const flow = await client.createFlow({ label: 'New Flow' });
+
+        expect(flow).toEqual(mockCreatedFlow);
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flow',
+          expect.objectContaining({
+            label: 'New Flow',
+            type: 'tab',
+          })
+        );
+      });
+
+      it('should generate unique flow ID if not provided', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockCreatedFlow });
+
+        await client.createFlow({ label: 'New Flow' });
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flow',
+          expect.objectContaining({
+            id: expect.any(String),
+          })
+        );
+      });
+
+      it('should preserve provided flow ID', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockCreatedFlow });
+
+        await client.createFlow({ id: 'custom-id', label: 'New Flow' });
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flow',
+          expect.objectContaining({
+            id: 'custom-id',
+          })
+        );
+      });
+
+      it('should ensure unique node IDs', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockCreatedFlow });
+
+        await client.createFlow({
+          label: 'Flow with nodes',
+          nodes: [
+            { id: 'node-1', type: 'inject', x: 100, y: 100 },
+            { id: 'node-2', type: 'debug', x: 200, y: 100 },
+          ],
+        });
+
+        const callArgs = mockAxiosInstance.post.mock.calls[0][1];
+        expect(callArgs.nodes[0].id).toBeDefined();
+        expect(callArgs.nodes[1].id).toBeDefined();
+        expect(callArgs.nodes[0].id).not.toBe(callArgs.nodes[1].id);
+      });
+    });
+
+    describe('updateFlow', () => {
+      it('should update an existing flow', async () => {
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: mockFlowTab });
+
+        const flow = await client.updateFlow('flow-1', { label: 'Updated Label' });
+
+        expect(flow).toEqual(mockFlowTab);
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith('/flow/flow-1', {
+          label: 'Updated Label',
+        });
+      });
+    });
+
+    describe('deleteFlow', () => {
+      it('should delete a flow', async () => {
+        mockAxiosInstance.delete.mockResolvedValueOnce({ data: {} });
+
+        await client.deleteFlow('flow-1');
+
+        expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/flow/flow-1');
+      });
+    });
+
+    describe('getFlowsWithRev', () => {
+      it('requests the v2 API and returns rev + flows', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [mockFlowTab] },
+        });
+
+        const result = await client.getFlowsWithRev();
+
+        expect(result).toEqual({ rev: 'rev-1', flows: [mockFlowTab] });
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flows', {
+          headers: { 'Node-RED-API-Version': 'v2' },
+        });
+      });
+
+      it('rejects an unexpected v2 body shape', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: [] });
+
+        await expect(client.getFlowsWithRev()).rejects.toThrow();
+      });
+    });
+
+    describe('assertExpectedFlowRev', () => {
+      it('passes when revs match', () => {
+        expect(() => assertExpectedFlowRev('rev-1', 'rev-1', 'test')).not.toThrow();
+      });
+
+      it('throws a 409-style NodeRedError when revs differ', () => {
+        try {
+          assertExpectedFlowRev('stale', 'fresh', 'deployModifiedNodes');
+          expect.unreachable('should throw');
+        } catch (e) {
+          expect(e).toBeInstanceOf(NodeRedError);
+          const err = e as NodeRedError;
+          expect(err.statusCode).toBe(409);
+          expect(err.message).toContain('expected_rev');
+          expect(err.message).toContain('re-read flows');
+          expect(err.nodeRedResponse).toMatchObject({
+            code: 'version_mismatch',
+            expected_rev: 'stale',
+            current_rev: 'fresh',
+          });
+        }
+      });
+    });
+
+    describe('deployModifiedNodes', () => {
+      it('upserts nodes by id and POSTs the caller expected_rev', async () => {
+        const existingNodeA = { id: 'node-a', type: 'inject', z: 'tab-1' };
+        const existingNodeB = { id: 'node-b', type: 'debug', z: 'tab-1' };
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [existingNodeA, existingNodeB] },
+        });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        const updatedNodeA = { id: 'node-a', type: 'inject', z: 'tab-1', name: 'renamed' };
+        const newNodeC = { id: 'node-c', type: 'function', z: 'tab-1' };
+
+        const result = await client.deployModifiedNodes([updatedNodeA, newNodeC], 'rev-1');
+
+        expect(result).toEqual({ rev: 'rev-2' });
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          { rev: 'rev-1', flows: [updatedNodeA, existingNodeB, newNodeC] },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'nodes',
+            },
+          }
+        );
+      });
+
+      it('fails fast when expected_rev does not match the current rev', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-fresh', flows: [{ id: 'node-a', type: 'inject', z: 'tab-1' }] },
+        });
+
+        await expect(
+          client.deployModifiedNodes([{ id: 'node-a', type: 'inject', z: 'tab-1' }], 'rev-stale')
+        ).rejects.toThrow(/expected_rev 'rev-stale'/);
+        expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+      });
+
+      it('includes top-level credentials when provided', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [{ id: 'node-a', type: 'mqtt-broker' }] },
+        });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        const credentials = { 'node-a': { user: 'u', password: 'p' } };
+        await client.deployModifiedNodes(
+          [{ id: 'node-a', type: 'mqtt-broker', name: 'broker' }],
+          'rev-1',
+          credentials
+        );
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          {
+            rev: 'rev-1',
+            flows: [{ id: 'node-a', type: 'mqtt-broker', name: 'broker' }],
+            credentials,
+          },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'nodes',
+            },
+          }
+        );
+      });
+
+      it('rejects an unexpected v2 deploy response shape', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [] },
+        });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { ok: true } });
+
+        await expect(
+          client.deployModifiedNodes([{ id: 'node-a', type: 'inject', z: 'tab-1' }], 'rev-1')
+        ).rejects.toThrow(/v2 deploy response/);
+      });
+
+      it('surfaces a clear conflict message on HTTP 409 version_mismatch', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows: [] } });
+        mockAxiosInstance.post.mockRejectedValueOnce({
+          response: {
+            status: 409,
+            statusText: 'Conflict',
+            data: { code: 'version_mismatch', message: 'Error' },
+            headers: { 'content-type': 'application/json' },
+            config: { method: 'post', url: '/flows' },
+          },
+        });
+
+        await expect(
+          client.deployModifiedNodes([{ id: 'node-a', type: 'inject', z: 'tab-1' }], 'rev-1')
+        ).rejects.toThrow(/revision \(rev\) is out of date/);
+      });
+
+      it('propagates errors from the deploy request', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows: [] } });
+        mockAxiosInstance.post.mockRejectedValueOnce(new Error('conflict'));
+
+        await expect(
+          client.deployModifiedNodes([{ id: 'node-a', type: 'inject', z: 'tab-1' }], 'rev-1')
+        ).rejects.toThrow();
+      });
+    });
+
+    describe('replaceFlowTabInFlatFlows', () => {
+      it('replaces only the target tab and its children, keeping other tabs intact', () => {
+        const flat = [
+          { id: 'tab-a', type: 'tab', label: 'A' },
+          { id: 'tab-b', type: 'tab', label: 'B' },
+          { id: 'n-a1', type: 'inject', z: 'tab-a', wires: [[]] },
+          { id: 'n-a2', type: 'debug', z: 'tab-a', wires: [] },
+          { id: 'n-b1', type: 'inject', z: 'tab-b', wires: [[]] },
+          { id: 'broker-1', type: 'mqtt-broker', name: 'global' },
+        ];
+
+        const merged = replaceFlowTabInFlatFlows(flat, 'tab-a', {
+          label: 'A-renamed',
+          nodes: [{ id: 'n-a1', type: 'inject', name: 'only-one', wires: [[]] }],
+        });
+
+        expect(merged.find(n => n.id === 'tab-a')).toMatchObject({
+          type: 'tab',
+          label: 'A-renamed',
+        });
+        expect(merged.find(n => n.id === 'n-a1')).toMatchObject({
+          z: 'tab-a',
+          name: 'only-one',
+        });
+        // Omitted child deleted
+        expect(merged.find(n => n.id === 'n-a2')).toBeUndefined();
+        // Other tab + global config preserved
+        expect(merged.find(n => n.id === 'tab-b')).toEqual(flat[1]);
+        expect(merged.find(n => n.id === 'n-b1')).toEqual(flat[4]);
+        expect(merged.find(n => n.id === 'broker-1')).toEqual(flat[5]);
+      });
+
+      it('throws when the tab id does not exist', () => {
+        expect(() =>
+          replaceFlowTabInFlatFlows([{ id: 'tab-a', type: 'tab', label: 'A' }], 'missing', {
+            nodes: [],
+          })
+        ).toThrow(/Flow 'missing' not found/);
+      });
+    });
+
+    describe('deployFlow', () => {
+      it('merges the tab, POSTs expected_rev, and deploys with type "flows" by default', async () => {
+        const flat = [
+          { id: 'tab-a', type: 'tab', label: 'A' },
+          { id: 'tab-b', type: 'tab', label: 'B' },
+          { id: 'n-a1', type: 'inject', z: 'tab-a', wires: [[]] },
+          { id: 'n-b1', type: 'debug', z: 'tab-b', wires: [] },
+        ];
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows: flat } });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        const result = await client.deployFlow(
+          'tab-a',
+          {
+            label: 'A2',
+            nodes: [{ id: 'n-a1', type: 'inject', name: 'kept', wires: [[]] }],
+          },
+          { expectedRev: 'rev-1' }
+        );
+
+        expect(result).toEqual({ rev: 'rev-2' });
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          {
+            rev: 'rev-1',
+            flows: expect.arrayContaining([
+              expect.objectContaining({ id: 'tab-a', label: 'A2' }),
+              expect.objectContaining({ id: 'n-a1', z: 'tab-a', name: 'kept' }),
+              expect.objectContaining({ id: 'tab-b', label: 'B' }),
+              expect.objectContaining({ id: 'n-b1', z: 'tab-b' }),
+            ]),
+          },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'flows',
+            },
+          }
+        );
+        const posted = mockAxiosInstance.post.mock.calls[0][1];
+        expect(posted.flows).toHaveLength(4);
+      });
+
+      it('fails fast when expected_rev is stale', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: {
+            rev: 'rev-fresh',
+            flows: [{ id: 'tab-a', type: 'tab', label: 'A' }],
+          },
+        });
+
+        await expect(
+          client.deployFlow('tab-a', { nodes: [] }, { expectedRev: 'rev-stale' })
+        ).rejects.toThrow(/expected_rev 'rev-stale'/);
+        expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+      });
+
+      it('allows Deployment-Type "nodes"', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: {
+            rev: 'rev-1',
+            flows: [{ id: 'tab-a', type: 'tab', label: 'A' }],
+          },
+        });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        await client.deployFlow(
+          'tab-a',
+          { label: 'A', nodes: [] },
+          { expectedRev: 'rev-1', type: 'nodes' }
+        );
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          expect.objectContaining({ rev: 'rev-1' }),
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              'Node-RED-Deployment-Type': 'nodes',
+            }),
+          })
+        );
+      });
+
+      it('errors when the tab id does not exist', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [{ id: 'tab-a', type: 'tab', label: 'A' }] },
+        });
+
+        await expect(
+          client.deployFlow('nope', { nodes: [] }, { expectedRev: 'rev-1' })
+        ).rejects.toThrow(/Flow 'nope' not found/);
+        expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+      });
+
+      it('surfaces a clear conflict message on HTTP 409 version_mismatch', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: { rev: 'rev-1', flows: [{ id: 'tab-a', type: 'tab', label: 'A' }] },
+        });
+        mockAxiosInstance.post.mockRejectedValueOnce({
+          response: {
+            status: 409,
+            statusText: 'Conflict',
+            data: { code: 'version_mismatch', message: 'Error' },
+            headers: { 'content-type': 'application/json' },
+            config: { method: 'post', url: '/flows' },
+          },
+        });
+
+        await expect(
+          client.deployFlow('tab-a', { nodes: [] }, { expectedRev: 'rev-1' })
+        ).rejects.toThrow(/revision \(rev\) is out of date/);
+      });
+    });
+
+    describe('deployFlows', () => {
+      it('re-posts the current v2 flows+rev for default full type', async () => {
+        const flows = [{ id: 'flow-1', type: 'tab', label: 'Test Flow' }];
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows } });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        const result = await client.deployFlows();
+
+        expect(result).toEqual({ rev: 'rev-2' });
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flows', {
+          headers: { 'Node-RED-API-Version': 'v2' },
+        });
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          { rev: 'rev-1', flows },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'full',
+            },
+          }
+        );
+      });
+
+      it('uses a caller-provided flows+rev body without a second GET', async () => {
+        const flows = [{ id: 'node-a', type: 'inject', z: 'tab-1' }];
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-9' } });
+
+        const result = await client.deployFlows({
+          type: 'nodes',
+          rev: 'rev-1',
+          flows,
+          credentials: { 'node-a': { user: 'u' } },
+        });
+
+        expect(result).toEqual({ rev: 'rev-9' });
+        expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          { rev: 'rev-1', flows, credentials: { 'node-a': { user: 'u' } } },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'nodes',
+            },
+          }
+        );
+      });
+
+      it('re-posts the current v2 flows+rev for type "nodes"', async () => {
+        const flows = [{ id: 'node-a', type: 'inject', z: 'tab-1' }];
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows } });
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-2' } });
+
+        await client.deployFlows({ type: 'nodes' });
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/flows',
+          { rev: 'rev-1', flows },
+          {
+            headers: {
+              'Node-RED-API-Version': 'v2',
+              'Node-RED-Deployment-Type': 'nodes',
+            },
+          }
+        );
+      });
+
+      it('posts without a body for type "reload"', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: { rev: 'rev-1' } });
+
+        const result = await client.deployFlows({ type: 'reload' });
+
+        expect(result).toEqual({ rev: 'rev-1' });
+        expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/flows', undefined, {
+          headers: {
+            'Node-RED-API-Version': 'v2',
+            'Node-RED-Deployment-Type': 'reload',
+          },
+        });
+      });
+    });
+
+    describe('enableFlow', () => {
+      it('enables a flow via PUT and does not call a null-body deploy', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockDisabledFlow });
+        mockAxiosInstance.put.mockResolvedValueOnce({
+          data: { ...mockDisabledFlow, disabled: false },
+        });
+
+        await client.enableFlow('flow-disabled');
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flow/flow-disabled');
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+          '/flow/flow-disabled',
+          expect.objectContaining({ disabled: false })
+        );
+        expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('disableFlow', () => {
+      it('disables a flow via PUT and does not call a null-body deploy', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockFlowTab });
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: { ...mockFlowTab, disabled: true } });
+
+        await client.disableFlow('flow-1');
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flow/flow-1');
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+          '/flow/flow-1',
+          expect.objectContaining({ disabled: true })
+        );
+        expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('Node Management', () => {
+    describe('getNodeTypes', () => {
+      it('should return all node types', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockNodeTypes });
+
+        const nodeTypes = await client.getNodeTypes();
+
+        expect(nodeTypes).toEqual(mockNodeTypes);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/nodes');
+      });
+    });
+
+    describe('getNodeType', () => {
+      it('should return specific node type', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockNodeTypes[0] });
+
+        const nodeType = await client.getNodeType('node-red/inject');
+
+        expect(nodeType).toEqual(mockNodeTypes[0]);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/nodes/node-red/inject');
+      });
+    });
+
+    describe('enableNodeType', () => {
+      it('should enable a node type', async () => {
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: {} });
+
+        await client.enableNodeType('node-red/inject');
+
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith('/nodes/node-red/inject', {
+          enabled: true,
+        });
+      });
+    });
+
+    describe('disableNodeType', () => {
+      it('should disable a node type', async () => {
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: {} });
+
+        await client.disableNodeType('node-red/inject');
+
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith('/nodes/node-red/inject', {
+          enabled: false,
+        });
+      });
+    });
+
+    describe('installNodeModule', () => {
+      it('should install a module without version', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        await client.installNodeModule('node-red-contrib-test');
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/nodes', {
+          module: 'node-red-contrib-test',
+        });
+      });
+
+      it('should install a module with specific version', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        await client.installNodeModule('node-red-contrib-test', '1.0.0');
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/nodes', {
+          module: 'node-red-contrib-test@1.0.0',
+        });
+      });
+    });
+
+    describe('uninstallNodeModule', () => {
+      it('should uninstall a module', async () => {
+        mockAxiosInstance.delete.mockResolvedValueOnce({ data: {} });
+
+        await client.uninstallNodeModule('node-red-contrib-test');
+
+        expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/nodes/node-red-contrib-test');
+      });
+    });
+  });
+
+  describe('Module Management', () => {
+    describe('searchModules', () => {
+      it('should search npm registry for modules', async () => {
+        (axios.get as Mock).mockResolvedValueOnce({ data: mockNpmSearchResponse });
+
+        const result = await client.searchModules('test');
+
+        expect(result).toBeDefined();
+        expect(result.modules).toBeDefined();
+        expect(Array.isArray(result.modules)).toBe(true);
+        expect(axios.get).toHaveBeenCalledWith(
+          'https://registry.npmjs.org/-/v1/search',
+          expect.objectContaining({
+            params: expect.objectContaining({
+              text: 'node-red test',
+            }),
+          })
+        );
+      });
+
+      it('should filter by contrib category', async () => {
+        (axios.get as Mock).mockResolvedValueOnce({ data: mockNpmSearchResponse });
+
+        await client.searchModules('test', 'contrib');
+
+        expect(axios.get).toHaveBeenCalledWith(
+          'https://registry.npmjs.org/-/v1/search',
+          expect.objectContaining({
+            params: expect.objectContaining({
+              text: 'node-red-contrib test',
+            }),
+          })
+        );
+      });
+
+      it('should filter by dashboard category', async () => {
+        (axios.get as Mock).mockResolvedValueOnce({ data: mockNpmSearchResponse });
+
+        await client.searchModules('test', 'dashboard');
+
+        expect(axios.get).toHaveBeenCalledWith(
+          'https://registry.npmjs.org/-/v1/search',
+          expect.objectContaining({
+            params: expect.objectContaining({
+              text: 'node-red-dashboard test',
+            }),
+          })
+        );
+      });
+
+      it('should respect limit parameter', async () => {
+        (axios.get as Mock).mockResolvedValueOnce({ data: mockNpmSearchResponse });
+
+        await client.searchModules('test', 'all', 5);
+
+        expect(axios.get).toHaveBeenCalledWith(
+          'https://registry.npmjs.org/-/v1/search',
+          expect.objectContaining({
+            params: expect.objectContaining({
+              size: 5,
+            }),
+          })
+        );
+      });
+    });
+
+    describe('installModule', () => {
+      it('should install a module successfully', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        const result = await client.installModule('node-red-contrib-test');
+
+        expect(result.success).toBe(true);
+        expect(result.module).toBe('node-red-contrib-test');
+        expect(result.message).toContain('installed successfully');
+      });
+
+      it('should install a module with version', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        const result = await client.installModule('node-red-contrib-test', '1.0.0');
+
+        expect(result.success).toBe(true);
+        expect(result.version).toBe('1.0.0');
+      });
+
+      it('should handle installation failure', async () => {
+        mockAxiosInstance.post.mockRejectedValueOnce(new Error('Module not found'));
+
+        const result = await client.installModule('nonexistent-module');
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('Failed to install');
+      });
+    });
+
+    describe('getInstalledModules', () => {
+      it('should return installed modules', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({
+          data: [
+            { module: 'node-red-contrib-mqtt', version: '1.2.0', name: 'mqtt' },
+            { module: 'node-red-dashboard', version: '3.6.0', name: 'dashboard' },
+            { module: 'node-red', version: '3.1.0', name: 'inject' }, // Should be filtered out
+          ],
+        });
+
+        const modules = await client.getInstalledModules();
+
+        expect(modules).toBeDefined();
+        expect(Array.isArray(modules)).toBe(true);
+        // Should not include core 'node-red' module
+        expect(modules.find(m => m.name === 'node-red')).toBeUndefined();
+      });
+    });
+  });
+
+  describe('Runtime Information', () => {
+    describe('getSettings', () => {
+      it('should return runtime settings', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockSettings });
+
+        const settings = await client.getSettings();
+
+        expect(settings).toEqual(mockSettings);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/settings');
+      });
+    });
+
+    describe('getRuntimeInfo', () => {
+      // getRuntimeInfo now reads two endpoints, so route by URL rather than
+      // relying on call order.
+      const routeGet =
+        (overrides: Record<string, unknown> = {}) =>
+        (url: string) => {
+          if (url in overrides) {
+            const value = overrides[url];
+            return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+          }
+          if (url === '/diagnostics') return Promise.resolve({ data: mockDiagnosticsReport });
+          if (url === '/flows') return Promise.resolve({ data: mockFlatFlows });
+          if (url === '/settings') return Promise.resolve({ data: mockSettings });
+          return Promise.reject(new Error(`unexpected GET ${url}`));
+        };
+
+      const httpError = (status: number): AxiosError => {
+        const err = new Error(`HTTP ${status}`) as AxiosError;
+        err.isAxiosError = true;
+        err.response = { status } as NonNullable<AxiosError['response']>;
+        return err;
+      };
+
+      it('reads /diagnostics, not the nonexistent /admin/info', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet());
+
+        await client.getRuntimeInfo();
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/diagnostics');
+        expect(mockAxiosInstance.get).not.toHaveBeenCalledWith('/admin/info');
+      });
+
+      it('preserves the NodeRedRuntimeInfo contract rather than passing the report through', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet());
+
+        const info = await client.getRuntimeInfo();
+
+        expect(info.version).toBe('3.1.0');
+        // /diagnostics reports module -> version string; the contract is
+        // module -> { version }.
+        expect(info.modules).toEqual({
+          'node-red-contrib-mqtt': { version: '1.2.0' },
+          'node-red-dashboard': { version: '3.6.0' },
+        });
+        // nodejs.memoryUsage is already bytes with matching keys, narrowed to
+        // the four documented fields.
+        expect(info.memory).toEqual({
+          rss: 100000000,
+          heapTotal: 50000000,
+          heapUsed: 30000000,
+          external: 5000000,
+        });
+        expect(info.flowFile).toBe('flows.json');
+        expect(info.source).toBe('diagnostics');
+      });
+
+      it('counts node instances per type from the flat /flows array', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet());
+
+        const info = await client.getRuntimeInfo();
+
+        // /diagnostics carries no per-type counts, so these come from /flows.
+        // Tabs, the subflow definition and the group are containers and are
+        // skipped; config nodes, disabled nodes, subflow instances and the
+        // nodes inside a subflow definition are all counted.
+        expect(info.nodes).toEqual({
+          'mqtt-broker': { count: 1 },
+          inject: { count: 2 },
+          debug: { count: 1 },
+          function: { count: 2 },
+          'mqtt in': { count: 1 },
+          'subflow:sf-1': { count: 1 },
+        });
+      });
+
+      it('surfaces the runtime state fields the report adds', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet());
+
+        const info = await client.getRuntimeInfo();
+
+        expect(info.isStarted).toBe(true);
+        expect(info.flows).toEqual({ state: 'start', started: true });
+        expect(info.nodejs?.version).toBe('v22.11.0');
+        expect(info.os?.type).toBe('Linux');
+      });
+
+      it("omits flowFile when /diagnostics reports the 'UNSET' sentinel", async () => {
+        const report = structuredClone(mockDiagnosticsReport);
+        report.runtime.settings.flowFile = 'UNSET';
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': { data: report } }));
+
+        const info = await client.getRuntimeInfo();
+
+        expect(info).not.toHaveProperty('flowFile');
+      });
+
+      it('narrows nodejs, os and flows to the documented, type-checked fields', async () => {
+        const report = structuredClone(mockDiagnosticsReport) as any;
+        // Fields a future Node-RED could add (its commented-out "admin" scope
+        // adds these), plus values of the wrong type.
+        report.os.hostname = 'secret-host';
+        report.os.networkInterfaces = { eth0: [] };
+        report.os.uptime = 'a while';
+        report.nodejs.execPath = '/usr/bin/node';
+        report.nodejs.arch = 64;
+        report.runtime.flows.started = 'yes';
+        report.runtime.isStarted = 'true';
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': { data: report } }));
+
+        const info = await client.getRuntimeInfo();
+
+        expect(info.os).toEqual({
+          type: 'Linux',
+          release: '6.1.0',
+          arch: 'x64',
+          platform: 'linux',
+          totalmem: 8000000000,
+          freemem: 4000000000,
+          containerised: false,
+        });
+        expect(info.nodejs).toEqual({
+          version: 'v22.11.0',
+          platform: 'linux',
+          memoryUsage: mockDiagnosticsReport.nodejs.memoryUsage,
+        });
+        expect(info.flows).toEqual({ state: 'start' });
+        expect(info).not.toHaveProperty('isStarted');
+      });
+
+      it.each([
+        ['disabled in settings', 403],
+        ['absent on older Node-RED', 404],
+      ])('falls back to /settings when diagnostics are %s', async (_label, status) => {
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': httpError(status) }));
+
+        const info = await client.getRuntimeInfo();
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/settings');
+        expect(info.source).toBe('settings');
+        expect(info.version).toBe(mockSettings.version);
+        // Still contract-shaped, so healthCheck and clients don't break.
+        expect(info.modules).toEqual({});
+        expect(info.memory).toEqual({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0 });
+        expect(info.nodes).toBeDefined();
+      });
+
+      it('propagates a genuine diagnostics failure instead of masking it as a fallback', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': httpError(500) }));
+
+        await expect(client.getRuntimeInfo()).rejects.toThrow();
+      });
+
+      // The inner /flows and /settings reads must not be wrapped twice: a
+      // re-wrapped NodeRedError has no .response, so it would collapse to 500.
+      const upstream = (response: (typeof mockErrorResponses)[keyof typeof mockErrorResponses]) =>
+        Object.assign(new Error(`HTTP ${response.status}`), { isAxiosError: true, response });
+
+      it.each([
+        ['/flows', mockErrorResponses.unauthorized, 401],
+        ['/diagnostics', mockErrorResponses.unauthorized, 401],
+        ['/flows', mockErrorResponses.notFound, 404],
+      ])('surfaces the real status when %s fails (%#)', async (url, response, status) => {
+        mockAxiosInstance.get.mockImplementation(routeGet({ [url]: upstream(response) }));
+
+        await expect(client.getRuntimeInfo()).rejects.toMatchObject({
+          statusCode: status,
+          nodeRedStatusCode: status,
+        });
+      });
+
+      it('surfaces the real status when the /settings fallback fails', async () => {
+        mockAxiosInstance.get.mockImplementation(
+          routeGet({
+            '/diagnostics': httpError(404),
+            '/settings': upstream(mockErrorResponses.unauthorized),
+          })
+        );
+
+        await expect(client.getRuntimeInfo()).rejects.toMatchObject({
+          statusCode: 401,
+          nodeRedStatusCode: 401,
+        });
+      });
+
+      // A login page served with HTTP 200 must fail like getFlows() does, not
+      // map to a plausible empty result.
+      const loginPage = { data: mockErrorResponses.htmlResponse.data };
+
+      it.each([
+        ['/flows and /diagnostics', { '/flows': loginPage, '/diagnostics': loginPage }],
+        ['/flows', { '/flows': loginPage }],
+        ['/diagnostics', { '/diagnostics': loginPage }],
+        ['the /settings fallback', { '/diagnostics': httpError(403), '/settings': loginPage }],
+      ])('rejects an HTML body from %s as a 502', async (_label, overrides) => {
+        mockAxiosInstance.get.mockImplementation(routeGet(overrides));
+
+        await expect(client.getRuntimeInfo()).rejects.toMatchObject({
+          statusCode: 502,
+          message: expect.stringContaining('Node-RED returned HTML content'),
+        });
+      });
+
+      it('rejects an empty /diagnostics body instead of treating it as unavailable', async () => {
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': { data: '' } }));
+        await expect(client.getRuntimeInfo()).rejects.toThrow('Node-RED returned HTML content');
+
+        mockAxiosInstance.get.mockClear();
+        mockAxiosInstance.get.mockImplementation(routeGet({ '/diagnostics': { data: null } }));
+        await expect(client.getRuntimeInfo()).rejects.toThrow('instead of diagnostics data');
+        expect(mockAxiosInstance.get).not.toHaveBeenCalledWith('/settings');
+      });
+
+      it('rejects a non-array /flows body', async () => {
+        mockAxiosInstance.get.mockImplementation(
+          routeGet({ '/flows': { data: { rev: 'abc', flows: [] } } })
+        );
+
+        await expect(client.getRuntimeInfo()).rejects.toThrow(
+          'unexpected object instead of flow data'
+        );
+      });
+    });
+
+    describe('getFlowStatus', () => {
+      it('should return flow status', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockFlowStatus });
+
+        const status = await client.getFlowStatus();
+
+        expect(status).toEqual(mockFlowStatus);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/flows/state');
+      });
+    });
+
+    describe('startFlows', () => {
+      it('should start all flows', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        await client.startFlows();
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/flows/state', { state: 'start' });
+      });
+    });
+
+    describe('stopFlows', () => {
+      it('should stop all flows', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        await client.stopFlows();
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/flows/state', { state: 'stop' });
+      });
+    });
+
+    describe('getVersion', () => {
+      it('should return Node-RED version', async () => {
+        mockAxiosInstance.get.mockImplementation((url: string) => {
+          if (url === '/diagnostics') return Promise.resolve({ data: mockDiagnosticsReport });
+          if (url === '/flows') return Promise.resolve({ data: mockFlows });
+          return Promise.reject(new Error(`unexpected GET ${url}`));
+        });
+
+        const version = await client.getVersion();
+
+        expect(version).toBe('3.1.0');
+      });
+    });
+  });
+
+  describe('Context Management', () => {
+    describe('getGlobalContext', () => {
+      it('should get all global context', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockGlobalContext });
+
+        const context = await client.getGlobalContext();
+
+        expect(context).toEqual(mockGlobalContext);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/context/global');
+      });
+
+      it('should get specific global context key', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { counter: 42 } });
+
+        const context = await client.getGlobalContext('counter');
+
+        expect(context).toEqual({ counter: 42 });
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/context/global/counter');
+      });
+    });
+
+    describe('setGlobalContext', () => {
+      it('should set global context value', async () => {
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: {} });
+
+        await client.setGlobalContext('newKey', 'newValue');
+
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith('/context/global/newKey', {
+          value: 'newValue',
+        });
+      });
+    });
+
+    describe('deleteGlobalContext', () => {
+      it('should delete global context key', async () => {
+        mockAxiosInstance.delete.mockResolvedValueOnce({ data: {} });
+
+        await client.deleteGlobalContext('counter');
+
+        expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/context/global/counter');
+      });
+    });
+
+    describe('getFlowContext', () => {
+      it('should get flow context', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { flowVar: 'value' } });
+
+        const context = await client.getFlowContext('flow-1');
+
+        expect(context).toEqual({ flowVar: 'value' });
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/context/flow/flow-1');
+      });
+
+      it('should get specific flow context key', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: { flowVar: 'value' } });
+
+        const context = await client.getFlowContext('flow-1', 'flowVar');
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/context/flow/flow-1/flowVar');
+      });
+    });
+
+    describe('setFlowContext', () => {
+      it('should set flow context value', async () => {
+        mockAxiosInstance.put.mockResolvedValueOnce({ data: {} });
+
+        await client.setFlowContext('flow-1', 'flowVar', 'newValue');
+
+        expect(mockAxiosInstance.put).toHaveBeenCalledWith('/context/flow/flow-1/flowVar', {
+          value: 'newValue',
+        });
+      });
+    });
+  });
+
+  describe('Library Management', () => {
+    describe('getLibraryEntries', () => {
+      it('should get library entries with default type', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockLibraryEntries });
+
+        const entries = await client.getLibraryEntries();
+
+        expect(entries).toEqual(mockLibraryEntries);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/library/flows');
+      });
+
+      it('should get library entries with custom type', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockLibraryEntries });
+
+        const entries = await client.getLibraryEntries('functions');
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/library/functions');
+      });
+    });
+
+    describe('saveToLibrary', () => {
+      it('should save to library', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+
+        await client.saveToLibrary('flows', 'myflow', { id: 'flow-1' });
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/library/flows/myflow', {
+          id: 'flow-1',
+        });
+      });
+    });
+
+    describe('loadFromLibrary', () => {
+      it('should load from library', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockFlowTab });
+
+        const data = await client.loadFromLibrary('flows', 'myflow');
+
+        expect(data).toEqual(mockFlowTab);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/library/flows/myflow');
+      });
+    });
+  });
+
+  describe('Authentication', () => {
+    describe('login', () => {
+      it('should login successfully', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockAuthToken });
+
+        const result = await client.login('admin', 'password');
+
+        expect(result).toEqual(mockAuthToken);
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/auth/token', {
+          client_id: 'node-red-admin',
+          grant_type: 'password',
+          scope: '*',
+          username: 'admin',
+          password: 'password',
+        });
+      });
+
+      it('requests the derived scope rather than a hardcoded "*"', async () => {
+        vi.mocked(getNodeRedAuthScope).mockReturnValueOnce('read');
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockAuthToken });
+
+        await client.login('mcpread', 'password');
+
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+          '/auth/token',
+          expect.objectContaining({ scope: 'read' })
+        );
+      });
+    });
+
+    describe('refreshToken', () => {
+      it('should refresh token', async () => {
+        mockAxiosInstance.post.mockResolvedValueOnce({ data: mockAuthToken });
+
+        const result = await client.refreshToken('refresh-token');
+
+        expect(result).toEqual(mockAuthToken);
+        expect(mockAxiosInstance.post).toHaveBeenCalledWith('/auth/token', {
+          client_id: 'node-red-admin',
+          grant_type: 'refresh_token',
+          refresh_token: 'refresh-token',
+        });
+      });
+    });
+
+    describe('getAuthStatus', () => {
+      it('should get auth status', async () => {
+        mockAxiosInstance.get.mockResolvedValueOnce({ data: mockAuthStatus });
+
+        const status = await client.getAuthStatus();
+
+        expect(status).toEqual(mockAuthStatus);
+        expect(mockAxiosInstance.get).toHaveBeenCalledWith('/auth/login');
+      });
+    });
+  });
+
+  describe('Health Check', () => {
+    it('should return healthy status when all checks pass', async () => {
+      mockAxiosInstance.get.mockImplementation((url: string) => {
+        if (url === '/settings') return Promise.resolve({ data: mockSettings });
+        if (url === '/flows') return Promise.resolve({ data: mockFlows });
+        if (url === '/diagnostics') return Promise.resolve({ data: mockDiagnosticsReport });
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+      });
+
+      const health = await client.healthCheck();
+
+      expect(health.healthy).toBe(true);
+      expect(health.details).toHaveProperty('version');
+      expect(health.details).toHaveProperty('flowCount');
+    });
+
+    it.each([
+      ['available', { data: mockDiagnosticsReport }],
+      ['unavailable', null],
+    ])('requests each endpoint once when diagnostics are %s', async (_label, diagnostics) => {
+      mockAxiosInstance.get.mockImplementation((url: string) => {
+        if (url === '/settings') return Promise.resolve({ data: mockSettings });
+        if (url === '/flows') return Promise.resolve({ data: mockFlows });
+        if (url === '/diagnostics') {
+          return diagnostics
+            ? Promise.resolve(diagnostics)
+            : Promise.reject(
+                Object.assign(new Error('HTTP 403'), {
+                  isAxiosError: true,
+                  response: { status: 403 },
+                })
+              );
+        }
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+      });
+
+      const health = await client.healthCheck();
+
+      expect(health.healthy).toBe(true);
+      const urls = mockAxiosInstance.get.mock.calls.map(([url]: [string]) => url);
+      expect(urls.sort()).toEqual(['/diagnostics', '/flows', '/settings']);
+    });
+
+    it('should return unhealthy status on error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(new Error('Connection failed'));
+
+      const health = await client.healthCheck();
+
+      expect(health.healthy).toBe(false);
+      expect(health.details).toHaveProperty('error');
+    });
+
+    it('reports unhealthy when /diagnostics answers 200 with a login page', async () => {
+      mockAxiosInstance.get.mockImplementation((url: string) => {
+        if (url === '/settings') return Promise.resolve({ data: mockSettings });
+        if (url === '/flows') return Promise.resolve({ data: mockFlows });
+        if (url === '/diagnostics') {
+          return Promise.resolve({ data: mockErrorResponses.htmlResponse.data });
+        }
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+      });
+
+      const health = await client.healthCheck();
+
+      expect(health.healthy).toBe(false);
+      expect(health.details.error).toContain('instead of diagnostics data');
+    });
+  });
+
+  describe('Circuit Breaker', () => {
+    it('should return circuit breaker stats', () => {
+      const stats = client.getCircuitBreakerStats();
+
+      expect(stats).toHaveProperty('state');
+      expect(stats).toHaveProperty('failureCount');
+      expect(stats).toHaveProperty('successCount');
+    });
+
+    it('should reset circuit breaker', () => {
+      client.resetCircuitBreaker();
+
+      const stats = client.getCircuitBreakerStats();
+      expect(stats.failureCount).toBe(0);
+      expect(stats.state).toBe('closed');
+    });
+  });
+
+  describe('JSON Response Validation', () => {
+    it('should throw error when response data is HTML string with Node-RED content', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: 'Node-RED dashboard login page content',
+        headers: { 'content-type': 'application/json' },
+      });
+
+      await expect(client.getFlows()).rejects.toThrow(/HTML content instead of flow data/);
+    });
+
+    it('should throw error when response data contains Node-RED HTML', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: '<!DOCTYPE html><html><title>Node-RED</title><body>Login</body></html>',
+        headers: { 'content-type': 'application/json' },
+      });
+
+      await expect(client.getFlows()).rejects.toThrow(/HTML content instead of flow data/);
+    });
+
+    it('should accept valid array response', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: mockFlows,
+        headers: { 'content-type': 'application/json' },
+      });
+
+      const flows = await client.getFlows();
+      expect(Array.isArray(flows)).toBe(true);
+    });
+  });
+
+  describe('installNodeModule — input validation', () => {
+    it('should throw for module name with spaces', async () => {
+      await expect(client.installNodeModule('invalid name!')).rejects.toThrow(
+        /Invalid module name/
+      );
+    });
+
+    it('should throw for module name starting with a dash', async () => {
+      await expect(client.installNodeModule('-bad-module')).rejects.toThrow(/Invalid module name/);
+    });
+
+    it('should throw for an invalid semver version', async () => {
+      await expect(client.installNodeModule('node-red-contrib-test', 'latest')).rejects.toThrow(
+        /Invalid module version/
+      );
+    });
+
+    it.each([
+      ['@scope/node-red-contrib-test', undefined],
+      ['node-red-contrib-test', '1.2.3'],
+      ['node-red-contrib-test', '1.0.0-beta.1'],
+    ])('should accept valid input: %s@%s', async (name, version) => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: {} });
+      await expect(client.installNodeModule(name, version)).resolves.not.toThrow();
+    });
+  });
+
+  describe('getFlowSummaries — branch coverage', () => {
+    function mockFlowAndStatus(flow: object, statusFlows: object[] = []) {
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({ data: [flow] })
+        .mockResolvedValueOnce({ data: { state: 'start', flows: statusFlows } });
+    }
+
+    it('should mark flow as inactive when flow status state is stop', async () => {
+      mockFlowAndStatus(mockFlowTab, [{ id: mockFlowTab.id, type: 'tab', state: 'stop' }]);
+
+      const summaries = await client.getFlowSummaries();
+
+      expect(summaries[0]!.status).toBe('inactive');
+    });
+
+    it('should omit label when flow has no label', async () => {
+      mockFlowAndStatus(mockFlowWithoutLabel);
+
+      const summaries = await client.getFlowSummaries();
+
+      expect(summaries[0]!.label).toBeUndefined();
+    });
+
+    it('should omit nodeCount when flow has no nodes', async () => {
+      mockFlowAndStatus(mockDisabledFlow);
+
+      const summaries = await client.getFlowSummaries();
+
+      expect(summaries[0]!.nodeCount).toBeUndefined();
+    });
+
+    it('should omit info when flow info is empty', async () => {
+      const flowNoInfo = {
+        id: 'tab-1',
+        type: 'tab',
+        label: 'Flow',
+        disabled: false,
+        info: '',
+        nodes: [{ id: 'n1', type: 'inject', x: 0, y: 0 }],
+      };
+      mockFlowAndStatus(flowNoInfo);
+
+      const summaries = await client.getFlowSummaries();
+
+      expect(summaries[0]!.info).toBeUndefined();
+    });
+
+    it('should exclude config nodes from default summary', async () => {
+      const tab = {
+        id: 'tab-1',
+        type: 'tab',
+        label: 'Flow',
+        disabled: false,
+        nodes: [{ id: 'n1', type: 'inject', x: 0, y: 0 }],
+      };
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({ data: [tab, mockConfigNode] })
+        .mockResolvedValueOnce({ data: { state: 'start', flows: [] } });
+
+      const summaries = await client.getFlowSummaries();
+
+      expect(summaries.find(s => s.id === mockConfigNode.id)).toBeUndefined();
+      expect(summaries.find(s => s.id === 'tab-1')).toBeDefined();
+    });
+  });
+
+  describe('createFlow — node ID generation', () => {
+    it('should generate IDs for nodes that have no id', async () => {
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: mockCreatedFlow });
+
+      await client.createFlow({
+        label: 'Flow',
+        nodes: [
+          { ...mockFlowTab.nodes[0], id: '' } as any,
+          { ...mockFlowTab.nodes[1], id: undefined } as any,
+        ],
+      });
+
+      const posted = mockAxiosInstance.post.mock.calls[0][1];
+      expect(posted.nodes[0].id).toBeTruthy();
+      expect(posted.nodes[1].id).toBeTruthy();
+    });
+  });
+
+  describe('Error propagation', () => {
+    let err: Error;
+    beforeEach(() => {
+      err = new Error('API failure');
+    });
+
+    it('createFlow propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.createFlow({ label: 'x' })).rejects.toThrow();
+    });
+
+    it('updateFlow propagates error', async () => {
+      mockAxiosInstance.put.mockRejectedValueOnce(err);
+      await expect(client.updateFlow('flow-1', {})).rejects.toThrow();
+    });
+
+    it('deleteFlow propagates error', async () => {
+      mockAxiosInstance.delete.mockRejectedValueOnce(err);
+      await expect(client.deleteFlow('flow-1')).rejects.toThrow();
+    });
+
+    it('deployFlows propagates error', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: { rev: 'rev-1', flows: [] } });
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.deployFlows()).rejects.toThrow();
+    });
+
+    it('enableFlow propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.enableFlow('flow-1')).rejects.toThrow();
+    });
+
+    it('disableFlow propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.disableFlow('flow-1')).rejects.toThrow();
+    });
+
+    it('getNodeTypes propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getNodeTypes()).rejects.toThrow();
+    });
+
+    it('getNodeType propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getNodeType('inject')).rejects.toThrow();
+    });
+
+    it('enableNodeType propagates error', async () => {
+      mockAxiosInstance.put.mockRejectedValueOnce(err);
+      await expect(client.enableNodeType('inject')).rejects.toThrow();
+    });
+
+    it('disableNodeType propagates error', async () => {
+      mockAxiosInstance.put.mockRejectedValueOnce(err);
+      await expect(client.disableNodeType('inject')).rejects.toThrow();
+    });
+
+    it('installNodeModule propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.installNodeModule('node-red-contrib-test')).rejects.toThrow();
+    });
+
+    it('uninstallNodeModule propagates error', async () => {
+      mockAxiosInstance.delete.mockRejectedValueOnce(err);
+      await expect(client.uninstallNodeModule('node-red-contrib-test')).rejects.toThrow();
+    });
+
+    it('getSettings propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getSettings()).rejects.toThrow();
+    });
+
+    it('getRuntimeInfo propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getRuntimeInfo()).rejects.toThrow();
+    });
+
+    it('getFlowStatus propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getFlowStatus()).rejects.toThrow();
+    });
+
+    it('startFlows propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.startFlows()).rejects.toThrow();
+    });
+
+    it('stopFlows propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.stopFlows()).rejects.toThrow();
+    });
+
+    it('getVersion propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getVersion()).rejects.toThrow();
+    });
+
+    it('getGlobalContext propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getGlobalContext()).rejects.toThrow();
+    });
+
+    it('setGlobalContext propagates error', async () => {
+      mockAxiosInstance.put.mockRejectedValueOnce(err);
+      await expect(client.setGlobalContext('key', 'value')).rejects.toThrow();
+    });
+
+    it('deleteGlobalContext propagates error', async () => {
+      mockAxiosInstance.delete.mockRejectedValueOnce(err);
+      await expect(client.deleteGlobalContext('key')).rejects.toThrow();
+    });
+
+    it('getFlowContext propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getFlowContext('flow-1')).rejects.toThrow();
+    });
+
+    it('setFlowContext propagates error', async () => {
+      mockAxiosInstance.put.mockRejectedValueOnce(err);
+      await expect(client.setFlowContext('flow-1', 'key', 'val')).rejects.toThrow();
+    });
+
+    it('getLibraryEntries propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getLibraryEntries()).rejects.toThrow();
+    });
+
+    it('saveToLibrary propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.saveToLibrary('flows', 'path', {})).rejects.toThrow();
+    });
+
+    it('loadFromLibrary propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.loadFromLibrary('flows', 'path')).rejects.toThrow();
+    });
+
+    it('login propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.login('user', 'pass')).rejects.toThrow();
+    });
+
+    it('refreshToken propagates error', async () => {
+      mockAxiosInstance.post.mockRejectedValueOnce(err);
+      await expect(client.refreshToken('token')).rejects.toThrow();
+    });
+
+    it('getAuthStatus propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getAuthStatus()).rejects.toThrow();
+    });
+
+    it('searchModules propagates error', async () => {
+      (axios.get as Mock).mockRejectedValueOnce(err);
+      await expect(client.searchModules('mqtt')).rejects.toThrow();
+    });
+
+    it('getInstalledModules propagates error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getInstalledModules()).rejects.toThrow();
+    });
+
+    it('getFlows propagates non-HTML error', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getFlows()).rejects.toThrow();
+    });
+
+    it('getFlowSummaries propagates error from getFlows', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(err);
+      await expect(client.getFlowSummaries()).rejects.toThrow();
+    });
+  });
+
+  describe('Auth header injection', () => {
+    it('applies resolveNodeRedAuthHeader on each request when there is no explicit auth override', async () => {
+      const requestInterceptor = mockAxiosInstance.interceptors.request.use.mock.calls[0][0];
+      const config: any = { headers: {} };
+
+      await requestInterceptor(config);
+
+      expect(resolveNodeRedAuthHeader).toHaveBeenCalledWith();
+    });
+
+    it('does not call resolveNodeRedAuthHeader when constructed with an explicit Authorization header (per-tenant client)', async () => {
+      vi.mocked(resolveNodeRedAuthHeader).mockClear();
+
+      new NodeRedAPIClient({
+        baseURL: 'http://tenant-nodered:1880',
+        headers: { Authorization: 'Bearer tenant-token' },
+      });
+      // The axios mock always returns the same shared instance object, so
+      // `.mock.calls` accumulates every client's registration — grab the
+      // most recent one (this test's tenant client), not index 0.
+      const requestCalls = mockAxiosInstance.interceptors.request.use.mock.calls;
+      const requestInterceptor = requestCalls[requestCalls.length - 1][0];
+
+      const config: any = { headers: { Authorization: 'Bearer tenant-token' } };
+      await requestInterceptor(config);
+
+      expect(resolveNodeRedAuthHeader).not.toHaveBeenCalled();
+      expect(config.headers.Authorization).toBe('Bearer tenant-token');
+    });
+  });
+
+  describe('401 handling', () => {
+    it('forces a token refresh and retries exactly once, guarded by _authRetry', async () => {
+      const responseErrorHandler = mockAxiosInstance.interceptors.response.use.mock.calls[0][1];
+      mockAxiosInstance.mockResolvedValueOnce({ data: 'retried-ok' });
+
+      const config: any = { headers: {}, _retryCount: 0 };
+      const error: any = { response: { status: 401 }, config };
+
+      const result = await responseErrorHandler(error);
+
+      expect(resolveNodeRedAuthHeader).toHaveBeenCalledWith(true);
+      expect(config._authRetry).toBe(true);
+      expect(mockAxiosInstance).toHaveBeenCalledTimes(1);
+      expect(mockAxiosInstance).toHaveBeenCalledWith(config);
+      expect(result).toEqual({ data: 'retried-ok' });
+    });
+
+    it('does not retry a second time once _authRetry is already set (no infinite loop)', async () => {
+      const responseErrorHandler = mockAxiosInstance.interceptors.response.use.mock.calls[0][1];
+      const config: any = { headers: {}, _authRetry: true, _retryCount: 3 };
+      const error: any = { response: { status: 401 }, config };
+
+      await expect(responseErrorHandler(error)).rejects.toBe(error);
+      expect(resolveNodeRedAuthHeader).not.toHaveBeenCalledWith(true);
+    });
+
+    it('skips the forced refresh when there is no refreshable auth (static Basic mode, gate off)', async () => {
+      vi.mocked(isNodeRedAdminAuthEnabled).mockReturnValueOnce(false);
+      vi.mocked(validateNodeRedAuth).mockReturnValueOnce({ type: 'basic' } as any);
+      const responseErrorHandler = mockAxiosInstance.interceptors.response.use.mock.calls[0][1];
+      const config: any = { headers: {}, _retryCount: 3 };
+      const error: any = { response: { status: 401 }, config };
+
+      await expect(responseErrorHandler(error)).rejects.toBe(error);
+      expect(resolveNodeRedAuthHeader).not.toHaveBeenCalledWith(true);
+    });
+
+    it('skips forced refresh on 401 for a client with an explicit auth override (per-tenant client)', async () => {
+      const tenantClient = new NodeRedAPIClient({
+        baseURL: 'http://tenant-nodered:1880',
+        headers: { Authorization: 'Bearer tenant-token' },
+      });
+      // Same shared-mock caveat as above: grab the most recently registered
+      // response interceptor, which belongs to this test's tenant client.
+      const responseCalls = mockAxiosInstance.interceptors.response.use.mock.calls;
+      const responseErrorHandler = responseCalls[responseCalls.length - 1][1];
+      vi.mocked(resolveNodeRedAuthHeader).mockClear();
+
+      const config: any = { headers: {}, _retryCount: 3 };
+      const error: any = { response: { status: 401 }, config };
+
+      await expect(responseErrorHandler(error)).rejects.toBe(error);
+      expect(resolveNodeRedAuthHeader).not.toHaveBeenCalled();
+      expect(tenantClient).toBeDefined();
+    });
+  });
+});

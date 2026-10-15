@@ -1,1 +1,323 @@
-# node-red-ai-access
+> **Note:** This project is derived from [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It will become **Node-RED AI Access** — a Node-RED plugin that gives AI clients temporary, owner-approved access.
+
+# 🚀 MCP Node-RED Server
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7%2B-blue.svg)](https://www.typescriptlang.org/)
+[![CI/CD](https://github.com/ziv-daniel/node-red-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ziv-daniel/node-red-mcp/actions)
+
+> A modern, production-ready Model Context Protocol (MCP) server for Node-RED
+> integration.
+
+## 🌟 Features
+
+### 🔧 23 MCP Tools
+
+Full CRUD for flows, context variables, modules, and diagnostics — plus semantic
+search, targeted node deploy, revision-safe tab deploy, and real-time error
+detection.
+
+### 📚 Prompts Library
+
+Built-in prompt templates: `debug_flow`, `explain_automation`, `audit_security`,
+`document_flow`.
+
+### 📦 MCP Resources
+
+Browse Node-RED state as structured resources: `nodered://flows`,
+`nodered://subflows`, `nodered://nodes`, `nodered://context/global`,
+`flow://<id>`, `system://runtime`.
+
+### 🔍 Semantic Search
+
+Embeddings-based search across flows and nodes via `semantic_search_flows`.
+Finds by meaning, not just keywords.
+
+### 🧠 Elicitation
+
+The server asks clarifying questions mid-call when required parameters are
+missing (MCP SDK 1.24+ elicitation).
+
+### 🚨 Real-time Error Detection
+
+`get_node_errors` connects to Node-RED's WebSocket `/comms` endpoint to detect
+nodes in error/warning state in real time.
+
+## 📋 Table of Contents
+
+- [Quick Start](#-quick-start)
+- [Available Tools](#-available-mcp-tools)
+- [Read-Only Mode](#-read-only-mode)
+- [Resources](#-mcp-resources)
+- [Prompts](#-mcp-prompts)
+- [Connecting](#-connecting-to-the-server)
+- [Node-RED Authentication](#node-red-authentication)
+- [Environment Variables](#-environment-variables)
+
+## ⚡ Quick Start
+
+### Prerequisites
+
+- **Node.js** 22+ (LTS recommended)
+- **Yarn** 4.x (automatically managed via Corepack)
+- **Docker** (optional, for containerized setup)
+
+### Native Installation
+
+```bash
+git clone https://github.com/ziv-daniel/node-red-mcp.git
+cd node-red-mcp
+yarn install
+yarn build
+```
+
+### Docker
+
+```bash
+docker run -e NODERED_URL=http://your-nodered:1880 \
+           -e NODERED_USERNAME=admin \
+           -e NODERED_PASSWORD=password \
+           -e MCP_TRANSPORT=http \
+           -p 3000:3000 \
+           ghcr.io/ziv-daniel/node-red-mcp:latest
+```
+
+## 🔧 Available MCP Tools
+
+### Flow Management
+
+| Tool                    | Description                        | Key Parameters                                   |
+| ----------------------- | ---------------------------------- | ------------------------------------------------ |
+| `get_flows`             | List flows (summary or full) + rev | `includeDetails?`, `types?`, `limit?`, `offset?` |
+| `get_flow`              | Get a specific flow + rev          | `flowId`                                         |
+| `create_flow`           | Create a new flow                  | `flowData`, `validate?`                          |
+| `replace_flow`          | Replace entire tab (PUT, no rev)   | `flowId`, `flowData`, `validate?`                |
+| `update_flow`           | Deprecated alias for replace_flow  | `flowId`, `flowData`, `validate?`                |
+| `deploy_flow`           | Replace one tab; rev-checked POST  | `flowId`, `flowData`, `expected_rev`, `type?`    |
+| `deploy_nodes`          | Upsert nodes; deploy only those    | `nodes`, `expected_rev`, `credentials?`          |
+| `enable_flow`           | Enable a flow                      | `flowId`                                         |
+| `disable_flow`          | Disable a flow                     | `flowId`                                         |
+| `delete_flow`           | Delete a flow (dry-run by default) | `flowId`, `dryRun?`, `confirm?`                  |
+| `validate_flow`         | Validate flow structure            | `flowId`                                         |
+| `search_flows`          | Search nodes by type/name/property | `type?`, `query?`, `flowId?`                     |
+| `semantic_search_flows` | Embeddings-based semantic search   | `query`, `scope?`, `topK?`, `refresh?`           |
+
+### Context Variables
+
+| Tool             | Description                 | Key Parameters                      |
+| ---------------- | --------------------------- | ----------------------------------- |
+| `get_context`    | Read global or flow context | `key?`, `scope?`, `flowId?`         |
+| `set_context`    | Write a context variable    | `key`, `value`, `scope?`, `flowId?` |
+| `delete_context` | Delete a context variable   | `key`, `scope?`, `flowId?`          |
+
+### Modules
+
+| Tool                    | Description             | Key Parameters                 |
+| ----------------------- | ----------------------- | ------------------------------ |
+| `search_modules`        | Search Node-RED palette | `query`, `category?`, `limit?` |
+| `install_module`        | Install a module        | `moduleName`, `version?`       |
+| `get_installed_modules` | List installed modules  | —                              |
+
+### Diagnostics
+
+| Tool               | Description                                     | Key Parameters                   |
+| ------------------ | ----------------------------------------------- | -------------------------------- |
+| `get_node_errors`  | Detect nodes in error/warning state (WebSocket) | `includeWarnings?`, `timeoutMs?` |
+| `get_flow_state`   | Get flow runtime state (started/stopped)        | —                                |
+| `get_settings`     | Get Node-RED runtime settings                   | —                                |
+| `get_runtime_info` | Get Node-RED version and system info            | —                                |
+
+## 🔒 Read-Only Mode
+
+Set `MCP_READ_ONLY=true` to structurally prevent any mutation of your Node-RED
+flows — useful when exposing this server to remote AI agents where an accidental
+or unintended write to a live/production instance is a real risk.
+
+When enabled, write tools (`create_flow`, `replace_flow`, `update_flow`,
+`deploy_flow`, `deploy_nodes`, `delete_flow`, `enable_flow`, `disable_flow`,
+`set_context`, `delete_context`, `install_module`) are removed from the tool
+list entirely — clients never see them as available capabilities — and are also
+rejected if called directly by name. All read, search, diagnostic, resource, and
+prompt capabilities remain fully available. This pairs naturally with
+`delete_flow`'s existing `dryRun` default for deployments that need read/write
+in the same session but still want an extra layer of protection against
+accidental writes.
+
+## 📦 MCP Resources
+
+Access Node-RED state as browseable MCP resources:
+
+| URI                        | Description                     |
+| -------------------------- | ------------------------------- |
+| `nodered://flows`          | All tab flows (summary)         |
+| `nodered://subflows`       | All subflows                    |
+| `nodered://nodes`          | Installed node modules          |
+| `nodered://context/global` | Global context variables        |
+| `flow://<id>`              | Full detail for a specific flow |
+| `system://runtime`         | Node-RED runtime info           |
+
+## 📚 MCP Prompts
+
+Built-in prompt templates for common tasks:
+
+| Prompt               | Description                                |
+| -------------------- | ------------------------------------------ |
+| `debug_flow`         | Diagnose errors in a specific flow         |
+| `explain_automation` | Explain what a flow does in plain language |
+| `audit_security`     | Security audit of flow configurations      |
+| `document_flow`      | Generate documentation for a flow          |
+
+## 🔌 Connecting to the Server
+
+### Transport Modes
+
+| Mode                | Env Var               | Endpoint          | Use Case                                    |
+| ------------------- | --------------------- | ----------------- | ------------------------------------------- |
+| **Streamable HTTP** | `MCP_TRANSPORT=http`  | `POST /mcp`       | Production, remote agents                   |
+| **Stdio**           | `MCP_TRANSPORT=stdio` | stdin/stdout      | Claude Desktop                              |
+| **Both**            | `MCP_TRANSPORT=both`  | both of the above | Serving HTTP while also attached over stdio |
+
+**The default is `stdio`, and the published Docker image bakes that in.**
+Nothing listens on a port until you ask it to, so a container started without
+`MCP_TRANSPORT` will not answer on `-p 3000:3000` and its healthcheck — which
+probes `/health` over HTTP — will never pass. To serve HTTP, set it explicitly:
+
+```bash
+-e MCP_TRANSPORT=http
+```
+
+### Authentication
+
+Set `MCP_USERNAME` and `MCP_PASSWORD` for HTTP Basic Auth on the `/mcp`
+endpoint.
+
+### Claude Desktop (stdio)
+
+```json
+{
+  "mcpServers": {
+    "nodered": {
+      "command": "node",
+      "args": ["path/to/node-red-mcp/dist/index.mjs"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "NODERED_URL": "https://your-nodered-instance.com",
+        "NODERED_USERNAME": "admin",
+        "NODERED_PASSWORD": "password"
+      }
+    }
+  }
+}
+```
+
+### Claude Code / Remote Agent (HTTP)
+
+```bash
+claude mcp add node-red \
+  --transport streamable-http \
+  --url https://<your-server>/mcp \
+  --header "Authorization: Basic <base64-credentials>"
+```
+
+### Node-RED Authentication
+
+`NODERED_USERNAME`/`NODERED_PASSWORD` mean one of two different things depending
+on your deployment, and this server needs to know which:
+
+- **Node-RED's own `adminAuth` is enabled** — these are Node-RED's own admin
+  credentials. Set **`NODERED_ADMIN_AUTH_ENABLED=true`** and the server
+  exchanges them for a Bearer token via Node-RED's `/auth/token` password grant
+  on first use (Node-RED's admin API only accepts Bearer tokens, not HTTP Basic
+  auth — this is required, not optional, in this mode). The token is cached in
+  memory and transparently re-exchanged shortly before it expires (or
+  immediately after a `401`). You never see the token. The same in-band exchange
+  also authenticates the `/comms` WebSocket used by `get_node_errors`, since
+  Node-RED's WebSocket auth is its own separate in-band handshake, not
+  header-based.
+- **The credentials belong to something in front of Node-RED** — e.g. an nginx
+  or Traefik Basic-auth layer gating every request to the whole instance,
+  unrelated to Node-RED's own auth. Leave `NODERED_ADMIN_AUTH_ENABLED` unset
+  (the default). The server sends a static HTTP Basic header built from
+  `NODERED_USERNAME`/`NODERED_PASSWORD` on every request, including the
+  WebSocket upgrade — exactly what a proxy in this position expects, and exactly
+  what Node-RED's own admin API would reject if its `adminAuth` were enabled.
+
+In this mode the exchange requests a scope, and Node-RED validates it against
+the user's own `adminAuth` permissions. The default is `*`, narrowing to `read`
+when [`MCP_READ_ONLY`](#-read-only-mode) is set — so a Node-RED user declared
+with `permissions: "read"` can be used as-is. Set **`NODERED_AUTH_SCOPE`**
+explicitly to override either default. This matters because Node-RED rejects an
+over-broad scope request with the _same_ `invalid_grant` / "Invalid resource
+owner credentials" response it gives for a wrong password, so a scope mismatch
+would otherwise look exactly like a bad credential.
+
+Pairing a read-scoped Node-RED user with `MCP_READ_ONLY` is the stronger
+configuration of the two: `MCP_READ_ONLY` hides the write tools, while the
+Node-RED permission is enforced by Node-RED's own admin API regardless of what
+this server sends.
+
+Alternatively, **`NODERED_API_TOKEN`** supplies an already-issued Node-RED
+bearer token directly (e.g. one you obtained yourself via `/auth/token`). Useful
+if you don't want this server to hold your Node-RED password, at the cost of
+having to refresh the token yourself once it expires. This mode is unaffected by
+`NODERED_ADMIN_AUTH_ENABLED`.
+
+If none of these are set, requests are sent unauthenticated — only appropriate
+when Node-RED's `adminAuth` is disabled and nothing sits in front of the
+instance either.
+
+**Known limitation:** these two topologies are mutually exclusive today. If you
+genuinely run _both_ — a reverse-proxy Basic-auth layer in front of an instance
+that also has Node-RED's own `adminAuth` enabled — there's currently no way to
+supply separate credentials for each; `NODERED_USERNAME`/`PASSWORD` can only be
+exchanged for a token _or_ sent as a static Basic header, not both at once for
+two different recipients. Supporting that would need a second, distinct
+credential pair sent independently of the Bearer exchange.
+
+## ⚙️ Environment Variables
+
+| Variable                      | Required | Default                   | Description                                                                                                                                                     |
+| ----------------------------- | -------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODERED_URL`                 | Yes      | —                         | URL of your Node-RED instance                                                                                                                                   |
+| `NODERED_USERNAME`            | No       | —                         | Node-RED admin username, or a reverse-proxy Basic-auth username — see [Node-RED Authentication](#node-red-authentication)                                       |
+| `NODERED_PASSWORD`            | No       | —                         | Node-RED admin password, or a reverse-proxy Basic-auth password — see [Node-RED Authentication](#node-red-authentication)                                       |
+| `NODERED_ADMIN_AUTH_ENABLED`  | No       | `false`                   | Set `true` when `NODERED_USERNAME`/`PASSWORD` are Node-RED's _own_ `adminAuth` credentials, to exchange them for a Bearer token instead of sending static Basic |
+| `NODERED_API_TOKEN`           | No       | —                         | Pre-issued Node-RED bearer token; takes precedence over username/password                                                                                       |
+| `NODERED_AUTH_SCOPE`          | No       | `*`                       | Scope requested in the `/auth/token` exchange; defaults to `read` under `MCP_READ_ONLY` — set explicitly for a narrower `adminAuth` permission                  |
+| `MCP_TRANSPORT`               | No       | `stdio`                   | `stdio`, `http`, or `both`. The published image bakes in `stdio`; set `http` to serve the HTTP endpoint and let the healthcheck pass                            |
+| `HTTP_ENABLED`                | No       | `false`                   | Serve HTTP alongside `MCP_TRANSPORT=stdio`. Ignored when transport is `http`/`both` — it can turn HTTP on, never off                                            |
+| `MCP_USERNAME`                | No       | —                         | MCP server auth username                                                                                                                                        |
+| `MCP_PASSWORD`                | No       | —                         | MCP server auth password                                                                                                                                        |
+| `MCP_READ_ONLY`               | No       | `false`                   | Set `true` to hide write tools and reject write calls — see [Read-Only Mode](#-read-only-mode)                                                                  |
+| `HOST`                        | No       | `0.0.0.0`                 | Bind address                                                                                                                                                    |
+| `PORT`                        | No       | `3000`                    | Listen port                                                                                                                                                     |
+| `LOG_LEVEL`                   | No       | `info`                    | `debug`, `info`, `warn`, `error`                                                                                                                                |
+| `NODERED_REJECT_UNAUTHORIZED` | No       | `true`                    | Set `false` to allow self-signed TLS                                                                                                                            |
+| `TRUST_PROXY`                 | No       | `false`                   | Reverse proxy hops to trust — see [Running Behind a Reverse Proxy](#running-behind-a-reverse-proxy)                                                             |
+| `EMBEDDING_MODEL`             | No       | `Xenova/all-MiniLM-L6-v2` | Model for semantic search                                                                                                                                       |
+
+### Running Behind a Reverse Proxy
+
+Express ignores `X-Forwarded-For` unless you tell it which proxies to trust.
+Left unset behind a proxy, every client resolves to the proxy's own address and
+shares a single rate-limit bucket. `TRUST_PROXY` sets Express's `trust proxy`:
+
+| Value                       | Meaning                                                                 |
+| --------------------------- | ----------------------------------------------------------------------- |
+| unset, empty, or `false`    | Don't trust `X-Forwarded-For`; use the socket address (default)         |
+| `1`, `2`, …                 | **Recommended.** Number of proxy hops in front of this server           |
+| `loopback`                  | Trust `127.0.0.1/8`, `::1/128` — also `linklocal` and `uniquelocal`     |
+| `10.0.0.0/8`, `192.168.1.5` | Trust specific addresses or CIDR ranges                                 |
+| `loopback,10.0.0.0/8`       | Comma-separated — any combination of the above                          |
+| `true`                      | Trust every hop. Works, but **not recommended** — see the warning below |
+
+Use the hop count wherever you can: `TRUST_PROXY=1` for a single Traefik, nginx
+or Caddy in front, `TRUST_PROXY=2` for something like Traefik in front of
+Pomerium. Count the proxies that actually append to `X-Forwarded-For`.
+
+`TRUST_PROXY=true` is accepted, but the server logs a warning on startup and
+express-rate-limit reports it as `ERR_ERL_PERMISSIVE_TRUST_PROXY`. Trusting
+every hop means any client can spoof its address — and so its rate-limit bucket
+— just by sending its own `X-Forwarded-For` header. Prefer a hop count or an
+explicit trust list.
