@@ -38,6 +38,8 @@ export default defineConfig({
     },
     watch: true,
     testTimeout: 10000,
+    // Real Node-RED boot in test/integration needs a longer budget.
+    hookTimeout: 120000,
     mockReset: true,
     clearMocks: true,
     restoreMocks: true,

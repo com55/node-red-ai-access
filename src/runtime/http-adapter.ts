@@ -2,7 +2,12 @@
  * Fallback adapter over the localhost Node-RED Admin HTTP API (v2).
  */
 
-import { FlowNotFoundError, FlowRevisionConflictError } from './errors.js';
+import {
+  FlowNotFoundError,
+  FlowRevisionConflictError,
+  PLUGIN_MISCONFIGURED_HTTP_AUTH_MESSAGE,
+  PluginMisconfiguredError,
+} from './errors.js';
 import { assertFlowsSnapshot, normalizeFlowTab, replaceFlowTabInFlatFlows } from './flows-util.js';
 import type {
   DeploymentType,
@@ -63,6 +68,9 @@ export class HttpAdapter implements FlowAdapter {
       }
       if (response.status === 409) {
         throw new FlowRevisionConflictError('unknown', 'unknown', `Admin API ${what}`);
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new PluginMisconfiguredError(PLUGIN_MISCONFIGURED_HTTP_AUTH_MESSAGE);
       }
       throw new Error(`Admin API ${what} failed (${response.status}): ${detail}`);
     }

@@ -51,7 +51,7 @@ function createMockRed(options: {
 
             const user = (req as Request & { user?: MockUser }).user;
             if (!user) {
-              next();
+              res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
               return;
             }
 
@@ -119,15 +119,18 @@ describe('AI Access plugin scaffold', () => {
   });
 
   describe('with adminAuth enabled', () => {
-    it('redirects unauthenticated GET /mcp to httpAdminRoot', async () => {
+    it('serves GET /mcp without server auth (client uses editor localStorage Bearer)', async () => {
       const { app } = createMockRed({
         adminAuth: { type: 'credentials' },
         httpAdminRoot: '/admin',
       });
 
       const res = await request(app).get('/mcp');
-      expect(res.status).toBe(302);
-      expect(res.headers.location).toBe('/admin');
+      expect(res.status).toBe(200);
+      expect(res.text).toMatch(/localStorage/);
+      expect(res.text).toMatch(/auth-tokens-admin/);
+      expect(res.text).toMatch(/editorRoot/);
+      expect(res.text).toMatch(/\\\/admin|\/admin/);
     });
 
     it('returns 401 for unauthenticated GET /mcp/api/v1/status', async () => {
@@ -135,10 +138,13 @@ describe('AI Access plugin scaffold', () => {
 
       const res = await request(app).get('/mcp/api/v1/status');
       expect(res.status).toBe(401);
-      expect(res.body).toMatchObject({ error: expect.stringMatching(/auth/i) });
+      expect(res.body).toMatchObject({
+        error: expect.stringMatching(/auth/i),
+        code: 'auth_required',
+      });
     });
 
-    it('allows a read user to view /mcp and status as read-only', async () => {
+    it('allows a read user to view status as read-only', async () => {
       const { app } = createMockRed({
         adminAuth: { type: 'credentials' },
         authenticate: (req, _res, next) => {
@@ -153,7 +159,7 @@ describe('AI Access plugin scaffold', () => {
       const page = await request(app).get('/mcp');
       expect(page.status).toBe(200);
       expect(page.text).toMatch(/AI Access/i);
-      expect(page.text).toMatch(/read-only/i);
+      expect(page.text).toMatch(/id="section-status"/);
 
       const status = await request(app).get('/mcp/api/v1/status');
       expect(status.status).toBe(200);
@@ -167,6 +173,7 @@ describe('AI Access plugin scaffold', () => {
           manageLinks: false,
           approveProposals: false,
         },
+        caller: { kind: 'admin', permission: 'read' },
       });
       expect(status.body.storageDir).toMatch(/\.ai-access$/);
     });
@@ -197,13 +204,13 @@ describe('AI Access plugin scaffold', () => {
   });
 
   describe('without adminAuth', () => {
-    it('shows a warning on /mcp and disables AI features by default', async () => {
+    it('serves /mcp shell; status reports AI features disabled by default', async () => {
       const { app } = createMockRed({});
 
       const page = await request(app).get('/mcp');
       expect(page.status).toBe(200);
-      expect(page.text).toMatch(/adminAuth/i);
-      expect(page.text).toMatch(/disabled|warning/i);
+      expect(page.text).toMatch(/AI Access/i);
+      expect(page.text).toMatch(/localStorage/);
 
       const status = await request(app).get('/mcp/api/v1/status');
       expect(status.status).toBe(200);

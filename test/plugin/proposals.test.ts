@@ -225,16 +225,16 @@ describe('proposals / flows / logs HTTP API', () => {
       .set('Authorization', `Bearer ${a.token}`)
       .send({
         type: 'replace_flow',
-        expectedRev: 'r',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
     await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${b.token}`)
       .send({
         type: 'replace_flow',
-        expectedRev: 'r',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
 
     const asLink = await request(app)
@@ -260,9 +260,10 @@ describe('proposals / flows / logs HTTP API', () => {
       .set('Authorization', `Bearer ${link.token}`)
       .send({
         type: 'replace_flow',
-        expectedRev: 'r',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
+    expect(created.status).toBe(201);
 
     const approve = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
     expect(approve.status).toBe(403);
@@ -291,8 +292,9 @@ describe('proposals / flows / logs HTTP API', () => {
       .send({
         type: 'replace_flow',
         expectedRev: 'r',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
+    expect(created.status).toBe(201);
 
     const rejected = await request(app)
       .post(`/mcp/api/v1/proposals/${created.body.id}/reject`)
@@ -310,7 +312,7 @@ describe('proposals / flows / logs HTTP API', () => {
         kind: 'red',
         getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
         getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
-        updateFlow: () => Promise.reject(new FlowRevisionConflictError('old', 'new')),
+        updateFlow: () => Promise.reject(new FlowRevisionConflictError('r', 'new')),
       },
     });
     const link = linkStore.create();
@@ -319,14 +321,37 @@ describe('proposals / flows / logs HTTP API', () => {
       .set('Authorization', `Bearer ${link.token}`)
       .send({
         type: 'replace_flow',
-        expectedRev: 'old',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        expectedRev: 'r',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
+    expect(created.status).toBe(201);
 
     const result = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
     expect(result.status).toBe(200);
     expect(result.body.status).toBe('rejected');
     expect(result.body.reason).toMatch(/resubmit/i);
+  });
+
+  it('rejects stale expectedRev at submit time with 409', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+    });
+    const link = linkStore.create();
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'stale123',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
+      });
+    expect(created.status).toBe(409);
+    expect(created.body).toMatchObject({
+      code: 'version_mismatch',
+      expectedRev: 'stale123',
+      currentRev: 'rev-1',
+    });
   });
 
   it('rejects proposal and flow routes when AI features are disabled', async () => {

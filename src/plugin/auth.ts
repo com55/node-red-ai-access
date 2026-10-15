@@ -4,6 +4,11 @@
 
 import type { NextFunction, Response } from 'express';
 
+import {
+  ACCESS_LINK_INVALID_CODE,
+  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_WWW_AUTHENTICATE,
+} from './access-link-auth.js';
 import { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type {
   AiAccessCapabilities,
@@ -99,13 +104,15 @@ export function requireAdminSession(RED: NodeRedPluginAPI, mode: AdminGateMode) 
           res.redirect(normalizeHttpAdminRoot(RED.settings.httpAdminRoot));
           return;
         }
-        res.status(401).json({ error: 'Authentication required' });
+        res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
         return;
       }
 
       const permission = resolvePermission(req);
       if (!permission) {
-        res.status(401).json({ error: 'Insufficient permissions' });
+        res
+          .status(401)
+          .json({ error: 'Insufficient permissions', code: 'insufficient_permissions' });
         return;
       }
 
@@ -145,6 +152,7 @@ export function requireAiFeatures(RED: NodeRedPluginAPI) {
       res.status(403).json({
         error:
           'AI Access features are disabled. Enable adminAuth, or set aiAccess.allowWithoutAdminAuth to true for local-only use.',
+        code: 'ai_features_disabled',
       });
       return;
     }
@@ -164,7 +172,9 @@ export function requireStarPermission(RED: NodeRedPluginAPI) {
         next();
         return;
       }
-      res.status(403).json({ error: 'AI Access features are disabled' });
+      res
+        .status(403)
+        .json({ error: 'AI Access features are disabled', code: 'ai_features_disabled' });
       return;
     }
 
@@ -172,6 +182,7 @@ export function requireStarPermission(RED: NodeRedPluginAPI) {
     if (permission !== '*') {
       res.status(403).json({
         error: 'Full admin permission (*) is required for this action',
+        code: 'insufficient_permissions',
       });
       return;
     }
@@ -199,6 +210,7 @@ export function requireAdminReadOrAccessLink(
       res.status(403).json({
         error:
           'AI Access features are disabled. Enable adminAuth, or set aiAccess.allowWithoutAdminAuth to true for local-only use.',
+        code: 'ai_features_disabled',
       });
       return;
     }
@@ -208,14 +220,19 @@ export function requireAdminReadOrAccessLink(
       const match = /^Bearer\s+(\S+)$/i.exec(authHeader.trim());
       const token = match?.[1];
       if (!token) {
-        res.status(401).json({ error: 'Authentication required' });
+        res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+        res.status(401).json({
+          error: ACCESS_LINK_INVALID_MESSAGE,
+          code: ACCESS_LINK_INVALID_CODE,
+        });
         return;
       }
       const link = validateAccessLink(token);
       if (!link) {
+        res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
         res.status(401).json({
-          error:
-            'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.',
+          error: ACCESS_LINK_INVALID_MESSAGE,
+          code: ACCESS_LINK_INVALID_CODE,
         });
         return;
       }
@@ -234,7 +251,7 @@ export function requireAdminReadOrAccessLink(
         return;
       }
       if (!resolvePermission(req)) {
-        res.status(401).json({ error: 'Authentication required' });
+        res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
         return;
       }
       next();

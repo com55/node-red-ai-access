@@ -29,6 +29,30 @@ function readPackageVersion(): string {
 export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): AiAccessStatus {
   const access = describeAccess(RED, req);
   const aiSettings = resolveAiAccessSettings(RED.settings);
+
+  // Access-link callers are not admin sessions: permission stays null; caller
+  // identifies the AI token so clients do not treat null as "logged out".
+  if (req.accessLink) {
+    return {
+      ok: true,
+      version: readPackageVersion(),
+      adminAuthEnabled: access.adminAuthEnabled,
+      aiFeaturesEnabled: access.aiFeaturesEnabled,
+      allowWithoutAdminAuth: access.allowWithoutAdminAuth,
+      permission: null,
+      capabilities: { view: true, manageLinks: false, approveProposals: false },
+      storageDir: getStorageDir(RED.settings),
+      defaultLinkTtlSeconds: aiSettings.defaultLinkTtlSeconds,
+      maxActiveLinks: aiSettings.maxActiveLinks,
+      defaultDeploymentType: aiSettings.defaultDeploymentType,
+      caller: {
+        kind: 'access-link',
+        linkId: req.accessLink.id,
+        ...(req.accessLink.label !== undefined ? { label: req.accessLink.label } : {}),
+      },
+    };
+  }
+
   return {
     ok: true,
     version: readPackageVersion(),
@@ -41,5 +65,9 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
     defaultLinkTtlSeconds: aiSettings.defaultLinkTtlSeconds,
     maxActiveLinks: aiSettings.maxActiveLinks,
     defaultDeploymentType: aiSettings.defaultDeploymentType,
+    caller: {
+      kind: 'admin',
+      ...(access.permission ? { permission: access.permission } : {}),
+    },
   };
 }

@@ -34,11 +34,16 @@ opt in (see Configuration).
    `http://localhost:1880/mcp`, or `{httpAdminRoot}/mcp` when `httpAdminRoot` is
    set).
 
+The `/mcp` HTML shell is served without adminAuth so the page can read the
+editor token from browser `localStorage` (Node-RED does not use cookies) and
+call APIs with `Authorization: Bearer`. If no valid token is present, the page
+redirects to the editor login. All data and actions stay behind permission
+checks.
+
 On `/mcp` you can create access links, review proposals, approve or reject
 changes, and read the audit log. Users with `read` (including guest, if
 configured) get a read-only view; only users with `*` can create/revoke links
-and approve/reject proposals. Unauthenticated visits redirect to the editor
-login.
+and approve/reject proposals.
 
 ## Configuration
 
@@ -62,7 +67,10 @@ module.exports = {
 
 Storage lives under **`<userDir>/.ai-access`** (`proposals/*.json` and
 append-only `logs/audit.jsonl`). Directories use mode `0700`, files `0600`.
-Oversized proposal JSON or audit lines return HTTP **413**.
+Proposal JSON is capped at **1_500_000 bytes**; oversized proposal JSON or audit
+lines return HTTP **413** with `code: storage_payload_too_large` (never silently
+truncated). Malformed JSON returns **400** JSON (REST `invalid_json`, MCP
+JSON-RPC `-32700`) — never HTML stack traces.
 
 ## REST API
 
@@ -94,25 +102,35 @@ AI clients can use the official MCP Streamable HTTP transport against
 API. Tools mirror the AI-facing REST surface only:
 
 `get_status`, `list_flows`, `get_flow`, `submit_proposal` (including
-`replace_flow` with `expected_rev` / `expectedRev`), `list_my_proposals`,
-`get_proposal`.
+`replace_flow` with `expectedRev`; `expected_rev` accepted as alias),
+`list_my_proposals`, `get_proposal`. Tool descriptions document purpose, inputs,
+returns, and when to use them. For access-link callers, `get_status` reports
+`permission: null` and `caller.kind: "access-link"` (expected — AI tokens are
+not admin sessions).
 
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and
-audit logging match REST. Invalid or expired tokens return **401** telling the
-AI to ask the user for a new access link.
+audit logging match REST. Missing tokens return **401** `access_link_missing`;
+invalid/expired/revoked tokens return **401** `access_link_invalid` (both with
+`WWW-Authenticate`) telling the AI to ask the user for a new access link. Every
+error JSON includes a `code`.
 
 Access links are **in memory** (default TTL 24h, max 10). The raw token is
 returned once at creation; after a restart every old token is invalid.
 
-Approve may send `deploymentType`: `nodes` (default), `flows`, or `full`. A
-stale `expectedRev` marks the proposal **rejected** with a resubmit message;
-other deploy errors mark it **failed**. Reject never mutates flows.
+Call `list_flows` or `get_flow` first and pass the returned `rev` as
+`expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
+`deploymentType`: `nodes` (default), `flows`, or `full`. A stale `expectedRev`
+at approve marks the proposal **rejected** with a resubmit message; other deploy
+errors mark it **failed**. Reject never mutates flows.
 
 ### Flow runtime adapter
 
-- **RedAdapter** — in-process `RED.runtime.flows`
-- **HttpAdapter** — localhost Admin API v2 fallback
+- **RedAdapter** — in-process flows API (`RED.runtime.flows`, or the initialized
+  `@node-red/runtime` singleton when the plugin RED object has no `.runtime`)
+- **HttpAdapter** — localhost Admin API v2 fallback only when credentials are
+  available (or adminAuth is off). Never selected silently without credentials
+  when adminAuth is on; upstream 401/403 becomes `plugin_misconfigured`
 - **`updateFlow`** — requires `expectedRev`; default deployment type `nodes`
 
 ## AI quickstart

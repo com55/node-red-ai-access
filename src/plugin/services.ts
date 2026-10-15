@@ -4,6 +4,11 @@
 
 import type { AccessLinkStore } from '../access/link-store.js';
 import { createFlowAdapter } from '../runtime/create-adapter.js';
+import {
+  AdapterUnavailableError,
+  PLUGIN_MISCONFIGURED_HTTP_AUTH_MESSAGE,
+  PluginMisconfiguredError,
+} from '../runtime/errors.js';
 import type { FlowAdapter, RedRuntimeHost } from '../runtime/types.js';
 import { AuditLog } from '../storage/audit-log.js';
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../storage/paths.js';
@@ -11,8 +16,19 @@ import { ProposalStore } from '../storage/proposals.js';
 
 import { createConfiguredLinkStore } from './links.js';
 import { ProposalService } from './proposal-service.js';
-import { resolveAiAccessSettings } from './settings.js';
+import { isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type { NodeRedPluginAPI } from './types.js';
+
+/** Adapter that fails every call with a clear misconfiguration error. */
+function misconfiguredAdapter(message: string): FlowAdapter {
+  const fail = (): Promise<never> => Promise.reject(new PluginMisconfiguredError(message));
+  return {
+    kind: 'http',
+    getFlows: fail,
+    getFlow: fail,
+    updateFlow: fail,
+  };
+}
 
 export interface PluginServices {
   linkStore: AccessLinkStore;
@@ -48,13 +64,27 @@ export function createPluginServices(
   const linkStore = options.linkStore ?? createConfiguredLinkStore(RED);
   const proposalStore = new ProposalStore(aiPaths);
   const auditLog = new AuditLog(aiPaths);
-  const flowAdapter =
-    options.flowAdapter ??
-    createFlowAdapter({
-      // Plugin RED may expose runtime.flows at runtime; typed loosely here.
-      RED: RED as unknown as RedRuntimeHost,
-      http: { baseUrl: localAdminBaseUrl(RED) },
-    });
+  let flowAdapter: FlowAdapter;
+  if (options.flowAdapter) {
+    flowAdapter = options.flowAdapter;
+  } else {
+    try {
+      flowAdapter = createFlowAdapter({
+        // Plugin RED from createNodeApi has no .runtime; resolveRuntimeHost also
+        // tries the process-wide @node-red/runtime singleton when initialized.
+        RED: RED as unknown as RedRuntimeHost,
+        http: { baseUrl: localAdminBaseUrl(RED) },
+        adminAuthEnabled: isAdminAuthEnabled(RED.settings),
+      });
+    } catch (error) {
+      const message =
+        error instanceof AdapterUnavailableError
+          ? error.message
+          : PLUGIN_MISCONFIGURED_HTTP_AUTH_MESSAGE;
+      RED.log?.warn?.(`AI Access flow adapter unavailable: ${message}`);
+      flowAdapter = misconfiguredAdapter(message);
+    }
+  }
   const proposalService = new ProposalService(
     proposalStore,
     auditLog,

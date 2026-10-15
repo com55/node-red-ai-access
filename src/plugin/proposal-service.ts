@@ -13,7 +13,7 @@ import {
 } from '../storage/proposals.js';
 
 const REV_CONFLICT_RESUBMIT =
-  'Flow revision conflict: the expected_rev is stale. Ask the AI to re-read flows and resubmit a new proposal.';
+  'Flow revision conflict: the expectedRev is stale. Ask the AI to re-read flows and resubmit a new proposal.';
 
 export class ProposalService {
   constructor(

@@ -1,5 +1,5 @@
 /**
- * /mcp admin page — auth, permission gating, and view scaffolding.
+ * /mcp admin page — public boot shell + API auth via editor localStorage Bearer.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,7 +56,7 @@ function createApp(options: {
             }
             const user = (req as Request & { user?: MockUser }).user;
             if (!user) {
-              next();
+              res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
               return;
             }
             const scopes = Array.isArray(user.permissions) ? user.permissions : [user.permissions];
@@ -114,7 +114,7 @@ describe('/mcp admin page', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
-  it('redirects unauthenticated GET /mcp to httpAdminRoot', async () => {
+  it('serves GET /mcp without server-side auth (client reads editor localStorage)', async () => {
     const { app } = createApp({
       userDir,
       adminAuth: { type: 'credentials' },
@@ -122,54 +122,34 @@ describe('/mcp admin page', () => {
     });
 
     const res = await request(app).get('/mcp');
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/editor');
-  });
-
-  it('shows adminAuth-off warning and disables AI features by default', async () => {
-    const { app } = createApp({ userDir });
-
-    const res = await request(app).get('/mcp');
     expect(res.status).toBe(200);
-    expect(res.text).toMatch(/adminAuth/i);
-    expect(res.text).toMatch(/allowWithoutAdminAuth/);
-    expect(res.text).toMatch(/data-ai-features="false"/);
-    expect(res.text).toMatch(/role="status"/);
-  });
-
-  it('includes status, links, proposals, and audit sections for a * user', async () => {
-    const { app } = createApp({
-      userDir,
-      adminAuth: { type: 'credentials' },
-      authenticate: asUser('*', 'admin'),
-    });
-
-    const res = await request(app).get('/mcp');
-    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/data-config=/);
+    expect(res.text).toMatch(/editorRoot/);
+    expect(res.text).toMatch(/auth-tokens-editor/);
+    expect(res.text).toMatch(/localStorage/);
     expect(res.text).toMatch(/id="section-status"/);
     expect(res.text).toMatch(/id="section-links"/);
     expect(res.text).toMatch(/id="section-proposals"/);
     expect(res.text).toMatch(/id="section-logs"/);
-    expect(res.text).toMatch(/data-can-manage-links="true"/);
-    expect(res.text).toMatch(/data-can-approve="true"/);
-    expect(res.text).toMatch(/Create access link/i);
-    expect(res.text).toMatch(/api\/v1/);
   });
 
-  it('gates write controls for read-only users', async () => {
+  it('keeps /mcp/api/v1/status behind admin auth', async () => {
     const { app } = createApp({
       userDir,
       adminAuth: { type: 'credentials' },
-      authenticate: asUser('read', 'guest'),
     });
 
-    const res = await request(app).get('/mcp');
-    expect(res.status).toBe(200);
-    expect(res.text).toMatch(/read-only/i);
-    expect(res.text).toMatch(/data-can-manage-links="false"/);
-    expect(res.text).toMatch(/data-can-approve="false"/);
-    expect(res.text).not.toMatch(/id="create-link-form"/);
-    expect(res.text).toMatch(/Link management requires full admin permission/i);
+    const unauth = await request(app).get('/mcp/api/v1/status');
+    expect(unauth.status).toBe(401);
+
+    const { app: app2 } = createApp({
+      userDir,
+      adminAuth: { type: 'credentials' },
+      authenticate: asUser('*', 'admin'),
+    });
+    const auth = await request(app2).get('/mcp/api/v1/status');
+    expect(auth.status).toBe(200);
+    expect(auth.body.caller).toMatchObject({ kind: 'admin', permission: '*' });
   });
 
   it('exposes defaults on status for the page client', async () => {
@@ -190,6 +170,17 @@ describe('/mcp admin page', () => {
       defaultLinkTtlSeconds: 3600,
       maxActiveLinks: 5,
       defaultDeploymentType: 'flows',
+      caller: { kind: 'admin', permission: '*' },
     });
+  });
+
+  it('embeds client script that redirects when editor token is missing', async () => {
+    const { app } = createApp({
+      userDir,
+      adminAuth: { type: 'credentials' },
+    });
+    const res = await request(app).get('/mcp');
+    expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
+    expect(res.text).toMatch(/location\.replace/);
   });
 });
