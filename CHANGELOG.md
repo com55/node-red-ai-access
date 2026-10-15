@@ -15,6 +15,9 @@ and this project adheres to
 - `aiAccess` settings hook (`allowWithoutAdminAuth` and reserved fields for
   later link TTL, max links, and deployment type).
 - Optional `node-red` peerDependency (`>=4.0.0`); standalone MCP server kept.
+- Flow runtime adapter (`RedAdapter` via `RED.runtime`, `HttpAdapter` Admin API
+  fallback, factory selection) with rev-checked `updateFlow` (default deployment
+  type `nodes`).
 
 ## [0.1.0] - 2026-10-15
 
