@@ -2,7 +2,15 @@
  * Trusted write helper, directory/file modes, and size-cap tests.
  */
 
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -46,9 +54,13 @@ describe('trusted-write helper', () => {
     });
     writeTrustedAtomic(storageRoot, target, payload);
 
-    const mode = statSync(target).mode & 0o777;
-    expect(mode).toBe(AI_ACCESS_FILE_MODE);
-    expect(JSON.parse(readFileSync(target, 'utf8'))).toEqual({ id: 'prop-test', ok: true });
+    const fd = openSync(target, 'r');
+    try {
+      expect(fstatSync(fd).mode & 0o777).toBe(AI_ACCESS_FILE_MODE);
+      expect(JSON.parse(readFileSync(fd, 'utf8'))).toEqual({ id: 'prop-test', ok: true });
+    } finally {
+      closeSync(fd);
+    }
   });
 
   it('appends trusted bytes with mode 0o600', () => {
@@ -58,9 +70,13 @@ describe('trusted-write helper', () => {
     });
     appendTrusted(storageRoot, target, payload);
 
-    const mode = statSync(target).mode & 0o777;
-    expect(mode).toBe(AI_ACCESS_FILE_MODE);
-    expect(readFileSync(target, 'utf8')).toContain('proposal.created');
+    const fd = openSync(target, 'r');
+    try {
+      expect(fstatSync(fd).mode & 0o777).toBe(AI_ACCESS_FILE_MODE);
+      expect(readFileSync(fd, 'utf8')).toContain('proposal.created');
+    } finally {
+      closeSync(fd);
+    }
   });
 
   it('rejects paths that escape the storage root', () => {

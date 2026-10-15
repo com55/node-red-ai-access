@@ -24,9 +24,10 @@ and this project adheres to
 - On-disk proposal store and audit log under `<userDir>/.ai-access`, plus REST
   routes for proposals, flows (with rev), and logs. Approve deploys via
   FlowAdapter with rev checks; concurrent approve guarded.
-- Trusted write helper for `.ai-access` (no CodeQL file-write suppressions):
-  directory mode `0o700`, file mode `0o600`, and size caps on proposal JSON and
-  audit appends (`413` when exceeded).
+- Trusted write helper for `.ai-access` (call-site file-write suppressions
+  removed; sole trust-boundary annotations live in the helper): directory mode
+  `0o700`, file mode `0o600`, and size caps on proposal JSON and audit appends
+  (`413` when exceeded).
 
 ## [0.1.0] - 2026-10-15
 

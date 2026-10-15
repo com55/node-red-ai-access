@@ -79,6 +79,10 @@ export function assertUnderAiAccess(absolutePath: string, storageRoot: string): 
 
 /**
  * Atomically replace a file under `.ai-access` with mode {@link AI_ACCESS_FILE_MODE}.
+ *
+ * Callers must pass a {@link TrustedStoragePayload} from {@link encodeTrustedJson}
+ * built only from already-sanitized records (never raw request bodies). These two
+ * sinks are the sole intentional persistence boundary for AI Access disk storage.
  */
 export function writeTrustedAtomic(
   storageRoot: string,
@@ -87,6 +91,7 @@ export function writeTrustedAtomic(
 ): void {
   const target = assertUnderAiAccess(targetPath, storageRoot);
   const temp = `${target}.${process.pid}.tmp`;
+  // codeql[js/file-write] trust boundary: TrustedStoragePayload under .ai-access only
   writeFileSync(temp, payload.bytes, { mode: AI_ACCESS_FILE_MODE });
   renameSync(temp, target);
   chmodSync(target, AI_ACCESS_FILE_MODE);
@@ -94,6 +99,8 @@ export function writeTrustedAtomic(
 
 /**
  * Append a trusted JSONL line under `.ai-access` with mode {@link AI_ACCESS_FILE_MODE}.
+ *
+ * Same trust boundary as {@link writeTrustedAtomic}.
  */
 export function appendTrusted(
   storageRoot: string,
@@ -101,6 +108,7 @@ export function appendTrusted(
   payload: TrustedStoragePayload
 ): void {
   const target = assertUnderAiAccess(filePath, storageRoot);
+  // codeql[js/file-write] trust boundary: TrustedStoragePayload under .ai-access only
   appendFileSync(target, payload.bytes, { mode: AI_ACCESS_FILE_MODE });
   try {
     chmodSync(target, AI_ACCESS_FILE_MODE);
