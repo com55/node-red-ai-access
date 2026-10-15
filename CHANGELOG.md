@@ -18,6 +18,9 @@ and this project adheres to
 - Flow runtime adapter (`RedAdapter` via `RED.runtime`, `HttpAdapter` Admin API
   fallback, factory selection) with rev-checked `updateFlow` (default deployment
   type `nodes`).
+- In-memory access-link store and admin routes under `/mcp/api/v1/links`
+  (default TTL 24h, max 10 active, token shown once; Bearer middleware for AI
+  clients).
 
 ## [0.1.0] - 2026-10-15
 

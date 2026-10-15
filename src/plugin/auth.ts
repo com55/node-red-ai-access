@@ -123,3 +123,47 @@ export function describeAccess(RED: NodeRedPluginAPI, req: AuthenticatedRequest)
     capabilities: capabilitiesFor(permission, aiFeaturesEnabled),
   };
 }
+
+/**
+ * Reject when AI features are disabled (no adminAuth and no local opt-in).
+ */
+export function requireAiFeatures(RED: NodeRedPluginAPI) {
+  return (_req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!areAiFeaturesEnabled(RED.settings)) {
+      res.status(403).json({
+        error:
+          'AI Access features are disabled. Enable adminAuth, or set aiAccess.allowWithoutAdminAuth to true for local-only use.',
+      });
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * Require full (`*`) permission for mutating admin actions (links, approvals).
+ * Must run after requireAdminSession. Read-only users receive 403.
+ */
+export function requireStarPermission(RED: NodeRedPluginAPI) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!isAdminAuthEnabled(RED.settings)) {
+      // Local-only opt-in already treated as full access by describeAccess.
+      if (areAiFeaturesEnabled(RED.settings)) {
+        next();
+        return;
+      }
+      res.status(403).json({ error: 'AI Access features are disabled' });
+      return;
+    }
+
+    const permission = resolvePermission(req);
+    if (permission !== '*') {
+      res.status(403).json({
+        error: 'Full admin permission (*) is required for this action',
+      });
+      return;
+    }
+
+    next();
+  };
+}
