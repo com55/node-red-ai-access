@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { AccessLinkLimitError, AccessLinkStore } from '../../src/access/index.js';
 
 describe('AccessLinkStore', () => {
-  it('creates a link with default 24h TTL and returns the raw token once', () => {
+  it('creates a link with default 4h TTL and returns the raw token once', () => {
     const now = 1_700_000_000_000;
     const store = new AccessLinkStore({
       now: () => now,
@@ -21,7 +21,7 @@ describe('AccessLinkStore', () => {
       token: 'aia_test-token',
       label: 'demo',
       createdAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + 86_400_000).toISOString(),
+      expiresAt: new Date(now + 14_400_000).toISOString(),
     });
 
     const listed = store.list();

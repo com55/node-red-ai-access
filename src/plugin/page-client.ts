@@ -13,7 +13,7 @@ function pageClientScriptPartA(): string {
   var canManage = false;
   var canApprove = false;
   var aiOn = false;
-  var defaultTtl = 86400;
+  var defaultTtl = 14400; // 4h default access-link TTL
   var defaultDeploy = 'nodes';
   var accessToken = null;
 
@@ -287,19 +287,23 @@ function pageClientScriptPartA2(): string {
 function pageClientScriptPartB(): string {
   return `
 
-  function accessLinkCopyText(token) {
+  function accessLinkCopyText(token, url) {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
     var base = origin + apiBase;
+    var getLink = url || (origin + (apiBase.replace(/\\/mcp\\/api\\/v1\\/?$/, '/mcp/a/') + token));
     return [
-      'Access link token (Authorization: Bearer <token>):',
-      token,
+      'Self-contained GET link (preferred for chat AIs that can only HTTP GET):',
+      getLink,
       '',
+      'Open that URL for markdown docs + token-scoped GET routes (status, flows, propose, drafts).',
+      '',
+      'Also (if your client can send headers):',
+      'Authorization: Bearer ' + token,
       'REST API base: ' + base,
-      'Discovery (no auth): GET ' + base,
       'OpenAPI: GET ' + base + '/openapi.yaml',
       'MCP (optional): POST ' + origin + mcpRpc,
       '',
-      'Send Authorization: Bearer <token> on authenticated calls. If you get 401 access_link_missing or access_link_invalid, ask the user for a new link.'
+      'If you get 401 access_link_missing or access_link_invalid, ask the user for a new link.'
     ].join('\\n');
   }
 
@@ -316,16 +320,16 @@ function pageClientScriptPartB(): string {
       var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
       var box = $('token-once');
       box.hidden = false;
-      $('token-value').textContent = created.token;
+      $('token-value').textContent = created.url || created.token;
       var copyBlock = $('token-copy-block');
-      var copyText = accessLinkCopyText(created.token);
+      var copyText = accessLinkCopyText(created.token, created.url);
       if (copyBlock) {
         copyBlock.hidden = false;
         copyBlock.textContent = copyText;
       }
       var hint = $('token-docs-hint');
       if (hint) {
-        hint.textContent = 'Includes API base URL + docs hint. Paste into your AI client with the token.';
+        hint.textContent = 'Copy the self-contained GET link for chat AIs (docs + scoped routes). Token TTL default is 4 hours.';
       }
       var copyBtn = $('token-copy-btn');
       if (copyBtn) {
@@ -608,7 +612,7 @@ function pageClientScriptPartD(): string {
     aiOn = !!s.aiFeaturesEnabled;
     canManage = !!(s.capabilities && s.capabilities.manageLinks);
     canApprove = !!(s.capabilities && s.capabilities.approveProposals);
-    defaultTtl = s.defaultLinkTtlSeconds || 86400;
+    defaultTtl = s.defaultLinkTtlSeconds || 14400;
     defaultDeploy = s.defaultDeploymentType || 'nodes';
 
     $('status-version').textContent = s.version;

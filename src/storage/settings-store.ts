@@ -51,7 +51,7 @@ export interface EffectiveAiAccessSettingsWithMeta extends EffectiveAiAccessSett
 const BUILTIN: EffectiveAiAccessSettings = {
   enabled: true,
   allowWithoutAdminAuth: false,
-  defaultLinkTtlSeconds: 86_400,
+  defaultLinkTtlSeconds: 14_400,
   maxActiveLinks: 10,
   defaultDeploymentType: 'nodes',
 };

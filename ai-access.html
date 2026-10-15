@@ -97,7 +97,7 @@
 
       $('#ai-access-enabled').prop('checked', s.enabled !== false);
       $('#ai-access-allow-without').prop('checked', !!s.allowWithoutAdminAuth);
-      $('#ai-access-ttl').val(s.defaultLinkTtlSeconds || 86400);
+      $('#ai-access-ttl').val(s.defaultLinkTtlSeconds || 14400);
       $('#ai-access-deploy').val(s.defaultDeploymentType || 'nodes');
 
       $('#ai-access-adminauth-row').toggle(ADMIN_AUTH);

@@ -21,6 +21,7 @@ import {
 } from './auth.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
 import { getFlowHandler, listFlowsHandler } from './flows-routes.js';
+import { registerGetLinkRoutes } from './get-link-routes.js';
 import { attachMcpJsonErrorHandlers } from './json-errors.js';
 import {
   createConfiguredLinkStore,
@@ -82,6 +83,14 @@ export function registerRoutes(
   const services = createPluginServices(RED, {
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
+  });
+
+  // Self-contained GET access links for headerless HTTP clients (`/mcp/a/<token>/…`).
+  registerGetLinkRoutes(RED, {
+    linkStore: services.linkStore,
+    proposalStore: services.proposalStore,
+    auditLog: services.auditLog,
+    flowAdapter: services.flowAdapter,
   });
 
   // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.

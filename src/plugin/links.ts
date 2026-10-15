@@ -11,8 +11,11 @@ import {
   AccessLinkValidationError,
 } from '../access/index.js';
 
+import { buildAccessLinkUrl, DEFAULT_ACCESS_LINK_TTL_SECONDS } from './access-path.js';
 import { resolveAiAccessSettings } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
+
+export { DEFAULT_ACCESS_LINK_TTL_SECONDS };
 
 function storeForRequest(RED: NodeRedPluginAPI, store: AccessLinkStore): AccessLinkStore {
   // Limits are fixed at construction; recreate is not needed. Settings are
@@ -57,7 +60,8 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore)
 
     try {
       const created = storeForRequest(RED, store).create(input);
-      res.status(201).json(created);
+      const url = buildAccessLinkUrl(req, RED.settings.httpAdminRoot, created.token);
+      res.status(201).json({ ...created, url });
     } catch (error) {
       if (error instanceof AccessLinkLimitError) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
