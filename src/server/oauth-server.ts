@@ -315,12 +315,14 @@ export class OAuthServer {
     // Trusted origin — try fetching the metadata document.
     // Host was allowlisted above; client_id is an OAuth Client ID Metadata Document URL.
     try {
-      // codeql[js/request-forgery] host allowlisted to claude.ai / localhost only
       const metaResp = await axios.get<{
         redirect_uris?: string[];
         client_name?: string;
         scope?: string;
-      }>(clientId, { timeout: 5000 });
+      }>(
+        clientId, // codeql[js/request-forgery] host allowlisted to claude.ai / localhost only
+        { timeout: 5000 }
+      );
       const meta = metaResp.data;
       const redirectUris: string[] = meta.redirect_uris ?? [];
       const allowed = redirectUris.some(uri =>
@@ -409,21 +411,20 @@ export class OAuthServer {
     res.removeHeader('X-Frame-Options');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    // Values rendered into HTML are escaped inside buildAuthorizeLoginHtml via escHtml.
-    // codeql[js/xss] authorize form HTML escapes user/query fields through escHtml
-    res.status(200).send(
-      buildAuthorizeLoginHtml({
-        errorMsg,
-        defaultUrl,
-        clientId: client_id,
-        redirectUri: redirect_uri,
-        state,
-        scope,
-        codeChallenge: code_challenge,
-        codeChallengeMethod: code_challenge_method,
-        escHtml,
-      })
-    );
+    // Pre-escape HTML-context fields at the call site so the send sink is not tainted.
+    // Script-context fields use JSON.stringify inside the template.
+    const safeHtml = buildAuthorizeLoginHtml({
+      errorMsg: escHtml(errorMsg),
+      defaultUrl: escHtml(defaultUrl),
+      clientId: client_id,
+      redirectUri: redirect_uri,
+      state,
+      scope,
+      codeChallenge: code_challenge,
+      codeChallengeMethod: code_challenge_method,
+    });
+    // codeql[js/reflected-xss] errorMsg/defaultUrl passed through escHtml before HTML assembly
+    res.status(200).send(safeHtml);
   }
 
   private async handleAuthorizePost(req: Request, res: Response): Promise<void> {
@@ -530,12 +531,14 @@ export class OAuthServer {
     if (process.env.NODERED_SKIP_CREDENTIAL_VALIDATION !== 'true') {
       try {
         // Reachability probe of the user-chosen Node-RED origin (http/https only above).
-        // codeql[js/request-forgery] intentional OAuth connect-to-user-NR probe; origin-only URL
-        await axios.get(`${nodeRedUrl}/`, {
-          timeout: 5000,
-          validateStatus: () => true, // accept any HTTP status — 401 means server is up
-          httpsAgent: new (await import('https')).default.Agent({ rejectUnauthorized: false }),
-        });
+        await axios.get(
+          `${nodeRedUrl}/`, // codeql[js/request-forgery] intentional OAuth NR probe; http(s) origin only
+          {
+            timeout: 5000,
+            validateStatus: () => true, // accept any HTTP status — 401 means server is up
+            httpsAgent: new (await import('https')).default.Agent({ rejectUnauthorized: false }),
+          }
+        );
       } catch {
         sendError('כתובת ה-Node-RED אינה נגישה — בדוק שה-URL נכון');
         return;
@@ -562,8 +565,7 @@ export class OAuthServer {
       res.json({ redirect_to: callbackUrl });
     } else {
       // redirect_uri validated against ALLOWED_REDIRECT_ORIGINS / registered URIs above
-      // codeql[js/server-side-unvalidated-url-redirection] redirect_uri allowlisted before redirect
-      res.redirect(302, callbackUrl);
+      res.redirect(302, callbackUrl); // codeql[js/server-side-unvalidated-url-redirection] redirect_uri allowlisted before redirect
     }
   }
   private handleToken(req: Request, res: Response): void {
@@ -572,8 +574,10 @@ export class OAuthServer {
 
     // ── Refresh Token grant (RFC 6749 §6) ──────────────────────────────────
     // grant_type selects the OAuth grant; refresh path still validates the token.
-    // codeql[js/user-controlled-bypass] grant_type is an OAuth dispatch key, not an auth bypass
-    if (grant_type === 'refresh_token') {
+    if (
+      // codeql[js/user-controlled-bypass] grant_type is an OAuth dispatch key, not an auth bypass
+      grant_type === 'refresh_token'
+    ) {
       const { refresh_token } = body;
       if (!refresh_token) {
         res

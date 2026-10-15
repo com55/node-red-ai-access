@@ -1,6 +1,7 @@
 /**
  * Authorize login form HTML for OAuth GET /authorize.
  */
+/** `errorMsg` and `defaultUrl` must already be HTML-escaped by the caller. */
 export function buildAuthorizeLoginHtml(opts: {
   errorMsg: string;
   defaultUrl: string;
@@ -10,7 +11,6 @@ export function buildAuthorizeLoginHtml(opts: {
   scope: string | undefined;
   codeChallenge: string;
   codeChallengeMethod: string | undefined;
-  escHtml: (s: string) => string;
 }): string {
   const {
     errorMsg,
@@ -21,7 +21,6 @@ export function buildAuthorizeLoginHtml(opts: {
     scope,
     codeChallenge,
     codeChallengeMethod,
-    escHtml,
   } = opts;
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
@@ -55,10 +54,10 @@ export function buildAuthorizeLoginHtml(opts: {
   <div class="card">
     <h1>🔌 חיבור ל-Node-RED</h1>
     <p class="subtitle">הזן את פרטי ה-Node-RED שאליו Claude יתחבר</p>
-    <div id="msg-box">${errorMsg ? `<div class="error">⚠️ ${escHtml(errorMsg)}</div>` : ''}</div>
+    <div id="msg-box">${errorMsg ? `<div class="error">⚠️ ${errorMsg}</div>` : ''}</div>
 
     <label for="nr_url">כתובת Node-RED</label>
-    <input type="url" id="nr_url" value="${escHtml(defaultUrl)}" placeholder="https://nodered.example.com">
+    <input type="url" id="nr_url" value="${defaultUrl}" placeholder="https://nodered.example.com">
 
     <label>סוג הזדהות</label>
     <div class="tabs">

@@ -119,8 +119,8 @@ async function collectStatuses(
             // authConfirmed also only affects statusesMayBeIncomplete, a
             // diagnostic-completeness signal — it grants no access, since
             // the socket already receives whatever Node-RED sends regardless.
+            // codeql[js/user-controlled-bypass] see comment above — TLS to NODERED_URL is the trust boundary
             if (msg.auth === 'ok') {
-              // codeql[js/user-controlled-bypass] see comment above
               authConfirmed = true;
             } else {
               // Invalidate the cached token so the *next* check() call

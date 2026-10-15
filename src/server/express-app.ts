@@ -931,9 +931,10 @@ export class ExpressApp {
             'X-MCP-Protocol': '2025-03-26',
           });
 
-          // Log only a sanitized token subject shape — never raw header material.
-          const subject = (req.auth?.userId ?? 'anonymous').replace(/[\r\n\t]/g, '').slice(0, 64);
-          console.log(`MCP SSE client connected (Claude ${subject})`);
+          // Do not log userId/token subjects — CodeQL treats oauth subjects as sensitive.
+          console.log(
+            `MCP SSE client connected (authenticated=${Boolean(req.auth?.isAuthenticated)})`
+          );
 
           // Send initial MCP server capabilities immediately
           const serverInfo = {
