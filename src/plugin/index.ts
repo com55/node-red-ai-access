@@ -9,6 +9,7 @@ import type { Response } from 'express';
 
 import { requireAccessLink } from './access-link-auth.js';
 import {
+  mcpApiBase,
   requireAdminReadOrAccessLink,
   requireAdminSession,
   requireAiFeatures,
@@ -68,7 +69,10 @@ export function registerRoutes(
     requireAdminSession(RED, 'page'),
     (req: AuthenticatedRequest, res: Response) => {
       const status = buildStatus(RED, req);
-      res.type('html').status(200).send(renderMcpPage(status));
+      res
+        .type('html')
+        .status(200)
+        .send(renderMcpPage(status, { apiBase: mcpApiBase(RED.settings.httpAdminRoot) }));
     }
   );
 

@@ -14,11 +14,17 @@ import type {
 
 export type AdminGateMode = 'page' | 'api';
 
-function normalizeHttpAdminRoot(httpAdminRoot: string | undefined): string {
+export function normalizeHttpAdminRoot(httpAdminRoot: string | undefined): string {
   if (!httpAdminRoot || httpAdminRoot === '/') {
     return '/';
   }
   return httpAdminRoot.endsWith('/') ? httpAdminRoot.slice(0, -1) : httpAdminRoot;
+}
+
+/** Absolute admin path for `/mcp/api/v1` (respects httpAdminRoot). */
+export function mcpApiBase(httpAdminRoot: string | undefined): string {
+  const root = normalizeHttpAdminRoot(httpAdminRoot);
+  return root === '/' ? '/mcp/api/v1' : `${root}/mcp/api/v1`;
 }
 
 function scopesFromRequest(req: AuthenticatedRequest): string[] {

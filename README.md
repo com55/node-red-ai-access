@@ -14,14 +14,15 @@
 > Node-RED plugin (Phase 1 REST admin surface) while the standalone MCP server
 > remains available.
 
-## 🔌 Node-RED plugin (Phase 1 scaffold)
+## 🔌 Node-RED plugin (Phase 1)
 
 Install the package into your Node-RED user directory (or via the palette), then
-restart Node-RED. Open **`/mcp`** on the editor admin root after logging in.
+restart Node-RED. Open **`/mcp`** on the editor admin root after logging in to
+manage access links, review proposals, and read the audit log.
 
 | Path                                     | Purpose                                          |
 | ---------------------------------------- | ------------------------------------------------ |
-| `GET /mcp`                               | Admin page (requires adminAuth login)            |
+| `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
 | `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
 | `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
 | `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)        |
@@ -35,9 +36,11 @@ restart Node-RED. Open **`/mcp`** on the editor admin root after logging in.
 | `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*` only; no flow mutate)    |
 | `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |
 
-**Permissions:** users with `read` get a read-only view; users with `*` get full
-access. Unauthenticated visits to `/mcp` redirect to the editor login
-(`httpAdminRoot`).
+**Permissions:** users with `read` (including guest, if configured) get a
+read-only admin page; users with `*` can create/revoke access links and
+approve/reject proposals. Unauthenticated visits to `/mcp` redirect to the
+editor login (`httpAdminRoot`). Approve may send `deploymentType` of `nodes`
+(default), `flows`, or `full`.
 
 **Without `adminAuth`:** AI features stay off and `/mcp` shows a warning. For
 local-only setups you can opt in in `settings.js`:

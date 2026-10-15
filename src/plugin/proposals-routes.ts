@@ -165,8 +165,21 @@ export function approveProposalHandler(service: ProposalService) {
       res.status(400).json({ error: 'Missing proposal id' });
       return;
     }
+    const body = (req.body ?? {}) as { deploymentType?: unknown };
+    const approveOptions: { deploymentType?: 'nodes' | 'flows' | 'full' } = {};
+    if (body.deploymentType !== undefined) {
+      if (
+        body.deploymentType !== 'nodes' &&
+        body.deploymentType !== 'flows' &&
+        body.deploymentType !== 'full'
+      ) {
+        res.status(400).json({ error: "deploymentType must be 'nodes', 'flows', or 'full'" });
+        return;
+      }
+      approveOptions.deploymentType = body.deploymentType;
+    }
     try {
-      const proposal = await service.approve(id, adminActor(req));
+      const proposal = await service.approve(id, adminActor(req), approveOptions);
       res.json(proposal);
     } catch (error) {
       if (
