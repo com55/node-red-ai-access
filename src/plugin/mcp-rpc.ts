@@ -32,6 +32,7 @@ import {
   listMyProposals,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { presentOptionsFor } from './proposal-present.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -173,9 +174,12 @@ function registerReadTools(
 
 function registerProposalTools(
   server: McpServer,
+  RED: NodeRedPluginAPI,
   services: PluginServices,
+  req: AuthenticatedRequest,
   accessLink: NonNullable<AuthenticatedRequest['accessLink']>
 ): void {
+  const presentOpts = presentOptionsFor(req, RED.settings.httpAdminRoot);
   server.registerTool(
     'submit_proposal',
     {
@@ -188,7 +192,8 @@ function registerProposalTools(
         `payload: { flowId, flow } with flow.nodes required. ` +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
-        'Returns the pending proposal with title, displayName (title · local datetime), and reviewUrl. ' +
+        'Returns the pending proposal with title, displayName (title · server-local datetime with offset), ' +
+        'reviewUrl (absolute when Host is known), and reviewPath (relative /mcp#proposal=<id>). ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
         'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
       inputSchema: {
@@ -238,7 +243,8 @@ function registerProposalTools(
             ...args,
             expectedRev: args.expectedRev || args.expected_rev,
           },
-          services.flowAdapter
+          services.flowAdapter,
+          presentOpts
         );
         return jsonResult(proposal);
       } catch (error) {
@@ -252,12 +258,14 @@ function registerProposalTools(
     {
       description:
         'List proposals created by this access link only. Returns { proposals: [...] } with ' +
-        'title, displayName, and reviewUrl on each. Prefer displayName + reviewUrl when ' +
-        'referring to a proposal with the user (not the raw id).',
+        'title, displayName (server-local time with offset), reviewUrl (absolute), and reviewPath. ' +
+        'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
     },
     () => {
       try {
-        return jsonResult({ proposals: listMyProposals(services.proposalStore, accessLink) });
+        return jsonResult({
+          proposals: listMyProposals(services.proposalStore, accessLink, presentOpts),
+        });
       } catch (error) {
         return jsonError(error);
       }
@@ -268,15 +276,16 @@ function registerProposalTools(
     'get_proposal',
     {
       description:
-        'Get one proposal by id if owned by this access link. Returns title, displayName, and ' +
-        'reviewUrl — cite those when talking to the user. 404-style tool error if missing or not yours.',
+        'Get one proposal by id if owned by this access link. Returns title, displayName, ' +
+        'reviewUrl, and reviewPath — cite displayName + reviewUrl when talking to the user. ' +
+        '404-style tool error if missing or not yours.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
       },
     },
     ({ id }) => {
       try {
-        return jsonResult(getMyProposal(services.proposalStore, accessLink, id));
+        return jsonResult(getMyProposal(services.proposalStore, accessLink, id, presentOpts));
       } catch (error) {
         return jsonError(error);
       }
@@ -300,7 +309,7 @@ function createAiMcpServer(
   }
 
   registerReadTools(server, RED, services, req);
-  registerProposalTools(server, services, accessLink);
+  registerProposalTools(server, RED, services, req, accessLink);
   return server;
 }
 

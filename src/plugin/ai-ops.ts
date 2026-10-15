@@ -23,11 +23,12 @@ import {
   resolveProposalTitle,
   sanitizeProposalTitle,
   type PresentedProposal,
+  type PresentProposalOptions,
 } from './proposal-present.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
 export { MAX_PROPOSAL_JSON_BYTES };
-export type { PresentedProposal };
+export type { PresentedProposal, PresentProposalOptions };
 
 export interface SiblingProposalRef {
   id: string;
@@ -118,7 +119,8 @@ export async function submitReplaceFlowProposal(
   audit: AuditLog,
   accessLink: AccessLinkAuthInfo,
   body: SubmitReplaceFlowInput,
-  adapter: FlowAdapter
+  adapter: FlowAdapter,
+  presentOptions: PresentProposalOptions = {}
 ): Promise<PresentedProposal> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
@@ -206,7 +208,7 @@ export async function submitReplaceFlowProposal(
     createdBy,
   });
 
-  const presented = presentProposal(proposal);
+  const presented = presentProposal(proposal, presentOptions);
 
   audit.append('proposal.created', createdBy, {
     proposalId: proposal.id,
@@ -221,15 +223,17 @@ export async function submitReplaceFlowProposal(
 
 export function listMyProposals(
   store: ProposalStore,
-  accessLink: AccessLinkAuthInfo
+  accessLink: AccessLinkAuthInfo,
+  presentOptions: PresentProposalOptions = {}
 ): PresentedProposal[] {
-  return store.list({ linkId: accessLink.id }).map(presentProposal);
+  return store.list({ linkId: accessLink.id }).map(p => presentProposal(p, presentOptions));
 }
 
 export function getMyProposal(
   store: ProposalStore,
   accessLink: AccessLinkAuthInfo,
-  id: string
+  id: string,
+  presentOptions: PresentProposalOptions = {}
 ): PresentedProposal {
   if (!id) {
     throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
@@ -238,7 +242,7 @@ export function getMyProposal(
   if (proposal.createdBy.linkId !== accessLink.id) {
     throw new ProposalNotFoundError(id);
   }
-  return presentProposal(proposal);
+  return presentProposal(proposal, presentOptions);
 }
 
 /** Map shared op errors to REST-style `{ statusCode, body }` for HTTP handlers. */

@@ -470,9 +470,9 @@ paths:
 
         Optional `title` (≤80 chars) is stored as a human-friendly label; when
         omitted it is auto-generated from the change set. Responses always
-        include `title`, `displayName` (`title ·` local submitted time), and
-        `reviewUrl` (`/mcp#proposal=<id>`). AI clients should cite
-        `displayName` + `reviewUrl` to users (not the raw id).
+        include `title`, `displayName` (`title ·` server-local submitted time
+        with offset), absolute `reviewUrl`, and relative `reviewPath`. AI clients
+        should cite `displayName` + `reviewUrl` to users (not the raw id).
 
         `payload.flow` must be a tab object (`id`, `type`, `label?`, `nodes[]`,
         optional `configs[]`). Payloads over 1_500_000 bytes return **413**.
@@ -1139,6 +1139,7 @@ components:
         - title
         - displayName
         - reviewUrl
+        - reviewPath
       properties:
         id:
           type: string
@@ -1166,19 +1167,32 @@ components:
         displayName:
           type: string
           description: |
-            `title · <submitted datetime>` in Node-RED server local time
-            (e.g. `Edit fn1 (function) · 16 Oct 01:35`). Prefer this when
-            referring to the proposal with a human.
+            `title · <submitted datetime>` in Node-RED **server local time**
+            with an explicit UTC offset (e.g. `Edit fn1 (function) · 16 Oct 01:35 +00:00`).
+            Prefer this when referring to the proposal with a human. UIs with a
+            browser should render `createdAt` in the client's local timezone
+            instead of parsing this embedded server clock.
         reviewUrl:
           type: string
           description: |
-            Relative deep link `/mcp#proposal=<id>` that opens the admin page,
-            switches to Proposals, and scrolls/highlights this item.
+            Absolute deep link (`https://host/mcp#proposal=<id>`) built from the
+            request Host/protocol. Uses `X-Forwarded-Host` / `X-Forwarded-Proto`
+            only when Express `trust proxy` is enabled; otherwise falls back to
+            the relative `reviewPath` when Host is unavailable.
+        reviewPath:
+          type: string
+          description: |
+            Relative deep link `/mcp#proposal=<id>` (under `httpAdminRoot` when
+            set) that opens the admin page, switches to Proposals, and
+            scrolls/highlights this item.
         createdBy:
           $ref: '#/components/schemas/ProposalCreator'
         createdAt:
           type: string
           format: date-time
+          description: |
+            ISO-8601 instant when the proposal was created. Prefer this for
+            client-side local-time rendering.
         updatedAt:
           type: string
           format: date-time

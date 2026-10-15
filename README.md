@@ -134,11 +134,15 @@ API. Tools mirror the AI-facing REST surface only:
 `replace_flow` with `expectedRev`; `expected_rev` accepted as alias; optional
 `title` ≤80 chars), `list_my_proposals`, `get_proposal`. Tool descriptions
 document purpose, inputs, returns, and when to use them. Proposal
-create/list/get responses include `title`, `displayName` (`title ·` server-local
-datetime), and `reviewUrl` (`/mcp#proposal=<id>`). AI clients should refer to
-proposals by `displayName` + `reviewUrl`, not the raw id. For access-link
-callers, `get_status` reports `permission: null` and
-`caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
+create/list/get responses include `title`, `displayName` (`title ·`
+**server-local** datetime with explicit offset, e.g. `16 Oct 01:35 +00:00`),
+`reviewUrl` (absolute URL using the request Host/protocol — `X-Forwarded-*` only
+when Express `trust proxy` is set), and `reviewPath` (relative
+`/mcp#proposal=<id>`). `createdAt` remains ISO-8601. The `/mcp` page renders
+times in the browser's local timezone. AI clients should refer to proposals by
+`displayName` + `reviewUrl`, not the raw id. For access-link callers,
+`get_status` reports `permission: null` and `caller.kind: "access-link"`
+(expected — AI tokens are not admin sessions).
 
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and

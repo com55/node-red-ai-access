@@ -29,6 +29,7 @@ import {
 import { getLinkProposeHandler } from './get-link/propose-handler.js';
 import { queryString } from './get-link/query.js';
 import { computeProposalDiff } from './proposal-diff.js';
+import { presentOptionsFor } from './proposal-present.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -118,15 +119,21 @@ export function registerGetLinkRoutes(
     }
   });
 
-  registerGetLinkProposalRoutes(app, base, gate, options);
+  const httpAdminRoot = RED.settings.httpAdminRoot;
+  registerGetLinkProposalRoutes(app, base, gate, options, httpAdminRoot);
 
   app.get(
     `${base}/propose`,
     ...gate,
-    getLinkProposeHandler(options.proposalStore, options.auditLog, options.flowAdapter)
+    getLinkProposeHandler(
+      options.proposalStore,
+      options.auditLog,
+      options.flowAdapter,
+      httpAdminRoot
+    )
   );
 
-  registerGetLinkDraftRoutes(app, base, gate, draftStore, options);
+  registerGetLinkDraftRoutes(app, base, gate, draftStore, options, httpAdminRoot);
 
   // JSON 404 for unmatched /mcp/a/* paths — never echo the token (no HTML "Cannot GET").
   app.use('/mcp/a', getLinkNotFoundHandler());
@@ -142,7 +149,8 @@ function registerGetLinkProposalRoutes(
   app: Express,
   base: string,
   gate: GetLinkGate,
-  options: RegisterGetLinkRoutesOptions
+  options: RegisterGetLinkRoutesOptions,
+  httpAdminRoot?: string
 ): void {
   app.get(`${base}/proposals`, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
@@ -151,7 +159,13 @@ function registerGetLinkProposalRoutes(
       jsonError(res, 401, 'Access link required', 'access_link_missing');
       return;
     }
-    res.json({ proposals: listMyProposals(options.proposalStore, link) });
+    res.json({
+      proposals: listMyProposals(
+        options.proposalStore,
+        link,
+        presentOptionsFor(req, httpAdminRoot)
+      ),
+    });
   });
 
   app.get(`${base}/proposals/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
@@ -167,7 +181,9 @@ function registerGetLinkProposalRoutes(
       return;
     }
     try {
-      res.json(getMyProposal(options.proposalStore, link, id));
+      res.json(
+        getMyProposal(options.proposalStore, link, id, presentOptionsFor(req, httpAdminRoot))
+      );
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
@@ -197,7 +213,12 @@ function registerGetLinkProposalRoutes(
         return;
       }
       try {
-        const proposal = getMyProposal(options.proposalStore, link, id);
+        const proposal = getMyProposal(
+          options.proposalStore,
+          link,
+          id,
+          presentOptionsFor(req, httpAdminRoot)
+        );
         const format = resolveDiffFormat(queryString(req.query, 'format'));
         res.json(applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter), format));
       } catch (error) {
@@ -217,7 +238,8 @@ function registerGetLinkDraftRoutes(
   base: string,
   gate: GetLinkGate,
   draftStore: DraftStore,
-  options: RegisterGetLinkRoutesOptions
+  options: RegisterGetLinkRoutesOptions,
+  httpAdminRoot?: string
 ): void {
   app.get(`${base}/draft/new`, ...gate, getLinkDraftNewHandler(draftStore, options.flowAdapter));
   app.get(`${base}/draft/:draftId/append`, ...gate, getLinkDraftAppendHandler(draftStore));
@@ -228,7 +250,8 @@ function registerGetLinkDraftRoutes(
       draftStore,
       options.proposalStore,
       options.auditLog,
-      options.flowAdapter
+      options.flowAdapter,
+      httpAdminRoot
     )
   );
 }

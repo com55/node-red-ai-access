@@ -110,6 +110,30 @@ function pageClientScriptPartATimeCopy(): string {
       return String(iso);
     }
   }
+  /** Browser-local short stamp matching API displayName style (D Mon HH:mm). */
+  function fmtLocalShort(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      var day = d.getDate();
+      var month = months[d.getMonth()] || 'Jan';
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      return day + ' ' + month + ' ' + hh + ':' + mm;
+    } catch (e) {
+      return String(iso);
+    }
+  }
+  function proposalHeading(p) {
+    // Prefer title + browser-local time — API displayName embeds server TZ.
+    if (p.title && p.createdAt) {
+      return esc(p.title) + ' · ' + esc(fmtLocalShort(p.createdAt));
+    }
+    if (p.title) return esc(p.title);
+    if (p.displayName) return esc(p.displayName);
+    return tipId(p.id, 12);
+  }
   function fmtRelative(iso) {
     try {
       var d = new Date(iso);
@@ -238,19 +262,24 @@ function pageClientScriptPartAFormat(): string {
     };
     return labels[action] ? labels[action] + ' (' + action + ')' : action;
   }
-  function auditProposalLabel(d) {
-    if (d.displayName) {
-      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
+  function auditProposalLabel(d, atIso) {
+    // Prefer title + browser-local time; fall back to server displayName.
+    if (d.title && atIso) {
+      return '<strong class="audit-display-name">' + esc(String(d.title)) +
+        ' · ' + esc(fmtLocalShort(atIso)) + '</strong>';
     }
     if (d.title) {
       return '<strong class="audit-display-name">' + esc(String(d.title)) + '</strong>';
+    }
+    if (d.displayName) {
+      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
     }
     return d.proposalId ? tipId(d.proposalId, 12) : '';
   }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
-    var prop = auditProposalLabel(d);
+    var prop = auditProposalLabel(d, entry.at);
     var flow = d.flowId != null ? esc(String(d.flowId)) : '';
     if (action === 'proposal.created') {
       return (prop || 'Proposal') + ' created' + (flow ? ' for flow "' + flow + '"' : '');
@@ -810,11 +839,8 @@ function pageClientScriptPartB2(): string {
             createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
           }
         }
-        var heading = p.displayName
-          ? esc(p.displayName)
-          : (p.title ? esc(p.title) : tipId(p.id, 12));
         return '<article class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) + '">' +
-          '<h3 class="proposal-heading">' + heading +
+          '<h3 class="proposal-heading">' + proposalHeading(p) +
           ' · <code>' + esc(p.status) + '</code></h3>' +
           '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +

@@ -8,6 +8,7 @@ import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
+import { presentOptionsFor } from '../proposal-present.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -129,7 +130,8 @@ async function buildFromSetProps(
 export function getLinkProposeHandler(
   proposalStore: ProposalStore,
   auditLog: AuditLog,
-  flowAdapter: FlowAdapter
+  flowAdapter: FlowAdapter,
+  httpAdminRoot?: string
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (rejectOversizedGetUrl(req, res)) {
@@ -213,7 +215,8 @@ export function getLinkProposeHandler(
           payload: { flowId: built.builtFlowId, flow: built.builtFlow },
           ...(titleParam ? { title: titleParam } : {}),
         },
-        flowAdapter
+        flowAdapter,
+        presentOptionsFor(req, httpAdminRoot)
       );
       const siblings = siblingsOnSameRev(proposalStore, proposal);
       res.status(201).json({

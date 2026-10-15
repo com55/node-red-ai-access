@@ -75,6 +75,52 @@ export { SettingsStore } from '../storage/settings-store.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
+function registerProposalHttpRoutes(
+  RED: NodeRedPluginAPI,
+  services: ReturnType<typeof createPluginServices>,
+  limiter: ReturnType<typeof createAiAccessRateLimiter>,
+  sharedRead: unknown[],
+  linkGuards: unknown[]
+): void {
+  const httpAdminRoot = RED.settings.httpAdminRoot;
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals',
+    ...(sharedRead as []),
+    listProposalsHandler(services.proposalStore, httpAdminRoot)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals/:id',
+    ...(sharedRead as []),
+    getProposalHandler(services.proposalStore, httpAdminRoot)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals/:id/diff',
+    ...(sharedRead as []),
+    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals',
+    limiter,
+    requireAccessLink(RED, services.linkStore),
+    createProposalHandler(
+      services.proposalStore,
+      services.auditLog,
+      services.flowAdapter,
+      httpAdminRoot
+    )
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/approve',
+    ...(linkGuards as []),
+    approveProposalHandler(services.proposalService, httpAdminRoot)
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/reject',
+    ...(linkGuards as []),
+    rejectProposalHandler(services.proposalService, httpAdminRoot)
+  );
+}
+
 export function registerRoutes(
   RED: NodeRedPluginAPI,
   serviceOptions: CreatePluginServicesOptions = {}
@@ -167,44 +213,12 @@ export function registerRoutes(
   RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(services.flowAdapter));
   RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowHandler(services.flowAdapter));
 
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals',
-    ...sharedRead,
-    listProposalsHandler(services.proposalStore)
-  );
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals/:id',
-    ...sharedRead,
-    getProposalHandler(services.proposalStore)
-  );
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals/:id/diff',
-    ...sharedRead,
-    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
-  );
-
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals',
-    limiter,
-    requireAccessLink(RED, services.linkStore),
-    createProposalHandler(services.proposalStore, services.auditLog, services.flowAdapter)
-  );
+  registerProposalHttpRoutes(RED, services, limiter, sharedRead, linkGuards);
 
   const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
-
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/approve',
-    ...linkGuards,
-    approveProposalHandler(services.proposalService)
-  );
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/reject',
-    ...linkGuards,
-    rejectProposalHandler(services.proposalService)
-  );
 
   RED.httpAdmin.get(
     '/mcp/api/v1/logs',

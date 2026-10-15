@@ -11,6 +11,7 @@ import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
 import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
+import { presentOptionsFor } from '../proposal-present.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -418,7 +419,8 @@ export function getLinkDraftSubmitHandler(
   draftStore: DraftStore,
   proposalStore: ProposalStore,
   auditLog: AuditLog,
-  flowAdapter: FlowAdapter
+  flowAdapter: FlowAdapter,
+  httpAdminRoot?: string
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (rejectOversizedGetUrl(req, res)) return;
@@ -508,7 +510,8 @@ export function getLinkDraftSubmitHandler(
           payload: { flowId: builtFlowId, flow: builtFlow },
           ...(title ? { title } : {}),
         },
-        flowAdapter
+        flowAdapter,
+        presentOptionsFor(req, httpAdminRoot)
       );
 
       draftStore.markSubmitted(draftId, req.accessLink.id, proposal.id);

@@ -49,9 +49,11 @@ these docs).
 3. For large content (e.g. HTML in a \`template\` node), use **chunked drafts**.
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
-Submit responses include \`title\`, \`displayName\` (title · local datetime), and
-\`reviewUrl\` (\`/mcp#proposal=<id>\`). **Always tell the user about the proposal
-using \`displayName\` + \`reviewUrl\` — not the raw id.**
+Submit responses include \`title\`, \`displayName\` (\`title ·\` **server-local**
+datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
+Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
+\`createdAt\` is ISO-8601. **Always tell the user about the proposal using
+\`displayName\` + \`reviewUrl\` — not the raw id.**
 
 ## Step-by-step workflow
 

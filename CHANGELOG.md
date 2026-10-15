@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Proposal `reviewUrl` is now an **absolute** URL from the request Host/protocol
+  (`X-Forwarded-*` only when Express `trust proxy` is set). Responses also
+  include relative `reviewPath` (`/mcp#proposal=<id>`).
+- `displayName` datetime includes an explicit UTC offset and is documented as
+  **server local time**; `/mcp` renders proposal/audit times in the browser's
+  local timezone. `createdAt` remains ISO-8601.
+
 ### Fixed
 
 - Unknown flow ids return **404** `flow_not_found` (with hint to use ids from
