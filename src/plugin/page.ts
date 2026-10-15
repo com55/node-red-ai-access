@@ -1,15 +1,20 @@
 /**
  * HTML admin UI for GET /mcp — status, links, proposals, audit log.
- * Plain CSS + vanilla JS; calls existing /mcp/api/v1 REST endpoints.
+ *
+ * Served without adminAuth so the browser can read the editor's localStorage
+ * Bearer token (Node-RED does not use cookies). APIs remain protected.
  */
 
 import { pageClientScript } from './page-client.js';
 import { pageStyles } from './page-styles.js';
-import type { AiAccessStatus } from './types.js';
 
 export interface RenderMcpPageOptions {
   /** Absolute path prefix for `/mcp/api/v1` (respects httpAdminRoot). */
   apiBase: string;
+  /** Editor root for login redirect (httpAdminRoot). */
+  editorRoot: string;
+  /** localStorage key matching the Node-RED editor auth token. */
+  authTokenKey: string;
 }
 
 function escapeHtml(value: string): string {
@@ -20,77 +25,15 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;');
 }
 
-export function renderMcpPage(status: AiAccessStatus, options: RenderMcpPageOptions): string {
-  const canManageLinks = status.capabilities.manageLinks;
-  const canApprove = status.capabilities.approveProposals;
-  const aiOn = status.aiFeaturesEnabled;
-
-  const warning =
-    !status.adminAuthEnabled && !status.aiFeaturesEnabled
-      ? `<aside class="warning" role="status">
-          <h2>Warning</h2>
-          <p>
-            <code>adminAuth</code> is not enabled, so AI Access features are
-            <strong>disabled</strong> by default. Enable Node-RED
-            <code>adminAuth</code>, or set
-            <code>aiAccess.allowWithoutAdminAuth: true</code> in
-            <code>settings.js</code> for local-only use.
-          </p>
-        </aside>`
-      : !status.adminAuthEnabled && status.aiFeaturesEnabled
-        ? `<aside class="warning" role="status">
-            <h2>Local-only mode</h2>
-            <p>
-              <code>adminAuth</code> is off and
-              <code>aiAccess.allowWithoutAdminAuth</code> is enabled. Full AI
-              Access features are available without a login — use only on trusted
-              local networks.
-            </p>
-          </aside>`
-        : '';
-
-  const modeLabel =
-    status.permission === '*'
-      ? 'full access'
-      : status.permission === 'read'
-        ? 'read-only'
-        : 'limited';
-
-  const ttlHoursDefault = Math.max(1, Math.round(status.defaultLinkTtlSeconds / 3600));
-
-  const linksManage = canManageLinks
-    ? `<form id="create-link-form" class="row">
-        <label>TTL (hours)
-          <input id="link-ttl" type="number" min="1" step="1" value="${ttlHoursDefault}" />
-        </label>
-        <label>Label (optional)
-          <input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" />
-        </label>
-        <button type="submit" class="action">Create access link</button>
-      </form>
-      <div id="token-once" class="token-once" hidden>
-        <strong>Token (shown once)</strong>
-        <code id="token-value"></code>
-      </div>
-      <div id="links-list"></div>`
-    : `<p class="readonly-note">Link management requires full admin permission (*).</p>
-       <div id="links-list"></div>`;
-
-  const proposalsHint = canApprove
-    ? `<p class="muted">Approve deploys via FlowAdapter. Default deploy type is <code>${escapeHtml(status.defaultDeploymentType)}</code>; you can override per approval (nodes / flows / full). Revision conflicts are shown as rejected proposals.</p>`
-    : `<p class="readonly-note">Approve and reject require full admin permission (*). You can still review proposals.</p>`;
-
-  const disabledNote = !aiOn
-    ? `<p class="readonly-note">AI features are disabled — enable adminAuth or allowWithoutAdminAuth to use these views.</p>`
-    : '';
-
+/**
+ * Boot shell: no server-side session required. Client authenticates via the
+ * editor token in localStorage and loads status/actions over the REST API.
+ */
+export function renderMcpPage(options: RenderMcpPageOptions): string {
   const config = {
     apiBase: options.apiBase,
-    canManageLinks,
-    canApprove,
-    aiFeaturesEnabled: aiOn,
-    defaultLinkTtlSeconds: status.defaultLinkTtlSeconds,
-    defaultDeploymentType: status.defaultDeploymentType,
+    editorRoot: options.editorRoot,
+    authTokenKey: options.authTokenKey,
   };
 
   return `<!DOCTYPE html>
@@ -104,9 +47,6 @@ export function renderMcpPage(status: AiAccessStatus, options: RenderMcpPageOpti
 <body>
   <main
     id="mcp-root"
-    data-ai-features="${aiOn ? 'true' : 'false'}"
-    data-can-manage-links="${canManageLinks ? 'true' : 'false'}"
-    data-can-approve="${canApprove ? 'true' : 'false'}"
     data-config="${escapeHtml(JSON.stringify(config))}"
   >
     <h1>Node-RED AI Access</h1>
@@ -114,53 +54,53 @@ export function renderMcpPage(status: AiAccessStatus, options: RenderMcpPageOpti
       Temporary, owner-approved access for AI clients. Manage access links,
       review proposals, and inspect the audit log.
     </p>
-    ${warning}
-    <nav class="tabs" aria-label="Admin views">
+    <div id="boot-flash" class="flash" hidden></div>
+    <nav class="tabs" aria-label="Admin views" hidden id="main-nav">
       <button type="button" data-tab="status" aria-selected="true">Status</button>
       <button type="button" data-tab="links" aria-selected="false">Access links</button>
       <button type="button" data-tab="proposals" aria-selected="false">Proposals</button>
       <button type="button" data-tab="logs" aria-selected="false">Audit log</button>
     </nav>
 
-    <section class="panel active" id="section-status" aria-label="Status">
+    <section class="panel active" id="section-status" aria-label="Status" hidden>
       <h2>Status</h2>
       <div id="status-flash" class="flash" hidden></div>
+      <aside id="status-warning" class="warning" role="status" hidden></aside>
       <dl class="status">
-        <dt>Version</dt><dd id="status-version">${escapeHtml(status.version)}</dd>
-        <dt>adminAuth</dt><dd id="status-adminauth">${status.adminAuthEnabled ? 'enabled' : 'disabled'}</dd>
-        <dt>AI features</dt><dd id="status-aifeatures">${status.aiFeaturesEnabled ? 'enabled' : 'disabled'}</dd>
-        <dt>Permission</dt><dd id="status-permission">${escapeHtml(status.permission ?? 'none')}</dd>
-        <dt>Storage</dt><dd id="status-storage">${escapeHtml(status.storageDir)}</dd>
-        <dt>Default link TTL</dt><dd id="status-ttl">${status.defaultLinkTtlSeconds}s</dd>
-        <dt>Max active links</dt><dd id="status-maxlinks">${status.maxActiveLinks}</dd>
-        <dt>Default deploy</dt><dd id="status-deploy">${escapeHtml(status.defaultDeploymentType)}</dd>
+        <dt>Version</dt><dd id="status-version">—</dd>
+        <dt>adminAuth</dt><dd id="status-adminauth">—</dd>
+        <dt>AI features</dt><dd id="status-aifeatures">—</dd>
+        <dt>Permission</dt><dd id="status-permission">—</dd>
+        <dt>Caller</dt><dd id="status-caller">—</dd>
+        <dt>Storage</dt><dd id="status-storage">—</dd>
+        <dt>Default link TTL</dt><dd id="status-ttl">—</dd>
+        <dt>Max active links</dt><dd id="status-maxlinks">—</dd>
+        <dt>Default deploy</dt><dd id="status-deploy">—</dd>
       </dl>
-      <span class="badge">${escapeHtml(modeLabel)}</span>
+      <span class="badge" id="status-badge">loading</span>
       <div class="row" style="margin-top:1rem">
         <button type="button" class="action secondary" id="refresh-status">Refresh</button>
       </div>
     </section>
 
-    <section class="panel" id="section-links" aria-label="Access links">
+    <section class="panel" id="section-links" aria-label="Access links" hidden>
       <h2>Access links</h2>
-      ${disabledNote}
       <div id="links-flash" class="flash" hidden></div>
-      ${aiOn ? linksManage : ''}
+      <div id="links-manage"></div>
+      <div id="links-list"></div>
     </section>
 
-    <section class="panel" id="section-proposals" aria-label="Proposals">
+    <section class="panel" id="section-proposals" aria-label="Proposals" hidden>
       <h2>Proposals</h2>
-      ${disabledNote}
-      ${aiOn ? proposalsHint : ''}
+      <p id="proposals-hint" class="muted"></p>
       <div id="proposals-flash" class="flash" hidden></div>
-      <div id="proposals-list">${aiOn ? '<p class="muted">Loading…</p>' : ''}</div>
+      <div id="proposals-list"><p class="muted">Loading…</p></div>
     </section>
 
-    <section class="panel" id="section-logs" aria-label="Audit log">
+    <section class="panel" id="section-logs" aria-label="Audit log" hidden>
       <h2>Audit log</h2>
-      ${disabledNote}
       <div id="logs-flash" class="flash" hidden></div>
-      <div id="logs-list">${aiOn ? '<p class="muted">Loading…</p>' : ''}</div>
+      <div id="logs-list"><p class="muted">Loading…</p></div>
     </section>
   </main>
   <script>${pageClientScript()}</script>

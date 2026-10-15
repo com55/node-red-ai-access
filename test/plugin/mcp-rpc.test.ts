@@ -11,7 +11,13 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
-import { ACCESS_LINK_INVALID_MESSAGE } from '../../src/plugin/access-link-auth.js';
+import {
+  ACCESS_LINK_INVALID_CODE,
+  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
+  ACCESS_LINK_MISSING_MESSAGE,
+  ACCESS_LINK_WWW_AUTHENTICATE,
+} from '../../src/plugin/access-link-auth.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
@@ -21,8 +27,9 @@ const MCP_ACCEPT = 'application/json, text/event-stream';
 function createApp(options: {
   userDir: string;
   adapter?: FlowAdapter;
-  /** Pass `null` to omit adminAuth (AI features off unless allowWithoutAdminAuth). */
-  adminAuth?: unknown | null;
+  /** When true, omit adminAuth (AI features off unless allowWithoutAdminAuth). */
+  omitAdminAuth?: boolean;
+  adminAuth?: Record<string, unknown>;
   aiAccess?: Record<string, unknown>;
 }): {
   app: Express;
@@ -37,9 +44,7 @@ function createApp(options: {
     settings: {
       userDir: options.userDir,
       httpAdminRoot: '/',
-      ...(options.adminAuth === null
-        ? {}
-        : { adminAuth: options.adminAuth ?? { type: 'credentials' } }),
+      ...(options.omitAdminAuth ? {} : { adminAuth: options.adminAuth ?? { type: 'credentials' } }),
       aiAccess: {
         defaultDeploymentType: 'nodes',
         ...(options.aiAccess ?? {}),
@@ -125,7 +130,7 @@ async function callTool(
 }
 
 function parseToolJson(result: Record<string, unknown> | undefined): unknown {
-  const content = result?.content as Array<{ type: string; text: string }> | undefined;
+  const content = result?.content as { type: string; text: string }[] | undefined;
   expect(content?.[0]?.type).toBe('text');
   return JSON.parse(content![0]!.text) as unknown;
 }
@@ -155,7 +160,17 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       },
     });
     expect(missing.status).toBe(401);
-    expect(missing.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(missing.body.error).toBe(ACCESS_LINK_MISSING_MESSAGE);
+    expect(missing.body.code).toBe(ACCESS_LINK_MISSING_CODE);
+    expect(
+      (
+        await request(app)
+          .post('/mcp/rpc')
+          .set('Accept', MCP_ACCEPT)
+          .set('Content-Type', 'application/json')
+          .send({})
+      ).headers['www-authenticate']
+    ).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
 
     const bad = await mcpRpc(app, 'not-a-token', {
       jsonrpc: '2.0',
@@ -164,6 +179,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     });
     expect(bad.status).toBe(401);
     expect(bad.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(bad.body.code).toBe(ACCESS_LINK_INVALID_CODE);
 
     const created = linkStore.create({ label: 'tmp' });
     linkStore.revoke(created.id);
@@ -179,7 +195,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
   it('returns 403 when AI features are disabled (adminAuth off, no opt-in)', async () => {
     const { app, linkStore } = createApp({
       userDir,
-      adminAuth: null,
+      omitAdminAuth: true,
       aiAccess: { allowWithoutAdminAuth: false },
     });
     // Link store still works in-memory; middleware checks AI features first.
@@ -209,7 +225,11 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
           return (_req: Request, _res: Response, next: NextFunction) => next();
         },
       },
-      plugins: { registerPlugin() {} },
+      plugins: {
+        registerPlugin() {
+          return undefined;
+        },
+      },
       log: { info: vi.fn() },
     };
     registerRoutes(RED, {
@@ -228,7 +248,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       method: 'tools/list',
     });
     expect(res.status).toBe(200);
-    const tools = (res.body.result as { tools: Array<{ name: string }> }).tools.map(t => t.name);
+    const tools = (res.body.result as { tools: { name: string }[] }).tools.map(t => t.name);
     expect(tools).toEqual(
       expect.arrayContaining([
         'get_status',
@@ -252,7 +272,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       method: 'tools/list',
     });
     expect(res.status).toBe(200);
-    const names = (res.body.result as { tools: Array<{ name: string }> }).tools.map(t => t.name);
+    const names = (res.body.result as { tools: { name: string }[] }).tools.map(t => t.name);
     expect(names.sort()).toEqual(
       [
         'get_flow',
@@ -263,6 +283,14 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'submit_proposal',
       ].sort()
     );
+    const tools = (res.body.result as { tools: { name: string; description?: string }[] }).tools;
+    const submit = tools.find(t => t.name === 'submit_proposal');
+    expect(submit?.description).toMatch(/expectedRev/);
+    expect(submit?.description).toMatch(/nodes\[\]/);
+    expect(submit?.description).toMatch(/413/);
+    expect(submit?.description).toMatch(/get_flow|list_flows/);
+    const getStatus = tools.find(t => t.name === 'get_status');
+    expect(getStatus?.description).toMatch(/permission is null|permission.*null/i);
   });
 
   it('get_status / list_flows / get_flow / submit / list / get_proposal work', async () => {
@@ -272,9 +300,16 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     const status = await callTool(app, link.token, 'get_status');
     expect(status.status).toBe(200);
     expect(status.result?.isError).toBeFalsy();
-    const statusJson = parseToolJson(status.result) as { ok: boolean; aiFeaturesEnabled: boolean };
+    const statusJson = parseToolJson(status.result) as {
+      ok: boolean;
+      aiFeaturesEnabled: boolean;
+      permission: string | null;
+      caller?: { kind: string; linkId?: string };
+    };
     expect(statusJson.ok).toBe(true);
     expect(statusJson.aiFeaturesEnabled).toBe(true);
+    expect(statusJson.permission).toBeNull();
+    expect(statusJson.caller).toMatchObject({ kind: 'access-link', linkId: link.id });
 
     const flows = await callTool(app, link.token, 'list_flows');
     expect(flows.status).toBe(200);
@@ -313,7 +348,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(proposal.createdBy.linkId).toBe(link.id);
 
     const mine = await callTool(app, link.token, 'list_my_proposals');
-    const mineJson = parseToolJson(mine.result) as { proposals: Array<{ id: string }> };
+    const mineJson = parseToolJson(mine.result) as { proposals: { id: string }[] };
     expect(mineJson.proposals).toHaveLength(1);
     expect(mineJson.proposals[0]!.id).toBe(proposal.id);
 

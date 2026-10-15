@@ -32,15 +32,28 @@ info:
       submit proposals (REST and `/mcp/rpc`). Tokens are in-memory only (lost
       on restart).
 
-    When an access-link token is missing, invalid, expired, revoked, or
-    cleared by a restart, AI-facing routes return **401** with a message that
-    tells the AI to ask the user for a new access link.
+    When an access-link token is **missing**, AI-facing routes return **401**
+    with `code: access_link_missing`. When the token is **invalid**, expired,
+    revoked, or cleared by a restart, they return **401** with
+    `code: access_link_invalid`. Both include `WWW-Authenticate: Bearer` and a
+    message that tells the AI to ask the user for a new access link.
+
+    ## Admin page (`GET /mcp`)
+
+    The HTML shell is served **without** adminAuth so the browser can read the
+    Node-RED editor token from `localStorage` (editors do not use cookies) and
+    call APIs with `Authorization: Bearer`. All data and mutating actions stay
+    behind `needsPermission` / access-link checks.
 
     ## Size limits
 
+    Proposal JSON is capped at **1_500_000 bytes** (`MAX_PROPOSAL_JSON_BYTES`).
     Oversized proposal JSON or audit append payloads return **413** with
-    `code: storage_payload_too_large`. The MCP endpoint shares the same
-    limits, rate limiting, and audit logging as REST.
+    `code: storage_payload_too_large` (never silently truncate). Malformed JSON
+    bodies return **400** JSON (`code: invalid_json` on REST;
+    JSON-RPC `-32700` Parse error on `/mcp/rpc`) — never HTML stack traces.
+    The MCP endpoint shares the same limits, rate limiting, and audit logging
+    as REST.
 
   contact:
     name: com55
@@ -276,10 +289,14 @@ paths:
         **Access-link Bearer only.** Submits a proposed replacement for one
         flow tab. Does not mutate Node-RED until an admin with `*` approves.
 
-        Include `expectedRev` (or `expected_rev`) from the latest
-        `GET /flows` or `GET /flows/{id}` response. On approve, a stale
-        revision marks the proposal `rejected` with a resubmit message
-        (no deploy).
+        Include `expectedRev` (preferred; `expected_rev` accepted as alias)
+        from the latest `GET /flows` or `GET /flows/{id}` response. The live
+        flow revision is checked **at submit time** (**409**
+        `version_mismatch` if stale). On approve, a stale revision marks the
+        proposal `rejected` with a resubmit message (no deploy).
+
+        `payload.flow` must be a tab object (`id`, `type`, `label?`, `nodes[]`,
+        optional `configs[]`). Payloads over 1_500_000 bytes return **413**.
       operationId: createProposal
       security:
         - AccessLinkBearer: []
@@ -302,6 +319,8 @@ paths:
           $ref: '#/components/responses/AccessLinkUnauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
 
@@ -505,16 +524,36 @@ components:
             $ref: '#/components/schemas/Error'
     AccessLinkUnauthorized:
       description: |
-        Missing, invalid, expired, revoked, or pre-restart access link.
-        Message instructs the AI to ask the user for a new access link.
+        Missing (`code: access_link_missing`) or invalid/expired/revoked/
+        pre-restart (`code: access_link_invalid`) access link. Includes
+        `WWW-Authenticate: Bearer`. Message instructs the AI to ask the user
+        for a new access link.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: 'Bearer realm="node-red-ai-access", charset="UTF-8"'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
           examples:
+            missing:
+              value:
+                error: 'Access link Bearer token is missing. Ask the user for a new access link and send Authorization: Bearer <token>.'
+                code: access_link_missing
             askForNewLink:
               value:
-                error: Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.
+                error: 'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.'
+                code: access_link_invalid
+    VersionConflict:
+      description: |
+        `expectedRev` does not match the current flow revision
+        (`code: version_mismatch`). Re-read flows and resubmit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VersionConflictError'
     Forbidden:
       description: AI features disabled, or full (`*`) permission required
       content:
@@ -543,7 +582,7 @@ components:
   schemas:
     Error:
       type: object
-      required: [error]
+      required: [error, code]
       properties:
         error:
           type: string
@@ -558,6 +597,19 @@ components:
             code:
               type: string
               const: storage_payload_too_large
+
+    VersionConflictError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            code:
+              type: string
+              const: version_mismatch
+            expectedRev:
+              type: string
+            currentRev:
+              type: string
 
     Status:
       type: object
@@ -589,6 +641,9 @@ components:
             - type: string
               enum: [read, '*']
             - type: 'null'
+          description: |
+            Admin session permission, or `null` for access-link callers
+            (AI tokens are not admin sessions — see `caller`).
         capabilities:
           $ref: '#/components/schemas/Capabilities'
         storageDir:
@@ -599,6 +654,28 @@ components:
           type: integer
         defaultDeploymentType:
           $ref: '#/components/schemas/DeploymentType'
+        caller:
+          description: Who is calling — admin session or access-link Bearer.
+          oneOf:
+            - type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  const: admin
+                permission:
+                  type: string
+                  enum: [read, '*']
+            - type: object
+              required: [kind, linkId]
+              properties:
+                kind:
+                  type: string
+                  const: access-link
+                linkId:
+                  type: string
+                label:
+                  type: string
 
     Capabilities:
       type: object

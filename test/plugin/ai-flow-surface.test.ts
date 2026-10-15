@@ -11,7 +11,13 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
-import { ACCESS_LINK_INVALID_MESSAGE } from '../../src/plugin/access-link-auth.js';
+import {
+  ACCESS_LINK_INVALID_CODE,
+  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
+  ACCESS_LINK_MISSING_MESSAGE,
+  ACCESS_LINK_WWW_AUTHENTICATE,
+} from '../../src/plugin/access-link-auth.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
@@ -162,6 +168,8 @@ describe('AI flow surface (access-link Bearer)', () => {
       .set('Authorization', 'Bearer not-a-real-token');
     expect(bad.status).toBe(401);
     expect(bad.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(bad.body.code).toBe(ACCESS_LINK_INVALID_CODE);
+    expect(bad.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
 
     const create = await request(app)
       .post('/mcp/api/v1/proposals')
@@ -173,6 +181,7 @@ describe('AI flow surface (access-link Bearer)', () => {
       });
     expect(create.status).toBe(401);
     expect(create.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(create.body.code).toBe(ACCESS_LINK_INVALID_CODE);
 
     const created = linkStore.create({ label: 'temp' });
     linkStore.revoke(created.id);
@@ -190,7 +199,9 @@ describe('AI flow surface (access-link Bearer)', () => {
         payload: { flowId: 'tab-1', flow: { nodes: [] } },
       });
     expect(noBearerCreate.status).toBe(401);
-    expect(noBearerCreate.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(noBearerCreate.body.error).toBe(ACCESS_LINK_MISSING_MESSAGE);
+    expect(noBearerCreate.body.code).toBe(ACCESS_LINK_MISSING_CODE);
+    expect(noBearerCreate.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
   });
 
   it('rejects admin-session create of proposals (access-link only)', async () => {
@@ -216,7 +227,11 @@ describe('AI flow surface (access-link Bearer)', () => {
           };
         },
       },
-      plugins: { registerPlugin() {} },
+      plugins: {
+        registerPlugin() {
+          return undefined;
+        },
+      },
       log: { info: vi.fn() },
     };
     registerRoutes(RED, {
@@ -237,6 +252,7 @@ describe('AI flow surface (access-link Bearer)', () => {
         payload: { flowId: 'tab-1', flow: { nodes: [] } },
       });
     expect(res.status).toBe(401);
-    expect(res.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
+    expect(res.body.error).toBe(ACCESS_LINK_MISSING_MESSAGE);
+    expect(res.body.code).toBe(ACCESS_LINK_MISSING_CODE);
   });
 });

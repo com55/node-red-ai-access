@@ -40,7 +40,7 @@ describe('createFlowAdapter', () => {
     expect(adapter.kind).toBe('red');
   });
 
-  it('falls back to HttpAdapter when runtime methods are missing', async () => {
+  it('falls back to HttpAdapter when runtime methods are missing and adminAuth is off', async () => {
     const app = express();
     app.get('/flows', (_req, res) => {
       res.json({ rev: 'http-rev', flows: [{ id: 'tab-1', type: 'tab' }] });
@@ -66,9 +66,20 @@ describe('createFlowAdapter', () => {
     const adapter = createFlowAdapter({
       RED: incomplete,
       http: { baseUrl: `http://127.0.0.1:${address.port}` },
+      adminAuthEnabled: false,
     });
     expect(adapter.kind).toBe('http');
     await expect(adapter.getFlows()).resolves.toMatchObject({ rev: 'http-rev' });
+  });
+
+  it('throws when HTTP fallback has no credentials and adminAuth is enabled', () => {
+    expect(() =>
+      createFlowAdapter({
+        RED: {},
+        http: { baseUrl: 'http://127.0.0.1:1880' },
+        adminAuthEnabled: true,
+      })
+    ).toThrow(AdapterUnavailableError);
   });
 
   it('throws AdapterUnavailableError when neither path works', () => {

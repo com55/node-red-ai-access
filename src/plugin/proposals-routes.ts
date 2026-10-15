@@ -4,6 +4,7 @@
 
 import type { Response } from 'express';
 
+import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
   ProposalConcurrentApproveError,
@@ -13,7 +14,11 @@ import {
 } from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
-import { ACCESS_LINK_INVALID_MESSAGE } from './access-link-auth.js';
+import {
+  ACCESS_LINK_INVALID_CODE,
+  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_WWW_AUTHENTICATE,
+} from './access-link-auth.js';
 import {
   aiOpsErrorToHttp,
   getMyProposal,
@@ -31,15 +36,16 @@ function adminActor(req: AuthenticatedRequest) {
   return actor;
 }
 
-export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
-  return (req: AuthenticatedRequest, res: Response): void => {
+export function createProposalHandler(store: ProposalStore, audit: AuditLog, adapter: FlowAdapter) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.accessLink) {
-      res.status(401).json({ error: ACCESS_LINK_INVALID_MESSAGE });
+      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+      res.status(401).json({ error: ACCESS_LINK_INVALID_MESSAGE, code: ACCESS_LINK_INVALID_CODE });
       return;
     }
 
     try {
-      const proposal = submitReplaceFlowProposal(
+      const proposal = await submitReplaceFlowProposal(
         store,
         audit,
         req.accessLink,
@@ -48,7 +54,8 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
           expectedRev?: unknown;
           expected_rev?: unknown;
           payload?: unknown;
-        }
+        },
+        adapter
       );
       res.status(201).json(proposal);
     } catch (error) {

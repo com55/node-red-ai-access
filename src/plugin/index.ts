@@ -8,14 +8,17 @@
 import type { Response } from 'express';
 
 import { requireAccessLink } from './access-link-auth.js';
+import { editorAuthTokenKey } from './auth-token-key.js';
 import {
   mcpApiBase,
+  normalizeHttpAdminRoot,
   requireAdminReadOrAccessLink,
   requireAdminSession,
   requireAiFeatures,
   requireStarPermission,
 } from './auth.js';
 import { getFlowHandler, listFlowsHandler } from './flows-routes.js';
+import { mcpJsonErrorHandler } from './json-errors.js';
 import {
   createConfiguredLinkStore,
   createLinkHandler,
@@ -48,10 +51,15 @@ export type {
 } from './types.js';
 
 export { AccessLinkStore } from '../access/index.js';
-export { ACCESS_LINK_INVALID_MESSAGE, requireAccessLink } from './access-link-auth.js';
+export {
+  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_MESSAGE,
+  requireAccessLink,
+} from './access-link-auth.js';
 export { getStorageDir } from './storage.js';
 export { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 export { createPluginServices } from './services.js';
+export { MAX_PROPOSAL_JSON_BYTES } from './ai-ops.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
@@ -65,18 +73,19 @@ export function registerRoutes(
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
   });
 
-  RED.httpAdmin.get(
-    '/mcp',
-    limiter,
-    requireAdminSession(RED, 'page'),
-    (req: AuthenticatedRequest, res: Response) => {
-      const status = buildStatus(RED, req);
-      res
-        .type('html')
-        .status(200)
-        .send(renderMcpPage(status, { apiBase: mcpApiBase(RED.settings.httpAdminRoot) }));
-    }
-  );
+  // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
+  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
+    res
+      .type('html')
+      .status(200)
+      .send(
+        renderMcpPage({
+          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
+          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
+        })
+      );
+  });
 
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
@@ -133,10 +142,9 @@ export function registerRoutes(
     '/mcp/api/v1/proposals',
     limiter,
     requireAccessLink(RED, services.linkStore),
-    createProposalHandler(services.proposalStore, services.auditLog)
+    createProposalHandler(services.proposalStore, services.auditLog, services.flowAdapter)
   );
 
-  // MCP Streamable HTTP (access-link Bearer). Same services as REST; no approve/link tools.
   const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
@@ -160,6 +168,9 @@ export function registerRoutes(
     requireAiFeatures(RED),
     listLogsHandler(services.auditLog)
   );
+
+  // JSON / JSON-RPC errors for /mcp* (no HTML stack traces).
+  RED.httpAdmin.use(mcpJsonErrorHandler());
 }
 
 /**

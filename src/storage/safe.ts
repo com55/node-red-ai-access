@@ -4,6 +4,8 @@
 
 import { basename, resolve, sep } from 'node:path';
 
+import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from './trusted-write.js';
+
 /** Single path segment: alphanumeric, dash, underscore, dot (no `/`, no `..`). */
 const SAFE_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
 
@@ -99,11 +101,18 @@ export function sanitizeFlowTab(value: unknown): Record<string, unknown> {
     if (!Array.isArray(list)) {
       continue;
     }
-    const encoded = JSON.stringify(list.slice(0, 5_000));
-    if (encoded.length > 1_500_000) {
-      continue;
+    const encoded = JSON.stringify(list);
+    const bytes = Buffer.byteLength(encoded, 'utf8');
+    if (bytes > MAX_PROPOSAL_JSON_BYTES) {
+      throw new StoragePayloadTooLargeError(`flow.${listKey}`, bytes, MAX_PROPOSAL_JSON_BYTES);
     }
     out[listKey] = JSON.parse(encoded) as unknown[];
+  }
+
+  // Reject oversized tabs even when individual lists fit (never silently truncate).
+  const totalBytes = Buffer.byteLength(JSON.stringify(out), 'utf8');
+  if (totalBytes > MAX_PROPOSAL_JSON_BYTES) {
+    throw new StoragePayloadTooLargeError('flow', totalBytes, MAX_PROPOSAL_JSON_BYTES);
   }
 
   return out;

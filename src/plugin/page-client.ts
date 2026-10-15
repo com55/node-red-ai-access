@@ -1,4 +1,5 @@
-/** Inline client script for the /mcp admin page. */
+/** Inline client script for the /mcp admin page (editor localStorage Bearer). */
+
 function pageClientScriptPartA(): string {
   return `
 (function () {
@@ -6,11 +7,14 @@ function pageClientScriptPartA(): string {
   if (!root) return;
   var cfg = JSON.parse(root.getAttribute('data-config') || '{}');
   var apiBase = cfg.apiBase || '/mcp/api/v1';
-  var canManage = !!cfg.canManageLinks;
-  var canApprove = !!cfg.canApprove;
-  var aiOn = !!cfg.aiFeaturesEnabled;
-  var defaultTtl = cfg.defaultLinkTtlSeconds || 86400;
-  var defaultDeploy = cfg.defaultDeploymentType || 'nodes';
+  var editorRoot = cfg.editorRoot || '/';
+  var authTokenKey = cfg.authTokenKey || 'auth-tokens';
+  var canManage = false;
+  var canApprove = false;
+  var aiOn = false;
+  var defaultTtl = 86400;
+  var defaultDeploy = 'nodes';
+  var accessToken = null;
 
   function $(id) { return document.getElementById(id); }
   function showFlash(el, message, ok) {
@@ -30,15 +34,43 @@ function pageClientScriptPartA(): string {
       .replace(/"/g, '&quot;');
   }
 
+  function readEditorToken() {
+    try {
+      var raw = localStorage.getItem(authTokenKey);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && parsed.access_token ? String(parsed.access_token) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function redirectToEditorLogin() {
+    var target = editorRoot;
+    if (!target || target === '') target = '/';
+    window.location.replace(target);
+  }
+
   async function api(path, options) {
+    var headers = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    };
+    if (accessToken) {
+      headers['Authorization'] = 'Bearer ' + accessToken;
+    }
     var res = await fetch(apiBase + path, Object.assign({
       credentials: 'same-origin',
-      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
+      headers: headers
     }, options || {}));
     var body = null;
     var text = await res.text();
     if (text) {
       try { body = JSON.parse(text); } catch (e) { body = { error: text }; }
+    }
+    if (res.status === 401) {
+      redirectToEditorLogin();
+      throw new Error((body && body.error) || 'Authentication required');
     }
     if (!res.ok) {
       var err = new Error((body && body.error) || ('HTTP ' + res.status));
@@ -64,6 +96,35 @@ function pageClientScriptPartA(): string {
     });
   });
 
+  function renderLinksManage() {
+    var host = $('links-manage');
+    if (!host) return;
+    if (!aiOn) {
+      host.innerHTML = '<p class="readonly-note">AI features are disabled — enable adminAuth or allowWithoutAdminAuth.</p>';
+      return;
+    }
+    if (!canManage) {
+      host.innerHTML = '<p class="readonly-note">Link management requires full admin permission (*).</p>';
+      return;
+    }
+    var ttlHoursDefault = Math.max(1, Math.round(defaultTtl / 3600));
+    host.innerHTML =
+      '<form id="create-link-form" class="row">' +
+      '<label>TTL (hours)<input id="link-ttl" type="number" min="1" step="1" value="' + ttlHoursDefault + '" /></label>' +
+      '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
+      '<button type="submit" class="action">Create access link</button></form>' +
+      '<div id="token-once" class="token-once" hidden><strong>Token (shown once)</strong><code id="token-value"></code></div>';
+    var createForm = $('create-link-form');
+    if (createForm) {
+      createForm.addEventListener('submit', onCreateLink);
+    }
+  }
+
+`;
+}
+
+function pageClientScriptPartA2(): string {
+  return `
   async function loadLinks() {
     if (!aiOn || !canManage) return;
     var list = $('links-list');
@@ -98,39 +159,38 @@ function pageClientScriptPartA(): string {
     try {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
-      $('token-once').hidden = true;
+      var once = $('token-once');
+      if (once) once.hidden = true;
       loadLinks();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
     }
-  }`;
+  }
+`;
 }
 
 function pageClientScriptPartB(): string {
   return `
 
-  var createForm = $('create-link-form');
-  if (createForm) {
-    createForm.addEventListener('submit', async function (ev) {
-      ev.preventDefault();
-      var flash = $('links-flash');
-      var ttlInput = $('link-ttl');
-      var labelInput = $('link-label');
-      var ttlHours = Number(ttlInput && ttlInput.value);
-      var ttlSeconds = Math.max(1, Math.floor((Number.isFinite(ttlHours) ? ttlHours : 24) * 3600));
-      var payload = { ttlSeconds: ttlSeconds };
-      if (labelInput && labelInput.value.trim()) payload.label = labelInput.value.trim();
-      try {
-        var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
-        var box = $('token-once');
-        box.hidden = false;
-        $('token-value').textContent = created.token;
-        showFlash(flash, 'Link created. Copy the token now — it will not be shown again.', true);
-        loadLinks();
-      } catch (e) {
-        showFlash(flash, e.message || String(e), false);
-      }
-    });
+  async function onCreateLink(ev) {
+    ev.preventDefault();
+    var flash = $('links-flash');
+    var ttlInput = $('link-ttl');
+    var labelInput = $('link-label');
+    var ttlHours = Number(ttlInput && ttlInput.value);
+    var ttlSeconds = Math.max(1, Math.floor((Number.isFinite(ttlHours) ? ttlHours : 24) * 3600));
+    var payload = { ttlSeconds: ttlSeconds };
+    if (labelInput && labelInput.value.trim()) payload.label = labelInput.value.trim();
+    try {
+      var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
+      var box = $('token-once');
+      box.hidden = false;
+      $('token-value').textContent = created.token;
+      showFlash(flash, 'Link created. Copy the token now — it will not be shown again.', true);
+      loadLinks();
+    } catch (e) {
+      showFlash(flash, e.message || String(e), false);
+    }
   }
 
   function proposalSummary(p) {
@@ -265,34 +325,99 @@ function pageClientScriptPartC(): string {
     }
   }
 
+`;
+}
+
+function pageClientScriptPartD(): string {
+  return `
+  function applyStatus(s) {
+    aiOn = !!s.aiFeaturesEnabled;
+    canManage = !!(s.capabilities && s.capabilities.manageLinks);
+    canApprove = !!(s.capabilities && s.capabilities.approveProposals);
+    defaultTtl = s.defaultLinkTtlSeconds || 86400;
+    defaultDeploy = s.defaultDeploymentType || 'nodes';
+
+    $('status-version').textContent = s.version;
+    $('status-adminauth').textContent = s.adminAuthEnabled ? 'enabled' : 'disabled';
+    $('status-aifeatures').textContent = s.aiFeaturesEnabled ? 'enabled' : 'disabled';
+    $('status-permission').textContent = s.permission || 'none (access-link or anonymous)';
+    $('status-caller').textContent = s.caller
+      ? (s.caller.kind + (s.caller.linkId ? ':' + s.caller.linkId : '') + (s.caller.permission ? ':' + s.caller.permission : ''))
+      : '—';
+    $('status-storage').textContent = s.storageDir;
+    $('status-ttl').textContent = String(s.defaultLinkTtlSeconds) + 's';
+    $('status-maxlinks').textContent = String(s.maxActiveLinks);
+    $('status-deploy').textContent = s.defaultDeploymentType;
+    var modeLabel = s.permission === '*' ? 'full access' : s.permission === 'read' ? 'read-only' : 'limited';
+    $('status-badge').textContent = modeLabel;
+
+    var warning = $('status-warning');
+    if (!s.adminAuthEnabled && !s.aiFeaturesEnabled) {
+      warning.hidden = false;
+      warning.innerHTML = '<h2>Warning</h2><p><code>adminAuth</code> is not enabled, so AI Access features are <strong>disabled</strong> by default.</p>';
+    } else if (!s.adminAuthEnabled && s.aiFeaturesEnabled) {
+      warning.hidden = false;
+      warning.innerHTML = '<h2>Local-only mode</h2><p><code>adminAuth</code> is off and <code>allowWithoutAdminAuth</code> is enabled.</p>';
+    } else {
+      warning.hidden = true;
+      warning.innerHTML = '';
+    }
+
+    $('proposals-hint').textContent = canApprove
+      ? 'Approve deploys via FlowAdapter. Revision conflicts are shown as rejected proposals.'
+      : 'Approve and reject require full admin permission (*). You can still review proposals.';
+
+    renderLinksManage();
+  }
+
+  async function boot() {
+    accessToken = readEditorToken();
+    if (!accessToken) {
+      showFlash($('boot-flash'), 'Not signed in to the Node-RED editor. Redirecting to login…', false);
+      redirectToEditorLogin();
+      return;
+    }
+    try {
+      var s = await api('/status');
+      applyStatus(s);
+      $('main-nav').hidden = false;
+      $('section-status').hidden = false;
+      $('section-links').hidden = false;
+      $('section-proposals').hidden = false;
+      $('section-logs').hidden = false;
+      if (aiOn) {
+        if (canManage) loadLinks();
+        loadProposals();
+        loadLogs();
+      }
+    } catch (e) {
+      showFlash($('boot-flash'), e.message || String(e), false);
+    }
+  }
+
   var refreshBtn = $('refresh-status');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async function () {
       try {
         var s = await api('/status');
-        $('status-version').textContent = s.version;
-        $('status-adminauth').textContent = s.adminAuthEnabled ? 'enabled' : 'disabled';
-        $('status-aifeatures').textContent = s.aiFeaturesEnabled ? 'enabled' : 'disabled';
-        $('status-permission').textContent = s.permission || 'none';
-        $('status-storage').textContent = s.storageDir;
-        $('status-ttl').textContent = String(s.defaultLinkTtlSeconds);
-        $('status-maxlinks').textContent = String(s.maxActiveLinks);
-        $('status-deploy').textContent = s.defaultDeploymentType;
+        applyStatus(s);
       } catch (e) {
         showFlash($('status-flash'), e.message || String(e), false);
       }
     });
   }
 
-  if (aiOn) {
-    if (canManage) loadLinks();
-    loadProposals();
-    loadLogs();
-  }
+  boot();
 })();
 `;
 }
 
 export function pageClientScript(): string {
-  return (pageClientScriptPartA() + pageClientScriptPartB() + pageClientScriptPartC()).trim();
+  return (
+    pageClientScriptPartA() +
+    pageClientScriptPartA2() +
+    pageClientScriptPartB() +
+    pageClientScriptPartC() +
+    pageClientScriptPartD()
+  ).trim();
 }
