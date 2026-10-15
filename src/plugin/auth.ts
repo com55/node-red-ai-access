@@ -27,6 +27,12 @@ export function mcpApiBase(httpAdminRoot: string | undefined): string {
   return root === '/' ? '/mcp/api/v1' : `${root}/mcp/api/v1`;
 }
 
+/** Absolute admin path for `/mcp/rpc` (respects httpAdminRoot). */
+export function mcpRpcPath(httpAdminRoot: string | undefined): string {
+  const root = normalizeHttpAdminRoot(httpAdminRoot);
+  return root === '/' ? '/mcp/rpc' : `${root}/mcp/rpc`;
+}
+
 function scopesFromRequest(req: AuthenticatedRequest): string[] {
   const fromAuthInfo = req.authInfo?.scope;
   if (fromAuthInfo) {

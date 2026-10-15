@@ -13,6 +13,15 @@ info:
     All routes are under `{httpAdminRoot}/mcp/api/v1`
     (for example `/mcp/api/v1` when `httpAdminRoot` is `/`).
 
+    ## MCP JSON-RPC
+
+    AI clients may also use MCP Streamable HTTP at `{httpAdminRoot}/mcp/rpc`
+    with the same access-link Bearer token. Tools mirror the AI-facing REST
+    operations (`get_status`, `list_flows`, `get_flow`, `submit_proposal`,
+    `list_my_proposals`, `get_proposal`). Approve/reject/link management stay
+    on this REST API and the `/mcp` admin page. This OpenAPI document covers
+    the REST surface only.
+
     ## Authentication
 
     - **Admin session** — Node-RED `adminAuth` cookie/session. Users with
@@ -20,7 +29,8 @@ info:
       also manage access links and approve/reject proposals.
     - **Access-link Bearer token** — temporary token minted by an admin with
       `*`. AI clients send `Authorization: Bearer <token>` to read flows and
-      submit proposals. Tokens are in-memory only (lost on restart).
+      submit proposals (REST and `/mcp/rpc`). Tokens are in-memory only (lost
+      on restart).
 
     When an access-link token is missing, invalid, expired, revoked, or
     cleared by a restart, AI-facing routes return **401** with a message that
@@ -29,7 +39,8 @@ info:
     ## Size limits
 
     Oversized proposal JSON or audit append payloads return **413** with
-    `code: storage_payload_too_large`.
+    `code: storage_payload_too_large`. The MCP endpoint shares the same
+    limits, rate limiting, and audit logging as REST.
 
   contact:
     name: com55

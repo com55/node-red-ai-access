@@ -23,6 +23,7 @@ import {
   revokeLinkHandler,
 } from './links.js';
 import { listLogsHandler } from './logs-routes.js';
+import { mcpRpcMethodNotAllowed, mcpRpcPostHandler } from './mcp-rpc.js';
 import { openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import {
@@ -134,6 +135,12 @@ export function registerRoutes(
     requireAccessLink(RED, services.linkStore),
     createProposalHandler(services.proposalStore, services.auditLog)
   );
+
+  // MCP Streamable HTTP (access-link Bearer). Same services as REST; no approve/link tools.
+  const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
+  RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
+  RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
+  RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
 
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/approve',
