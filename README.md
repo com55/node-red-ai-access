@@ -1,4 +1,7 @@
-> **Note:** This project is derived from [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It will become **Node-RED AI Access** — a Node-RED plugin that gives AI clients temporary, owner-approved access.
+> **Note:** This project is derived from
+> [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It will
+> become **Node-RED AI Access** — a Node-RED plugin that gives AI clients
+> temporary, owner-approved access.
 
 # 🚀 MCP Node-RED Server
 
