@@ -201,9 +201,11 @@ errors mark it **failed**. Reject never mutates flows.
 2. Send `Authorization: Bearer <token>` to REST and/or MCP:
 
    - REST: `GET /mcp/api/v1/status`, `GET /mcp/api/v1/flows`,
-     `GET /mcp/api/v1/flows/{id}`, `POST /mcp/api/v1/proposals`,
-     `GET /mcp/api/v1/proposals`
-   - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow`, `submit_proposal`,
+     `GET /mcp/api/v1/flows/{id}?summary=1`, `GET /mcp/api/v1/nodes/{id}`,
+     `GET /mcp/api/v1/nodes/{id}/field/{name}`, `GET /mcp/api/v1/search`,
+     `POST /mcp/api/v1/proposals`, `GET /mcp/api/v1/proposals`
+   - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow` (optional `summary`),
+     `get_node`, `get_node_field`, `search_flows`, `submit_proposal`,
      `list_my_proposals` (same access-link auth and limits)
 
 3. The owner reviews the proposal on `/mcp` and approves or rejects it.

@@ -54,7 +54,25 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       method: 'GET',
       path: '/flows/{id}',
       auth: 'admin-or-access-link',
-      summary: 'Get one flow tab + rev',
+      summary: 'Get one flow tab + rev (?summary=1 for node list without field contents)',
+    },
+    {
+      method: 'GET',
+      path: '/nodes/{id}',
+      auth: 'admin-or-access-link',
+      summary: 'Get one full node (optional ?flow=)',
+    },
+    {
+      method: 'GET',
+      path: '/nodes/{id}/field/{name}',
+      auth: 'admin-or-access-link',
+      summary: 'Get one node field (?lines=A-B optional)',
+    },
+    {
+      method: 'GET',
+      path: '/search',
+      auth: 'admin-or-access-link',
+      summary: 'Text search across string fields (?q=&flow=)',
     },
     {
       method: 'POST',

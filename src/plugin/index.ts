@@ -20,9 +20,15 @@ import {
   requireStarPermission,
 } from './auth.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
-import { getFlowHandler, listFlowsHandler } from './flows-routes.js';
+import { listFlowsHandler } from './flows-routes.js';
 import { registerGetLinkRoutes } from './get-link-routes.js';
 import { attachMcpJsonErrorHandlers } from './json-errors.js';
+import {
+  getFlowOrSummaryHandler,
+  getNodeFieldHandler,
+  getNodeHandler,
+  searchFlowsHandler,
+} from './layered-read-routes.js';
 import {
   createConfiguredLinkStore,
   createLinkHandler,
@@ -180,8 +186,12 @@ export function registerRoutes(
     requireAdminReadOrAccessLink(RED, token => services.linkStore.validate(token)),
   ];
 
-  RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(services.flowAdapter));
-  RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowHandler(services.flowAdapter));
+  const flows = services.flowAdapter;
+  RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(flows));
+  RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowOrSummaryHandler(flows));
+  RED.httpAdmin.get('/mcp/api/v1/nodes/:id', ...sharedRead, getNodeHandler(flows));
+  RED.httpAdmin.get('/mcp/api/v1/nodes/:id/field/:name', ...sharedRead, getNodeFieldHandler(flows));
+  RED.httpAdmin.get('/mcp/api/v1/search', ...sharedRead, searchFlowsHandler(flows));
 
   // Proposal routes stay in this function so CodeQL can see the local limiters
   // (passing them into a helper breaks missing-rate-limiting dataflow).

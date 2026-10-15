@@ -10,13 +10,21 @@ and this project adheres to
 
 ### Added
 
-- Targeted \`replace_text\` op for string fields (\`template\`, \`func\`, …):
-  unique \`find\` or 1-based \`occurrence\`; errors \`400 text_not_found\` /
-  \`409 ambiguous_match\` (with \`matchCount\`). Available via GET propose
-  (\`node=&field=&find=&replace=\`), patch JSON, and REST/MCP
-  \`submit_proposal\` (\`payload.nodes\` without a full tab). Multiple ops apply
-  in order. AI guide recommends it for small edits to long fields and documents
-  a last-resort placeholder→paste workflow when content exceeds draft limits.
+- Targeted `replace_text` op for string fields (`template`, `func`, …): unique
+  `find` or 1-based `occurrence`; errors `400 text_not_found` /
+  `409 ambiguous_match` (with `matchCount`). Available via GET propose
+  (`node=&field=&find=&replace=`), patch JSON, and REST/MCP `submit_proposal`
+  (`payload.nodes` without a full tab). Multiple ops apply in order. AI guide
+  recommends it for small edits to long fields and documents a last-resort
+  placeholder→paste workflow when content exceeds draft limits.
+- Layered reads on GET link, REST, and MCP (same auth/rate limits):
+  `GET …/flows/{id}?summary=1` (node id/type/name/wires + bytes, no field
+  bodies); `GET …/nodes/{id}` (one full node + flowId);
+  `GET …/nodes/{id}/field/{name}?lines=A-B` (optional line range +
+  `totalLines`/`bytes`); `GET …/search?q=&flow=` (hits with node/field/lines/
+  snippet; capped with `truncated:true`). Recommended loop: summary → search →
+  read line range → `replace_text` → propose. MCP tools: `get_flow` (`summary`),
+  `get_node`, `get_node_field`, `search_flows`.
 
 ### Changed
 

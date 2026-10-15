@@ -22,22 +22,28 @@ info:
     `http(s)://{host}{httpAdminRoot}/mcp/a/{token}` (default TTL **4h**).
 
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
-    2. `GET {url}/status`, `/flows`, `/flows/{id}`, `/proposals`, …
-    3. Small string edits (preferred): `GET {url}/propose?flow=&rev=&node=&field=&find=&replace=`
+    2. `GET {url}/status`, `/flows`, …
+    3. Layered read (prefer before loading whole tabs):
+       `GET {url}/flows/{id}?summary=1` → `GET {url}/search?q=&flow=` →
+       `GET {url}/nodes/{id}` / `…/nodes/{id}/field/{name}?lines=A-B`.
+    4. Small string edits (preferred): `GET {url}/propose?flow=&rev=&node=&field=&find=&replace=`
        (`occurrence` 1-based if find is not unique). Same as patch
        `{op:'replace_text',...}` / REST·MCP `payload.nodes`.
-    4. Whole property: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
-    5. Multi-node / add / remove / replace_text: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
+    5. Whole property: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
+    6. Multi-node / add / remove / replace_text: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
        where the JSON is `nodes:[{op:'set'|'add'|'remove'|'replace_text',...}]` or a
        full `replace_flow` document (URL soft-cap ~8KB → use chunked drafts;
        prefer ~4–5 KB raw chunks; base64url adds ~33%).
-    6. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
+    7. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
        `…/draft/{id}/submit?sha256=` (30 min expiry, 1.5MB **decoded** bytes;
        field mode validates node/field at `draft/new`; `mode=json` may add nodes).
        Last resort if still too large: placeholder propose → human deploy → user pastes
        full content in the editor (not reviewed via diff).
-    7. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
+    8. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
        Unknown paths under `/mcp/a/*` return JSON `not_found` (never echo the token).
+
+    Recommended edit loop: summary → search → read a line range →
+    `replace_text` → propose.
 
     ### Bearer REST (clients that can send headers)
 
@@ -49,8 +55,10 @@ info:
        token + docs hint).
     2. Discover endpoints (no auth): `GET {httpAdminRoot}/mcp/api/v1`.
     3. Send `Authorization: Bearer <token>` on every authenticated call.
-    4. Read flows: `GET /flows`, then `GET /flows/{id}` (response always
-       includes `flow.type`, defaulting to `tab`).
+    4. Read flows lightly: `GET /flows`, then `GET /flows/{id}?summary=1`,
+       `GET /search?q=`, `GET /nodes/{id}`, `GET /nodes/{id}/field/{name}?lines=A-B`
+       (full `GET /flows/{id}` still available; response always includes
+       `flow.type`, defaulting to `tab`).
     5. Submit a proposal. Prefer targeted `replace_text` for small string edits:
 
     ```json
@@ -83,7 +91,8 @@ info:
 
     AI clients may also use MCP Streamable HTTP at `{httpAdminRoot}/mcp/rpc`
     with the same access-link Bearer token. Tools mirror the AI-facing REST
-    operations (`get_status`, `list_flows`, `get_flow`, `submit_proposal`,
+    operations (`get_status`, `list_flows`, `get_flow` with optional `summary`,
+    `get_node`, `get_node_field`, `search_flows`, `submit_proposal`,
     `list_my_proposals`, `get_proposal`). Approve/reject/link management stay
     on this REST API and the `/mcp` admin page. This OpenAPI document covers
     the REST surface only.
@@ -411,21 +420,32 @@ paths:
       summary: Get one flow (tab) with revision
       description: |
         Returns the nested tab shape used as the basis for a `replace_flow`
-        proposal payload. Always re-read before proposing so `expectedRev`
-        matches the current revision.
+        proposal payload. Pass `summary=1` for a lightweight node list
+        (`id`/`type`/`name`/`wires` + per-node `bytes`, no field contents).
+        Always re-read before proposing so `expectedRev` matches the current
+        revision.
       operationId: getFlow
       security:
         - AccessLinkBearer: []
         - AdminSession: []
       parameters:
         - $ref: '#/components/parameters/FlowId'
+        - name: summary
+          in: query
+          required: false
+          description: When `1`/`true`/`yes`, return a node summary without field bodies
+          schema:
+            type: string
+            enum: ['1', 'true', 'yes']
       responses:
         '200':
-          description: Nested flow tab plus revision
+          description: Nested flow tab plus revision, or summary shape when `summary=1`
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FlowSnapshot'
+                oneOf:
+                  - $ref: '#/components/schemas/FlowSnapshot'
+                  - $ref: '#/components/schemas/FlowSummary'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -434,6 +454,135 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /nodes/{id}:
+    get:
+      tags: [Flows]
+      summary: Get one full node
+      description: |
+        Returns one node plus owning `flowId` when known. Optional `flow`
+        scopes the lookup to a tab.
+      operationId: getNode
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: flow
+          in: query
+          required: false
+          description: Optional tab id to scope the lookup
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One node with revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /nodes/{id}/field/{name}:
+    get:
+      tags: [Flows]
+      summary: Get one node string field
+      description: |
+        Returns one string field. Optional `lines=A-B` (1-based inclusive)
+        returns a slice; response always includes `totalLines` and `bytes`.
+      operationId: getNodeField
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: lines
+          in: query
+          required: false
+          description: Optional 1-based line range `A` or `A-B`
+          schema:
+            type: string
+            pattern: '^[0-9]+(-[0-9]+)?$'
+        - name: flow
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Field value (possibly sliced) with metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeFieldSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /search:
+    get:
+      tags: [Flows]
+      summary: Text search across string fields
+      description: |
+        Case-sensitive substring search. Hits include node id, field, line
+        numbers, and a short snippet. Results are capped (default 50);
+        `truncated:true` when the cap is hit. Optional `flow` scopes to one tab.
+      operationId: searchFlows
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: flow
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search hits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '502':
           $ref: '#/components/responses/BadGateway'
 
@@ -1093,6 +1242,118 @@ components:
           type: string
         flow:
           $ref: '#/components/schemas/FlowTab'
+
+    FlowSummary:
+      type: object
+      description: Lightweight flow view from `GET /flows/{id}?summary=1`
+      required: [rev, flowId, nodes, nodeCount]
+      properties:
+        rev:
+          type: string
+        flowId:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+        nodeCount:
+          type: integer
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, type, bytes]
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              name:
+                type: string
+              wires: {}
+              bytes:
+                type: integer
+                description: UTF-8 byte size of the full node JSON
+
+    NodeSnapshot:
+      type: object
+      required: [rev, flowId, node]
+      properties:
+        rev:
+          type: string
+        flowId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        node:
+          type: object
+          additionalProperties: true
+
+    NodeFieldSnapshot:
+      type: object
+      required: [rev, flowId, nodeId, field, value, totalLines, bytes]
+      properties:
+        rev:
+          type: string
+        flowId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        nodeId:
+          type: string
+        field:
+          type: string
+        value:
+          type: string
+        totalLines:
+          type: integer
+        bytes:
+          type: integer
+        lineRange:
+          type: object
+          required: [start, end]
+          properties:
+            start:
+              type: integer
+            end:
+              type: integer
+
+    SearchResult:
+      type: object
+      required: [rev, q, hits, hitCount, truncated, cap]
+      properties:
+        rev:
+          type: string
+        q:
+          type: string
+        flowId:
+          type: string
+        hitCount:
+          type: integer
+        truncated:
+          type: boolean
+        cap:
+          type: integer
+        hits:
+          type: array
+          items:
+            type: object
+            required: [flowId, nodeId, field, lines, snippet]
+            properties:
+              flowId:
+                oneOf:
+                  - type: string
+                  - type: 'null'
+              nodeId:
+                type: string
+              field:
+                type: string
+              lines:
+                type: array
+                items:
+                  type: integer
+              snippet:
+                type: string
 
     FlowTab:
       type: object

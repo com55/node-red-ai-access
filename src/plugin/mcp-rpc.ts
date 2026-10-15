@@ -32,6 +32,7 @@ import {
   listMyProposals,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { presentOptionsFor } from './proposal-present.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
@@ -156,15 +157,89 @@ function registerReadTools(
     {
       description:
         'Get one tab/subflow by id with nested nodes/configs and the current rev. ' +
-        'Returns { rev, flow } where flow is { id, type, label?, nodes[], configs?, ... }. ' +
-        'Use the returned rev as expectedRev when calling submit_proposal.',
+        'Pass summary=true for a lightweight node list (id/type/name/wires/bytes, no field contents). ' +
+        'Prefer summary → search_flows → get_node_field(lines) → replace_text → submit_proposal. ' +
+        'Returns { rev, flow } or summary shape. Use rev as expectedRev when submitting.',
       inputSchema: {
         id: z.string().min(1).describe('Flow / tab id'),
+        summary: z
+          .boolean()
+          .optional()
+          .describe('When true, return node list with sizes only (no field contents)'),
       },
     },
-    async ({ id }) => {
+    async ({ id, summary }) => {
       try {
+        if (summary) {
+          return jsonResult(await getFlowSummary(services.flowAdapter, id));
+        }
         return jsonResult(await getFlow(services.flowAdapter, id));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_node',
+    {
+      description:
+        'Get one full node by id (includes owning flowId when known). Optional flow scopes the lookup.',
+      inputSchema: {
+        id: z.string().min(1).describe('Node id'),
+        flow: z.string().min(1).optional().describe('Optional tab id to scope the lookup'),
+      },
+    },
+    async ({ id, flow }) => {
+      try {
+        return jsonResult(await getNodeById(services.flowAdapter, id, flow));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_node_field',
+    {
+      description:
+        'Get one string field from a node. Optional lines="A-B" (1-based inclusive) returns a slice; ' +
+        'response always includes totalLines and bytes.',
+      inputSchema: {
+        id: z.string().min(1).describe('Node id'),
+        field: z.string().min(1).describe('Field name (e.g. template, func)'),
+        lines: z.string().optional().describe('Optional 1-based line range A or A-B'),
+        flow: z.string().min(1).optional().describe('Optional tab id to scope the lookup'),
+      },
+    },
+    async ({ id, field, lines, flow }) => {
+      try {
+        return jsonResult(
+          await getNodeField(services.flowAdapter, id, field, {
+            ...(flow ? { flowId: flow } : {}),
+            ...(lines ? { lines } : {}),
+          })
+        );
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'search_flows',
+    {
+      description:
+        'Text search across string fields. Returns hits with node id, field, line numbers, and a short snippet. ' +
+        'Results are capped; truncated=true when the cap is hit. Optional flow scopes to one tab.',
+      inputSchema: {
+        q: z.string().min(1).describe('Substring to find (case-sensitive)'),
+        flow: z.string().min(1).optional().describe('Optional tab id'),
+      },
+    },
+    async ({ q, flow }) => {
+      try {
+        return jsonResult(await searchFlows(services.flowAdapter, q, flow ? { flowId: flow } : {}));
       } catch (error) {
         return jsonError(error, 502);
       }

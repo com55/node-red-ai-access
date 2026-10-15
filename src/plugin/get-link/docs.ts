@@ -59,7 +59,14 @@ Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 
 1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\`.
 2. \`GET ./flows\` — list tabs + current \`rev\`.
-3. \`GET ./flows/<id>\` — get one tab (\`type\` is always present) + \`rev\`.
+3. **Layered read (prefer this before loading whole tabs):**
+   - \`GET ./flows/<id>?summary=1\` — node list with \`id\`/\`type\`/\`name\`/\`wires\` +
+     per-node \`bytes\` (no field contents).
+   - \`GET ./search?q=<text>&flow=<id>\` — hits with node id, field, line numbers,
+     short snippet (\`truncated:true\` when the result cap is hit).
+   - \`GET ./nodes/<id>\` — one full node (\`flowId\` included when known).
+   - \`GET ./nodes/<id>/field/<name>?lines=A-B\` — one field (optional 1-based
+     line range) plus \`totalLines\` and \`bytes\`.
 4. Prefer a **targeted text replace** for small edits inside long string fields
    (\`template\`, \`func\`, …) — unique \`find\` (or \`occurrence\`) keeps the diff short:
 
@@ -86,6 +93,9 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
    with a summary sentence; pending+stale may include \`vsCurrent\`.
 
+**Recommended edit loop:** summary → search → read a line range →
+\`replace_text\` → propose.
+
 If another pending proposal shares the same flow + rev, the propose/draft
 response includes \`siblingsOnSameRev\` and a warning — approve order may
 conflict; prefer one pending change per rev.
@@ -101,6 +111,10 @@ function docsUrlTable(): string {
 | Status | \`GET ./status\` |
 | List flows | \`GET ./flows\` |
 | One flow | \`GET ./flows/<id>\` |
+| Flow summary (no field bodies) | \`GET ./flows/<id>?summary=1\` |
+| One node | \`GET ./nodes/<id>\` |
+| One field (optional lines) | \`GET ./nodes/<id>/field/<name>?lines=A-B\` |
+| Text search | \`GET ./search?q=&flow=\` |
 | My proposals | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
