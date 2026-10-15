@@ -56,7 +56,6 @@ function escHtml(s: string): string {
     .replace(/'/g, '&#x27;');
 }
 
-
 export class OAuthServer {
   private clients = new Map<string, OAuthClient>();
   private codes = new Map<string, AuthorizationCode>();
@@ -640,9 +639,7 @@ export class OAuthServer {
 
     // PKCE verification (required)
     if (!code_verifier) {
-      res
-        .status(400)
-        .json({ error: 'invalid_grant', error_description: 'code_verifier required' });
+      res.status(400).json({ error: 'invalid_grant', error_description: 'code_verifier required' });
       return;
     }
 
@@ -655,9 +652,7 @@ export class OAuthServer {
     }
 
     if (redirect_uri && authCode.redirectUri && authCode.redirectUri !== redirect_uri) {
-      res
-        .status(400)
-        .json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+      res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
       return;
     }
 

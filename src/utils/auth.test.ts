@@ -193,7 +193,9 @@ function createMockReqRes(): {
     }) as any,
   };
 
-  const next: NextFunction = () => { /* empty */ };
+  const next: NextFunction = () => {
+    /* empty */
+  };
 
   return { req, res, next, statusCode: null, jsonData: null };
 }

@@ -389,7 +389,7 @@ describe('asyncHandler', () => {
     const asyncFn = vi.fn().mockResolvedValue('success');
     const wrapped = asyncHandler(asyncFn);
 
-    wrapped(mockReq as Request, mockRes as Response, mockNext);
+    await wrapped(mockReq as Request, mockRes as Response, mockNext);
 
     expect(asyncFn).toHaveBeenCalledWith(mockReq, mockRes, mockNext);
     expect(mockNext).not.toHaveBeenCalled();
@@ -400,7 +400,7 @@ describe('asyncHandler', () => {
     const asyncFn = vi.fn().mockRejectedValue(error);
     const wrapped = asyncHandler(asyncFn);
 
-    wrapped(mockReq as Request, mockRes as Response, mockNext);
+    await wrapped(mockReq as Request, mockRes as Response, mockNext);
 
     expect(mockNext).toHaveBeenCalledWith(error);
   });

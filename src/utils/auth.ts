@@ -75,7 +75,10 @@ export function extractToken(authHeader: string): string | null {
     return null;
   }
 
-  return parts[1] ?? null;
+  // Empty token after "Bearer " must be null — callers treat '' as invalid.
+  const token = parts[1];
+  if (!token) return null;
+  return token;
 }
 
 /**
@@ -531,6 +534,18 @@ export function getRateLimitKey(req: Request): string {
     return `user:${authReq.auth.userId}`;
   }
 
-  const ip = req.ip ?? req.socket.remoteAddress ?? req.connection.remoteAddress;
+  // Express types mark socket/connection as always present; runtime and tests
+  // may omit them, so read through a view that does not inherit Request's
+  // required socket/connection fields.
+  interface OptionalIpSources {
+    ip?: string;
+    socket?: { remoteAddress?: string } | null;
+    connection?: { remoteAddress?: string } | null;
+  }
+  const sources = req as unknown as OptionalIpSources;
+  const candidates = [sources.ip, sources.socket?.remoteAddress, sources.connection?.remoteAddress];
+  const ip = candidates.find(
+    (value): value is string => typeof value === 'string' && value.length > 0
+  );
   return `ip:${ip ? ipKeyGenerator(ip) : 'unknown'}`;
 }

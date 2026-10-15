@@ -5,11 +5,7 @@
  */
 
 import { SSEHandler } from '../server/sse-handler.js';
-import {
-  NodeRedFlowEvent,
-  NodeRedRuntimeEvent,
-  NodeRedStatusEvent,
-} from '../types/nodered.js';
+import { NodeRedFlowEvent, NodeRedRuntimeEvent, NodeRedStatusEvent } from '../types/nodered.js';
 
 import { NodeRedAPIClient } from './nodered-api.js';
 import { NodeRedWsClient } from './nodered-ws-client.js';
@@ -28,12 +24,35 @@ function toStatusShape(value: string | undefined): StatusShape | undefined {
   return value !== undefined && STATUS_SHAPES.has(value) ? (value as StatusShape) : undefined;
 }
 
+/**
+ * Read `config.baseURL` when present (including plain mock clients that never
+ * implement getCommsWsUrl). Kept as a narrow object probe so we do not cast
+ * through `any`.
+ */
+function readConfigBaseURL(client: object): string | undefined {
+  if (!('config' in client)) return undefined;
+  const config = (client as { config?: unknown }).config;
+  if (config === null || typeof config !== 'object') return undefined;
+  if (!('baseURL' in config)) return undefined;
+  const baseURL = (config as { baseURL?: unknown }).baseURL;
+  return typeof baseURL === 'string' && baseURL.length > 0 ? baseURL : undefined;
+}
+
+/**
+ * Resolve the Node-RED HTTP base URL from a client instance.
+ * Prefer getCommsWsUrl when available; otherwise mirror the previous
+ * `config?.baseURL ?? NODERED_URL ?? localhost` fallback for mocks.
+ */
 function baseURLFromClient(client: NodeRedAPIClient): string {
-  return client
-    .getCommsWsUrl()
-    .replace(/\/comms$/, '')
-    .replace(/^wss:\/\//, 'https://')
-    .replace(/^ws:\/\//, 'http://');
+  if (typeof client.getCommsWsUrl === 'function') {
+    return client
+      .getCommsWsUrl()
+      .replace(/\/comms$/, '')
+      .replace(/^wss:\/\//, 'https://')
+      .replace(/^ws:\/\//, 'http://');
+  }
+
+  return readConfigBaseURL(client) ?? process.env.NODERED_URL ?? 'http://localhost:1880';
 }
 
 export class NodeRedEventListener {

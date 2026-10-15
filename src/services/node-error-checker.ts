@@ -125,7 +125,9 @@ async function collectStatuses(
             } else {
               // Invalidate the cached token so the *next* check() call
               // re-exchanges instead of retrying with the same bad token.
-              resolveNodeRedAuthToken(true).catch(() => { /* empty */ });
+              resolveNodeRedAuthToken(true).catch(() => {
+                /* empty */
+              });
               finish(new AuthenticationError('Node-RED WebSocket auth failed'));
             }
             continue;

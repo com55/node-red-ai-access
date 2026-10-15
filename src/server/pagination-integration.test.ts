@@ -75,7 +75,6 @@ function parse(result: any) {
   return JSON.parse(textContent(result));
 }
 
-
 function textContent(result: { content: { type: string; text?: string }[] }): string {
   const first = result.content[0];
   if (first?.type !== 'text' || typeof first.text !== 'string') {

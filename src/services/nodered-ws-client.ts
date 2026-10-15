@@ -6,11 +6,7 @@
 import WebSocket from 'ws';
 
 import { SSEHandler } from '../server/sse-handler.js';
-import {
-  NodeRedNodeEvent,
-  NodeRedRuntimeEvent,
-  NodeRedStatusEvent,
-} from '../types/nodered.js';
+import { NodeRedNodeEvent, NodeRedRuntimeEvent, NodeRedStatusEvent } from '../types/nodered.js';
 import {
   resolveNodeRedAuthHeader,
   resolveNodeRedAuthToken,
@@ -36,9 +32,7 @@ interface CommsMessage {
 
 function asCommsFrames(parsed: unknown): CommsMessage[] {
   if (Array.isArray(parsed)) {
-    return parsed.filter(
-      (item): item is CommsMessage => typeof item === 'object' && item !== null
-    );
+    return parsed.filter((item): item is CommsMessage => typeof item === 'object' && item !== null);
   }
   if (typeof parsed === 'object' && parsed !== null) {
     return [parsed];
@@ -198,7 +192,10 @@ export class NodeRedWsClient {
           id: nodeId,
           status: {
             fill: readStringField(record, 'fill') as NodeRedStatusEvent['data']['status']['fill'],
-            shape: readStringField(record, 'shape') as NodeRedStatusEvent['data']['status']['shape'],
+            shape: readStringField(
+              record,
+              'shape'
+            ) as NodeRedStatusEvent['data']['status']['shape'],
             text: readStringField(record, 'text'),
           },
         },

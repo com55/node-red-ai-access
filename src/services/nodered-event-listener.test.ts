@@ -38,8 +38,12 @@ describe('NodeRedEventListener', () => {
   let mockWsClient: ReturnType<typeof makeMockWsClient>;
 
   beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => { /* empty */ });
-    vi.spyOn(console, 'error').mockImplementation(() => { /* empty */ });
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      /* empty */
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {
+      /* empty */
+    });
 
     mockSSEHandler = { broadcast: vi.fn() };
     mockNodeRedClient = {};

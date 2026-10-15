@@ -234,9 +234,7 @@ export class ExpressApp {
           userId: payload.userId,
           permissions: payload.permissions,
           isAuthenticated: true,
-          ...(payload.exp !== undefined
-            ? { tokenExpiry: new Date(payload.exp * 1000) }
-            : {}),
+          ...(payload.exp !== undefined ? { tokenExpiry: new Date(payload.exp * 1000) } : {}),
         };
         return next();
       }
@@ -367,7 +365,6 @@ export class ExpressApp {
     });
   }
 
-
   /**
    * Resolve tool/prompt arguments from a JSON-RPC params object.
    */
@@ -392,11 +389,7 @@ export class ExpressApp {
       /** Legacy endpoints use "… is required"; Streamable HTTP uses "… required". */
       verboseRequired?: boolean;
     } = {}
-  ): Promise<
-    | { kind: 'result'; result: unknown }
-    | { kind: 'ack' }
-    | { kind: 'method-not-found' }
-  > {
+  ): Promise<{ kind: 'result'; result: unknown } | { kind: 'ack' } | { kind: 'method-not-found' }> {
     const requiredMsg = (label: string): string =>
       options.verboseRequired ? `${label} is required` : `${label} required`;
 
@@ -450,8 +443,7 @@ export class ExpressApp {
   }
 
   private resourceMetadataUrl(): string {
-    const resourceUrl =
-      process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
+    const resourceUrl = process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
     return resourceUrl;
   }
 
@@ -473,9 +465,7 @@ export class ExpressApp {
         'WWW-Authenticate',
         `Bearer resource_metadata="${resourceUrl}/.well-known/oauth-protected-resource"`
       );
-      res
-        .status(401)
-        .json({ error: 'unauthorized', error_description: 'Bearer token required' });
+      res.status(401).json({ error: 'unauthorized', error_description: 'Bearer token required' });
       return true;
     }
 
@@ -510,9 +500,7 @@ export class ExpressApp {
       userId: tokenData.userId,
       ...(tokenData.credentialId
         ? {
-            nodeRedCredentials: this.oauthServer.getNodeRedCredentials(
-              tokenData.credentialId
-            ),
+            nodeRedCredentials: this.oauthServer.getNodeRedCredentials(tokenData.credentialId),
           }
         : {}),
     };
@@ -737,11 +725,9 @@ export class ExpressApp {
       if (sessionId) this.sessionManager.delete(sessionId);
       res.status(204).end();
     });
-
   }
 
   private setupPublicInfoRoutes(): void {
-
     // Health check endpoint (public — minimal info only)
     this.app.get(
       '/health',
@@ -840,8 +826,6 @@ export class ExpressApp {
         server: 'Node-RED AI Access',
       });
     });
-
-
   }
 
   private setupPublicApiRoutes(): void {
@@ -915,10 +899,7 @@ export class ExpressApp {
 
       res.json(response);
     });
-
-  
   }
-
 
   private setupClaudeSseRoutes(): void {
     // CORS preflight for SSE — handled by the global cors() middleware above
@@ -1065,11 +1046,9 @@ export class ExpressApp {
         await this.handleLegacyJsonRpc(req, res);
       })
     );
-
   }
 
   private setupSseManagementRoutes(): void {
-
     // Authenticated SSE connection endpoint (for secure access)
     this.app.get(
       '/api/events/secure',
@@ -1185,8 +1164,6 @@ export class ExpressApp {
         res.json(response);
       })
     );
-
-
   }
 
   private setupSseAdminRoutes(): void {
@@ -1280,10 +1257,7 @@ export class ExpressApp {
         res.json(response);
       })
     );
-
-  
   }
-
 
   private setupNodeRedProxyRoutes(): void {
     // Node-RED proxy endpoints (optional - for direct API access)
@@ -1334,7 +1308,6 @@ export class ExpressApp {
         res.json(response);
       })
     );
-
   }
 
   private setupDebugAndFallbackRoutes(): void {
@@ -1475,7 +1448,6 @@ export class ExpressApp {
       res.status(404).json(response);
     });
   }
-
 
   /**
    * Setup error handling middleware

@@ -4,7 +4,7 @@
  * Comprehensive tests for the Node-RED API client service
  */
 
-import axios, {  AxiosError } from 'axios';
+import axios, { AxiosError } from 'axios';
 import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
 
 import {

@@ -85,7 +85,9 @@ function createLogger() {
     ...baseConfig,
     formatters: {
       level: label => ({ level: label.toUpperCase() }),
-      bindings: (bindings: Bindings): {
+      bindings: (
+        bindings: Bindings
+      ): {
         service?: string;
         pid?: number;
         hostname?: string;
@@ -154,11 +156,7 @@ export const generateRequestId = () =>
 /**
  * Enhanced error logging with context
  */
-export const logError = (
-  error: unknown,
-  context?: string,
-  metadata?: Record<string, unknown>
-) => {
+export const logError = (error: unknown, context?: string, metadata?: Record<string, unknown>) => {
   const errorLogger = context ? createChildLogger(context) : logger;
 
   const errorInfo =

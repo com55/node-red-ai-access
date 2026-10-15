@@ -2,7 +2,7 @@
  * Server-Sent Events (SSE) handler for real-time Node-RED monitoring
  */
 
-import {  Response } from 'express';
+import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
@@ -64,7 +64,7 @@ export class SSEHandler {
 
     const connectionId = uuidv4();
     const userAgent = req.get('User-Agent') ?? 'unknown';
-    const ip = (req.ip ?? req.connection.remoteAddress) ?? 'unknown';
+    const ip = req.ip ?? req.connection.remoteAddress ?? 'unknown';
 
     // Set SSE headers
     res.writeHead(200, {
@@ -514,20 +514,12 @@ export class SSEHandler {
       const flowId = eventData.flowId;
 
       // Filter by node IDs
-      if (
-        filter.nodeIds &&
-        typeof nodeId === 'string' &&
-        !filter.nodeIds.includes(nodeId)
-      ) {
+      if (filter.nodeIds && typeof nodeId === 'string' && !filter.nodeIds.includes(nodeId)) {
         return false;
       }
 
       // Filter by flow IDs
-      if (
-        filter.flowIds &&
-        typeof flowId === 'string' &&
-        !filter.flowIds.includes(flowId)
-      ) {
+      if (filter.flowIds && typeof flowId === 'string' && !filter.flowIds.includes(flowId)) {
         return false;
       }
     }

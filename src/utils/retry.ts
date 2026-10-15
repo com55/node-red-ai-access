@@ -100,7 +100,11 @@ export class CircuitBreaker {
       failureThreshold: options.failureThreshold ?? 5,
       successThreshold: options.successThreshold ?? 2,
       timeout: options.timeout ?? 60000,
-      onStateChange: options.onStateChange ?? (() => { /* empty */ }),
+      onStateChange:
+        options.onStateChange ??
+        (() => {
+          /* empty */
+        }),
     };
   }
 

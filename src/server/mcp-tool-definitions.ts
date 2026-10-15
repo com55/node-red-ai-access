@@ -33,8 +33,7 @@ export const ALL_TOOL_DEFINITIONS = [
       properties: {
         includeDetails: {
           type: 'boolean',
-          description:
-            'Include full flow details with nodes (default: false for token efficiency)',
+          description: 'Include full flow details with nodes (default: false for token efficiency)',
           default: false,
         },
         types: {
@@ -411,8 +410,7 @@ export const ALL_TOOL_DEFINITIONS = [
       properties: {
         type: {
           type: 'string',
-          description:
-            'Substring match on node type (case-insensitive, e.g. "function", "mqtt")',
+          description: 'Substring match on node type (case-insensitive, e.g. "function", "mqtt")',
         },
         query: {
           type: 'string',
@@ -425,8 +423,7 @@ export const ALL_TOOL_DEFINITIONS = [
         },
         nodeTypePrefix: {
           type: 'string',
-          description:
-            'Case-insensitive prefix match on node type — useful for namespaced types.',
+          description: 'Case-insensitive prefix match on node type — useful for namespaced types.',
         },
         excludeFlowIds: {
           type: 'array',
@@ -533,8 +530,7 @@ export const ALL_TOOL_DEFINITIONS = [
         scope: {
           type: 'string',
           enum: ['flows', 'nodes', 'all'],
-          description:
-            'Restrict search to flow-level docs, node-level docs, or all (default: all)',
+          description: 'Restrict search to flow-level docs, node-level docs, or all (default: all)',
           default: 'all',
         },
         refresh: {

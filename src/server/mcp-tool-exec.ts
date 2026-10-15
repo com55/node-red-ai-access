@@ -10,10 +10,7 @@ import type { McpToolResult } from '../types/mcp-extensions.js';
 import type { NodeRedFlow, NodeRedFlowStatus, NodeRedNode } from '../types/nodered.js';
 import { validateRequired } from '../utils/error-handling.js';
 
-import {
-  FLOW_SORT_KEYS,
-  type FlowSortKey,
-} from './mcp-tool-definitions.js';
+import { FLOW_SORT_KEYS, type FlowSortKey } from './mcp-tool-definitions.js';
 import {
   applyPagination,
   caseInsensitiveIncludes,
@@ -36,8 +33,7 @@ export interface CallToolResponse {
 }
 
 export type ToolOutcome =
-  | { kind: 'result'; result: McpToolResult }
-  | { kind: 'content'; response: CallToolResponse };
+  { kind: 'result'; result: McpToolResult } | { kind: 'content'; response: CallToolResponse };
 
 interface FlowSortable {
   id?: string;
@@ -175,9 +171,7 @@ async function handleGetFlows(
   // expected_rev without breaking existing consumers of `data`.
   const [{ rev }, flowDataRaw] = await Promise.all([
     ctx.nodeRedClient.getFlowsWithRev(),
-    includeDetails
-      ? ctx.nodeRedClient.getFlows()
-      : ctx.nodeRedClient.getFlowSummaries(types),
+    includeDetails ? ctx.nodeRedClient.getFlows() : ctx.nodeRedClient.getFlowSummaries(types),
   ]);
   let flowData: FlowSortable[] = flowDataRaw;
 
@@ -264,9 +258,7 @@ async function handleDeployFlow(
   if (!args.flowData) throw new Error('Missing required parameter: flowData');
   const expectedRev = args.expected_rev;
   if (typeof expectedRev !== 'string' || expectedRev.length === 0) {
-    throw new Error(
-      'Missing required parameter: expected_rev (from get_flows / get_flow `rev`)'
-    );
+    throw new Error('Missing required parameter: expected_rev (from get_flows / get_flow `rev`)');
   }
   if (args.validate) validateFlowOrThrow(asPartialFlow(args.flowData));
   const deployType = args.type === 'nodes' ? 'nodes' : 'flows';
@@ -298,9 +290,7 @@ async function handleDeployNodes(
   const nodes: unknown[] = rawNodes;
   const expectedRev = args.expected_rev;
   if (typeof expectedRev !== 'string' || expectedRev.length === 0) {
-    throw new Error(
-      'Missing required parameter: expected_rev (from get_flows / get_flow `rev`)'
-    );
+    throw new Error('Missing required parameter: expected_rev (from get_flows / get_flow `rev`)');
   }
   const seenIds = new Set<string>();
   for (let i = 0; i < nodes.length; i++) {
@@ -410,9 +400,7 @@ async function handleGetInstalledModules(
     return { kind: 'content', response: jsonResult(installedModules) };
   }
 
-  let modules: (NodeRedModule | string)[] = Array.isArray(installedModules)
-    ? installedModules
-    : [];
+  let modules: (NodeRedModule | string)[] = Array.isArray(installedModules) ? installedModules : [];
   if (typeof queryFilter === 'string') {
     modules = modules.filter(m => {
       if (typeof m === 'string') return caseInsensitiveIncludes(m, queryFilter);
@@ -451,11 +439,7 @@ async function handleSetContext(
   const scope = (args.scope as string | undefined) ?? 'global';
   if (scope === 'flow') {
     validateRequired(args, ['flowId']);
-    await ctx.nodeRedClient.setFlowContext(
-      args.flowId as string,
-      args.key as string,
-      args.value
-    );
+    await ctx.nodeRedClient.setFlowContext(args.flowId as string, args.key as string, args.value);
   } else {
     await ctx.nodeRedClient.setGlobalContext(args.key as string, args.value);
   }

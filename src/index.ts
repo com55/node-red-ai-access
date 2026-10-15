@@ -7,7 +7,9 @@ import dotenv from 'dotenv';
 
 // Load environment variables silently - suppress all dotenv output
 const originalConsoleLog = console.log;
-console.log = () => { /* empty */ }; // Temporarily suppress console.log
+console.log = () => {
+  /* empty */
+}; // Temporarily suppress console.log
 dotenv.config();
 console.log = originalConsoleLog; // Restore console.log
 import { ExpressApp } from './server/express-app.js';

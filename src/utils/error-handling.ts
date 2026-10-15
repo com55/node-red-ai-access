@@ -2,7 +2,6 @@
  * Comprehensive error handling utilities
  */
 
-import axios from 'axios';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -162,12 +161,7 @@ export function createErrorResponse<T = never>(
 /**
  * Express error handling middleware
  */
-export function errorHandler(
-  error: Error,
-  req: Request,
-  res: Response,
-  _next: NextFunction
-): void {
+export function errorHandler(error: Error, req: Request, res: Response, _next: NextFunction): void {
   const requestId = (req as RequestWithId).requestId ?? uuidv4();
 
   // Log the error
@@ -198,33 +192,113 @@ export function errorHandler(
 }
 
 /**
- * Async error wrapper for Express handlers
+ * Async error wrapper for Express handlers.
+ * Returns the settled promise so callers/tests can await microtask completion;
+ * Express itself ignores the return value.
  */
 export function asyncHandler<T extends unknown[]>(
-  fn: (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-    ...args: T
-  ) => Promise<unknown> | void
+  fn: (req: Request, res: Response, next: NextFunction, ...args: T) => Promise<unknown> | void
 ) {
-  return (req: Request, res: Response, next: NextFunction, ...args: T) => {
-    Promise.resolve(fn(req, res, next, ...args)).catch(next);
+  return (req: Request, res: Response, next: NextFunction, ...args: T): Promise<unknown> => {
+    return Promise.resolve(fn(req, res, next, ...args)).catch(next);
   };
 }
 
 const RESPONSE_PREVIEW_LIMIT = 500;
 
 /**
+ * Axios-like error shape used by real Axios errors and by tests that pass
+ * plain `{ response }` / `{ request }` objects. Prefer duck-typing over
+ * `axios.isAxiosError` so mock errors keep the same message paths.
+ */
+interface AxiosLikeError {
+  message?: string;
+  code?: string;
+  config?: { url?: string; method?: string };
+  response?: {
+    status: number;
+    statusText?: string;
+    data?: unknown;
+    headers?: Record<string, unknown>;
+  };
+  request?: unknown;
+}
+
+function asAxiosLike(error: unknown): AxiosLikeError | null {
+  if (error === null || typeof error !== 'object') {
+    return null;
+  }
+  // Real Axios errors and plain mock `{ response }` / `{ request }` objects.
+  return error;
+}
+
+function headerContentType(headers: Record<string, unknown> | undefined): string {
+  const raw = headers?.['content-type'];
+  return typeof raw === 'string' ? raw : '';
+}
+
+/**
  * Describe the request an Axios error came from, e.g. `GET /flows`.
  * Returns undefined when the error carries no request config.
  */
 function describeRequest(error: unknown): string | undefined {
-  if (!axios.isAxiosError(error)) return undefined;
-  const config = error.config;
+  const axiosLike = asAxiosLike(error);
+  const config = axiosLike?.config;
   if (!config?.url) return undefined;
-  const method = String(config.method ?? 'get').toUpperCase();
-  return `${method} ${config.url}`;
+  const methodName = config.method && config.method.length > 0 ? config.method : 'get';
+  return `${methodName.toUpperCase()} ${config.url}`;
+}
+
+/**
+ * Map an Axios-like response error into a NodeRedError and throw.
+ */
+function throwFromAxiosResponse(
+  axiosLike: AxiosLikeError & { response: NonNullable<AxiosLikeError['response']> },
+  context: string,
+  requestSuffix: string,
+  request: string | undefined
+): never {
+  const { status, statusText } = axiosLike.response;
+  const data: unknown = axiosLike.response.data;
+  const contentType = headerContentType(axiosLike.response.headers);
+
+  if (axiosLike.message?.includes('Unexpected token') && contentType.includes('text/html')) {
+    throw new NodeRedError(
+      `Node-RED returned HTML instead of JSON in ${context}${requestSuffix} (HTTP ${status}). This usually indicates an authentication redirect or configuration issue. Check your Node-RED admin settings and authentication.`,
+      502,
+      status,
+      {
+        originalError: axiosLike.message,
+        contentType,
+        request,
+        responsePreview:
+          typeof data === 'string' ? data.substring(0, RESPONSE_PREVIEW_LIMIT) : data,
+      }
+    );
+  }
+
+  const detail = summarizeResponseBody(data);
+  const statusLabel = statusText ? `HTTP ${status} ${statusText}` : `HTTP ${status}`;
+
+  if (status === 409) {
+    throw new NodeRedError(
+      `Node-RED API conflict in ${context}${requestSuffix}: ${statusLabel}${
+        detail ? ` — ${detail}` : ''
+      }. The flow revision (rev) is out of date — re-read flows and retry.`,
+      409,
+      status,
+      data
+    );
+  }
+
+  throw new NodeRedError(
+    `Node-RED API error in ${context}${requestSuffix}: ${statusLabel}${
+      detail ? ` — ${detail}` : ' (no response body)'
+    }`,
+    status >= 500 ? 502 : status,
+    status,
+    data
+  );
 }
 
 /**
@@ -266,79 +340,43 @@ function summarizeResponseBody(data: unknown): string | undefined {
   return undefined;
 }
 
+function errorMessage(error: unknown, axiosLike: AxiosLikeError | null): string {
+  if (error instanceof Error) return error.message;
+  if (typeof axiosLike?.message === 'string') return axiosLike.message;
+  return String(error);
+}
+
 /**
  * Handle Node-RED API errors
  */
 export function handleNodeRedError(error: unknown, context: string): never {
   const request = describeRequest(error);
   const requestSuffix = request ? ` [${request}]` : '';
+  const axiosLike = asAxiosLike(error);
 
-  if (axios.isAxiosError(error) && error.response) {
-    // Axios error with response
-    const { status, statusText } = error.response;
-    const data: unknown = error.response.data;
-
-    // Check if this is a JSON parse error due to HTML response
-    const contentType = String(error.response.headers['content-type'] ?? '');
-    if (error.message.includes('Unexpected token') && contentType.includes('text/html')) {
-      throw new NodeRedError(
-        `Node-RED returned HTML instead of JSON in ${context}${requestSuffix} (HTTP ${status}). This usually indicates an authentication redirect or configuration issue. Check your Node-RED admin settings and authentication.`,
-        502,
-        status,
-        {
-          originalError: error.message,
-          contentType,
-          request,
-          responsePreview:
-            typeof data === 'string' ? data.substring(0, RESPONSE_PREVIEW_LIMIT) : data,
-        }
-      );
-    }
-
-    // Always surface the upstream status — a bare "Unknown error" makes a 403
-    // (missing permission) indistinguishable from a 404 (endpoint gone).
-    const detail = summarizeResponseBody(data);
-    const statusLabel = statusText ? `HTTP ${status} ${statusText}` : `HTTP ${status}`;
-
-    // Admin API v2 POST /flows returns 409 with `{ code: "version_mismatch" }`
-    // when the posted `rev` is stale — tell callers to re-read and retry.
-    if (status === 409) {
-      throw new NodeRedError(
-        `Node-RED API conflict in ${context}${requestSuffix}: ${statusLabel}${
-          detail ? ` — ${detail}` : ''
-        }. The flow revision (rev) is out of date — re-read flows and retry.`,
-        409,
-        status,
-        data
-      );
-    }
-
-    throw new NodeRedError(
-      `Node-RED API error in ${context}${requestSuffix}: ${statusLabel}${
-        detail ? ` — ${detail}` : ' (no response body)'
-      }`,
-      status >= 500 ? 502 : status, // Bad Gateway for server errors
-      status,
-      data
+  if (axiosLike?.response) {
+    throwFromAxiosResponse(
+      axiosLike as AxiosLikeError & { response: NonNullable<AxiosLikeError['response']> },
+      context,
+      requestSuffix,
+      request
     );
-  } else if (axios.isAxiosError(error) && error.request) {
-    // Network error
-    const code = error.code ? ` (${error.code})` : '';
-    throw new NodeRedError(
-      `Failed to connect to Node-RED in ${context}${requestSuffix}: ${error.message}${code}`,
-      503 // Service Unavailable
-    );
-  } else if (error instanceof Error && error.message.includes('Node-RED returned HTML')) {
-    // Our custom validation error
-    throw new NodeRedError(
-      `${error.message} (Context: ${context})`,
-      502 // Bad Gateway
-    );
-  } else {
-    // Other error
-    const message = error instanceof Error ? error.message : String(error);
-    throw new NodeRedError(`Error in ${context}${requestSuffix}: ${message}`, 500);
   }
+
+  if (axiosLike?.request) {
+    const code = axiosLike.code ? ` (${axiosLike.code})` : '';
+    throw new NodeRedError(
+      `Failed to connect to Node-RED in ${context}${requestSuffix}: ${axiosLike.message}${code}`,
+      503
+    );
+  }
+
+  const message = errorMessage(error, axiosLike);
+  if (message.includes('Node-RED returned HTML')) {
+    throw new NodeRedError(`${message} (Context: ${context})`, 502);
+  }
+
+  throw new NodeRedError(`Error in ${context}${requestSuffix}: ${message}`, 500);
 }
 
 /**

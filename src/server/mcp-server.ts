@@ -29,20 +29,10 @@ import {
 } from '../types/mcp-extensions.js';
 import type { NodeRedCredentials } from '../types/oauth.js';
 import { isReadOnlyMode } from '../utils/auth.js';
-import {
-  AppError,
-  NodeRedError,
-  logDebug,
-  safeStringify,
-} from '../utils/error-handling.js';
+import { AppError, NodeRedError, logDebug, safeStringify } from '../utils/error-handling.js';
 
 import { ALL_TOOL_DEFINITIONS } from './mcp-tool-definitions.js';
-import {
-  asString,
-  executeTool,
-  type ToolArgs,
-  type ToolExecContext,
-} from './mcp-tool-exec.js';
+import { asString, executeTool, type ToolArgs, type ToolExecContext } from './mcp-tool-exec.js';
 import { SSEHandler } from './sse-handler.js';
 
 const UPSTREAM_RESPONSE_LIMIT = 2000;
