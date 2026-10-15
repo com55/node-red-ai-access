@@ -170,21 +170,6 @@ export default tseslint.config(
   },
 
 
-  // node-error-checker: keep byte-identical to main so CodeQL does not re-report
-  // the intentional /comms auth trust-boundary alert as a new PR finding.
-  // Pre-existing lint warnings here are accepted until a dedicated hardening PR.
-  {
-    files: ['src/services/node-error-checker.ts'],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/prefer-promise-reject-errors': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-empty-function': 'off',
-      '@typescript-eslint/no-unnecessary-condition': 'off',
-      complexity: 'off',
-    },
-  },
-
   // Ignore patterns
   {
     ignores: [
