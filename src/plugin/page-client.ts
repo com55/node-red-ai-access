@@ -95,43 +95,48 @@ function pageClientScriptPartA(): string {
 
 function pageClientScriptPartATimeCopy(): string {
   return `
+  // Time helpers — keep in sync with page-time.ts (always browser-local Intl).
+  function titleFromDisplayName(displayName) {
+    var s = String(displayName || '');
+    var idx = s.lastIndexOf(' · ');
+    if (idx > 0) return s.slice(0, idx);
+    return s;
+  }
   function fmtCompact(iso) {
     try {
       var d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
-      var y = d.getFullYear();
-      var m = String(d.getMonth() + 1).padStart(2, '0');
-      var day = String(d.getDate()).padStart(2, '0');
-      var hh = String(d.getHours()).padStart(2, '0');
-      var mm = String(d.getMinutes()).padStart(2, '0');
-      var ss = String(d.getSeconds()).padStart(2, '0');
-      return y + '-' + m + '-' + day + ' ' + hh + ':' + mm + ':' + ss;
+      return new Intl.DateTimeFormat(undefined, {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+      }).format(d);
     } catch (e) {
       return String(iso);
     }
   }
-  /** Browser-local short stamp matching API displayName style (D Mon HH:mm). */
+  /** Browser-local short stamp from ISO createdAt/at (never server displayName). */
   function fmtLocalShort(iso) {
     try {
       var d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
-      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      var day = d.getDate();
-      var month = months[d.getMonth()] || 'Jan';
-      var hh = String(d.getHours()).padStart(2, '0');
-      var mm = String(d.getMinutes()).padStart(2, '0');
-      return day + ' ' + month + ' ' + hh + ':' + mm;
+      return new Intl.DateTimeFormat(undefined, {
+        day: 'numeric', month: 'short',
+        hour: '2-digit', minute: '2-digit',
+        hour12: false
+      }).format(d);
     } catch (e) {
       return String(iso);
     }
   }
   function proposalHeading(p) {
-    // Prefer title + browser-local time — API displayName embeds server TZ.
-    if (p.title && p.createdAt) {
-      return esc(p.title) + ' · ' + esc(fmtLocalShort(p.createdAt));
+    // Never render API displayName (server TZ). Rebuild from title + createdAt.
+    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : '');
+    if (title && p.createdAt) {
+      return esc(title) + ' · ' + esc(fmtLocalShort(p.createdAt));
     }
-    if (p.title) return esc(p.title);
-    if (p.displayName) return esc(p.displayName);
+    if (title) return esc(title);
+    if (p.createdAt) return esc(fmtLocalShort(p.createdAt));
     return tipId(p.id, 12);
   }
   function fmtRelative(iso) {
@@ -263,16 +268,17 @@ function pageClientScriptPartAFormat(): string {
     return labels[action] ? labels[action] + ' (' + action + ')' : action;
   }
   function auditProposalLabel(d, atIso) {
-    // Prefer title + browser-local time; fall back to server displayName.
-    if (d.title && atIso) {
-      return '<strong class="audit-display-name">' + esc(String(d.title)) +
+    // Never render API displayName (server TZ). Rebuild from title + entry.at.
+    var title = d.title || (d.displayName ? titleFromDisplayName(d.displayName) : '');
+    if (title && atIso) {
+      return '<strong class="audit-display-name">' + esc(String(title)) +
         ' · ' + esc(fmtLocalShort(atIso)) + '</strong>';
     }
-    if (d.title) {
-      return '<strong class="audit-display-name">' + esc(String(d.title)) + '</strong>';
+    if (title) {
+      return '<strong class="audit-display-name">' + esc(String(title)) + '</strong>';
     }
-    if (d.displayName) {
-      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
+    if (atIso) {
+      return '<strong class="audit-display-name">' + esc(fmtLocalShort(atIso)) + '</strong>';
     }
     return d.proposalId ? tipId(d.proposalId, 12) : '';
   }

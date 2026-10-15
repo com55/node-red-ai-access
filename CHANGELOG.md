@@ -19,8 +19,10 @@ and this project adheres to
   (`X-Forwarded-*` only when Express `trust proxy` is set). Responses also
   include relative `reviewPath` (`/mcp#proposal=<id>`).
 - `displayName` datetime includes an explicit UTC offset and is documented as
-  **server local time**; `/mcp` renders proposal/audit times in the browser's
-  local timezone. `createdAt` remains ISO-8601.
+  **server local time** (for AI clients). The `/mcp` UI never shows that server
+  string: proposal headings and audit labels rebuild the title and format
+  `createdAt` / `at` with `Intl.DateTimeFormat` in the **browser** timezone.
+  `createdAt` remains ISO-8601.
 - `/mcp` is served with `Cache-Control: no-store` so plugin upgrades do not keep
   serving a cached admin client (inline CSS/JS).
 - `/mcp` location hash reflects the active tab (`#status`, `#links`,
