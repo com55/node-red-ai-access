@@ -97,7 +97,7 @@ async function collectStatuses(
         const parsed: unknown = JSON.parse(raw.toString());
         // Node-RED batches multiple events into a JSON array per WS message;
         // the auth handshake reply is always a single flat object.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- CommsFrame shape narrowed below
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- narrowed per-frame below
         const frames: CommsFrame[] = Array.isArray(parsed) ? parsed : [parsed];
 
         for (const msg of frames) {
@@ -106,21 +106,15 @@ async function collectStatuses(
             // inherent to implementing Node-RED's documented /comms protocol
             // — there is no alternative, signed proof Node-RED provides. The
             // actual trust boundary is the TLS connection to NODERED_URL
-            // (see getTlsRejectUnauthorized), not this in-band message; a
-            // party able to inject frames on this socket without breaking
-            // TLS has already compromised the channel this check depends on.
-            // authConfirmed also only affects statusesMayBeIncomplete, a
-            // diagnostic-completeness signal — it grants no access, since
-            // the socket already receives whatever Node-RED sends regardless.
-            if (msg.auth === 'ok') {
-              // codeql[js/user-controlled-bypass] see comment above
-              authConfirmed = true;
-            } else {
+            // (see getTlsRejectUnauthorized), not this in-band message.
+            // Do not flip authConfirmed on `{auth:"ok"}` alone: completeness
+            // is confirmed when real status frames arrive below. Reject only
+            // explicit auth failures here.
+            if (msg.auth !== 'ok') {
               // Invalidate the cached token so the *next* check() call
               // re-exchanges instead of retrying with the same bad token.
-              resolveNodeRedAuthToken(true).catch(() => {
-                /* empty */
-              });
+              // eslint-disable-next-line @typescript-eslint/no-empty-function -- fire-and-forget refresh
+              resolveNodeRedAuthToken(true).catch(() => {});
               finish(new AuthenticationError('Node-RED WebSocket auth failed'));
             }
             continue;
