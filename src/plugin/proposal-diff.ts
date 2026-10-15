@@ -1,5 +1,9 @@
 /**
- * Build a human-readable proposal vs current-flow diff for the /mcp UI.
+ * Build a human-readable proposal diff for the /mcp UI.
+ *
+ * Primary compare is proposal.payload.flow vs the stored baseFlow snapshot
+ * (captured at submit). Live flow is only used for the stale-rev warning and
+ * an optional secondary "vs current" section for pending proposals.
  */
 
 import { FlowNotFoundError } from '../runtime/errors.js';
@@ -22,12 +26,6 @@ const TEXT_PROPERTY_KEYS = new Set([
 
 /** Keys ignored when comparing nodes (layout / wiring noise). */
 const IGNORE_NODE_KEYS = new Set(['x', 'y', 'w', 'h', 'wires', 'g']);
-
-export interface NodeRef {
-  id: string;
-  type: string;
-  name?: string;
-}
 
 export interface ScalarPropertyChange {
   key: string;
@@ -53,24 +51,57 @@ export interface ModifiedNodeDiff {
   changes: PropertyChange[];
 }
 
-export interface ProposalDiffResult {
+/** Scalar or long-text property on an added/removed node (single-sided). */
+export interface PresenceProperty {
+  key: string;
+  kind: 'scalar' | 'text';
+  value: unknown;
+}
+
+/**
+ * Added or removed node as one block: identity + properties (not per-field
+ * before→null rows).
+ */
+export interface PresenceNodeDiff {
+  id: string;
+  type: string;
+  name?: string;
+  properties: PresenceProperty[];
+}
+
+export interface DiffSectionSummary {
+  added: number;
+  removed: number;
+  modified: number;
+  tabChanges: string[];
+}
+
+export interface DiffSections {
+  summary: DiffSectionSummary;
+  added: PresenceNodeDiff[];
+  removed: PresenceNodeDiff[];
+  modified: ModifiedNodeDiff[];
+}
+
+export interface ProposalDiffResult extends DiffSections {
   proposalId: string;
   flowId: string;
   expectedRev: string;
   currentRev: string;
-  /** True when expectedRev !== currentRev (approve would fail with revision conflict). */
+  /**
+   * True only for **pending** proposals when expectedRev !== live rev
+   * (approve would fail). Never true for approved/rejected/failed.
+   */
   baseRevStale: boolean;
-  summary: {
-    added: number;
-    removed: number;
-    modified: number;
-    tabChanges: string[];
-  };
-  /** Added nodes with full property changes (text fields as all-added line diffs). */
-  added: ModifiedNodeDiff[];
-  /** Removed nodes with full property changes (text fields as all-removed line diffs). */
-  removed: ModifiedNodeDiff[];
-  modified: ModifiedNodeDiff[];
+  /** What the primary sections were compared against. */
+  compareAgainst: 'base' | 'current';
+  /** True when the proposal has no stored baseFlow (legacy). */
+  baseSnapshotMissing?: boolean;
+  /**
+   * When pending + baseRevStale and a base snapshot exists: proposal vs live
+   * flow (what would apply / conflict with the current editor state).
+   */
+  vsCurrent?: DiffSections;
 }
 
 function nodeName(node: FlowNode): string | undefined {
@@ -81,71 +112,6 @@ function nodeName(node: FlowNode): string | undefined {
     return node.label;
   }
   return undefined;
-}
-
-/**
- * Snapshot every comparable property of a node as added or removed changes
- * so reviewers can see full content (including long template/func text).
- */
-function snapshotNodeChanges(node: FlowNode, side: 'added' | 'removed'): PropertyChange[] {
-  const changes: PropertyChange[] = [];
-  const keys = [...Object.keys(node)].sort();
-  for (const key of keys) {
-    if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
-      continue;
-    }
-    const value = node[key];
-    const text = asText(value);
-    if (TEXT_PROPERTY_KEYS.has(key) && text !== null) {
-      if (side === 'added') {
-        changes.push({
-          key,
-          kind: 'text',
-          before: '',
-          after: text,
-          lines: diffLines('', text),
-        });
-      } else {
-        changes.push({
-          key,
-          kind: 'text',
-          before: text,
-          after: '',
-          lines: diffLines(text, ''),
-        });
-      }
-      continue;
-    }
-    if (side === 'added') {
-      changes.push({
-        key,
-        kind: 'scalar',
-        before: null,
-        after: value === undefined ? null : value,
-      });
-    } else {
-      changes.push({
-        key,
-        kind: 'scalar',
-        before: value === undefined ? null : value,
-        after: null,
-      });
-    }
-  }
-  return changes;
-}
-
-function toNodeDetail(node: FlowNode, side: 'added' | 'removed'): ModifiedNodeDiff {
-  const entry: ModifiedNodeDiff = {
-    id: node.id,
-    type: node.type,
-    changes: snapshotNodeChanges(node, side),
-  };
-  const name = nodeName(node);
-  if (name !== undefined) {
-    entry.name = name;
-  }
-  return entry;
 }
 
 function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
@@ -183,6 +149,40 @@ function asText(value: unknown): string | null {
     return value;
   }
   return null;
+}
+
+function nodeProperties(node: FlowNode): PresenceProperty[] {
+  const properties: PresenceProperty[] = [];
+  for (const key of [...Object.keys(node)].sort()) {
+    if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
+      continue;
+    }
+    const value = node[key];
+    const text = asText(value);
+    if (TEXT_PROPERTY_KEYS.has(key) && text !== null) {
+      properties.push({ key, kind: 'text', value: text });
+      continue;
+    }
+    properties.push({
+      key,
+      kind: 'scalar',
+      value: value === undefined ? null : value,
+    });
+  }
+  return properties;
+}
+
+function toPresenceNode(node: FlowNode): PresenceNodeDiff {
+  const entry: PresenceNodeDiff = {
+    id: node.id,
+    type: node.type,
+    properties: nodeProperties(node),
+  };
+  const name = nodeName(node);
+  if (name !== undefined) {
+    entry.name = name;
+  }
+  return entry;
 }
 
 function compareNodes(before: FlowNode, after: FlowNode): PropertyChange[] {
@@ -233,27 +233,27 @@ function compareTabMeta(before: Partial<FlowTab>, after: Partial<FlowTab>): stri
 }
 
 /**
- * Pure compare of a proposal payload against a current flow tab snapshot.
+ * Pure compare of a proposed flow tab against a before (base or live) tab.
  */
-export function buildProposalDiff(
-  proposal: Proposal,
-  current: { rev: string; flow: Partial<FlowTab> }
-): ProposalDiffResult {
-  const beforeNodes = collectNodes(current.flow);
-  const afterNodes = collectNodes(proposal.payload.flow);
+export function buildDiffSections(
+  afterFlow: Partial<FlowTab>,
+  beforeFlow: Partial<FlowTab>
+): DiffSections {
+  const beforeNodes = collectNodes(beforeFlow);
+  const afterNodes = collectNodes(afterFlow);
 
-  const added: ModifiedNodeDiff[] = [];
-  const removed: ModifiedNodeDiff[] = [];
+  const added: PresenceNodeDiff[] = [];
+  const removed: PresenceNodeDiff[] = [];
   const modified: ModifiedNodeDiff[] = [];
 
   for (const [id, node] of afterNodes) {
     if (!beforeNodes.has(id)) {
-      added.push(toNodeDetail(node, 'added'));
+      added.push(toPresenceNode(node));
     }
   }
   for (const [id, node] of beforeNodes) {
     if (!afterNodes.has(id)) {
-      removed.push(toNodeDetail(node, 'removed'));
+      removed.push(toPresenceNode(node));
     }
   }
   for (const [id, after] of afterNodes) {
@@ -280,21 +280,12 @@ export function buildProposalDiff(
   removed.sort((a, b) => a.id.localeCompare(b.id));
   modified.sort((a, b) => a.id.localeCompare(b.id));
 
-  const tabChanges = compareTabMeta(current.flow, proposal.payload.flow);
-  const currentRev = current.rev;
-  const expectedRev = proposal.expectedRev;
-
   return {
-    proposalId: proposal.id,
-    flowId: proposal.payload.flowId,
-    expectedRev,
-    currentRev,
-    baseRevStale: expectedRev !== currentRev,
     summary: {
       added: added.length,
       removed: removed.length,
       modified: modified.length,
-      tabChanges,
+      tabChanges: compareTabMeta(beforeFlow, afterFlow),
     },
     added,
     removed,
@@ -303,34 +294,101 @@ export function buildProposalDiff(
 }
 
 /**
- * Load the live flow for a proposal and return a diff result.
- * Missing flows are treated as an empty tab (all proposal nodes are "added").
+ * Pure compare of a proposal payload against a before-flow snapshot.
+ * `before.rev` is used as `currentRev` unless `options.currentRev` is set.
+ */
+export function buildProposalDiff(
+  proposal: Proposal,
+  before: { rev: string; flow: Partial<FlowTab> },
+  options: {
+    currentRev?: string;
+    compareAgainst?: 'base' | 'current';
+    baseSnapshotMissing?: boolean;
+    /** Override stale banner (default: pending && expectedRev !== currentRev). */
+    baseRevStale?: boolean;
+    vsCurrent?: DiffSections;
+  } = {}
+): ProposalDiffResult {
+  const sections = buildDiffSections(proposal.payload.flow, before.flow);
+  const currentRev = options.currentRev ?? before.rev;
+  const expectedRev = proposal.expectedRev;
+  const baseRevStale =
+    options.baseRevStale ?? (proposal.status === 'pending' && expectedRev !== currentRev);
+
+  const result: ProposalDiffResult = {
+    proposalId: proposal.id,
+    flowId: proposal.payload.flowId,
+    expectedRev,
+    currentRev,
+    baseRevStale,
+    compareAgainst: options.compareAgainst ?? 'current',
+    ...sections,
+  };
+  if (options.baseSnapshotMissing) {
+    result.baseSnapshotMissing = true;
+  }
+  if (options.vsCurrent) {
+    result.vsCurrent = options.vsCurrent;
+  }
+  return result;
+}
+
+/**
+ * Diff a proposal against its stored baseFlow snapshot when present.
+ * Pending + stale also attaches `vsCurrent` (proposal vs live flow).
+ * Approved/rejected/failed never set `baseRevStale` (no "approve would fail").
  */
 export async function computeProposalDiff(
   proposal: Proposal,
   adapter: FlowAdapter
 ): Promise<ProposalDiffResult> {
   const flowId = proposal.payload.flowId;
+  const emptyTab: Partial<FlowTab> = { id: flowId, type: 'tab', nodes: [], configs: [] };
+
+  let liveRev = proposal.expectedRev;
+  let liveFlow: Partial<FlowTab> = emptyTab;
   try {
     const snapshot = await adapter.getFlow(flowId);
-    return buildProposalDiff(proposal, {
-      rev: snapshot.rev,
-      flow: snapshot.flow,
-    });
+    liveRev = snapshot.rev;
+    liveFlow = snapshot.flow;
   } catch (error) {
-    if (error instanceof FlowNotFoundError) {
-      let currentRev = proposal.expectedRev;
-      try {
-        const flows = await adapter.getFlows();
-        currentRev = flows.rev;
-      } catch {
-        // keep expectedRev as best-effort current marker
-      }
-      return buildProposalDiff(proposal, {
-        rev: currentRev,
-        flow: { id: flowId, type: 'tab', nodes: [], configs: [] },
-      });
+    if (!(error instanceof FlowNotFoundError)) {
+      throw error;
     }
-    throw error;
+    try {
+      const flows = await adapter.getFlows();
+      liveRev = flows.rev;
+    } catch {
+      // keep expectedRev
+    }
   }
+
+  const pending = proposal.status === 'pending';
+  const baseRevStale = pending && proposal.expectedRev !== liveRev;
+  const storedBase = proposal.baseFlow;
+
+  if (storedBase !== undefined) {
+    const vsCurrent = baseRevStale ? buildDiffSections(proposal.payload.flow, liveFlow) : undefined;
+    return buildProposalDiff(
+      proposal,
+      { rev: proposal.expectedRev, flow: storedBase },
+      {
+        currentRev: liveRev,
+        compareAgainst: 'base',
+        baseRevStale,
+        ...(vsCurrent ? { vsCurrent } : {}),
+      }
+    );
+  }
+
+  // Legacy proposals: fall back to live comparison.
+  return buildProposalDiff(
+    proposal,
+    { rev: liveRev, flow: liveFlow },
+    {
+      compareAgainst: 'current',
+      baseSnapshotMissing: true,
+      baseRevStale,
+    }
+  );
 }

@@ -461,13 +461,31 @@ function pageClientScriptPartBDiff(): string {
 
 function pageClientScriptPartBDiffView(): string {
   return `
-  function renderNodeDetail(n, mode) {
-    var label = (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
-    var changes = (n.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('');
-    return '<div class="modified-node">' +
-      '<div><code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' + label + '</div>' +
-      changes +
-      '</div>';
+  function presenceLabel(n) {
+    return (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
+  }
+
+  function renderPresenceProperty(p) {
+    if (p.kind === 'text') {
+      var text = String(p.value == null ? '' : p.value);
+      return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
+        ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
+        '<pre class="presence-pre">' + esc(text) + '</pre></details>';
+    }
+    return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+      '<code>' + esc(JSON.stringify(p.value)) + '</code></div>';
+  }
+
+  function renderPresenceNode(n, kind) {
+    var title = kind === 'added' ? 'Node added' : 'Node removed';
+    var open = kind === 'added' ? ' open' : '';
+    var props = (n.properties || []).map(renderPresenceProperty).join('');
+    return '<details class="node-presence node-' + kind + '"' + open + '>' +
+      '<summary><strong>' + title + '</strong> · ' +
+      '<code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' +
+      presenceLabel(n) + '</summary>' +
+      '<div class="presence-body">' + (props || '<p class="muted">No properties.</p>') +
+      '</div></details>';
   }
 
   function renderPropertyChange(ch, mode) {
@@ -490,13 +508,45 @@ function pageClientScriptPartBDiffView(): string {
       ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
   }
 
+  function renderDiffSections(sections, mode, emptyMsg) {
+    var parts = '';
+    if (sections.added && sections.added.length) {
+      parts += '<div class="diff-section"><h4>Added nodes</h4>' +
+        sections.added.map(function (n) { return renderPresenceNode(n, 'added'); }).join('') +
+        '</div>';
+    }
+    if (sections.removed && sections.removed.length) {
+      parts += '<div class="diff-section"><h4>Removed nodes</h4>' +
+        sections.removed.map(function (n) { return renderPresenceNode(n, 'removed'); }).join('') +
+        '</div>';
+    }
+    if (sections.modified && sections.modified.length) {
+      parts += '<div class="diff-section"><h4>Modified nodes</h4>' +
+        sections.modified.map(function (m) {
+          return '<div class="modified-node">' +
+            '<div><code title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</code> ' +
+            (m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?') + '</div>' +
+            (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
+            '</div>';
+        }).join('') + '</div>';
+    }
+    if (!parts) {
+      parts = '<p class="muted">' + esc(emptyMsg) + '</p>';
+    }
+    return parts;
+  }
+
   function renderDiffView(diff, mode) {
     if (!diff) return '<p class="muted">Diff unavailable.</p>';
     mode = mode || getDiffMode();
     var stale = diff.baseRevStale
-      ? '<p class="stale-banner" role="status">Base revision is stale — approve would fail. Ask the AI to re-read flows and resubmit.</p>'
+      ? '<p class="stale-banner" role="status">Base revision is stale — approve would fail. Ask the AI to re-read flows and resubmit. Primary diff below is still vs the stored base snapshot (what the AI changed).</p>'
+      : '';
+    var missing = diff.baseSnapshotMissing
+      ? '<p class="muted">This legacy proposal has no stored base snapshot; comparing against the live flow.</p>'
       : '';
     var sum = diff.summary || {};
+    var against = diff.compareAgainst === 'base' ? 'base snapshot' : 'current flow';
     var counts = '<p class="diff-summary"><strong>+' + (sum.added || 0) +
       '</strong> added · <strong>-' + (sum.removed || 0) +
       '</strong> removed · <strong>~' + (sum.modified || 0) +
@@ -504,7 +554,7 @@ function pageClientScriptPartBDiffView(): string {
       (sum.tabChanges && sum.tabChanges.length
         ? ' · tab: ' + esc(sum.tabChanges.join(', '))
         : '') +
-      '</p>';
+      ' <span class="muted">(vs ' + against + ')</span></p>';
     var meta = '<p class="muted">expectedRev ' + tipId(diff.expectedRev, 8) +
       ' · currentRev ' + tipId(diff.currentRev, 8) + '</p>';
     var toolbar =
@@ -513,29 +563,24 @@ function pageClientScriptPartBDiffView(): string {
       '<button type="button" data-diff-mode="split" aria-pressed="' + (mode === 'split' ? 'true' : 'false') + '">Side by side</button>' +
       '<button type="button" data-diff-mode="unified" aria-pressed="' + (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
       '</div></div>';
-    var sections = '';
-    if (diff.added && diff.added.length) {
-      sections += '<div class="diff-section"><h4>Added nodes</h4>' +
-        diff.added.map(function (n) { return renderNodeDetail(n, mode); }).join('') + '</div>';
+    var sections = renderDiffSections(
+      diff,
+      mode,
+      diff.compareAgainst === 'base'
+        ? 'No node changes vs the base snapshot.'
+        : 'No node changes vs the current flow.'
+    );
+    var vsCurrent = '';
+    if (diff.vsCurrent) {
+      var vc = diff.vsCurrent.summary || {};
+      vsCurrent =
+        '<details class="vs-current">' +
+        '<summary>Also show changes vs current flow (+' + (vc.added || 0) +
+        ' / -' + (vc.removed || 0) + ' / ~' + (vc.modified || 0) + ')</summary>' +
+        renderDiffSections(diff.vsCurrent, mode, 'No node changes vs the current flow.') +
+        '</details>';
     }
-    if (diff.removed && diff.removed.length) {
-      sections += '<div class="diff-section"><h4>Removed nodes</h4>' +
-        diff.removed.map(function (n) { return renderNodeDetail(n, mode); }).join('') + '</div>';
-    }
-    if (diff.modified && diff.modified.length) {
-      sections += '<div class="diff-section"><h4>Modified nodes</h4>' +
-        diff.modified.map(function (m) {
-          return '<div class="modified-node">' +
-            '<div><code title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</code> ' +
-            (m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?') + '</div>' +
-            (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
-            '</div>';
-        }).join('') + '</div>';
-    }
-    if (!sections) {
-      sections = '<p class="muted">No node changes vs the current flow.</p>';
-    }
-    return stale + toolbar + meta + sections;
+    return stale + missing + toolbar + meta + sections + vsCurrent;
   }
 `;
 }

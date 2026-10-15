@@ -178,7 +178,8 @@ export function rejectProposalHandler(service: ProposalService) {
 }
 
 /**
- * GET /proposals/:id/diff — compare proposal payload to the live flow tab.
+ * GET /proposals/:id/diff — compare proposal payload to its stored baseFlow
+ * snapshot (what the AI changed). Pending + stale also includes `vsCurrent`.
  * Requires admin `read` or the owning access link (same as getProposal).
  */
 export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapter) {

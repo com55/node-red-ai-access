@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildProposalDiff } from '../../src/plugin/proposal-diff.js';
+import { buildDiffSections, buildProposalDiff } from '../../src/plugin/proposal-diff.js';
 import type { Proposal } from '../../src/storage/proposals.js';
 
 function proposal(partial: Partial<Proposal> & Pick<Proposal, 'payload'>): Proposal {
@@ -17,9 +17,17 @@ function proposal(partial: Partial<Proposal> & Pick<Proposal, 'payload'>): Propo
 }
 
 describe('buildProposalDiff', () => {
-  it('counts added, removed, and modified nodes', () => {
+  it('counts added, removed, and modified nodes vs base snapshot', () => {
     const diff = buildProposalDiff(
       proposal({
+        baseFlow: {
+          id: 'tab1',
+          label: 'Main',
+          nodes: [
+            { id: 'n1', type: 'inject', name: 'tick', topic: 'old' },
+            { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
+          ],
+        },
         payload: {
           flowId: 'tab1',
           flow: {
@@ -42,7 +50,8 @@ describe('buildProposalDiff', () => {
             { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
           ],
         },
-      }
+      },
+      { compareAgainst: 'base' }
     );
 
     expect(diff.summary).toEqual({
@@ -51,20 +60,16 @@ describe('buildProposalDiff', () => {
       modified: 1,
       tabChanges: ['label'],
     });
+    expect(diff.compareAgainst).toBe('base');
     expect(diff.baseRevStale).toBe(false);
     expect(diff.added).toHaveLength(1);
     expect(diff.added[0]).toMatchObject({ id: 'n3', type: 'debug', name: 'out' });
-    expect(diff.added[0]?.changes.some(c => c.key === 'type' && c.kind === 'scalar')).toBe(true);
-    expect(diff.added[0]?.changes.some(c => c.key === 'name')).toBe(true);
+    expect(diff.added[0]?.properties.some(p => p.key === 'type' && p.kind === 'scalar')).toBe(true);
+    expect(diff.added[0]?.properties.some(p => p.key === 'name')).toBe(true);
     expect(diff.removed).toHaveLength(1);
     expect(diff.removed[0]).toMatchObject({ id: 'n2', type: 'function', name: 'fn' });
-    const removedFunc = diff.removed[0]?.changes.find(c => c.key === 'func');
-    expect(removedFunc?.kind).toBe('text');
-    if (removedFunc?.kind === 'text') {
-      expect(removedFunc.lines.every(l => l.op === 'remove')).toBe(true);
-      expect(removedFunc.before).toContain('return msg;');
-      expect(removedFunc.after).toBe('');
-    }
+    const removedFunc = diff.removed[0]?.properties.find(p => p.key === 'func');
+    expect(removedFunc).toEqual({ key: 'func', kind: 'text', value: 'return msg;' });
     expect(diff.modified).toHaveLength(1);
     expect(diff.modified[0]?.id).toBe('n1');
     expect(diff.modified[0]?.changes).toEqual([
@@ -72,7 +77,75 @@ describe('buildProposalDiff', () => {
     ]);
   });
 
-  it('shows all-added line diffs for template on newly added nodes', () => {
+  it('keeps base-snapshot diff when live flow later adds unrelated nodes', () => {
+    const base = {
+      id: 'tab1',
+      type: 'tab',
+      nodes: [{ id: 'n1', type: 'inject', name: 'tick' }],
+    };
+    const proposed = {
+      id: 'tab1',
+      type: 'tab',
+      nodes: [{ id: 'n1', type: 'inject', name: 'tick', topic: 'x' }],
+    };
+    // Live flow after another approval added html20k — must NOT appear as removed.
+    const live = {
+      id: 'tab1',
+      type: 'tab',
+      nodes: [
+        { id: 'n1', type: 'inject', name: 'tick' },
+        { id: 'html20k', type: 'template', name: 'html20k', template: '<p>big</p>' },
+      ],
+    };
+
+    const vsBase = buildDiffSections(proposed, base);
+    expect(vsBase.summary).toEqual({
+      added: 0,
+      removed: 0,
+      modified: 1,
+      tabChanges: [],
+    });
+    expect(vsBase.removed).toEqual([]);
+
+    const vsLive = buildDiffSections(proposed, live);
+    expect(vsLive.removed.some(n => n.id === 'html20k')).toBe(true);
+
+    const diff = buildProposalDiff(
+      proposal({
+        status: 'pending',
+        expectedRev: 'rev-1',
+        baseFlow: base,
+        payload: { flowId: 'tab1', flow: proposed },
+      }),
+      { rev: 'rev-1', flow: base },
+      {
+        currentRev: 'rev-2',
+        compareAgainst: 'base',
+        baseRevStale: true,
+        vsCurrent: vsLive,
+      }
+    );
+    expect(diff.summary.removed).toBe(0);
+    expect(diff.baseRevStale).toBe(true);
+    expect(diff.vsCurrent?.removed.some(n => n.id === 'html20k')).toBe(true);
+  });
+
+  it('does not flag baseRevStale for approved proposals even when live rev moved', () => {
+    const diff = buildProposalDiff(
+      proposal({
+        status: 'approved',
+        expectedRev: 'old-rev',
+        baseFlow: { nodes: [] },
+        payload: { flowId: 'tab1', flow: { nodes: [] } },
+      }),
+      { rev: 'old-rev', flow: { nodes: [] } },
+      { currentRev: 'new-rev', compareAgainst: 'base' }
+    );
+    expect(diff.baseRevStale).toBe(false);
+    expect(diff.currentRev).toBe('new-rev');
+  });
+
+  it('shows text properties on added nodes for expandable UI', () => {
     const html = '<h1>Hello</h1>\n<p>World</p>';
     const diff = buildProposalDiff(
       proposal({
@@ -83,17 +156,12 @@ describe('buildProposalDiff', () => {
           },
         },
       }),
-      { rev: 'rev-1', flow: { nodes: [] } }
+      { rev: 'rev-1', flow: { nodes: [] } },
+      { compareAgainst: 'base' }
     );
     expect(diff.added).toHaveLength(1);
-    const tpl = diff.added[0]?.changes.find(c => c.key === 'template');
-    expect(tpl?.kind).toBe('text');
-    if (tpl?.kind === 'text') {
-      expect(tpl.before).toBe('');
-      expect(tpl.after).toBe(html);
-      expect(tpl.lines.every(l => l.op === 'add')).toBe(true);
-      expect(tpl.lines.map(l => l.text).join('\n')).toBe(html);
-    }
+    const tpl = diff.added[0]?.properties.find(p => p.key === 'template');
+    expect(tpl).toEqual({ key: 'template', kind: 'text', value: html });
   });
 
   it('includes line diffs for function func changes', () => {
@@ -123,9 +191,10 @@ describe('buildProposalDiff', () => {
     }
   });
 
-  it('flags stale base revision', () => {
+  it('flags stale base revision for pending proposals', () => {
     const diff = buildProposalDiff(
       proposal({
+        status: 'pending',
         expectedRev: 'old-rev',
         payload: { flowId: 'tab1', flow: { nodes: [] } },
       }),

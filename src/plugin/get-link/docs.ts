@@ -68,8 +68,9 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>
 \`\`\`
 
 6. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
-7. Optional: \`GET ./proposals/<id>/diff\` for a structured diff (added/removed
-   nodes include **all properties**; long text fields are line-diffed).
+7. Optional: \`GET ./proposals/<id>/diff\` for a structured diff against the
+   **base snapshot** stored at submit (not the live flow). Added/removed nodes
+   are single presence blocks; pending+stale may include \`vsCurrent\`.
 `;
 }
 
