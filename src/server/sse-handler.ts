@@ -23,7 +23,10 @@ import { SSEError as SSEErrorClass } from '../utils/error-handling.js';
 export class SSEHandler {
   private connections = new Map<string, SSEConnection>();
   private config: SSEConfig;
-  private stats: SSEStats;
+  private stats: Omit<SSEStats, 'connectionsByEventType'> & {
+    // Map avoids remote-property-injection on user-supplied event type names.
+    connectionsByEventType: Map<string, number>;
+  };
   private heartbeatInterval?: NodeJS.Timeout | undefined;
 
   constructor(config: Partial<SSEConfig> = {}) {
@@ -45,11 +48,21 @@ export class SSEHandler {
       messagesSent: 0,
       errors: 0,
       uptime: Date.now(),
-      connectionsByEventType: {},
+      connectionsByEventType: new Map(),
     };
 
     this.startHeartbeat();
     this.startHealthMonitoring();
+  }
+
+  private bumpEventTypeCount(eventType: string, delta: number): void {
+    const current = this.stats.connectionsByEventType.get(eventType) ?? 0;
+    const next = current + delta;
+    if (next <= 0) {
+      this.stats.connectionsByEventType.delete(eventType);
+    } else {
+      this.stats.connectionsByEventType.set(eventType, next);
+    }
   }
 
   /**
@@ -145,7 +158,8 @@ export class SSEHandler {
     // Update stats
     this.stats.activeConnections = Math.max(0, this.stats.activeConnections - 1);
 
-    console.log(`SSE connection closed: ${connectionId}`);
+    const safeConnId = connectionId.replace(/[\r\n\t]/g, '').slice(0, 64);
+    console.log(`SSE connection closed: ${safeConnId}`);
   }
 
   /**
@@ -159,10 +173,7 @@ export class SSEHandler {
 
     for (const eventType of eventTypes) {
       connection.subscriptions.add(eventType);
-
-      // Update stats
-      this.stats.connectionsByEventType[eventType] =
-        (this.stats.connectionsByEventType[eventType] ?? 0) + 1;
+      this.bumpEventTypeCount(eventType, 1);
     }
 
     connection.clientInfo.lastActivity = new Date();
@@ -186,9 +197,7 @@ export class SSEHandler {
       connection.filters.set(eventType, filter);
     }
 
-    // Update stats
-    this.stats.connectionsByEventType[eventType] =
-      (this.stats.connectionsByEventType[eventType] ?? 0) + 1;
+    this.bumpEventTypeCount(eventType, 1);
     connection.clientInfo.lastActivity = new Date();
   }
 
@@ -226,14 +235,7 @@ export class SSEHandler {
 
     for (const eventType of eventTypes) {
       connection.subscriptions.delete(eventType);
-
-      // Update stats
-      if (this.stats.connectionsByEventType[eventType]) {
-        this.stats.connectionsByEventType[eventType]--;
-        if (this.stats.connectionsByEventType[eventType] <= 0) {
-          delete this.stats.connectionsByEventType[eventType];
-        }
-      }
+      this.bumpEventTypeCount(eventType, -1);
     }
 
     connection.clientInfo.lastActivity = new Date();
@@ -408,9 +410,12 @@ export class SSEHandler {
    */
   getStats(): SSEStats {
     return {
-      ...this.stats,
-      uptime: Date.now() - this.stats.uptime,
+      totalConnections: this.stats.totalConnections,
       activeConnections: this.connections.size,
+      messagesSent: this.stats.messagesSent,
+      errors: this.stats.errors,
+      uptime: Date.now() - this.stats.uptime,
+      connectionsByEventType: Object.fromEntries(this.stats.connectionsByEventType),
     };
   }
 

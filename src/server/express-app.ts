@@ -931,7 +931,9 @@ export class ExpressApp {
             'X-MCP-Protocol': '2025-03-26',
           });
 
-          console.log(`MCP SSE client connected (Claude ${req.auth?.userId ?? 'unknown'})`);
+          // Log only a sanitized token subject shape — never raw header material.
+          const subject = (req.auth?.userId ?? 'anonymous').replace(/[\r\n\t]/g, '').slice(0, 64);
+          console.log(`MCP SSE client connected (Claude ${subject})`);
 
           // Send initial MCP server capabilities immediately
           const serverInfo = {

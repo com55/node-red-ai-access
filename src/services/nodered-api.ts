@@ -762,8 +762,8 @@ export class NodeRedAPIClient {
    */
   async getFlow(flowId: string): Promise<NodeRedFlow> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      const response = await this.client.get<NodeRedFlow>(`/flow/${flowId}`);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const response = await this.client.get<NodeRedFlow>(`/flow/${safeFlowId}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getFlow(${flowId})`);
@@ -797,8 +797,8 @@ export class NodeRedAPIClient {
    */
   async updateFlow(flowId: string, flowData: Partial<NodeRedFlow>): Promise<NodeRedFlow> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      const response = await this.client.put<NodeRedFlow>(`/flow/${flowId}`, flowData);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const response = await this.client.put<NodeRedFlow>(`/flow/${safeFlowId}`, flowData);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `updateFlow(${flowId})`);
@@ -907,8 +907,8 @@ export class NodeRedAPIClient {
    */
   async deleteFlow(flowId: string): Promise<void> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      await this.client.delete(`/flow/${flowId}`);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      await this.client.delete(`/flow/${safeFlowId}`);
     } catch (error) {
       handleNodeRedError(error, `deleteFlow(${flowId})`);
     }
@@ -1036,8 +1036,8 @@ export class NodeRedAPIClient {
     try {
       // Node type IDs are '<module>/<name>' (e.g. 'node-red/inject') and legitimately
       // contain a '/', so this needs the library-path validator, not the single-segment one.
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      const response = await this.client.get<NodeRedNodeType>(`/nodes/${nodeId}`);
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      const response = await this.client.get<NodeRedNodeType>(`/nodes/${safeNodeId}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getNodeType(${nodeId})`);
@@ -1049,8 +1049,8 @@ export class NodeRedAPIClient {
    */
   async enableNodeType(nodeId: string): Promise<void> {
     try {
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      await this.client.put(`/nodes/${nodeId}`, { enabled: true });
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      await this.client.put(`/nodes/${safeNodeId}`, { enabled: true });
     } catch (error) {
       handleNodeRedError(error, `enableNodeType(${nodeId})`);
     }
@@ -1061,8 +1061,8 @@ export class NodeRedAPIClient {
    */
   async disableNodeType(nodeId: string): Promise<void> {
     try {
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      await this.client.put(`/nodes/${nodeId}`, { enabled: false });
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      await this.client.put(`/nodes/${safeNodeId}`, { enabled: false });
     } catch (error) {
       handleNodeRedError(error, `disableNodeType(${nodeId})`);
     }
@@ -1211,8 +1211,8 @@ export class NodeRedAPIClient {
    */
   async getGlobalContext(key?: string): Promise<unknown> {
     try {
-      if (key) this.assertSafeSegment(key, 'key');
-      const url = key ? `/context/global/${key}` : '/context/global';
+      const safeKey = key ? this.assertSafeSegment(key, 'key') : undefined;
+      const url = safeKey ? `/context/global/${safeKey}` : '/context/global';
       const response = await this.client.get<unknown>(url);
       return response.data;
     } catch (error) {
@@ -1225,8 +1225,8 @@ export class NodeRedAPIClient {
    */
   async setGlobalContext(key: string, value: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(key, 'key');
-      await this.client.put(`/context/global/${key}`, { value });
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.put(`/context/global/${safeKey}`, { value });
     } catch (error) {
       handleNodeRedError(error, `setGlobalContext(${key})`);
     }
@@ -1237,8 +1237,8 @@ export class NodeRedAPIClient {
    */
   async deleteGlobalContext(key: string): Promise<void> {
     try {
-      this.assertSafeSegment(key, 'key');
-      await this.client.delete(`/context/global/${key}`);
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.delete(`/context/global/${safeKey}`);
     } catch (error) {
       handleNodeRedError(error, `deleteGlobalContext(${key})`);
     }
@@ -1249,9 +1249,11 @@ export class NodeRedAPIClient {
    */
   async getFlowContext(flowId: string, key?: string): Promise<unknown> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      if (key) this.assertSafeSegment(key, 'key');
-      const url = key ? `/context/flow/${flowId}/${key}` : `/context/flow/${flowId}`;
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const safeKey = key ? this.assertSafeSegment(key, 'key') : undefined;
+      const url = safeKey
+        ? `/context/flow/${safeFlowId}/${safeKey}`
+        : `/context/flow/${safeFlowId}`;
       const response = await this.client.get<unknown>(url);
       return response.data;
     } catch (error) {
@@ -1264,9 +1266,9 @@ export class NodeRedAPIClient {
    */
   async setFlowContext(flowId: string, key: string, value: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      this.assertSafeSegment(key, 'key');
-      await this.client.put(`/context/flow/${flowId}/${key}`, { value });
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.put(`/context/flow/${safeFlowId}/${safeKey}`, { value });
     } catch (error) {
       handleNodeRedError(error, `setFlowContext(${flowId}, ${key})`);
     }
@@ -1279,8 +1281,8 @@ export class NodeRedAPIClient {
    */
   async getLibraryEntries(type = 'flows'): Promise<unknown[]> {
     try {
-      this.assertSafeSegment(type, 'type');
-      const response = await this.client.get<unknown[]>(`/library/${type}`);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const response = await this.client.get<unknown[]>(`/library/${safeType}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getLibraryEntries(${type})`);
@@ -1292,9 +1294,9 @@ export class NodeRedAPIClient {
    */
   async saveToLibrary(type: string, path: string, data: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(type, 'type');
-      this.assertSafeLibraryPath(path, 'path');
-      await this.client.post(`/library/${type}/${path}`, data);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const safePath = this.assertSafeLibraryPath(path, 'path');
+      await this.client.post(`/library/${safeType}/${safePath}`, data);
     } catch (error) {
       handleNodeRedError(error, `saveToLibrary(${type}, ${path})`);
     }
@@ -1305,9 +1307,9 @@ export class NodeRedAPIClient {
    */
   async loadFromLibrary(type: string, path: string): Promise<unknown> {
     try {
-      this.assertSafeSegment(type, 'type');
-      this.assertSafeLibraryPath(path, 'path');
-      const response = await this.client.get<unknown>(`/library/${type}/${path}`);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const safePath = this.assertSafeLibraryPath(path, 'path');
+      const response = await this.client.get<unknown>(`/library/${safeType}/${safePath}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `loadFromLibrary(${type}, ${path})`);

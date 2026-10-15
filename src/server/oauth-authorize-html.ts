@@ -58,7 +58,7 @@ export function buildAuthorizeLoginHtml(opts: {
     <div id="msg-box">${errorMsg ? `<div class="error">⚠️ ${escHtml(errorMsg)}</div>` : ''}</div>
 
     <label for="nr_url">כתובת Node-RED</label>
-    <input type="url" id="nr_url" value="${defaultUrl}" placeholder="https://nodered.example.com">
+    <input type="url" id="nr_url" value="${escHtml(defaultUrl)}" placeholder="https://nodered.example.com">
 
     <label>סוג הזדהות</label>
     <div class="tabs">

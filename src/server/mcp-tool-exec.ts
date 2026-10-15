@@ -673,7 +673,8 @@ export async function executeTool(
   args: ToolArgs,
   timestamp: string
 ): Promise<ToolOutcome> {
-  const handler = TOOL_HANDLERS[name];
+  // Allowlist dispatch: only keys present on TOOL_HANDLERS are callable.
+  const handler = Object.hasOwn(TOOL_HANDLERS, name) ? TOOL_HANDLERS[name] : undefined;
   if (!handler) {
     throw new Error(`Unknown tool: ${name}`);
   }
