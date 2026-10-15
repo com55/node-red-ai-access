@@ -101,6 +101,23 @@ describe('AI Access plugin scaffold', () => {
     expect(registeredPlugins).toContain('com55-ai-access');
   });
 
+  it('rate-limits /mcp routes (RateLimit headers present)', async () => {
+    const { app } = createMockRed({
+      adminAuth: { type: 'credentials' },
+      authenticate: (req, _res, next) => {
+        (req as Request & { user?: MockUser }).user = {
+          username: 'admin',
+          permissions: '*',
+        };
+        next();
+      },
+    });
+
+    const res = await request(app).get('/mcp/api/v1/status');
+    expect(res.status).toBe(200);
+    expect(res.headers['ratelimit-limit'] ?? res.headers['x-ratelimit-limit']).toBeDefined();
+  });
+
   describe('with adminAuth enabled', () => {
     it('redirects unauthenticated GET /mcp to httpAdminRoot', async () => {
       const { app } = createMockRed({

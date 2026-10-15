@@ -285,7 +285,9 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           target: production
-          platforms: linux/amd64,linux/arm64
+          # PR builds stay on amd64 to avoid flaky QEMU arm64 crashes during
+          # yarn install. Push/tag builds keep multi-arch (amd64 + arm64).
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

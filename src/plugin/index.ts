@@ -9,6 +9,7 @@ import type { Response } from 'express';
 
 import { requireAdminSession } from './auth.js';
 import { renderMcpPage } from './page.js';
+import { createAiAccessRateLimiter } from './rate-limit.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -26,8 +27,11 @@ export { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } fro
 const PLUGIN_ID = 'com55-ai-access';
 
 function registerRoutes(RED: NodeRedPluginAPI): void {
+  const limiter = createAiAccessRateLimiter();
+
   RED.httpAdmin.get(
     '/mcp',
+    limiter,
     requireAdminSession(RED, 'page'),
     (req: AuthenticatedRequest, res: Response) => {
       const status = buildStatus(RED, req);
@@ -37,6 +41,7 @@ function registerRoutes(RED: NodeRedPluginAPI): void {
 
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
+    limiter,
     requireAdminSession(RED, 'api'),
     (req: AuthenticatedRequest, res: Response) => {
       res.json(buildStatus(RED, req));
