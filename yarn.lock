@@ -67,7 +67,7 @@ __metadata:
     "@vitest/ui": "npm:^5.0.3"
     axios: "npm:^1.16.1"
     cors: "npm:^2.8.6"
-    dotenv: "npm:^17.4.2"
+    dotenv: "npm:^18.0.7"
     eslint: "npm:^10"
     eslint-config-prettier: "npm:^10.1.8"
     eslint-plugin-import: "npm:^2.32.0"
@@ -2454,10 +2454,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dotenv@npm:^17.4.2":
-  version: 17.4.2
-  resolution: "dotenv@npm:17.4.2"
-  checksum: 10c0/164f8e77a646c8446867d5b588d26ea6005c8ea7c5eb41cf926f6113d23f2191355f6e0cfd95ea9bab98394a5b0a3f1e51a8399711b666fe55cc7b0bd745f942
+"dotenv@npm:^18.0.7":
+  version: 18.0.7
+  resolution: "dotenv@npm:18.0.7"
+  bin:
+    dotenv: dist/index.cjs
+  checksum: 10c0/bda2efbfa3194eec5ae592308db16285a3e163b505282a052ec9e10538be1c6a526f0437b431e78183e9bd367db0ad7c446d0180ab62310bc0a384787bec8894
   languageName: node
   linkType: hard
 
