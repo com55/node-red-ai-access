@@ -8,6 +8,26 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Unknown flow ids return **404** `flow_not_found` (with hint to use ids from
+  `GET ./flows`) instead of **502** `upstream_error` on RedAdapter.
+- Invalid draft chunk base64url (e.g. `@@@`) returns **400**
+  `invalid_chunk_data` and does not store the seq.
+- `set.wires` is allowed in patch/propose when targets exist in the resulting
+  flow (validated); id/type/z stay protected.
+- Added/removed node diffs include `wires` (readable) and `x`/`y`.
+- `draft/new` checks live rev immediately (**409** `version_mismatch`); stale
+  submit responses set `draftDeleted: false` when the draft was kept.
+- REST `Bearer bogus` / short tokens return `access_link_invalid` (with a
+  truncated-URL hint when applicable), not `access_link_missing`.
+- Proposal diffs default to compact `format=summary` (changed lines + context +
+  byte sizes); `format=full` restores complete text.
+- Re-submitting a draft returns **409** `draft_already_submitted` with
+  `proposalId`; malformed sha256 returns **400** `invalid_sha256`.
+- Propose/draft responses warn with `siblingsOnSameRev` when other pending
+  proposals share the same flow revision.
+
 ### Added
 
 - Human-friendly proposals: optional `title` (≤80 chars) on all submit paths

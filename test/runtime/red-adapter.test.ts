@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { FlowRevisionConflictError } from '../../src/runtime/errors.js';
+import { FlowNotFoundError, FlowRevisionConflictError } from '../../src/runtime/errors.js';
 import { canUseRedRuntime, RedAdapter } from '../../src/runtime/red-adapter.js';
 import type { FlowNode, FlowsSnapshot, RedRuntimeHost } from '../../src/runtime/types.js';
 
@@ -146,6 +146,18 @@ describe('RedAdapter', () => {
     });
 
     expect(setFlows.mock.calls[0]?.[0]).toMatchObject({ deploymentType: 'full' });
+  });
+
+  it('getFlow maps runtime 404 to FlowNotFoundError (not opaque upstream)', async () => {
+    const { RED } = createMockRed();
+    const adapter = new RedAdapter(RED);
+
+    await expect(adapter.getFlow('missing-tab')).rejects.toBeInstanceOf(FlowNotFoundError);
+    await expect(adapter.getFlow('missing-tab')).rejects.toMatchObject({
+      code: 'flow_not_found',
+      statusCode: 404,
+      flowId: 'missing-tab',
+    });
   });
 
   it('updateFlow throws FlowRevisionConflictError when expectedRev is stale', async () => {

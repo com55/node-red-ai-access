@@ -66,8 +66,53 @@ export class DraftNotFoundError extends Error {
   }
 }
 
+export class DraftAlreadySubmittedError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'draft_already_submitted' as const;
+  readonly proposalId: string;
+  constructor(draftId: string, proposalId: string) {
+    super(`Draft '${draftId}' was already submitted as proposal '${proposalId}'`);
+    this.name = 'DraftAlreadySubmittedError';
+    this.proposalId = proposalId;
+  }
+}
+
+/** Strict base64url alphabet (optional padding). */
+const BASE64URL_RE = /^[A-Za-z0-9_-]+={0,2}$/;
+
+function assertValidBase64UrlChunk(data: string): Buffer {
+  if (!BASE64URL_RE.test(data) || data.replace(/=+$/, '').length === 0) {
+    throw new DraftValidationError(
+      'data must be non-empty base64url (A-Z, a-z, 0-9, -, _)',
+      'invalid_chunk_data'
+    );
+  }
+  let decoded: Buffer;
+  try {
+    decoded = Buffer.from(data, 'base64url');
+  } catch {
+    throw new DraftValidationError(
+      'data must be non-empty base64url (A-Z, a-z, 0-9, -, _)',
+      'invalid_chunk_data'
+    );
+  }
+  // Reject alphabets that decode to empty (e.g. invalid chars stripped by Buffer).
+  if (decoded.byteLength === 0 && data.length > 0) {
+    throw new DraftValidationError(
+      'data must be non-empty base64url (A-Z, a-z, 0-9, -, _)',
+      'invalid_chunk_data'
+    );
+  }
+  return decoded;
+}
+
 export class DraftStore {
   private readonly drafts = new Map<string, DraftRecord>();
+  /** Tombstones for drafts that already produced a proposal (same TTL window). */
+  private readonly submitted = new Map<
+    string,
+    { linkId: string; proposalId: string; expiresAtMs: number }
+  >();
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly maxBytes: number;
@@ -91,6 +136,11 @@ export class DraftStore {
     for (const [id, draft] of this.drafts) {
       if (draft.expiresAtMs <= atMs) {
         this.drafts.delete(id);
+      }
+    }
+    for (const [id, entry] of this.submitted) {
+      if (entry.expiresAtMs <= atMs) {
+        this.submitted.delete(id);
       }
     }
   }
@@ -122,6 +172,10 @@ export class DraftStore {
   getForLink(draftId: string, linkId: string): DraftRecord {
     const atMs = this.now();
     this.purgeExpired(atMs);
+    const done = this.submitted.get(draftId);
+    if (done?.linkId === linkId) {
+      throw new DraftAlreadySubmittedError(draftId, done.proposalId);
+    }
     const draft = this.drafts.get(draftId);
     if (draft?.linkId !== linkId) {
       throw new DraftNotFoundError(draftId);
@@ -130,6 +184,17 @@ export class DraftStore {
       throw new DraftNotFoundError(draftId);
     }
     return draft;
+  }
+
+  /** Record a successful submit so re-submit returns draft_already_submitted. */
+  markSubmitted(draftId: string, linkId: string, proposalId: string): void {
+    const atMs = this.now();
+    this.drafts.delete(draftId);
+    this.submitted.set(draftId, {
+      linkId,
+      proposalId,
+      expiresAtMs: atMs + this.ttlMs,
+    });
   }
 
   /**
@@ -167,13 +232,8 @@ export class DraftStore {
       }
     } else {
       // Count decoded payload bytes (not base64url character length).
-      let decodedLen: number;
-      try {
-        decodedLen = Buffer.from(data, 'base64url').byteLength;
-      } catch {
-        throw new DraftValidationError('data must be a base64url string', 'invalid_chunk');
-      }
-      const nextBytes = draft.totalBytes + decodedLen;
+      const decoded = assertValidBase64UrlChunk(data);
+      const nextBytes = draft.totalBytes + decoded.byteLength;
       if (nextBytes > this.maxBytes) {
         throw new DraftValidationError(
           `Draft exceeds limit of ${this.maxBytes} bytes (decoded)`,
@@ -250,13 +310,7 @@ export class DraftStore {
       parts.push(part);
     }
     // Chunks are base64url payloads; decode each then concatenate bytes.
-    const buffers = parts.map(part => {
-      try {
-        return Buffer.from(part, 'base64url');
-      } catch {
-        throw new DraftValidationError('Chunk is not valid base64url', 'invalid_chunk');
-      }
-    });
+    const buffers = parts.map(part => assertValidBase64UrlChunk(part));
     const assembledBuf = Buffer.concat(buffers);
     if (assembledBuf.byteLength > this.maxBytes) {
       throw new DraftValidationError(
@@ -265,16 +319,19 @@ export class DraftStore {
       );
     }
 
-    const digest = createHash('sha256').update(assembledBuf).digest('hex');
     const expected = sha256Hex.trim().toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(expected) || digest !== expected) {
+    if (!/^[0-9a-f]{64}$/.test(expected)) {
+      throw new DraftValidationError('invalid_sha256: expected 64 hex chars', 'invalid_sha256');
+    }
+    const digest = createHash('sha256').update(assembledBuf).digest('hex');
+    if (digest !== expected) {
       throw new DraftValidationError(
         'sha256 does not match assembled draft content',
         'draft_hash_mismatch'
       );
     }
 
-    this.drafts.delete(draftId);
+    // Keep draft until markSubmitted so a failed propose can retry.
     return { draft, assembled: assembledBuf.toString('utf8') };
   }
 
@@ -286,5 +343,6 @@ export class DraftStore {
 
   clear(): void {
     this.drafts.clear();
+    this.submitted.clear();
   }
 }

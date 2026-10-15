@@ -10,10 +10,15 @@ import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
-import { aiOpsErrorToHttp, submitReplaceFlowProposal } from '../ai-ops.js';
+import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
 import type { AuthenticatedRequest } from '../types.js';
 
-import { DraftNotFoundError, DraftStore, DraftValidationError } from './draft-store.js';
+import {
+  DraftAlreadySubmittedError,
+  DraftNotFoundError,
+  DraftStore,
+  DraftValidationError,
+} from './draft-store.js';
 import {
   applyFlowNodeOps,
   buildPatchedFlowTab,
@@ -27,6 +32,8 @@ function draftErrorHint(code: string): string | undefined {
   switch (code) {
     case 'draft_not_found':
       return 'Start a new draft with GET …/draft/new.';
+    case 'draft_already_submitted':
+      return 'This draft already created a proposal; poll that proposal or start a new draft.';
     case 'chunk_conflict':
       return 'Re-send the same data for that seq, or start a new draft.';
     case 'payload_too_large':
@@ -34,9 +41,12 @@ function draftErrorHint(code: string): string | undefined {
     case 'invalid_seq':
       return 'seq must be a non-negative integer (0, 1, 2, …).';
     case 'invalid_chunk':
-      return 'data must be base64url of the raw chunk bytes.';
+    case 'invalid_chunk_data':
+      return 'data must be base64url of the raw chunk bytes (A-Z, a-z, 0-9, -, _).';
     case 'missing_chunks':
       return 'Upload every seq from 0 through max before submit.';
+    case 'invalid_sha256':
+      return 'sha256 must be exactly 64 hexadecimal characters.';
     case 'draft_hash_mismatch':
       return 'sha256 must be the hex digest of the assembled UTF-8 bytes (before base64url).';
     case 'draft_empty':
@@ -47,6 +57,12 @@ function draftErrorHint(code: string): string | undefined {
       return 'Use a property that exists on the node, or mode=json to add/replace nodes.';
     case 'missing_draft_params':
       return 'Example: …/draft/new?flow=tab1&rev=abc&node=n1&field=template';
+    case 'version_mismatch':
+      return 'Re-read the flow and start a new draft with the current rev.';
+    case 'protected_property':
+      return 'Omit id, type, and z from set props. wires are allowed when targets exist in the flow.';
+    case 'invalid_wires':
+      return 'wires must list existing node ids (or add those nodes in the same patch).';
     default:
       return undefined;
   }
@@ -204,6 +220,36 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
       return;
     }
 
+    // Fail fast when the client’s rev is already stale.
+    try {
+      const live = await flowAdapter.getFlow(flowId);
+      if (live.rev !== rev) {
+        res.status(409).json({
+          error: 'Flow revision mismatch',
+          code: 'version_mismatch',
+          expectedRev: rev,
+          currentRev: live.rev,
+          hint: draftErrorHint('version_mismatch'),
+        });
+        return;
+      }
+    } catch (error) {
+      const mapped = aiOpsErrorToHttp(error);
+      if (mapped) {
+        jsonError(
+          res,
+          mapped.statusCode,
+          mapped.body.error,
+          mapped.body.code,
+          mapped.body.code === 'flow_not_found'
+            ? 'Use an id from GET ./flows'
+            : draftErrorHint(mapped.body.code)
+        );
+        return;
+      }
+      throw error;
+    }
+
     const plan = planDraftMode(nodeId, field, modeParam, targetsEncoded);
     if (!plan.ok) {
       jsonError(res, plan.status, plan.error, plan.code, plan.hint);
@@ -293,8 +339,19 @@ export function getLinkDraftAppendHandler(draftStore: DraftStore) {
             : `Upload missing seqs: ${result.missingSeqs.join(',')}`,
       });
     } catch (error) {
-      if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
-        jsonError(res, error.statusCode, error.message, error.code, draftErrorHint(error.code));
+      if (
+        error instanceof DraftNotFoundError ||
+        error instanceof DraftAlreadySubmittedError ||
+        error instanceof DraftValidationError
+      ) {
+        jsonError(
+          res,
+          error.statusCode,
+          error.message,
+          error.code,
+          draftErrorHint(error.code),
+          error instanceof DraftAlreadySubmittedError ? { proposalId: error.proposalId } : undefined
+        );
         return;
       }
       throw error;
@@ -399,12 +456,14 @@ export function getLinkDraftSubmitHandler(
         const edits = editsFromFieldDraft(draft, assembled);
         const patched = await buildPatchedFlowTab(flowAdapter, draft.flowId, edits);
         if (patched.expectedRev !== draft.expectedRev) {
+          // Draft is retained (assemble no longer deletes); tell the client clearly.
           res.status(409).json({
             error: 'Flow revision mismatch',
             code: 'version_mismatch',
             expectedRev: draft.expectedRev,
             currentRev: patched.expectedRev,
-            hint: 'Start a new draft with the current rev.',
+            draftDeleted: false,
+            hint: 'Draft was kept. Re-read the flow and start a new draft with the current rev (or retry if you refresh rev).',
           });
           return;
         }
@@ -428,7 +487,8 @@ export function getLinkDraftSubmitHandler(
               code: 'version_mismatch',
               expectedRev: draft.expectedRev,
               currentRev: patched.expectedRev,
-              hint: 'Start a new draft with the current rev.',
+              draftDeleted: false,
+              hint: 'Draft was kept. Re-read the flow and start a new draft with the current rev.',
             });
             return;
           }
@@ -437,7 +497,7 @@ export function getLinkDraftSubmitHandler(
         }
       }
 
-      const title = titleOverride || draft.title || draft.summary;
+      const title = titleOverride ?? draft.title ?? draft.summary;
       const proposal = await submitReplaceFlowProposal(
         proposalStore,
         auditLog,
@@ -451,15 +511,31 @@ export function getLinkDraftSubmitHandler(
         flowAdapter
       );
 
+      draftStore.markSubmitted(draftId, req.accessLink.id, proposal.id);
+      const siblings = siblingsOnSameRev(proposalStore, proposal);
+
       res.status(201).json({
         ok: true,
         proposal,
         sha256: createHash('sha256').update(Buffer.from(assembled, 'utf8')).digest('hex'),
+        ...(siblings.length > 0
+          ? {
+              siblingsOnSameRev: siblings,
+              warning:
+                'Other pending proposals share this flow revision — approve order may conflict.',
+            }
+          : {}),
         hint:
           `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
           `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,
       });
     } catch (error) {
+      if (error instanceof DraftAlreadySubmittedError) {
+        jsonError(res, error.statusCode, error.message, error.code, draftErrorHint(error.code), {
+          proposalId: error.proposalId,
+        });
+        return;
+      }
       if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
         jsonError(res, error.statusCode, error.message, error.code, draftErrorHint(error.code));
         return;

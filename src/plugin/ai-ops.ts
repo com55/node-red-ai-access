@@ -12,13 +12,15 @@ import {
 import { normalizeFlowTab } from '../runtime/flows-util.js';
 import type { FlowAdapter, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
-import { ProposalNotFoundError, type ProposalStore } from '../storage/proposals.js';
+import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../storage/proposals.js';
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import {
   autoGenerateProposalTitle,
+  buildProposalDisplayName,
   presentProposal,
+  resolveProposalTitle,
   sanitizeProposalTitle,
   type PresentedProposal,
 } from './proposal-present.js';
@@ -26,6 +28,33 @@ import type { AccessLinkAuthInfo } from './types.js';
 
 export { MAX_PROPOSAL_JSON_BYTES };
 export type { PresentedProposal };
+
+export interface SiblingProposalRef {
+  id: string;
+  title: string;
+  displayName: string;
+}
+
+/** Other pending proposals on the same flowId + expectedRev. */
+export function siblingsOnSameRev(store: ProposalStore, proposal: Proposal): SiblingProposalRef[] {
+  return store
+    .list()
+    .filter(
+      p =>
+        p.id !== proposal.id &&
+        p.status === 'pending' &&
+        p.expectedRev === proposal.expectedRev &&
+        p.payload.flowId === proposal.payload.flowId
+    )
+    .map(p => {
+      const title = resolveProposalTitle(p);
+      return {
+        id: p.id,
+        title,
+        displayName: buildProposalDisplayName(title, p.createdAt),
+      };
+    });
+}
 
 export class AiOpsValidationError extends Error {
   readonly statusCode = 400;

@@ -47,9 +47,21 @@ function parseAuthorizationHeader(authorization: string | undefined): AuthHeader
   return { kind: 'other' };
 }
 
-function sendUnauthorized(res: Response, message: string, code: AccessLinkAuthCode): void {
+function sendUnauthorized(
+  res: Response,
+  message: string,
+  code: AccessLinkAuthCode,
+  hint?: string
+): void {
   res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-  res.status(401).json({ error: message, code });
+  res.status(401).json({ error: message, code, ...(hint ? { hint } : {}) });
+}
+
+function truncatedBearerHint(token: string): string | undefined {
+  if (token.length < 24 || (token.startsWith('aia_') && token.length < 40)) {
+    return 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.';
+  }
+  return undefined;
 }
 
 /**
@@ -79,7 +91,12 @@ export function requireAccessLink(RED: NodeRedPluginAPI, store: AccessLinkStore)
 
     const link = store.validate(parsed.token);
     if (!link) {
-      sendUnauthorized(res, ACCESS_LINK_INVALID_MESSAGE, ACCESS_LINK_INVALID_CODE);
+      sendUnauthorized(
+        res,
+        ACCESS_LINK_INVALID_MESSAGE,
+        ACCESS_LINK_INVALID_CODE,
+        truncatedBearerHint(parsed.token)
+      );
       return;
     }
 

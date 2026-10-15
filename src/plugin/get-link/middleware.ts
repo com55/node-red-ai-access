@@ -106,10 +106,14 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
 
     const link = store.validate(token);
     if (!link) {
+      const truncated =
+        token.length < 24 || (token.startsWith('aia_') && token.length < 40)
+          ? 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.'
+          : 'Ask the user for a new self-contained access link URL.';
       res.status(401).json({
         error: ACCESS_LINK_INVALID_MESSAGE,
         code: ACCESS_LINK_INVALID_CODE,
-        hint: 'Ask the user for a new self-contained access link URL.',
+        hint: truncated,
       });
       return;
     }

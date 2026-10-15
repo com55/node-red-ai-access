@@ -2,7 +2,7 @@
  * In-process adapter over RED.runtime.flows.
  */
 
-import { FlowRevisionConflictError } from './errors.js';
+import { FlowNotFoundError, FlowRevisionConflictError } from './errors.js';
 import { assertFlowsSnapshot, normalizeFlowTab, replaceFlowTabInFlatFlows } from './flows-util.js';
 import type {
   DeploymentType,
@@ -47,10 +47,16 @@ export class RedAdapter implements FlowAdapter {
   }
 
   async getFlow(flowId: string): Promise<FlowSnapshot> {
-    const [snapshot, raw] = await Promise.all([
-      this.getFlows(),
-      this.flows.getFlow({ id: flowId }),
-    ]);
+    const snapshot = await this.getFlows();
+    let raw: unknown;
+    try {
+      raw = await this.flows.getFlow({ id: flowId });
+    } catch (error) {
+      if (isRuntimeFlowNotFound(error)) {
+        throw new FlowNotFoundError(flowId);
+      }
+      throw error;
+    }
     return {
       rev: snapshot.rev,
       flow: normalizeFlowTab(flowId, raw),
@@ -87,4 +93,26 @@ export class RedAdapter implements FlowAdapter {
 export function canUseRedRuntime(RED: RedRuntimeHost | null | undefined): boolean {
   const flows = RED?.runtime?.flows;
   return Boolean(flows?.getFlows && flows.getFlow && flows.setFlows);
+}
+
+/** Map Node-RED runtime "not found" rejects to FlowNotFoundError. */
+function isRuntimeFlowNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const err = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    code?: unknown;
+    message?: unknown;
+  };
+  const status = typeof err.status === 'number' ? err.status : err.statusCode;
+  if (status === 404) {
+    return true;
+  }
+  if (err.code === 'not_found' || err.code === 'flow_not_found') {
+    return true;
+  }
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+  return message.includes('not found') || message.includes('unknown flow');
 }

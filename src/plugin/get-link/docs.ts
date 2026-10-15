@@ -73,10 +73,14 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 
 6. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
    Cite \`displayName\` + \`reviewUrl\` from the response when updating the user.
-7. Optional: \`GET ./proposals/<id>/diff\` for a structured diff against the
-   **base snapshot** stored at submit (not the live flow). Added/removed nodes
-   are single presence blocks with a summary sentence; pending+stale may include
-   \`vsCurrent\`.
+7. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
+   line hunks + byte sizes; \`format=full\` for complete text) against the
+   **base snapshot** stored at submit. Added/removed nodes are presence blocks
+   with a summary sentence; pending+stale may include \`vsCurrent\`.
+
+If another pending proposal shares the same flow + rev, the propose/draft
+response includes \`siblingsOnSameRev\` and a warning — approve order may
+conflict; prefer one pending change per rev.
 `;
 }
 

@@ -7,7 +7,7 @@ import type { Response } from 'express';
 import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
-import { aiOpsErrorToHttp, submitReplaceFlowProposal } from '../ai-ops.js';
+import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -31,7 +31,9 @@ function proposeErrorHint(code: string): string | undefined {
     case 'flow_not_found':
       return 'Call GET …/flows to list valid ids.';
     case 'protected_property':
-      return 'Omit id, type, z, and wires from set props (use op:add for new nodes).';
+      return 'Omit id, type, and z from set props. wires are allowed when targets exist in the flow.';
+    case 'invalid_wires':
+      return 'wires must list existing node ids (or add those nodes in the same patch).';
     case 'invalid_patch':
     case 'invalid_patch_json':
       return 'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.';
@@ -46,6 +48,82 @@ function proposeErrorHint(code: string): string | undefined {
     default:
       return undefined;
   }
+}
+
+function sendVersionMismatch(res: Response, expectedRev: string, currentRev: string): void {
+  res.status(409).json({
+    error: 'Flow revision mismatch',
+    code: 'version_mismatch',
+    expectedRev,
+    currentRev,
+    hint: proposeErrorHint('version_mismatch'),
+  });
+}
+
+type BuiltPropose =
+  | { ok: true; builtFlowId: string; builtFlow: FlowTab; expectedRev: string }
+  | { ok: false; kind: 'version_mismatch'; expectedRev: string; currentRev: string };
+
+async function buildFromPatch(
+  flowAdapter: FlowAdapter,
+  patchEncoded: string,
+  flowId: string | undefined,
+  rev: string
+): Promise<BuiltPropose> {
+  const interpreted = interpretPatch(decodeBase64UrlJson(patchEncoded), flowId);
+  const builtFlowId = interpreted.flowId;
+  if (interpreted.kind === 'replace_flow') {
+    return {
+      ok: true,
+      builtFlowId,
+      builtFlow: {
+        ...interpreted.flow,
+        id: interpreted.flow.id || builtFlowId,
+        type: interpreted.flow.type ?? 'tab',
+        nodes: interpreted.flow.nodes ?? [],
+      },
+      expectedRev: rev,
+    };
+  }
+  const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
+  if (patched.expectedRev !== rev) {
+    return {
+      ok: false,
+      kind: 'version_mismatch',
+      expectedRev: rev,
+      currentRev: patched.expectedRev,
+    };
+  }
+  return {
+    ok: true,
+    builtFlowId,
+    builtFlow: patched.flow,
+    expectedRev: patched.expectedRev,
+  };
+}
+
+async function buildFromSetProps(
+  flowAdapter: FlowAdapter,
+  flowId: string,
+  nodeId: string,
+  setProps: Record<string, string>,
+  rev: string
+): Promise<BuiltPropose> {
+  const patched = await buildPatchedFlowTab(flowAdapter, flowId, [{ nodeId, set: setProps }]);
+  if (patched.expectedRev !== rev) {
+    return {
+      ok: false,
+      kind: 'version_mismatch',
+      expectedRev: rev,
+      currentRev: patched.expectedRev,
+    };
+  }
+  return {
+    ok: true,
+    builtFlowId: flowId,
+    builtFlow: patched.flow,
+    expectedRev: patched.expectedRev,
+  };
 }
 
 export function getLinkProposeHandler(
@@ -77,42 +155,15 @@ export function getLinkProposeHandler(
       );
       return;
     }
-
     if (!req.accessLink) {
       jsonError(res, 401, 'Access link required', 'access_link_missing');
       return;
     }
 
     try {
-      let builtFlowId: string;
-      let builtFlow: FlowTab;
-      let expectedRev = rev;
-
+      let built: BuiltPropose;
       if (patchEncoded) {
-        const interpreted = interpretPatch(decodeBase64UrlJson(patchEncoded), flowId);
-        builtFlowId = interpreted.flowId;
-        if (interpreted.kind === 'replace_flow') {
-          builtFlow = {
-            ...interpreted.flow,
-            id: interpreted.flow.id || builtFlowId,
-            type: interpreted.flow.type ?? 'tab',
-            nodes: interpreted.flow.nodes ?? [],
-          };
-        } else {
-          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
-          if (patched.expectedRev !== rev) {
-            res.status(409).json({
-              error: 'Flow revision mismatch',
-              code: 'version_mismatch',
-              expectedRev: rev,
-              currentRev: patched.expectedRev,
-              hint: proposeErrorHint('version_mismatch'),
-            });
-            return;
-          }
-          builtFlow = patched.flow;
-          expectedRev = patched.expectedRev;
-        }
+        built = await buildFromPatch(flowAdapter, patchEncoded, flowId, rev);
       } else {
         if (!flowId) {
           jsonError(
@@ -144,20 +195,12 @@ export function getLinkProposeHandler(
           );
           return;
         }
-        const patched = await buildPatchedFlowTab(flowAdapter, flowId, [{ nodeId, set: setProps }]);
-        if (patched.expectedRev !== rev) {
-          res.status(409).json({
-            error: 'Flow revision mismatch',
-            code: 'version_mismatch',
-            expectedRev: rev,
-            currentRev: patched.expectedRev,
-            hint: proposeErrorHint('version_mismatch'),
-          });
-          return;
-        }
-        builtFlowId = flowId;
-        builtFlow = patched.flow;
-        expectedRev = patched.expectedRev;
+        built = await buildFromSetProps(flowAdapter, flowId, nodeId, setProps, rev);
+      }
+
+      if (!built.ok) {
+        sendVersionMismatch(res, built.expectedRev, built.currentRev);
+        return;
       }
 
       const proposal = await submitReplaceFlowProposal(
@@ -166,16 +209,24 @@ export function getLinkProposeHandler(
         req.accessLink,
         {
           type: 'replace_flow',
-          expectedRev,
-          payload: { flowId: builtFlowId, flow: builtFlow },
+          expectedRev: built.expectedRev,
+          payload: { flowId: built.builtFlowId, flow: built.builtFlow },
           ...(titleParam ? { title: titleParam } : {}),
         },
         flowAdapter
       );
+      const siblings = siblingsOnSameRev(proposalStore, proposal);
       res.status(201).json({
         ok: true,
         proposal,
         ...(summary ? { summary } : {}),
+        ...(siblings.length > 0
+          ? {
+              siblingsOnSameRev: siblings,
+              warning:
+                'Other pending proposals share this flow revision — approve order may conflict.',
+            }
+          : {}),
         hint:
           `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
           `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,

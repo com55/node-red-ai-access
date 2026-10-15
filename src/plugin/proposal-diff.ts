@@ -24,8 +24,11 @@ const TEXT_PROPERTY_KEYS = new Set([
   'syntax',
 ]);
 
-/** Keys ignored when comparing nodes (layout / wiring noise). */
-const IGNORE_NODE_KEYS = new Set(['x', 'y', 'w', 'h', 'wires', 'g']);
+/** Keys ignored in modified-node compares (layout / wiring noise). */
+const IGNORE_COMPARE_KEYS = new Set(['x', 'y', 'w', 'h', 'wires', 'g']);
+
+/** Keys omitted from added/removed property dumps (keep x/y/wires visible). */
+const IGNORE_PRESENCE_KEYS = new Set(['w', 'h', 'g']);
 
 export interface ScalarPropertyChange {
   key: string;
@@ -40,6 +43,12 @@ export interface TextPropertyChange {
   before: string;
   after: string;
   lines: LineDiffEntry[];
+  /** UTF-8 byte length of before (set by diff formatter). */
+  beforeBytes?: number;
+  /** UTF-8 byte length of after (set by diff formatter). */
+  afterBytes?: number;
+  /** True when equal runs were collapsed in summary format. */
+  truncated?: boolean;
 }
 
 export type PropertyChange = ScalarPropertyChange | TextPropertyChange;
@@ -109,6 +118,8 @@ export interface ProposalDiffResult extends DiffSections {
    * flow (what would apply / conflict with the current editor state).
    */
   vsCurrent?: DiffSections;
+  /** Diff payload format (`summary` default collapses unchanged runs). */
+  format?: 'summary' | 'full';
 }
 
 function nodeName(node: FlowNode): string | undefined {
@@ -189,10 +200,19 @@ function toPresenceProperty(node: FlowNode, key: string, value: unknown): Presen
   };
 }
 
-function nodeProperties(node: FlowNode): PresenceProperty[] {
+function nodeProperties(node: FlowNode, allNodes: Map<string, FlowNode>): PresenceProperty[] {
   const properties: PresenceProperty[] = [];
   for (const key of [...Object.keys(node)].sort()) {
-    if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
+    if (IGNORE_PRESENCE_KEYS.has(key) || key === 'id' || key === 'z') {
+      continue;
+    }
+    if (key === 'wires') {
+      const labels = describeWires(node, allNodes);
+      properties.push({
+        key: 'wires',
+        kind: 'scalar',
+        value: labels ?? node.wires ?? null,
+      });
       continue;
     }
     properties.push(toPresenceProperty(node, key, node[key]));
@@ -284,7 +304,7 @@ function toPresenceNode(
     type: node.type,
     summary: buildPresenceSummary(node, kind, flowLabel),
     keyFields: buildKeyFields(node, allNodes),
-    properties: nodeProperties(node),
+    properties: nodeProperties(node, allNodes),
   };
   const name = nodeName(node);
   if (name !== undefined) {
@@ -297,7 +317,7 @@ function compareNodes(before: FlowNode, after: FlowNode): PropertyChange[] {
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
   const changes: PropertyChange[] = [];
   for (const key of [...keys].sort()) {
-    if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
+    if (IGNORE_COMPARE_KEYS.has(key) || key === 'id' || key === 'z') {
       continue;
     }
     const left = before[key];
