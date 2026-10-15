@@ -404,6 +404,41 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /proposals/{id}/diff:
+    get:
+      tags: [Proposals]
+      summary: Diff a proposal against the current flow
+      description: |
+        Compares the proposal payload to the live flow tab. Returns counts of
+        added / removed / modified nodes, per-node change details, and
+        line-level diffs for text fields such as `func` and `template`.
+        `baseRevStale` is true when `expectedRev` does not match the current
+        revision (approve would fail with a revision conflict).
+
+        Admins with `read` can diff any proposal. Access-link clients can only
+        diff proposals they created.
+      operationId: getProposalDiff
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        '200':
+          description: Proposal diff
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalDiff'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /proposals/{id}/approve:
     post:
       tags: [Proposals]
@@ -1032,6 +1067,120 @@ components:
         reason:
           type: string
           default: Rejected by admin
+
+    ProposalDiffLine:
+      type: object
+      required: [op, text]
+      properties:
+        op:
+          type: string
+          enum: [equal, add, remove]
+        text:
+          type: string
+
+    ProposalDiffPropertyChange:
+      oneOf:
+        - type: object
+          required: [key, kind, before, after]
+          properties:
+            key:
+              type: string
+            kind:
+              const: scalar
+            before: {}
+            after: {}
+        - type: object
+          required: [key, kind, before, after, lines]
+          properties:
+            key:
+              type: string
+            kind:
+              const: text
+            before:
+              type: string
+            after:
+              type: string
+            lines:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProposalDiffLine'
+
+    ProposalDiffNodeRef:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+
+    ProposalDiffModifiedNode:
+      type: object
+      required: [id, type, changes]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffPropertyChange'
+
+    ProposalDiff:
+      type: object
+      required:
+        - proposalId
+        - flowId
+        - expectedRev
+        - currentRev
+        - baseRevStale
+        - summary
+        - added
+        - removed
+        - modified
+      properties:
+        proposalId:
+          type: string
+        flowId:
+          type: string
+        expectedRev:
+          type: string
+        currentRev:
+          type: string
+        baseRevStale:
+          type: boolean
+          description: True when expectedRev does not match the live flow revision
+        summary:
+          type: object
+          required: [added, removed, modified, tabChanges]
+          properties:
+            added:
+              type: integer
+            removed:
+              type: integer
+            modified:
+              type: integer
+            tabChanges:
+              type: array
+              items:
+                type: string
+        added:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffNodeRef'
+        removed:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffNodeRef'
+        modified:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffModifiedNode'
 
     AuditActor:
       oneOf:

@@ -332,6 +332,127 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(result.body.reason).toMatch(/resubmit/i);
   });
 
+  it('GET /proposals/:id/diff compares against the live flow', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('read', 'guest'),
+      adapter: {
+        kind: 'red',
+        getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+        getFlow: () =>
+          Promise.resolve({
+            rev: 'rev-1',
+            flow: {
+              id: 'tab-1',
+              type: 'tab',
+              label: 'Main',
+              nodes: [
+                { id: 'n1', type: 'inject', name: 'tick' },
+                { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
+              ],
+            },
+          }),
+        updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),
+      },
+    });
+    const link = linkStore.create({ label: 'diff-agent' });
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: {
+          flowId: 'tab-1',
+          flow: {
+            id: 'tab-1',
+            type: 'tab',
+            label: 'Main',
+            nodes: [
+              {
+                id: 'n2',
+                type: 'function',
+                name: 'fn',
+                func: 'msg.x = 1;\nreturn msg;',
+              },
+              { id: 'n3', type: 'debug', name: 'out' },
+            ],
+          },
+        },
+      });
+    expect(created.status).toBe(201);
+
+    const asAdmin = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
+    expect(asAdmin.status).toBe(200);
+    expect(asAdmin.body).toMatchObject({
+      proposalId: created.body.id,
+      flowId: 'tab-1',
+      expectedRev: 'rev-1',
+      currentRev: 'rev-1',
+      baseRevStale: false,
+      summary: { added: 1, removed: 1, modified: 1 },
+    });
+    expect(asAdmin.body.added).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'n3', type: 'debug' })])
+    );
+    expect(asAdmin.body.removed).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'n1', type: 'inject' })])
+    );
+    const funcChange = asAdmin.body.modified
+      .find((m: { id: string }) => m.id === 'n2')
+      ?.changes.find((c: { key: string }) => c.key === 'func');
+    expect(funcChange?.kind).toBe('text');
+    expect(funcChange?.lines?.some((l: { op: string }) => l.op === 'add')).toBe(true);
+
+    const asLink = await request(app)
+      .get(`/mcp/api/v1/proposals/${created.body.id}/diff`)
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(asLink.status).toBe(200);
+    expect(asLink.body.proposalId).toBe(created.body.id);
+
+    const other = linkStore.create({ label: 'other' });
+    const denied = await request(app)
+      .get(`/mcp/api/v1/proposals/${created.body.id}/diff`)
+      .set('Authorization', `Bearer ${other.token}`);
+    expect(denied.status).toBe(404);
+  });
+
+  it('GET /proposals/:id/diff sets baseRevStale when live rev moved', async () => {
+    let liveRev = 'rev-1';
+    const adapter: FlowAdapter = {
+      kind: 'red',
+      getFlows: () => Promise.resolve({ rev: liveRev, flows: [] }),
+      getFlow: () =>
+        Promise.resolve({
+          rev: liveRev,
+          flow: { id: 'tab-1', type: 'tab', nodes: [] },
+        }),
+      updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),
+    };
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter,
+    });
+    const link = linkStore.create();
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
+      });
+    expect(created.status).toBe(201);
+
+    liveRev = 'rev-live';
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
+    expect(diff.status).toBe(200);
+    expect(diff.body.baseRevStale).toBe(true);
+    expect(diff.body.currentRev).toBe('rev-live');
+    expect(diff.body.expectedRev).toBe('rev-1');
+  });
+
   it('rejects stale expectedRev at submit time with 409', async () => {
     const { app, linkStore } = createApp({
       userDir,
