@@ -49,7 +49,7 @@ info:
 
     Proposal JSON is capped at **1_500_000 bytes** (`MAX_PROPOSAL_JSON_BYTES`).
     Oversized proposal JSON or audit append payloads return **413** with
-    `code: storage_payload_too_large` (never silently truncate). Malformed JSON
+    `code: payload_too_large` (never silently truncate). Malformed JSON
     bodies return **400** JSON (`code: invalid_json` on REST;
     JSON-RPC `-32700` Parse error on `/mcp/rpc`) — never HTML stack traces.
     Unauthenticated admin API calls return JSON `{ code: auth_required }`
@@ -526,10 +526,11 @@ components:
             $ref: '#/components/schemas/Error'
     AccessLinkUnauthorized:
       description: |
-        Missing (`code: access_link_missing`) or invalid/expired/revoked/
+        Missing (`code: access_link_missing`), wrong scheme such as Basic
+        (`code: bearer_scheme_required`), or invalid/expired/revoked/
         pre-restart (`code: access_link_invalid`) access link. Includes
         `WWW-Authenticate: Bearer`. Message instructs the AI to ask the user
-        for a new access link.
+        for a new access link (or to use Bearer, not Basic).
       headers:
         WWW-Authenticate:
           schema:
@@ -544,6 +545,10 @@ components:
               value:
                 error: 'Access link Bearer token is missing. Ask the user for a new access link and send Authorization: Bearer <token>.'
                 code: access_link_missing
+            basicScheme:
+              value:
+                error: 'Authorization must use the Bearer scheme (Authorization: Bearer <access-link-token>), not Basic. Ask the user for a new access link.'
+                code: bearer_scheme_required
             askForNewLink:
               value:
                 error: 'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.'
@@ -598,7 +603,7 @@ components:
           properties:
             code:
               type: string
-              const: storage_payload_too_large
+              const: payload_too_large
 
     VersionConflictError:
       allOf:
@@ -755,12 +760,19 @@ components:
 
     FlowTab:
       type: object
-      description: Nested tab shape for replace_flow proposals
+      description: |
+        Nested tab shape from `GET /flows/{id}` / `get_flow`. Reuse this object
+        as `payload.flow` on `submit_proposal`. `get_flow` always includes
+        `type` (defaults to `tab` when Node-RED omits it) and `nodes` (array,
+        possibly empty). `configs` is optional.
+      required: [id, type, nodes]
       properties:
         id:
           type: string
         type:
           type: string
+          description: Tab/subflow type; `get_flow` defaults omitted values to `tab`
+          default: tab
         label:
           type: string
         disabled:
@@ -772,6 +784,7 @@ components:
           items: {}
         nodes:
           type: array
+          description: Child nodes for the tab (required on submit_proposal)
           items:
             type: object
             additionalProperties: true

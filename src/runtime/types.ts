@@ -66,7 +66,11 @@ export interface RedRuntimeFlows {
   getFlow: (opts: { id: string } & Record<string, unknown>) => Promise<FlowTab | FlowNode[]>;
   setFlows: (
     opts: {
-      flows: FlowNode[] | FlowsSnapshot;
+      /**
+       * Config object `{ flows: [...], rev?, credentials? }` as required by
+       * `@node-red/runtime` `flows.setFlows` (not a bare array).
+       */
+      flows: { flows: FlowNode[]; rev?: string; credentials?: unknown };
       deploymentType?: DeploymentType;
     } & Record<string, unknown>
   ) => Promise<FlowsSnapshot | { rev: string } | string>;

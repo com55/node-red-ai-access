@@ -15,24 +15,39 @@ export const ACCESS_LINK_INVALID_MESSAGE =
 export const ACCESS_LINK_MISSING_MESSAGE =
   'Access link Bearer token is missing. Ask the user for a new access link and send Authorization: Bearer <token>.';
 
+export const ACCESS_LINK_BEARER_REQUIRED_MESSAGE =
+  'Authorization must use the Bearer scheme (Authorization: Bearer <access-link-token>), not Basic. Ask the user for a new access link.';
+
 export const ACCESS_LINK_WWW_AUTHENTICATE = 'Bearer realm="node-red-ai-access", charset="UTF-8"';
 
 export const ACCESS_LINK_MISSING_CODE = 'access_link_missing' as const;
 export const ACCESS_LINK_INVALID_CODE = 'access_link_invalid' as const;
+export const ACCESS_LINK_BEARER_REQUIRED_CODE = 'bearer_scheme_required' as const;
 
-function extractBearerToken(authorization: string | undefined): string | null {
-  if (!authorization) {
-    return null;
+type AccessLinkAuthCode =
+  | typeof ACCESS_LINK_MISSING_CODE
+  | typeof ACCESS_LINK_INVALID_CODE
+  | typeof ACCESS_LINK_BEARER_REQUIRED_CODE;
+
+type AuthHeaderParse =
+  { kind: 'missing' } | { kind: 'basic' } | { kind: 'other' } | { kind: 'bearer'; token: string };
+
+function parseAuthorizationHeader(authorization: string | undefined): AuthHeaderParse {
+  if (!authorization || authorization.trim().length === 0) {
+    return { kind: 'missing' };
   }
-  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
-  return match?.[1] ?? null;
+  const trimmed = authorization.trim();
+  if (/^Basic\s+/i.test(trimmed)) {
+    return { kind: 'basic' };
+  }
+  const match = /^Bearer\s+(\S+)$/i.exec(trimmed);
+  if (match?.[1]) {
+    return { kind: 'bearer', token: match[1] };
+  }
+  return { kind: 'other' };
 }
 
-function sendUnauthorized(
-  res: Response,
-  message: string,
-  code: typeof ACCESS_LINK_MISSING_CODE | typeof ACCESS_LINK_INVALID_CODE
-): void {
+function sendUnauthorized(res: Response, message: string, code: AccessLinkAuthCode): void {
   res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
   res.status(401).json({ error: message, code });
 }
@@ -52,13 +67,17 @@ export function requireAccessLink(RED: NodeRedPluginAPI, store: AccessLinkStore)
       return;
     }
 
-    const token = extractBearerToken(req.headers.authorization);
-    if (!token) {
+    const parsed = parseAuthorizationHeader(req.headers.authorization);
+    if (parsed.kind === 'basic') {
+      sendUnauthorized(res, ACCESS_LINK_BEARER_REQUIRED_MESSAGE, ACCESS_LINK_BEARER_REQUIRED_CODE);
+      return;
+    }
+    if (parsed.kind === 'missing' || parsed.kind === 'other') {
       sendUnauthorized(res, ACCESS_LINK_MISSING_MESSAGE, ACCESS_LINK_MISSING_CODE);
       return;
     }
 
-    const link = store.validate(token);
+    const link = store.validate(parsed.token);
     if (!link) {
       sendUnauthorized(res, ACCESS_LINK_INVALID_MESSAGE, ACCESS_LINK_INVALID_CODE);
       return;

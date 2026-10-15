@@ -68,7 +68,7 @@ module.exports = {
 Storage lives under **`<userDir>/.ai-access`** (`proposals/*.json` and
 append-only `logs/audit.jsonl`). Directories use mode `0700`, files `0600`.
 Proposal JSON is capped at **1_500_000 bytes**; oversized proposal JSON or audit
-lines return HTTP **413** with `code: storage_payload_too_large` (never silently
+lines return HTTP **413** with `code: payload_too_large` (never silently
 truncated). Malformed JSON returns **400** JSON (REST `invalid_json`, MCP
 JSON-RPC `-32700`) — never HTML stack traces (middleware is attached to the
 editor-api app that owns body-parser, not only the nested plugin `httpAdmin`).

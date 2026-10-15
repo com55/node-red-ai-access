@@ -8,7 +8,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import {
+  ACCESS_LINK_BEARER_REQUIRED_CODE,
+  ACCESS_LINK_BEARER_REQUIRED_MESSAGE,
   ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
   requireAccessLink,
 } from '../../src/plugin/access-link-auth.js';
 import registerAiAccessPlugin from '../../src/plugin/index.js';
@@ -244,5 +247,37 @@ describe('requireAccessLink middleware', () => {
     const res = await request(app).get('/probe').set('Authorization', `Bearer ${created.token}`);
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/disabled/i);
+  });
+
+  it('rejects Authorization: Basic with bearer_scheme_required', async () => {
+    const store = new AccessLinkStore();
+    const RED = {
+      settings: { userDir: '/tmp', adminAuth: { type: 'credentials' } },
+    } as NodeRedPluginAPI;
+    const app = express();
+    app.get('/probe', requireAccessLink(RED, store), (_req, res) => res.json({ ok: true }));
+
+    const res = await request(app).get('/probe').set('Authorization', 'Basic YWRtaW46cGFzc3dvcmQ=');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({
+      error: ACCESS_LINK_BEARER_REQUIRED_MESSAGE,
+      code: ACCESS_LINK_BEARER_REQUIRED_CODE,
+    });
+    expect(res.headers['www-authenticate']).toMatch(/Bearer/);
+    expect(res.body.error).toMatch(/Bearer/i);
+    expect(res.body.error).not.toMatch(/missing/i);
+  });
+
+  it('rejects empty Authorization as access_link_missing', async () => {
+    const store = new AccessLinkStore();
+    const RED = {
+      settings: { userDir: '/tmp', adminAuth: { type: 'credentials' } },
+    } as NodeRedPluginAPI;
+    const app = express();
+    app.get('/probe', requireAccessLink(RED, store), (_req, res) => res.json({ ok: true }));
+
+    const res = await request(app).get('/probe');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe(ACCESS_LINK_MISSING_CODE);
   });
 });

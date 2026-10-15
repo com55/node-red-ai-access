@@ -107,8 +107,18 @@ export function normalizeFlowTab(flowId: string, value: unknown): FlowTab {
   }
 
   const flow = value as FlowTab;
-  if (typeof flow.id !== 'string' || flow.id.length === 0) {
-    return { ...flow, id: flowId };
+  const id = typeof flow.id === 'string' && flow.id.length > 0 ? flow.id : flowId;
+  // Node-RED's getFlow often omits `type` on tabs; always expose it for AI clients.
+  const type = typeof flow.type === 'string' && flow.type.length > 0 ? flow.type : 'tab';
+  const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
+  const normalized: FlowTab = {
+    ...flow,
+    id,
+    type,
+    nodes,
+  };
+  if (Array.isArray(flow.configs)) {
+    normalized.configs = flow.configs;
   }
-  return flow;
+  return normalized;
 }

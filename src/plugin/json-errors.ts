@@ -85,7 +85,7 @@ export function mcpJsonErrorHandler(): ErrorRequestHandler {
     if (isPayloadTooLarge(err) && isMcpPath(path)) {
       res.status(413).json({
         error: `Request body exceeds limit of ${MAX_PROPOSAL_JSON_BYTES} bytes`,
-        code: 'storage_payload_too_large',
+        code: 'payload_too_large',
       });
       return;
     }

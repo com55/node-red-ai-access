@@ -129,7 +129,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
     try {
       sanitizeFlowTab({ id: 'tab1', type: 'tab', nodes });
     } catch (err) {
-      expect(err).toMatchObject({ code: 'storage_payload_too_large', statusCode: 413 });
+      expect(err).toMatchObject({ code: 'payload_too_large', statusCode: 413 });
     }
   });
 
@@ -156,7 +156,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
       .send({ type: 'replace_flow', expectedRev: 'rev-live', payload });
 
     expect(res.status).toBe(413);
-    expect(res.body.code).toBe('storage_payload_too_large');
+    expect(res.body.code).toBe('payload_too_large');
     expect(res.body.error).toMatch(/limit/i);
 
     const listed = await request(app)

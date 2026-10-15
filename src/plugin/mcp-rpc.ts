@@ -181,8 +181,10 @@ function registerProposalTools(
     {
       description:
         'Submit a replace_flow proposal for owner approval (does not deploy). ' +
-        'Inputs: type="replace_flow", expectedRev (from get_flow/list_flows; expected_rev alias accepted), ' +
-        `payload: { flowId, flow } where flow is a tab object with id/type/label and nodes[] (and optional configs[]). ` +
+        'Call get_flow first and reuse that nested shape: payload.flow should be the get_flow ' +
+        'result (id, type, label?, nodes[], optional configs[]) for the tab you are replacing. ' +
+        'Inputs: type="replace_flow", expectedRev (required; from get_flow/list_flows; expected_rev alias accepted), ' +
+        `payload: { flowId, flow } with flow.nodes required. ` +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
         'Returns the created pending proposal. Approve/reject stay on the /mcp admin page.',
@@ -191,15 +193,27 @@ function registerProposalTools(
         expectedRev: z
           .string()
           .min(1)
+          .describe('Current flow revision from get_flow/list_flows (required)'),
+        expected_rev: z
+          .string()
+          .min(1)
           .optional()
-          .describe('Current flow revision from get_flow/list_flows (preferred name)'),
-        expected_rev: z.string().min(1).optional().describe('Alias for expectedRev (snake_case)'),
+          .describe('Alias for expectedRev (snake_case); prefer expectedRev'),
         payload: z
           .object({
             flowId: z.string().min(1).describe('Tab id to replace'),
             flow: z
-              .record(z.string(), z.unknown())
-              .describe('Tab object: id, type, label?, nodes[], configs?'),
+              .object({
+                id: z.string().optional(),
+                type: z.string().optional().describe("Usually 'tab' (included by get_flow)"),
+                label: z.string().optional(),
+                nodes: z
+                  .array(z.record(z.string(), z.unknown()))
+                  .describe('Child nodes for the tab (required; from get_flow.nodes)'),
+                configs: z.array(z.record(z.string(), z.unknown())).optional(),
+              })
+              .passthrough()
+              .describe('Nested get_flow tab object (id, type, label?, nodes[], configs?)'),
           })
           .describe('Replacement flow payload'),
       },
@@ -210,7 +224,10 @@ function registerProposalTools(
           services.proposalStore,
           services.auditLog,
           accessLink,
-          args,
+          {
+            ...args,
+            expectedRev: args.expectedRev || args.expected_rev,
+          },
           services.flowAdapter
         );
         return jsonResult(proposal);
