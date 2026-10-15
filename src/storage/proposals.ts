@@ -4,11 +4,17 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename } from 'node:path';
 
 import type { FlowTab } from '../runtime/types.js';
 
 import type { AiAccessPaths } from './paths.js';
+import {
+  assertSafeProposalId,
+  assertSafeSegment,
+  resolveUnderDir,
+  sanitizeJsonValue,
+} from './safe.js';
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed';
 
@@ -78,6 +84,10 @@ export class ProposalConcurrentApproveError extends Error {
   }
 }
 
+function isProposalStatus(value: unknown): value is ProposalStatus {
+  return value === 'pending' || value === 'approved' || value === 'rejected' || value === 'failed';
+}
+
 export class ProposalStore {
   private readonly inFlight = new Set<string>();
   private readonly now: () => number;
@@ -92,31 +102,86 @@ export class ProposalStore {
   }
 
   private fileFor(id: string): string {
-    return join(this.paths.proposals, `${id}.json`);
+    let safeId: string;
+    try {
+      safeId = assertSafeProposalId(id);
+    } catch {
+      throw new ProposalNotFoundError(id);
+    }
+    return resolveUnderDir(this.paths.proposals, `${safeId}.json`);
+  }
+
+  /** Rebuild a proposal record so only validated fields are written to disk. */
+  private toDiskRecord(proposal: Proposal): Proposal {
+    const id = assertSafeProposalId(proposal.id);
+    const expectedRev = assertSafeSegment(
+      String(proposal.expectedRev).slice(0, 200),
+      'expectedRev'
+    );
+    const flowId = assertSafeSegment(String(proposal.payload.flowId).slice(0, 200), 'flowId');
+    const flow = sanitizeJsonValue(proposal.payload.flow) as Partial<FlowTab>;
+
+    const createdBy: ProposalCreator = {
+      kind: 'access-link',
+      linkId: assertSafeSegment(String(proposal.createdBy.linkId).slice(0, 200), 'linkId'),
+    };
+    if (typeof proposal.createdBy.label === 'string') {
+      createdBy.label = proposal.createdBy.label.replace(/\0/g, '').slice(0, 200);
+    }
+
+    const record: Proposal = {
+      id,
+      type: 'replace_flow',
+      status: isProposalStatus(proposal.status) ? proposal.status : 'pending',
+      expectedRev,
+      payload: { flowId, flow },
+      createdBy,
+      createdAt: String(proposal.createdAt).slice(0, 64),
+      updatedAt: String(proposal.updatedAt).slice(0, 64),
+    };
+
+    if (proposal.decidedBy) {
+      const decidedBy: ProposalDecisionBy = { kind: 'admin' };
+      if (typeof proposal.decidedBy.username === 'string') {
+        decidedBy.username = proposal.decidedBy.username.replace(/\0/g, '').slice(0, 200);
+      }
+      record.decidedBy = decidedBy;
+    }
+    if (typeof proposal.reason === 'string') {
+      record.reason = proposal.reason.replace(/\0/g, '').slice(0, 2_000);
+    }
+    if (typeof proposal.resultRev === 'string') {
+      record.resultRev = assertSafeSegment(proposal.resultRev.slice(0, 200), 'resultRev');
+    }
+    return record;
   }
 
   private writeAtomic(id: string, proposal: Proposal): void {
     const target = this.fileFor(id);
+    const disk = this.toDiskRecord(proposal);
     const temp = `${target}.${process.pid}.tmp`;
-    writeFileSync(temp, `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
+    writeFileSync(temp, `${JSON.stringify(disk, null, 2)}\n`, 'utf8');
     renameSync(temp, target);
   }
 
   create(input: CreateProposalInput): Proposal {
     const at = new Date(this.now()).toISOString();
-    const id = `prop-${this.randomId()}`;
+    const id = assertSafeProposalId(`prop-${this.randomId()}`);
     const proposal: Proposal = {
       id,
-      type: input.type,
+      type: 'replace_flow',
       status: 'pending',
       expectedRev: input.expectedRev,
-      payload: input.payload,
+      payload: {
+        flowId: input.payload.flowId,
+        flow: input.payload.flow,
+      },
       createdBy: input.createdBy,
       createdAt: at,
       updatedAt: at,
     };
     this.writeAtomic(id, proposal);
-    return proposal;
+    return this.get(id);
   }
 
   get(id: string): Proposal {
@@ -134,16 +199,20 @@ export class ProposalStore {
     const files = readdirSync(this.paths.proposals).filter(name => name.endsWith('.json'));
     const proposals: Proposal[] = [];
     for (const file of files) {
+      const base = basename(file);
+      if (base !== file || base.includes('..')) {
+        continue;
+      }
       try {
         const proposal = JSON.parse(
-          readFileSync(join(this.paths.proposals, file), 'utf8')
+          readFileSync(resolveUnderDir(this.paths.proposals, base), 'utf8')
         ) as Proposal;
         if (filter?.linkId && proposal.createdBy.linkId !== filter.linkId) {
           continue;
         }
         proposals.push(proposal);
       } catch {
-        // skip corrupt
+        // skip corrupt / unsafe
       }
     }
     return proposals.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -176,7 +245,7 @@ export class ProposalStore {
     proposal.resultRev = resultRev;
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
-    return proposal;
+    return this.get(id);
   }
 
   markRejected(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
@@ -188,7 +257,7 @@ export class ProposalStore {
     proposal.reason = reason;
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
-    return proposal;
+    return this.get(id);
   }
 
   markFailed(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
@@ -200,6 +269,6 @@ export class ProposalStore {
     proposal.reason = reason;
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
-    return proposal;
+    return this.get(id);
   }
 }

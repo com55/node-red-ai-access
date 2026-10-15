@@ -6,6 +6,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AiAccessPaths } from './paths.js';
+import { sanitizeJsonValue } from './safe.js';
 
 export type AuditActor =
   | { kind: 'access-link'; linkId: string; label?: string }
@@ -20,6 +21,29 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
+const SAFE_ACTION_RE = /^[a-z][a-z0-9._-]{0,63}$/;
+
+function sanitizeActor(actor: AuditActor): AuditActor {
+  if (actor.kind === 'system') {
+    return { kind: 'system' };
+  }
+  if (actor.kind === 'access-link') {
+    const out: { kind: 'access-link'; linkId: string; label?: string } = {
+      kind: 'access-link',
+      linkId: String(actor.linkId).replace(/\0/g, '').slice(0, 200),
+    };
+    if (typeof actor.label === 'string') {
+      out.label = actor.label.replace(/\0/g, '').slice(0, 200);
+    }
+    return out;
+  }
+  const out: { kind: 'admin'; username?: string } = { kind: 'admin' };
+  if (typeof actor.username === 'string') {
+    out.username = actor.username.replace(/\0/g, '').slice(0, 200);
+  }
+  return out;
+}
+
 export class AuditLog {
   private readonly filePath: string;
   private seq = 0;
@@ -32,15 +56,16 @@ export class AuditLog {
   }
 
   append(action: string, actor: AuditActor, details?: Record<string, unknown>): AuditEntry {
+    const safeAction = SAFE_ACTION_RE.test(action) ? action : 'unknown';
     this.seq += 1;
     const entry: AuditEntry = {
       id: `log-${this.now()}-${this.seq}`,
       at: new Date(this.now()).toISOString(),
-      action,
-      actor,
+      action: safeAction,
+      actor: sanitizeActor(actor),
     };
     if (details !== undefined) {
-      entry.details = details;
+      entry.details = sanitizeJsonValue(details) as Record<string, unknown>;
     }
     appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, 'utf8');
     return entry;

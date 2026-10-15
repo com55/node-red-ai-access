@@ -21,3 +21,9 @@ export type {
   ProposalType,
   ReplaceFlowPayload,
 } from './proposals.js';
+export {
+  assertSafeProposalId,
+  assertSafeSegment,
+  resolveUnderDir,
+  sanitizeJsonValue,
+} from './safe.js';

@@ -105,6 +105,11 @@ describe('ProposalStore + ProposalService', () => {
     expect(updateFlow).not.toHaveBeenCalled();
   });
 
+  it('rejects path-traversal proposal ids', () => {
+    expect(() => store.get('../etc/passwd')).toThrow();
+    expect(() => store.get('prop-../../x')).toThrow();
+  });
+
   it('guards concurrent approve of the same proposal', async () => {
     const created = createPending();
     let release!: () => void;

@@ -4,6 +4,7 @@
 
 import type { Response } from 'express';
 
+import type { FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
   ProposalConcurrentApproveError,
@@ -11,6 +12,7 @@ import {
   ProposalNotPendingError,
   type ProposalStore,
 } from '../storage/proposals.js';
+import { assertSafeSegment, sanitizeJsonValue } from '../storage/safe.js';
 
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
@@ -69,6 +71,18 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
       return;
     }
 
+    let safeExpectedRev: string;
+    let safeFlowId: string;
+    try {
+      safeExpectedRev = assertSafeSegment(expectedRev.slice(0, 200), 'expectedRev');
+      safeFlowId = assertSafeSegment(flowId.slice(0, 200), 'flowId');
+    } catch {
+      res.status(400).json({ error: 'expectedRev and payload.flowId must be safe path segments' });
+      return;
+    }
+
+    const safeFlow = sanitizeJsonValue(flow) as Partial<FlowTab>;
+
     const createdBy: {
       kind: 'access-link';
       linkId: string;
@@ -83,18 +97,18 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
 
     const proposal = store.create({
       type: 'replace_flow',
-      expectedRev,
+      expectedRev: safeExpectedRev,
       payload: {
-        flowId,
-        flow,
+        flowId: safeFlowId,
+        flow: safeFlow,
       },
       createdBy,
     });
 
     audit.append('proposal.created', createdBy, {
       proposalId: proposal.id,
-      flowId,
-      expectedRev,
+      flowId: safeFlowId,
+      expectedRev: safeExpectedRev,
     });
 
     res.status(201).json(proposal);
