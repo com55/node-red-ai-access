@@ -33,14 +33,16 @@ interface RawStatus {
 interface CommsFrame {
   topic?: string;
   data?: unknown;
-  auth?: 'ok' | 'fail';
+  auth?: string;
 }
 
 function asCommsFrames(parsed: unknown): CommsFrame[] {
   if (Array.isArray(parsed)) {
-    return parsed.filter((item): item is CommsFrame => typeof item === 'object' && item !== null);
+    return parsed.filter(
+      (entry): entry is CommsFrame => entry !== null && typeof entry === 'object'
+    );
   }
-  if (typeof parsed === 'object' && parsed !== null) {
+  if (parsed !== null && typeof parsed === 'object') {
     return [parsed];
   }
   return [];
@@ -119,8 +121,8 @@ async function collectStatuses(
             // authConfirmed also only affects statusesMayBeIncomplete, a
             // diagnostic-completeness signal — it grants no access, since
             // the socket already receives whatever Node-RED sends regardless.
-            // codeql[js/user-controlled-bypass] see comment above — TLS to NODERED_URL is the trust boundary
             if (msg.auth === 'ok') {
+              // codeql[js/user-controlled-bypass] see comment above
               authConfirmed = true;
             } else {
               // Invalidate the cached token so the *next* check() call
@@ -143,7 +145,10 @@ async function collectStatuses(
 
           if (msg.topic.startsWith('status/')) {
             const nodeId = msg.topic.slice('status/'.length);
-            const d = (msg.data ?? {}) as Record<string, unknown>;
+            const d =
+              msg.data !== null && typeof msg.data === 'object'
+                ? (msg.data as Record<string, unknown>)
+                : {};
             const fill = typeof d.fill === 'string' ? d.fill : undefined;
             const shape = typeof d.shape === 'string' ? d.shape : undefined;
             const text = typeof d.text === 'string' ? d.text : undefined;
@@ -185,23 +190,6 @@ export class NodeErrorChecker {
       this.apiClient.getFlows().catch((): Awaited<ReturnType<NodeRedAPIClient['getFlows']>> => []),
     ]);
 
-    const nodeIndex = this.buildNodeIndex(flows);
-    const { errors, warnings } = this.collectErrorEntries(statuses, nodeIndex, includeWarnings);
-
-    // Two independent reasons the status snapshot might be incomplete: the
-    // WS transport never connected, or it connected but never confirmed auth.
-    const authIncomplete = authExpected && !authConfirmed;
-
-    return {
-      errors,
-      warnings,
-      statusesMayBeIncomplete: !connected || authIncomplete,
-    };
-  }
-
-  private buildNodeIndex(
-    flows: Awaited<ReturnType<NodeRedAPIClient['getFlows']>>
-  ): Map<string, { nodeType: string; label: string; flowId: string; flowName: string }> {
     const nodeIndex = new Map<
       string,
       { nodeType: string; label: string; flowId: string; flowName: string }
@@ -217,14 +205,7 @@ export class NodeErrorChecker {
         });
       }
     }
-    return nodeIndex;
-  }
 
-  private collectErrorEntries(
-    statuses: Map<string, RawStatus>,
-    nodeIndex: Map<string, { nodeType: string; label: string; flowId: string; flowName: string }>,
-    includeWarnings: boolean
-  ): { errors: NodeErrorEntry[]; warnings: NodeErrorEntry[] } {
     const errors: NodeErrorEntry[] = [];
     const warnings: NodeErrorEntry[] = [];
 
@@ -250,6 +231,14 @@ export class NodeErrorChecker {
       }
     }
 
-    return { errors, warnings };
+    // Two independent reasons the status snapshot might be incomplete: the
+    // WS transport never connected, or it connected but never confirmed auth.
+    const authIncomplete = authExpected && !authConfirmed;
+
+    return {
+      errors,
+      warnings,
+      statusesMayBeIncomplete: !connected || authIncomplete,
+    };
   }
 }
