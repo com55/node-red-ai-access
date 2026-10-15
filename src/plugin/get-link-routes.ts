@@ -9,7 +9,6 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import type { ProposalStore } from '../storage/proposals.js';
 
-import { mcpAccessLinkPath } from './access-path.js';
 import { aiOpsErrorToHttp, getFlow, getMyProposal, listFlows, listMyProposals } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
@@ -51,14 +50,17 @@ export function registerGetLinkRoutes(
 
   app.get(base, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
-    const token =
-      (req as AuthenticatedRequest & { getLinkToken?: string }).getLinkToken ??
-      String(req.params.token);
-    const linkBase = mcpAccessLinkPath(RED.settings.httpAdminRoot, token);
+    // Do not reflect the path token into the body (CodeQL XSS / sniffing).
+    // Docs use relative ./status, ./flows, … scoped to this URL.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     const restBase = mcpApiBase(RED.settings.httpAdminRoot);
+    const accessLink = req.accessLink;
+    if (!accessLink) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
     const md = renderGetLinkDocs({
-      linkBase,
-      link: req.accessLink!,
+      link: accessLink,
       openapiPath: `${restBase}/openapi.yaml`,
       restApiBase: restBase,
       mcpRpcPath: mcpRpcPath(RED.settings.httpAdminRoot),

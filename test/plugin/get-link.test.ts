@@ -159,8 +159,12 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(docs.headers['content-type']).toMatch(/markdown/);
     expect(docs.headers['cache-control']).toMatch(/no-store/);
     expect(docs.text).toMatch(/human owner[\s*]*must approve/i);
-    expect(docs.text).toMatch(`/mcp/a/${link.token}/flows`);
+    expect(docs.text).toMatch(/\./);
+    expect(docs.text).toMatch(/GET \.\/flows/);
     expect(docs.text).toMatch(/access_link_invalid/);
+    expect(docs.headers['x-content-type-options']).toBe('nosniff');
+    // Path token must not be reflected into the docs body (XSS / sniffing).
+    expect(docs.text).not.toContain(link.token);
 
     const status = await request(app).get(`/mcp/a/${link.token}/status`);
     expect(status.status).toBe(200);
