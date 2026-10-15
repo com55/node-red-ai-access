@@ -18,6 +18,11 @@ and this project adheres to
   local timezone. `createdAt` remains ISO-8601.
 - `/mcp` is served with `Cache-Control: no-store` so plugin upgrades do not keep
   serving a cached admin client (inline CSS/JS).
+- `/mcp` location hash reflects the active tab (`#status`, `#links`,
+  `#proposals`, `#audit`) via `history.replaceState`. `#proposal=<id>` is only
+  used while focusing a proposal deep link and is replaced with `#proposals`
+  after the scroll/highlight is consumed (so reload / returning to Proposals
+  does not re-trigger).
 
 ### Fixed
 
