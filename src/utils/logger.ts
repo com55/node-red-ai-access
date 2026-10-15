@@ -24,7 +24,7 @@ function createLogger() {
   const logLevel = appConfig.logging.level;
 
   const baseConfig = {
-    name: 'mcp-nodered-server',
+    name: '@com55/node-red-ai-access',
     level: logLevel,
     customLevels,
     useOnlyCustomLevels: false,
@@ -33,7 +33,7 @@ function createLogger() {
     base: {
       pid: process.pid,
       hostname: process.env.HOSTNAME || 'localhost',
-      service: 'mcp-nodered-server',
+      service: '@com55/node-red-ai-access',
       version: process.env.npm_package_version || '1.0.0',
     },
 

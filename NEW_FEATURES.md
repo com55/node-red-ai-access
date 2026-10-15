@@ -1,9 +1,9 @@
-# New Features - MCP Node-RED Server
+# New Features - Node-RED AI Access
 
 ## Overview
 
-This document describes the new features and fixes added to the MCP Node-RED
-Server to enhance module management and resolve flow creation issues.
+This document describes the new features and fixes added to the Node-RED AI
+Access Server to enhance module management and resolve flow creation issues.
 
 ## 🔧 Fixed Issues
 

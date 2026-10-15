@@ -1,5 +1,5 @@
 #
-# Docker Compose for MCP Node-RED Server
+# Docker Compose for Node-RED AI Access
 # 2025 Development & Production Configuration
 #
 
@@ -20,7 +20,7 @@ x-common-healthcheck: &common-healthcheck
 networks:
   mcp-network:
     driver: bridge
-    name: mcp-nodered-network
+    name: node-red-ai-access-network
 
 volumes:
   nodered_data:
@@ -36,7 +36,7 @@ volumes:
 
 services:
   # ==========================================================================
-  # MCP Node-RED Server (Main Application)
+  # Node-RED AI Access (Main Application)
   # ==========================================================================
   mcp-server:
     build:
@@ -46,7 +46,7 @@ services:
       args:
         NODE_VERSION: 22
         YARN_VERSION: 4.9.4
-    container_name: mcp-nodered-server
+    container_name: node-red-ai-access
     hostname: mcp-server
     restart: unless-stopped
 

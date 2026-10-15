@@ -1,5 +1,5 @@
 /**
- * Main application entry point for MCP Node-RED Server
+ * Main application entry point for Node-RED AI Access
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';

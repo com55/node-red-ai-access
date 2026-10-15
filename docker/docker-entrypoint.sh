@@ -2,7 +2,7 @@
 set -e
 
 #
-# Docker Entrypoint for MCP Node-RED Server
+# Docker Entrypoint for Node-RED AI Access
 # 2025 Production-Ready Configuration
 #
 
@@ -52,7 +52,7 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Print banner
 cat << EOF
 =====================================
-🚀 MCP Node-RED Server
+🚀 Node-RED AI Access
 =====================================
 Version: ${npm_package_version:-1.0.0}
 Environment: ${NODE_ENV:-production}
@@ -220,7 +220,7 @@ if [ "$#" -gt 0 ]; then
     case "$1" in
         node)
             # Default application start
-            log_info "Starting MCP Node-RED Server..."
+            log_info "Starting Node-RED AI Access..."
             exec "$@" &
             MCP_PID=$!
             ;;
@@ -238,10 +238,10 @@ if [ "$#" -gt 0 ]; then
         help|--help|-h)
             # Show help
             cat << HELP
-MCP Node-RED Server Docker Container
+Node-RED AI Access Docker Container
 
 Usage: 
-  docker run [options] mcp-nodered-server [command]
+  docker run [options] node-red-ai-access [command]
 
 Commands:
   node dist/index.mjs  Start the MCP server (default)
@@ -262,9 +262,9 @@ Environment Variables:
   TRUST_PROXY         Reverse proxy hops to trust (e.g. 1) or a trust list
 
 Examples:
-  docker run -e NODE_ENV=development mcp-nodered-server
-  docker run -e MCP_TRANSPORT=http -e PORT=3001 mcp-nodered-server
-  docker run -it mcp-nodered-server sh
+  docker run -e NODE_ENV=development node-red-ai-access
+  docker run -e MCP_TRANSPORT=http -e PORT=3001 node-red-ai-access
+  docker run -it node-red-ai-access sh
 
 For more information, visit: https://github.com/your-org/nodered-mcp
 HELP
@@ -279,7 +279,7 @@ HELP
     esac
 else
     # No arguments provided, start with default command
-    log_info "Starting MCP Node-RED Server with default configuration..."
+    log_info "Starting Node-RED AI Access with default configuration..."
     exec node dist/index.mjs &
     MCP_PID=$!
 fi

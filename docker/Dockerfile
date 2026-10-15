@@ -169,13 +169,13 @@ CMD ["node", "dist/index.mjs"]
 # ============================================================================
 # Labels for metadata (OCI compliant)
 # ============================================================================
-LABEL org.opencontainers.image.title="MCP Node-RED Server"
-LABEL org.opencontainers.image.description="Model Context Protocol server for Node-RED integration"
-LABEL org.opencontainers.image.vendor="MCP Node-RED Server"
+LABEL org.opencontainers.image.title="Node-RED AI Access"
+LABEL org.opencontainers.image.description="Temporary, owner-approved Node-RED access for AI clients (MCP)"
+LABEL org.opencontainers.image.vendor="com55"
 LABEL org.opencontainers.image.licenses="MIT"
-LABEL org.opencontainers.image.version="1.0.0"
-LABEL org.opencontainers.image.source="https://github.com/your-org/nodered-mcp"
-LABEL org.opencontainers.image.documentation="https://github.com/your-org/nodered-mcp#readme"
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.source="https://github.com/com55/node-red-ai-access"
+LABEL org.opencontainers.image.documentation="https://github.com/com55/node-red-ai-access#readme"
 
 # Security and maintenance labels
 LABEL maintainer="your-email@example.com"

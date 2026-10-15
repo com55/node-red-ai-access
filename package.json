@@ -1,7 +1,7 @@
 {
-  "name": "mcp-nodered-server",
-  "version": "2.0.0",
-  "description": "Model Context Protocol server for Node-RED integration with SSE support",
+  "name": "@com55/node-red-ai-access",
+  "version": "0.1.0",
+  "description": "Node-RED AI Access — temporary, owner-approved Node-RED access for AI clients (MCP server)",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -42,8 +42,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",
-    "docker:build": "docker build -t mcp-nodered-server .",
-    "docker:run": "docker run -p 3000:3000 mcp-nodered-server",
+    "docker:build": "docker build -t node-red-ai-access .",
+    "docker:run": "docker run -p 3000:3000 node-red-ai-access",
     "prepare": "husky"
   },
   "keywords": [
@@ -53,9 +53,11 @@
     "sse",
     "server-sent-events",
     "typescript",
-    "automation"
+    "automation",
+    "ai-access",
+    "@com55/node-red-ai-access"
   ],
-  "author": "ziv-daniel",
+  "author": "com55",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -121,5 +123,8 @@
     "*.{json,md,yml,yaml}": [
       "prettier --write"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

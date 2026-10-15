@@ -152,7 +152,7 @@ async function checkNodeRedHealth(): Promise<{
     const response = await axios.get(`${appConfig.nodeRed.url}/admin`, {
       timeout: 5000,
       headers: {
-        'User-Agent': 'MCP-NodeRED-Server/1.0.0',
+        'User-Agent': 'Node-RED-AI-Access/0.1.0',
       },
       validateStatus: status => status < 500, // Accept any non-5xx status
     });

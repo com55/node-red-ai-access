@@ -108,7 +108,7 @@ beforeEach(async () => {
   process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET = 'test-secret-key-minimum-32-chars-xxxx';
   process.env.NODERED_SKIP_CREDENTIAL_VALIDATION = 'true';
-  process.env.PUBLIC_URL = 'https://mcp-nodered.danielshaprvt.work';
+  process.env.PUBLIC_URL = 'https://mcp.example.com';
   process.env.CLAUDE_AUTH_REQUIRED = 'true';
 
   const { ExpressApp } = await import('../server/express-app.js');
@@ -177,7 +177,7 @@ describe('Full OAuth2 + PKCE Authorization Code Flow', () => {
       code_challenge_method: 'S256',
       state: 'test-state',
       scope: 'mcp:read',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'admin',
       nr_password: 'secret',
@@ -205,7 +205,7 @@ describe('Full OAuth2 + PKCE Authorization Code Flow', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 'state-123',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'admin',
       nr_password: 'secret',
@@ -250,7 +250,7 @@ describe('Full OAuth2 + PKCE Authorization Code Flow', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'admin',
       nr_password: 'secret',
@@ -301,7 +301,7 @@ describe('PKCE Validation', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'u',
       nr_password: 'p',
@@ -433,7 +433,7 @@ describe('code_challenge_method Enforcement', () => {
       code_challenge: challenge,
       // code_challenge_method omitted
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'u',
       nr_password: 'p',
@@ -455,7 +455,7 @@ describe('code_challenge_method Enforcement', () => {
       code_challenge: verifier, // plain method uses raw verifier
       code_challenge_method: 'plain',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'u',
       nr_password: 'p',
@@ -474,7 +474,7 @@ describe('code_challenge_method Enforcement', () => {
       // code_challenge omitted
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
     });
 
@@ -496,7 +496,7 @@ describe('Error Response Format — no [object Object]', () => {
       code_challenge: 'x',
       code_challenge_method: 'plain', // invalid — triggers error
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
     });
 
@@ -552,7 +552,7 @@ describe('Credential Store Security', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'admin',
       nr_password: SECRET_PASSWORD,
@@ -586,7 +586,7 @@ describe('Credential Store Security', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'admin',
       nr_password: 'p',
@@ -709,7 +709,7 @@ describe('CORS Origin Enforcement', () => {
 
     const res = await request(app)
       .post('/authorize')
-      .set('Origin', 'https://mcp-nodered.danielshaprvt.work')
+      .set('Origin', 'https://mcp.example.com')
       .type('form')
       .send({
         _json: '1',
@@ -719,7 +719,7 @@ describe('CORS Origin Enforcement', () => {
         code_challenge: challenge,
         code_challenge_method: 'S256',
         state: 's',
-        nr_url: 'https://nodered.danielshaprvt.work',
+        nr_url: 'https://nodered.example.com',
         auth_type: 'basic',
         nr_username: 'u',
         nr_password: 'p',
@@ -730,7 +730,7 @@ describe('CORS Origin Enforcement', () => {
     // Must have CORS header allowing our domain
     const allowOrigin = res.headers['access-control-allow-origin'];
     if (allowOrigin) {
-      expect(allowOrigin).toMatch(/mcp-nodered\.danielshaprvt\.work|claude\.ai|\*/);
+      expect(allowOrigin).toMatch(/mcp\.example\.com|claude\.ai|\*/);
     }
   });
 
@@ -779,7 +779,7 @@ describe('Token Exchange Security', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'u',
       nr_password: 'p',
@@ -821,7 +821,7 @@ describe('Token Exchange Security', () => {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       state: 's',
-      nr_url: 'https://nodered.danielshaprvt.work',
+      nr_url: 'https://nodered.example.com',
       auth_type: 'basic',
       nr_username: 'u',
       nr_password: 'p',

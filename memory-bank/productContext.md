@@ -1,4 +1,4 @@
-# Product Context: MCP Node-RED SSE Integration Server
+# Product Context: Node-RED AI Access
 
 ## Why This Project Exists
 
