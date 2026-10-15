@@ -5,7 +5,7 @@
  * and the /mcp/rpc Streamable HTTP endpoint.
  */
 
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { Response } from 'express';
 
 import { requireAccessLink } from './access-link-auth.js';
 import { editorAuthTokenKey } from './auth-token-key.js';
@@ -75,55 +75,33 @@ export { SettingsStore } from '../storage/settings-store.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
-type ExpressMiddleware =
-  RequestHandler | ((req: Request, res: Response, next: NextFunction) => void);
-
-function registerProposalHttpRoutes(
+/** Public shell + discovery (no authorization middleware — safe to extract). */
+function registerMcpShellAndDiscovery(
   RED: NodeRedPluginAPI,
-  services: ReturnType<typeof createPluginServices>,
-  limiter: ReturnType<typeof createAiAccessRateLimiter>,
-  sharedRead: ExpressMiddleware[],
-  linkGuards: ExpressMiddleware[]
+  limiter: ReturnType<typeof createAiAccessRateLimiter>
 ): void {
-  const httpAdminRoot = RED.settings.httpAdminRoot;
-  // Keep `limiter` as an explicit argument on each route so static analyzers
-  // (CodeQL missing-rate-limiting) can see authorization is rate-limited.
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals',
-    ...sharedRead,
-    listProposalsHandler(services.proposalStore, httpAdminRoot)
-  );
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals/:id',
-    ...sharedRead,
-    getProposalHandler(services.proposalStore, httpAdminRoot)
-  );
-  RED.httpAdmin.get(
-    '/mcp/api/v1/proposals/:id/diff',
-    ...sharedRead,
-    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
-  );
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals',
-    limiter,
-    requireAccessLink(RED, services.linkStore),
-    createProposalHandler(
-      services.proposalStore,
-      services.auditLog,
-      services.flowAdapter,
-      httpAdminRoot
-    )
-  );
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/approve',
-    ...linkGuards,
-    approveProposalHandler(services.proposalService, httpAdminRoot)
-  );
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/reject',
-    ...linkGuards,
-    rejectProposalHandler(services.proposalService, httpAdminRoot)
-  );
+  // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
+  // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
+  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res
+      .type('html')
+      .status(200)
+      .send(
+        renderMcpPage({
+          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
+          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
+          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
+        })
+      );
+  });
+
+  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
 }
 
 export function registerRoutes(
@@ -144,24 +122,7 @@ export function registerRoutes(
     flowAdapter: services.flowAdapter,
   });
 
-  // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
-  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
-    res
-      .type('html')
-      .status(200)
-      .send(
-        renderMcpPage({
-          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
-          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
-          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
-          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
-        })
-      );
-  });
-
-  // Discovery index — no auth (plain HTTP AI clients start here).
-  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
-  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
+  registerMcpShellAndDiscovery(RED, limiter);
 
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
@@ -171,9 +132,6 @@ export function registerRoutes(
       res.json(buildStatus(RED, req));
     }
   );
-
-  // Documentation only — no admin session required.
-  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
 
   // Settings API (sidebar AI Access tab) — admin session; PUT requires *.
   RED.httpAdmin.get(
@@ -218,7 +176,45 @@ export function registerRoutes(
   RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(services.flowAdapter));
   RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowHandler(services.flowAdapter));
 
-  registerProposalHttpRoutes(RED, services, limiter, sharedRead, linkGuards);
+  // Proposal routes stay in this function so CodeQL can see the local `limiter`
+  // (passing it into a helper breaks missing-rate-limiting dataflow).
+  const httpAdminRoot = RED.settings.httpAdminRoot;
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals',
+    ...sharedRead,
+    listProposalsHandler(services.proposalStore, httpAdminRoot)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals/:id',
+    ...sharedRead,
+    getProposalHandler(services.proposalStore, httpAdminRoot)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals/:id/diff',
+    ...sharedRead,
+    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals',
+    limiter,
+    requireAccessLink(RED, services.linkStore),
+    createProposalHandler(
+      services.proposalStore,
+      services.auditLog,
+      services.flowAdapter,
+      httpAdminRoot
+    )
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/approve',
+    ...linkGuards,
+    approveProposalHandler(services.proposalService, httpAdminRoot)
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/reject',
+    ...linkGuards,
+    rejectProposalHandler(services.proposalService, httpAdminRoot)
+  );
 
   const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));

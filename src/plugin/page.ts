@@ -44,6 +44,8 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>Node-RED AI Access</title>
   <style>${pageStyles()}</style>
 </head>

@@ -559,29 +559,63 @@ function pageClientScriptPartBDiff(): string {
       lines + '</div>';
   }
 
+  /**
+   * Pair remove/add runs so large replaces (many removes then many adds) show
+   * BEFORE and AFTER content side-by-side — keep in sync with alignSplitDiffLines.
+   */
+  function alignSplitDiffLines(lines) {
+    var rows = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line) { i += 1; continue; }
+      if (line.op === 'equal') {
+        rows.push({ left: line, right: line });
+        i += 1;
+        continue;
+      }
+      var removes = [];
+      while (i < lines.length && lines[i] && lines[i].op === 'remove') {
+        removes.push(lines[i]);
+        i += 1;
+      }
+      var adds = [];
+      while (i < lines.length && lines[i] && lines[i].op === 'add') {
+        adds.push(lines[i]);
+        i += 1;
+      }
+      var n = Math.max(removes.length, adds.length);
+      for (var k = 0; k < n; k += 1) {
+        rows.push({ left: removes[k] || null, right: adds[k] || null });
+      }
+    }
+    return rows;
+  }
+
   function renderSplitTextDiff(ch) {
     var left = [];
     var right = [];
     var beforeLn = 0;
     var afterLn = 0;
-    (ch.lines || []).forEach(function (line) {
-      if (line.op === 'equal') {
+    alignSplitDiffLines(ch.lines || []).forEach(function (row) {
+      if (row.left && row.left.op === 'equal' && row.right && row.right.op === 'equal') {
         beforeLn += 1;
         afterLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: line.text }));
-        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: line.text }));
+        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: row.left.text }));
+        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: row.right.text }));
         return;
       }
-      if (line.op === 'remove') {
+      if (row.left && row.left.op === 'remove') {
         beforeLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: line.text }));
-        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-        return;
-      }
-      if (line.op === 'add') {
-        afterLn += 1;
+        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: row.left.text }));
+      } else {
         left.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: line.text }));
+      }
+      if (row.right && row.right.op === 'add') {
+        afterLn += 1;
+        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: row.right.text }));
+      } else {
+        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
       }
     });
     return '<div class="diff-split" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +

@@ -92,3 +92,59 @@ function splitLines(value: string): string[] {
   }
   return value.split('\n');
 }
+
+/** One aligned row for side-by-side (split) rendering. */
+export interface SplitDiffRow {
+  left: LineDiffEntry | null;
+  right: LineDiffEntry | null;
+}
+
+/**
+ * Pair remove/add runs into side-by-side rows so a large replace
+ * (many removes followed by many adds) does not push the AFTER column's
+ * real content below the fold under a stack of blank placeholders.
+ *
+ * Keep in sync with `renderSplitTextDiff` in page-client.ts.
+ */
+export function alignSplitDiffLines(lines: LineDiffEntry[]): SplitDiffRow[] {
+  const rows: SplitDiffRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line) {
+      i += 1;
+      continue;
+    }
+    if (line.op === 'equal') {
+      rows.push({ left: line, right: line });
+      i += 1;
+      continue;
+    }
+
+    const removes: LineDiffEntry[] = [];
+    while (i < lines.length && lines[i]?.op === 'remove') {
+      const rem = lines[i];
+      if (rem) {
+        removes.push(rem);
+      }
+      i += 1;
+    }
+    const adds: LineDiffEntry[] = [];
+    while (i < lines.length && lines[i]?.op === 'add') {
+      const add = lines[i];
+      if (add) {
+        adds.push(add);
+      }
+      i += 1;
+    }
+
+    const n = Math.max(removes.length, adds.length);
+    for (let k = 0; k < n; k += 1) {
+      rows.push({
+        left: removes[k] ?? null,
+        right: adds[k] ?? null,
+      });
+    }
+  }
+  return rows;
+}

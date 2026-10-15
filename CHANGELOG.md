@@ -16,9 +16,13 @@ and this project adheres to
 - `displayName` datetime includes an explicit UTC offset and is documented as
   **server local time**; `/mcp` renders proposal/audit times in the browser's
   local timezone. `createdAt` remains ISO-8601.
+- `/mcp` is served with `Cache-Control: no-store` so plugin upgrades do not keep
+  serving a cached admin client (inline CSS/JS).
 
 ### Fixed
 
+- Side-by-side (split) diffs for large field replaces pair remove/add runs so
+  the AFTER column is visible instead of a long blank placeholder stack.
 - Unknown flow ids return **404** `flow_not_found` (with hint to use ids from
   `GET ./flows`) instead of **502** `upstream_error` on RedAdapter.
 - Invalid draft chunk base64url (e.g. `@@@`) returns **400**
