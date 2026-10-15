@@ -21,6 +21,9 @@ and this project adheres to
 - In-memory access-link store and admin routes under `/mcp/api/v1/links`
   (default TTL 24h, max 10 active, token shown once; Bearer middleware for AI
   clients).
+- On-disk proposal store and audit log under `<userDir>/.ai-access`, plus REST
+  routes for proposals, flows (with rev), and logs. Approve deploys via
+  FlowAdapter with rev checks; concurrent approve guarded.
 
 ## [0.1.0] - 2026-10-15
 

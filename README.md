@@ -19,13 +19,21 @@
 Install the package into your Node-RED user directory (or via the palette), then
 restart Node-RED. Open **`/mcp`** on the editor admin root after logging in.
 
-| Path                           | Purpose                                   |
-| ------------------------------ | ----------------------------------------- |
-| `GET /mcp`                     | Admin page (requires adminAuth login)     |
-| `GET /mcp/api/v1/status`       | Plugin status JSON                        |
-| `GET /mcp/api/v1/links`        | List active access links (`*` only)       |
-| `POST /mcp/api/v1/links`       | Create access link (`*` only; token once) |
-| `DELETE /mcp/api/v1/links/:id` | Revoke access link (`*` only)             |
+| Path                                     | Purpose                                          |
+| ---------------------------------------- | ------------------------------------------------ |
+| `GET /mcp`                               | Admin page (requires adminAuth login)            |
+| `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
+| `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
+| `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)        |
+| `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                    |
+| `GET /mcp/api/v1/flows`                  | List flows + rev (admin `read` or access link)   |
+| `GET /mcp/api/v1/flows/:id`              | Get one flow + rev (admin `read` or access link) |
+| `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)        |
+| `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)           |
+| `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)             |
+| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy via FlowAdapter (`*` only)      |
+| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*` only; no flow mutate)    |
+| `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |
 
 **Permissions:** users with `read` get a read-only view; users with `*` get full
 access. Unauthenticated visits to `/mcp` redirect to the editor login
@@ -41,12 +49,13 @@ module.exports = {
     allowWithoutAdminAuth: true,
     // defaultLinkTtlSeconds: 86400,
     // maxActiveLinks: 10,
-    // defaultDeploymentType: "nodes", // or "flows" | "full" (later PRs)
+    // defaultDeploymentType: "nodes", // or "flows" | "full"
   },
 };
 ```
 
-Data for later proposal/log features is stored under `<userDir>/.ai-access`.
+Data lives under `<userDir>/.ai-access` (`proposals/*.json` and append-only
+`logs/audit.jsonl`).
 
 ### Access links (in memory)
 
@@ -58,7 +67,7 @@ old token is invalid and the AI should ask the user for a new link. Users with
 
 ### Flow runtime adapter
 
-Phase 1 includes a `FlowAdapter` used by later proposal/approve work:
+Phase 1 includes a `FlowAdapter` used by proposal approve:
 
 - **RedAdapter** — in-process `RED.runtime.flows` (`getFlows` / `getFlow` /
   `setFlows`)
@@ -67,6 +76,16 @@ Phase 1 includes a `FlowAdapter` used by later proposal/approve work:
 - **`updateFlow`** — requires `expectedRev`; default deployment type is `nodes`
   (also `flows` | `full`); stale rev → `FlowRevisionConflictError` (HTTP 409
   semantics)
+
+### Proposals and audit log
+
+Access-link clients submit `replace_flow` proposals with an `expectedRev`.
+Lifecycle: `pending` → `approved` | `rejected` | `failed`. Approve deploys
+through the FlowAdapter using `aiAccess.defaultDeploymentType` (default
+`nodes`). A rev conflict marks the proposal **rejected** with a resubmit
+message; other deploy errors mark it **failed**. Concurrent approve of the same
+id is rejected with 409. Reject never mutates flows. Every action is appended to
+the audit log.
 
 ## 🌟 Features
 

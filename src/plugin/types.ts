@@ -18,7 +18,7 @@ export interface AiAccessSettings {
   defaultLinkTtlSeconds?: number;
   /** Maximum concurrent active access links (default: 10). */
   maxActiveLinks?: number;
-  /** Reserved: deployment type used when approving proposals. */
+  /** Deployment type used when approving proposals (default: nodes). */
   defaultDeploymentType?: 'nodes' | 'flows' | 'full';
 }
 

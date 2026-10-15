@@ -1,0 +1,338 @@
+/**
+ * HTTP tests for proposals, flows, and logs routes.
+ */
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AccessLinkStore } from '../../src/access/index.js';
+import { registerRoutes } from '../../src/plugin/index.js';
+import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
+import { FlowRevisionConflictError } from '../../src/runtime/errors.js';
+import type { FlowAdapter } from '../../src/runtime/types.js';
+
+interface MockUser {
+  username: string;
+  permissions: string | string[];
+}
+
+function createApp(options: {
+  userDir: string;
+  authenticate?: (req: Request, _res: Response, next: NextFunction) => void;
+  adapter?: FlowAdapter;
+  linkStore?: AccessLinkStore;
+}): { app: Express; RED: NodeRedPluginAPI; linkStore: AccessLinkStore } {
+  const app = express();
+  app.use(express.json());
+
+  const authenticate =
+    options.authenticate ??
+    ((_req: Request, _res: Response, next: NextFunction) => {
+      next();
+    });
+
+  const linkStore = options.linkStore ?? new AccessLinkStore({ maxActiveLinks: 10 });
+
+  const RED: NodeRedPluginAPI = {
+    settings: {
+      userDir: options.userDir,
+      httpAdminRoot: '/',
+      adminAuth: { type: 'credentials' },
+      aiAccess: { defaultDeploymentType: 'nodes' },
+    },
+    httpAdmin: app,
+    auth: {
+      needsPermission(permission: string) {
+        return (req: Request, res: Response, next: NextFunction) => {
+          authenticate(req, res, (err?: unknown) => {
+            if (err) {
+              next(err as Error);
+              return;
+            }
+            const user = (req as Request & { user?: MockUser }).user;
+            if (!user) {
+              next();
+              return;
+            }
+            const scopes = Array.isArray(user.permissions) ? user.permissions : [user.permissions];
+            const allowed =
+              scopes.includes('*') ||
+              scopes.includes(permission) ||
+              (permission === 'read' && scopes.includes('read'));
+            if (!allowed) {
+              res.status(401).end();
+              return;
+            }
+            next();
+          });
+        };
+      },
+    },
+    plugins: {
+      registerPlugin() {
+        // unused — registerRoutes called directly
+      },
+    },
+    log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  };
+
+  const adapter: FlowAdapter =
+    options.adapter ??
+    ({
+      kind: 'red',
+      getFlows: () =>
+        Promise.resolve({
+          rev: 'rev-1',
+          flows: [
+            { id: 'tab-1', type: 'tab', label: 'Main' },
+            { id: 'n1', type: 'inject', z: 'tab-1' },
+          ],
+        }),
+      getFlow: () =>
+        Promise.resolve({
+          rev: 'rev-1',
+          flow: { id: 'tab-1', type: 'tab', label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
+        }),
+      updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),
+    } satisfies FlowAdapter);
+
+  registerRoutes(RED, { flowAdapter: adapter, linkStore });
+  return { app, RED, linkStore };
+}
+
+function asUser(permissions: string | string[], username = 'user') {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    (req as Request & { user?: MockUser }).user = { username, permissions };
+    next();
+  };
+}
+
+describe('proposals / flows / logs HTTP API', () => {
+  let userDir: string;
+
+  beforeEach(() => {
+    userDir = mkdtempSync(join(tmpdir(), 'ai-access-http-'));
+  });
+
+  afterEach(() => {
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  it('access link can read flows (with rev), create proposal; * can approve', async () => {
+    const updateFlow = vi.fn(() => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }));
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: {
+        kind: 'red',
+        getFlows: () =>
+          Promise.resolve({
+            rev: 'rev-1',
+            flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }],
+          }),
+        getFlow: () =>
+          Promise.resolve({
+            rev: 'rev-1',
+            flow: { id: 'tab-1', type: 'tab', nodes: [] },
+          }),
+        updateFlow,
+      },
+    });
+
+    const link = linkStore.create({ label: 'agent' });
+
+    const flows = await request(app)
+      .get('/mcp/api/v1/flows')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(flows.status).toBe(200);
+    expect(flows.body.rev).toBe('rev-1');
+
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: {
+          flowId: 'tab-1',
+          flow: { label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
+        },
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe('pending');
+
+    const approved = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe('approved');
+    expect(updateFlow).toHaveBeenCalledOnce();
+
+    const logs = await request(app).get('/mcp/api/v1/logs');
+    expect(logs.status).toBe(200);
+    expect(logs.body.logs.some((e: { action: string }) => e.action === 'proposal.approved')).toBe(
+      true
+    );
+  });
+
+  it('read admin can list all proposals; access link only sees its own', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('read', 'guest'),
+    });
+    const a = linkStore.create({ label: 'a' });
+    const b = linkStore.create({ label: 'b' });
+
+    await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${a.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'r',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+    await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${b.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'r',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+
+    const asLink = await request(app)
+      .get('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${a.token}`);
+    expect(asLink.status).toBe(200);
+    expect(asLink.body.proposals).toHaveLength(1);
+    expect(asLink.body.proposals[0].createdBy.linkId).toBe(a.id);
+
+    const asAdmin = await request(app).get('/mcp/api/v1/proposals');
+    expect(asAdmin.status).toBe(200);
+    expect(asAdmin.body.proposals).toHaveLength(2);
+  });
+
+  it('read user cannot approve or reject', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('read', 'guest'),
+    });
+    const link = linkStore.create();
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'r',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+
+    const approve = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
+    expect(approve.status).toBe(403);
+    const reject = await request(app)
+      .post(`/mcp/api/v1/proposals/${created.body.id}/reject`)
+      .send({ reason: 'no' });
+    expect(reject.status).toBe(403);
+  });
+
+  it('reject does not mutate flows via adapter', async () => {
+    const updateFlow = vi.fn();
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: {
+        kind: 'red',
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
+        updateFlow,
+      },
+    });
+    const link = linkStore.create();
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'r',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+
+    const rejected = await request(app)
+      .post(`/mcp/api/v1/proposals/${created.body.id}/reject`)
+      .send({ reason: 'not now' });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.status).toBe('rejected');
+    expect(updateFlow).not.toHaveBeenCalled();
+  });
+
+  it('approve with rev conflict returns rejected proposal', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: {
+        kind: 'red',
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
+        updateFlow: () => Promise.reject(new FlowRevisionConflictError('old', 'new')),
+      },
+    });
+    const link = linkStore.create();
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'old',
+        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+      });
+
+    const result = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
+    expect(result.status).toBe(200);
+    expect(result.body.status).toBe('rejected');
+    expect(result.body.reason).toMatch(/resubmit/i);
+  });
+
+  it('rejects proposal and flow routes when AI features are disabled', async () => {
+    const app = express();
+    app.use(express.json());
+    const linkStore = new AccessLinkStore({ maxActiveLinks: 10 });
+    const RED: NodeRedPluginAPI = {
+      settings: {
+        userDir,
+        httpAdminRoot: '/',
+        // no adminAuth, no allowWithoutAdminAuth → AI off
+      },
+      httpAdmin: app,
+      auth: {
+        needsPermission() {
+          return (_req: Request, _res: Response, next: NextFunction) => next();
+        },
+      },
+      plugins: {
+        registerPlugin() {
+          // unused in this test
+        },
+      },
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+    registerRoutes(RED, {
+      linkStore,
+      flowAdapter: {
+        kind: 'red',
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
+        updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'r2' }),
+      },
+    });
+
+    const flows = await request(app).get('/mcp/api/v1/flows');
+    expect(flows.status).toBe(403);
+    const proposals = await request(app).get('/mcp/api/v1/proposals');
+    expect(proposals.status).toBe(403);
+    const logs = await request(app).get('/mcp/api/v1/logs');
+    expect(logs.status).toBe(403);
+  });
+});

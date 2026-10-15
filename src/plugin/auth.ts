@@ -167,3 +167,65 @@ export function requireStarPermission(RED: NodeRedPluginAPI) {
     next();
   };
 }
+
+/**
+ * Accept either a valid access-link Bearer token or an admin session with at
+ * least `read` permission. Used for shared read surfaces (flows, proposals).
+ */
+export function requireAdminReadOrAccessLink(
+  RED: NodeRedPluginAPI,
+  validateAccessLink: (token: string) => {
+    id: string;
+    label?: string;
+    createdAt: string;
+    expiresAt: string;
+    createdBy?: string;
+  } | null
+) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!areAiFeaturesEnabled(RED.settings)) {
+      res.status(403).json({
+        error:
+          'AI Access features are disabled. Enable adminAuth, or set aiAccess.allowWithoutAdminAuth to true for local-only use.',
+      });
+      return;
+    }
+
+    const authHeader = req.headers.authorization;
+    if (typeof authHeader === 'string' && /^Bearer\s+\S+/i.test(authHeader.trim())) {
+      const match = /^Bearer\s+(\S+)$/i.exec(authHeader.trim());
+      const token = match?.[1];
+      if (!token) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      const link = validateAccessLink(token);
+      if (!link) {
+        res.status(401).json({
+          error:
+            'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.',
+        });
+        return;
+      }
+      req.accessLink = link;
+      next();
+      return;
+    }
+
+    requireAdminSession(RED, 'api')(req, res, (err?: unknown) => {
+      if (err) {
+        next(err as Error);
+        return;
+      }
+      if (!isAdminAuthEnabled(RED.settings)) {
+        next();
+        return;
+      }
+      if (!resolvePermission(req)) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      next();
+    });
+  };
+}
