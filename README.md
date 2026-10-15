@@ -55,7 +55,8 @@ module.exports = {
 ```
 
 Data lives under `<userDir>/.ai-access` (`proposals/*.json` and append-only
-`logs/audit.jsonl`).
+`logs/audit.jsonl`). Directories are created mode `0700` and files `0600`.
+Proposal JSON and each audit line are size-capped (HTTP `413` when exceeded).
 
 ### Access links (in memory)
 

@@ -2,8 +2,10 @@
  * On-disk layout under `<userDir>/.ai-access`.
  */
 
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { AI_ACCESS_DIR_MODE } from './trusted-write.js';
 
 export interface AiAccessPaths {
   root: string;
@@ -20,7 +22,17 @@ export function resolveAiAccessPaths(userDir: string): AiAccessPaths {
   };
 }
 
+function mkdirSecure(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: AI_ACCESS_DIR_MODE });
+  try {
+    chmodSync(dir, AI_ACCESS_DIR_MODE);
+  } catch {
+    // Best-effort when the filesystem ignores chmod.
+  }
+}
+
 export function ensureAiAccessDirs(paths: AiAccessPaths): void {
-  mkdirSync(paths.proposals, { recursive: true });
-  mkdirSync(paths.logs, { recursive: true });
+  mkdirSecure(paths.root);
+  mkdirSecure(paths.proposals);
+  mkdirSecure(paths.logs);
 }

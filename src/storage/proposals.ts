@@ -3,7 +3,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
 import type { FlowTab } from '../runtime/types.js';
@@ -15,6 +15,7 @@ import {
   resolveUnderDir,
   sanitizeFlowTab,
 } from './safe.js';
+import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed';
 
@@ -92,13 +93,19 @@ export class ProposalStore {
   private readonly inFlight = new Set<string>();
   private readonly now: () => number;
   private readonly randomId: () => string;
+  private readonly maxProposalBytes: number;
 
   constructor(
     private readonly paths: AiAccessPaths,
-    options: { now?: () => number; randomId?: () => string } = {}
+    options: {
+      now?: () => number;
+      randomId?: () => string;
+      maxProposalBytes?: number;
+    } = {}
   ) {
     this.now = options.now ?? (() => Date.now());
     this.randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));
+    this.maxProposalBytes = options.maxProposalBytes ?? MAX_PROPOSAL_JSON_BYTES;
   }
 
   private fileFor(id: string): string {
@@ -159,13 +166,11 @@ export class ProposalStore {
   private writeAtomic(id: string, proposal: Proposal): void {
     const target = this.fileFor(id);
     const disk = this.toDiskRecord(proposal);
-    const temp = `${target}.${process.pid}.tmp`;
-    // Intentionally persist owner-approved / access-link proposal JSON under
-    // userDir/.ai-access after path + field validation above. This is the
-    // product's storage surface, not an open file write of raw request bodies.
-    // codeql[js/file-write]
-    writeFileSync(temp, `${JSON.stringify(disk, null, 2)}\n`, 'utf8');
-    renameSync(temp, target);
+    const payload = encodeTrustedJson(disk, this.maxProposalBytes, {
+      kind: 'proposal',
+      pretty: true,
+    });
+    writeTrustedAtomic(this.paths.root, target, payload);
   }
 
   create(input: CreateProposalInput): Proposal {
