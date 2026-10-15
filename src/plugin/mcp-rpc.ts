@@ -184,10 +184,13 @@ function registerProposalTools(
         'Call get_flow first and reuse that nested shape: payload.flow should be the get_flow ' +
         'result (id, type, label?, nodes[], optional configs[]) for the tab you are replacing. ' +
         'Inputs: type="replace_flow", expectedRev (required; from get_flow/list_flows; expected_rev alias accepted), ' +
+        'optional title (≤80 chars, human-friendly), ' +
         `payload: { flowId, flow } with flow.nodes required. ` +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
-        'Returns the created pending proposal. Approve/reject stay on the /mcp admin page.',
+        'Returns the pending proposal with title, displayName (title · local datetime), and reviewUrl. ' +
+        'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
+        'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
       inputSchema: {
         type: z.literal('replace_flow').describe("Must be 'replace_flow'"),
         expectedRev: z
@@ -199,6 +202,13 @@ function registerProposalTools(
           .min(1)
           .optional()
           .describe('Alias for expectedRev (snake_case); prefer expectedRev'),
+        title: z
+          .string()
+          .max(80)
+          .optional()
+          .describe(
+            'Optional short human title (≤80 chars). Auto-generated from changes when omitted.'
+          ),
         payload: z
           .object({
             flowId: z.string().min(1).describe('Tab id to replace'),
@@ -241,8 +251,9 @@ function registerProposalTools(
     'list_my_proposals',
     {
       description:
-        'List proposals created by this access link only. Returns { proposals: [...] }. ' +
-        'Use to check pending/approved/rejected status after submit_proposal.',
+        'List proposals created by this access link only. Returns { proposals: [...] } with ' +
+        'title, displayName, and reviewUrl on each. Prefer displayName + reviewUrl when ' +
+        'referring to a proposal with the user (not the raw id).',
     },
     () => {
       try {
@@ -257,7 +268,8 @@ function registerProposalTools(
     'get_proposal',
     {
       description:
-        'Get one proposal by id if owned by this access link. Returns 404-style tool error if missing or not yours.',
+        'Get one proposal by id if owned by this access link. Returns title, displayName, and ' +
+        'reviewUrl — cite those when talking to the user. 404-style tool error if missing or not yours.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
       },

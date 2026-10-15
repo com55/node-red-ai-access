@@ -460,6 +460,26 @@ function pageStylesPartE(): string {
 }
 .diff-before { color: var(--danger); word-break: break-word; }
 .diff-after { color: var(--ok); word-break: break-word; }
+`;
+}
+
+function pageStylesPartF(): string {
+  return `
+.proposal-detail.proposal-highlight {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.proposal-heading {
+  font-size: 1.05rem;
+  font-weight: 650;
+  margin: 0 0 0.15rem;
+  letter-spacing: -0.01em;
+}
+.proposal-id {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+}
 .node-presence {
   margin: 0.35rem 0 0.55rem;
   border: 1px solid var(--line);
@@ -475,12 +495,59 @@ function pageStylesPartE(): string {
 .node-presence > summary::-webkit-details-marker { display: none; }
 .node-presence.node-added > summary { background: #e6f6ec; }
 .node-presence.node-removed > summary { background: #fdeceb; }
+.presence-summary-text { font-weight: 600; }
 .presence-body { padding: 0.35rem 0.55rem 0.55rem; }
+.presence-key-fields { margin-bottom: 0.35rem; }
+.presence-all-props {
+  margin-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.25rem;
+}
+.presence-all-props > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  user-select: none;
+}
 .presence-text { margin: 0.25rem 0; }
 .presence-text > summary {
   cursor: pointer;
   font-size: 0.88rem;
   user-select: none;
+}
+.presence-text-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+.presence-preview-toggle {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.presence-preview-toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.presence-preview-host {
+  margin: 0.3rem 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  overflow: hidden;
+}
+.presence-preview-frame {
+  display: block;
+  width: 100%;
+  min-height: 10rem;
+  max-height: 18rem;
+  border: 0;
+  background: #fff;
 }
 .presence-pre {
   margin: 0.3rem 0 0;
@@ -529,6 +596,7 @@ export function pageStyles(): string {
     pageStylesPartB() +
     pageStylesPartC() +
     pageStylesPartD() +
-    pageStylesPartE()
+    pageStylesPartE() +
+    pageStylesPartF()
   ).trim();
 }

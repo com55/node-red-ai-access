@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Human-friendly proposals: optional `title` (≤80 chars) on all submit paths
+  (REST, MCP `submit_proposal`, GET `propose`, draft new/submit); responses
+  always include `title`, `displayName` (`title ·` server-local datetime), and
+  `reviewUrl` (`/mcp#proposal=<id>`). AI guides tell clients to cite
+  `displayName` + `reviewUrl` (not the raw id). `/mcp` list headings and audit
+  details use `displayName`; deep links open/scroll/highlight the proposal.
+
+### Changed
+
+- Node added/removed diff blocks use a readable summary sentence, show key
+  fields (name, wires by node name, code/HTML), and hide the rest under “All
+  properties”. HTML templates offer a sandboxed iframe Preview toggle (`sandbox`
+  with no `allow-scripts`, `srcdoc`) plus the code view.
+
 ### Fixed
 
 - `/mcp` proposal diffs default to side-by-side on wide screens (unified below

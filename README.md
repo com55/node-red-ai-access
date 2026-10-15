@@ -131,11 +131,14 @@ AI clients can use the official MCP Streamable HTTP transport against
 API. Tools mirror the AI-facing REST surface only:
 
 `get_status`, `list_flows`, `get_flow`, `submit_proposal` (including
-`replace_flow` with `expectedRev`; `expected_rev` accepted as alias),
-`list_my_proposals`, `get_proposal`. Tool descriptions document purpose, inputs,
-returns, and when to use them. For access-link callers, `get_status` reports
-`permission: null` and `caller.kind: "access-link"` (expected — AI tokens are
-not admin sessions).
+`replace_flow` with `expectedRev`; `expected_rev` accepted as alias; optional
+`title` ≤80 chars), `list_my_proposals`, `get_proposal`. Tool descriptions
+document purpose, inputs, returns, and when to use them. Proposal
+create/list/get responses include `title`, `displayName` (`title ·` server-local
+datetime), and `reviewUrl` (`/mcp#proposal=<id>`). AI clients should refer to
+proposals by `displayName` + `reviewUrl`, not the raw id. For access-link
+callers, `get_status` reports `permission: null` and
+`caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
 
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and
@@ -202,6 +205,7 @@ Example create body:
 {
   "type": "replace_flow",
   "expectedRev": "abc123",
+  "title": "Rename inject to Hello",
   "payload": {
     "flowId": "tab-1",
     "flow": {

@@ -24,6 +24,8 @@ const AUDIT_DETAIL_KEYS = [
   'reason',
   'code',
   'currentRev',
+  'title',
+  'displayName',
 ] as const;
 
 export function assertSafeSegment(value: string, paramName: string): string {

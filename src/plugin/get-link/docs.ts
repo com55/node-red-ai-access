@@ -49,28 +49,34 @@ these docs).
 3. For large content (e.g. HTML in a \`template\` node), use **chunked drafts**.
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
+Submit responses include \`title\`, \`displayName\` (title · local datetime), and
+\`reviewUrl\` (\`/mcp#proposal=<id>\`). **Always tell the user about the proposal
+using \`displayName\` + \`reviewUrl\` — not the raw id.**
 
 ## Step-by-step workflow
 
 1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\`.
 2. \`GET ./flows\` — list tabs + current \`rev\`.
 3. \`GET ./flows/<id>\` — get one tab (\`type\` is always present) + \`rev\`.
-4. Propose a small node property change:
+4. Propose a small node property change (optional \`title\` ≤80 chars; \`summary\`
+   is accepted as a title fallback):
 
 \`\`\`
-GET ./propose?flow=<flowId>&rev=<rev>&node=<nodeId>&set.<prop>=<urlencoded>&summary=<text>
+GET ./propose?flow=<flowId>&rev=<rev>&node=<nodeId>&set.<prop>=<urlencoded>&title=<text>
 \`\`\`
 
 5. Or multi-node / add / remove / full tab via base64url JSON patch:
 
 \`\`\`
-GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>
+GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 \`\`\`
 
 6. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
+   Cite \`displayName\` + \`reviewUrl\` from the response when updating the user.
 7. Optional: \`GET ./proposals/<id>/diff\` for a structured diff against the
    **base snapshot** stored at submit (not the live flow). Added/removed nodes
-   are single presence blocks; pending+stale may include \`vsCurrent\`.
+   are single presence blocks with a summary sentence; pending+stale may include
+   \`vsCurrent\`.
 `;
 }
 
@@ -87,9 +93,9 @@ function docsUrlTable(): string {
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
 | Propose (query) | \`GET ./propose?…\` |
-| Draft start | \`GET ./draft/new?flow=&rev=&node=&field=\` |
+| Draft start | \`GET ./draft/new?flow=&rev=&node=&field=&title=\` |
 | Draft chunk | \`GET ./draft/<draftId>/append?seq=N&data=<base64url>\` |
-| Draft submit | \`GET ./draft/<draftId>/submit?sha256=<hex>\` |
+| Draft submit | \`GET ./draft/<draftId>/submit?sha256=<hex>&title=\` |
 
 Unknown paths under this link return JSON \`{ "code": "not_found" }\` (never HTML,
 and the token is never echoed).
@@ -102,7 +108,7 @@ function docsProposeExamples(): string {
 **Rename a node** (URL-encode values):
 
 \`\`\`
-GET ./propose?flow=tab1&rev=abc123&node=n1&set.name=Hello&summary=rename
+GET ./propose?flow=tab1&rev=abc123&node=n1&set.name=Hello&title=Rename%20inject
 \`\`\`
 
 **Patch JSON** — node-level ops (\`set\` / \`add\` / \`remove\`):

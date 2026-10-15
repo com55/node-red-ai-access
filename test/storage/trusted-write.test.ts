@@ -137,6 +137,7 @@ describe('proposal and audit size caps', () => {
           flow: { label: 'x'.repeat(200), nodes: [] },
         },
         baseFlow: { id: 'tab-1', type: 'tab', nodes: [] },
+        title: 'Huge payload',
         createdBy: { kind: 'access-link', linkId: 'link1' },
       })
     ).toThrow(StoragePayloadTooLargeError);
@@ -150,6 +151,7 @@ describe('proposal and audit size caps', () => {
           flow: { label: 'x'.repeat(200), nodes: [] },
         },
         baseFlow: { id: 'tab-1', type: 'tab', nodes: [] },
+        title: 'Huge payload',
         createdBy: { kind: 'access-link', linkId: 'link1' },
       });
     } catch (error) {

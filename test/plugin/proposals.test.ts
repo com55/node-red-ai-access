@@ -199,10 +199,41 @@ describe('proposals / flows / logs HTTP API', () => {
       });
     expect(created.status).toBe(201);
     expect(created.body.status).toBe('pending');
+    expect(created.body.title).toBeTruthy();
+    expect(created.body.displayName).toContain(created.body.title);
+    expect(created.body.reviewUrl).toBe(`/mcp#proposal=${created.body.id}`);
+
+    const withTitle = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        title: 'Add inject sensor',
+        payload: {
+          flowId: 'tab-1',
+          flow: { label: 'Main', nodes: [{ id: 'n2', type: 'inject', name: 'sensor' }] },
+        },
+      });
+    expect(withTitle.status).toBe(201);
+    expect(withTitle.body.title).toBe('Add inject sensor');
+    expect(withTitle.body.displayName.startsWith('Add inject sensor · ')).toBe(true);
+    expect(withTitle.body.reviewUrl).toBe(`/mcp#proposal=${withTitle.body.id}`);
+
+    const listed = await request(app)
+      .get('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(listed.status).toBe(200);
+    expect(
+      listed.body.proposals.every((p: { displayName?: string; reviewUrl?: string }) =>
+        Boolean(p.displayName && p.reviewUrl)
+      )
+    ).toBe(true);
 
     const approved = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
     expect(approved.status).toBe(200);
     expect(approved.body.status).toBe('approved');
+    expect(approved.body.displayName).toBeTruthy();
     expect(updateFlow).toHaveBeenCalledOnce();
 
     const logs = await request(app).get('/mcp/api/v1/logs');
@@ -210,6 +241,10 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(logs.body.logs.some((e: { action: string }) => e.action === 'proposal.approved')).toBe(
       true
     );
+    const createdLog = logs.body.logs.find(
+      (e: { action: string }) => e.action === 'proposal.created'
+    );
+    expect(createdLog?.details?.displayName).toBeTruthy();
   });
 
   it('read admin can list all proposals; access link only sees its own', async () => {

@@ -173,17 +173,27 @@ function pageClientScriptPartAFormat(): string {
     };
     return labels[action] ? labels[action] + ' (' + action + ')' : action;
   }
+  function auditProposalLabel(d) {
+    if (d.displayName) {
+      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
+    }
+    if (d.title) {
+      return '<strong class="audit-display-name">' + esc(String(d.title)) + '</strong>';
+    }
+    return d.proposalId ? tipId(d.proposalId, 12) : '';
+  }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
-    var prop = d.proposalId ? tipId(d.proposalId, 12) : '';
+    var prop = auditProposalLabel(d);
     var flow = d.flowId != null ? esc(String(d.flowId)) : '';
     if (action === 'proposal.created') {
-      return 'Proposal ' + prop + ' created for flow "' + flow + '"';
+      return (prop || 'Proposal') + ' created' + (flow ? ' for flow "' + flow + '"' : '');
     }
     if (action === 'proposal.approved') {
       var rev = d.resultRev ? tipId(d.resultRev, 8) : '';
-      return 'Approved' + (d.flowId ? ' for flow "' + flow + '"' : '') +
+      return 'Approved' + (prop ? ' ' + prop : '') +
+        (d.flowId ? ' for flow "' + flow + '"' : '') +
         (rev ? ', deployed (rev ' + rev + ')' : '');
     }
     if (action === 'proposal.rejected') {
@@ -467,24 +477,40 @@ function pageClientScriptPartBDiff(): string {
 `;
 }
 
-function pageClientScriptPartBDiffView(): string {
+function pageClientScriptPartBDiffPresence(): string {
   return `
-  function presenceLabel(n) {
-    return (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
-  }
-
   function isCollapsiblePresenceText(value) {
     var s = String(value == null ? '' : value);
     if (s.indexOf('\\n') >= 0) return true;
     return s.length > PRESENCE_SHORT_TEXT_MAX;
   }
 
+  function renderHtmlPreviewBlock(text) {
+    // Sandboxed preview: no allow-scripts (and no other allow-* tokens).
+    var srcdoc = String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;');
+    return '<div class="presence-preview-host" hidden>' +
+      '<iframe class="presence-preview-frame" sandbox="" referrerpolicy="no-referrer" ' +
+      'title="HTML preview" srcdoc="' + srcdoc + '"></iframe></div>';
+  }
+
   function renderPresenceProperty(p) {
     if (p.kind === 'text') {
       var text = String(p.value == null ? '' : p.value);
+      var previewToggle = '';
+      var previewBlock = '';
+      if (p.preview === 'html') {
+        previewToggle =
+          '<button type="button" class="presence-preview-toggle" aria-pressed="false">' +
+          'Preview</button>';
+        previewBlock = renderHtmlPreviewBlock(text);
+      }
       if (isCollapsiblePresenceText(text)) {
         return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
           ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
+          '<div class="presence-text-toolbar">' + previewToggle + '</div>' +
+          previewBlock +
           '<pre class="presence-pre">' + esc(text) + '</pre></details>';
       }
       // Short single-line fields (format, syntax, …) stay inline expanded.
@@ -496,17 +522,59 @@ function pageClientScriptPartBDiffView(): string {
   }
 
   function renderPresenceNode(n, kind) {
-    var title = kind === 'added' ? 'Node added' : 'Node removed';
     var open = kind === 'added' ? ' open' : '';
-    var props = (n.properties || []).map(renderPresenceProperty).join('');
-    return '<details class="node-presence node-' + kind + '"' + open + '>' +
-      '<summary><strong>' + title + '</strong> · ' +
-      '<code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' +
-      presenceLabel(n) + '</summary>' +
-      '<div class="presence-body">' + (props || '<p class="muted">No properties.</p>') +
+    var summaryText = n.summary
+      ? esc(n.summary)
+      : ((kind === 'added' ? 'Node added' : 'Node removed') +
+        (n.name ? ' · ' + esc(n.name) : '') +
+        ' · ' + esc(n.type || '?'));
+    var keyFields = (n.keyFields || []).map(renderPresenceProperty).join('');
+    var allProps = (n.properties || []).map(renderPresenceProperty).join('');
+    var body =
+      (keyFields ? '<div class="presence-key-fields">' + keyFields + '</div>' : '') +
+      '<details class="presence-all-props">' +
+      '<summary>All properties</summary>' +
+      '<div class="presence-all-body">' +
+      (allProps || '<p class="muted">No properties.</p>') +
       '</div></details>';
+    return '<details class="node-presence node-' + kind + '"' + open + '>' +
+      '<summary><span class="presence-summary-text">' + summaryText + '</span> · ' +
+      '<code class="id-short muted" title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code>' +
+      '</summary>' +
+      '<div class="presence-body">' + body + '</div></details>';
   }
 
+  function bindPresencePreviewToggles(host) {
+    if (!host) return;
+    host.querySelectorAll('.presence-preview-toggle').forEach(function (btn) {
+      if (btn.getAttribute('data-bound') === '1') return;
+      btn.setAttribute('data-bound', '1');
+      btn.addEventListener('click', function () {
+        var wrap = btn.closest('.presence-text') || btn.parentElement;
+        if (!wrap) return;
+        var preview = wrap.querySelector('.presence-preview-host');
+        var code = wrap.querySelector('.presence-pre');
+        if (!preview) return;
+        var show = preview.hasAttribute('hidden');
+        if (show) {
+          preview.removeAttribute('hidden');
+          if (code) code.setAttribute('hidden', '');
+          btn.setAttribute('aria-pressed', 'true');
+          btn.textContent = 'Code';
+        } else {
+          preview.setAttribute('hidden', '');
+          if (code) code.removeAttribute('hidden');
+          btn.setAttribute('aria-pressed', 'false');
+          btn.textContent = 'Preview';
+        }
+      });
+    });
+  }
+`;
+}
+
+function pageClientScriptPartBDiffView(): string {
+  return `
   function renderPropertyChange(ch, mode) {
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
@@ -642,8 +710,13 @@ function pageClientScriptPartB2(): string {
             createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
           }
         }
-        return '<article class="proposal-detail" data-id="' + esc(p.id) + '">' +
-          '<strong title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</strong> · <code>' + esc(p.status) + '</code><br/>' +
+        var heading = p.displayName
+          ? esc(p.displayName)
+          : (p.title ? esc(p.title) : tipId(p.id, 12));
+        return '<article class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) + '">' +
+          '<h3 class="proposal-heading">' + heading +
+          ' · <code>' + esc(p.status) + '</code></h3>' +
+          '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
           '<span class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
           ' · created ' + esc(fmtCompact(p.createdAt)) +
@@ -662,8 +735,47 @@ function pageClientScriptPartB2(): string {
         btn.addEventListener('click', function () { rejectProposal(btn.getAttribute('data-id')); });
       });
       proposals.forEach(function (p) { loadProposalDiff(p.id); });
+      focusProposalFromHash();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+    }
+  }
+
+  function readProposalHashId() {
+    try {
+      var hash = String(location.hash || '');
+      var m = hash.match(/^#proposal=([^&]+)/);
+      if (!m) return '';
+      return decodeURIComponent(m[1]);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function selectTab(target) {
+    document.querySelectorAll('nav.tabs button').forEach(function (b) {
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
+    });
+    document.querySelectorAll('section.panel').forEach(function (sec) {
+      sec.classList.toggle('active', sec.id === 'section-' + target);
+    });
+  }
+
+  function focusProposalFromHash() {
+    var id = readProposalHashId();
+    if (!id) return;
+    selectTab('proposals');
+    var el = document.getElementById('proposal-' + id) ||
+      document.querySelector('.proposal-detail[data-id="' + id + '"]');
+    if (!el) return;
+    document.querySelectorAll('.proposal-detail.proposal-highlight').forEach(function (node) {
+      node.classList.remove('proposal-highlight');
+    });
+    el.classList.add('proposal-highlight');
+    try {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      el.scrollIntoView(true);
     }
   }
 
@@ -675,6 +787,7 @@ function pageClientScriptPartB2(): string {
         setDiffMode(mode);
         host.innerHTML = renderDiffView(diff, mode);
         bindDiffModeToggle(host, diff);
+        bindPresencePreviewToggles(host);
       });
     });
   }
@@ -686,6 +799,7 @@ function pageClientScriptPartB2(): string {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
       host.innerHTML = renderDiffView(diff);
       bindDiffModeToggle(host, diff);
+      bindPresencePreviewToggles(host);
     } catch (e) {
       host.innerHTML = '<p class="muted">Could not load diff: ' + esc(e.message || String(e)) + '</p>';
     }
@@ -858,6 +972,9 @@ function pageClientScriptPartD(): string {
         if (canManage) loadLinks();
         loadProposals();
         loadLogs();
+        if (readProposalHashId()) {
+          selectTab('proposals');
+        }
       }
     } catch (e) {
       showFlash($('boot-flash'), e.message || String(e), false);
@@ -881,6 +998,13 @@ function pageClientScriptPartD(): string {
     logsFilter.addEventListener('change', applyLogFilter);
   }
 
+  window.addEventListener('hashchange', function () {
+    if (readProposalHashId()) {
+      selectTab('proposals');
+      focusProposalFromHash();
+    }
+  });
+
   boot();
 })();
 `;
@@ -894,6 +1018,7 @@ export function pageClientScript(): string {
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
     pageClientScriptPartBDiff() +
+    pageClientScriptPartBDiffPresence() +
     pageClientScriptPartBDiffView() +
     pageClientScriptPartB2() +
     pageClientScriptPartC() +

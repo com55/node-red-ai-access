@@ -88,11 +88,19 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/Node added/);
     expect(client).toMatch(/Node removed/);
     expect(client).toMatch(/renderPresenceNode/);
+    expect(client).toMatch(/presence-all-props|All properties/);
+    expect(client).toMatch(/presence-preview-toggle|Preview/);
+    expect(client).toMatch(/sandbox=""/);
+    expect(client).toMatch(/displayName|proposal-heading/);
+    expect(client).toMatch(/#proposal=/);
+    expect(client).toMatch(/focusProposalFromHash|proposal-highlight/);
     expect(client).toMatch(/vsCurrent|vs current flow/i);
     expect(client).toMatch(/base snapshot/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/\.node-presence/);
     expect(styles).toMatch(/\.presence-pre/);
+    expect(styles).toMatch(/\.presence-preview-frame/);
+    expect(styles).toMatch(/\.proposal-highlight/);
   });
 });
 

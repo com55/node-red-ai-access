@@ -56,16 +56,23 @@ export interface PresenceProperty {
   key: string;
   kind: 'scalar' | 'text';
   value: unknown;
+  /** When set, UI may offer a sandboxed HTML preview alongside the code. */
+  preview?: 'html';
 }
 
 /**
- * Added or removed node as one block: identity + properties (not per-field
- * before→null rows).
+ * Added or removed node as one block: summary sentence + key fields + full
+ * property list (for “All properties”).
  */
 export interface PresenceNodeDiff {
   id: string;
   type: string;
   name?: string;
+  /** Human sentence, e.g. Adds template node "demo-html" to flow "Test Flow". */
+  summary: string;
+  /** Highlighted fields (name, wires by node name, code/HTML). */
+  keyFields: PresenceProperty[];
+  /** Full property list (technical dump under “All properties”). */
   properties: PresenceProperty[];
 }
 
@@ -151,31 +158,132 @@ function asText(value: unknown): string | null {
   return null;
 }
 
+function looksLikeHtml(text: string): boolean {
+  return /<\/?[a-z][\s\S]*>/i.test(text.slice(0, 800));
+}
+
+function isHtmlTemplateField(node: FlowNode, key: string, text: string): boolean {
+  if (key !== 'template') {
+    return false;
+  }
+  const format = typeof node.format === 'string' ? node.format.toLowerCase() : '';
+  if (format === 'html' || format === 'handlebars' || format === 'mustache') {
+    return true;
+  }
+  return looksLikeHtml(text);
+}
+
+function toPresenceProperty(node: FlowNode, key: string, value: unknown): PresenceProperty {
+  const text = asText(value);
+  if (TEXT_PROPERTY_KEYS.has(key) && text !== null) {
+    const prop: PresenceProperty = { key, kind: 'text', value: text };
+    if (isHtmlTemplateField(node, key, text)) {
+      prop.preview = 'html';
+    }
+    return prop;
+  }
+  return {
+    key,
+    kind: 'scalar',
+    value: value === undefined ? null : value,
+  };
+}
+
 function nodeProperties(node: FlowNode): PresenceProperty[] {
   const properties: PresenceProperty[] = [];
   for (const key of [...Object.keys(node)].sort()) {
     if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
       continue;
     }
-    const value = node[key];
-    const text = asText(value);
-    if (TEXT_PROPERTY_KEYS.has(key) && text !== null) {
-      properties.push({ key, kind: 'text', value: text });
-      continue;
-    }
-    properties.push({
-      key,
-      kind: 'scalar',
-      value: value === undefined ? null : value,
-    });
+    properties.push(toPresenceProperty(node, key, node[key]));
   }
   return properties;
 }
 
-function toPresenceNode(node: FlowNode): PresenceNodeDiff {
+/** Resolve wire target ids to human node names when possible. */
+function describeWires(node: FlowNode, allNodes: Map<string, FlowNode>): string | undefined {
+  const wires = node.wires;
+  if (!Array.isArray(wires) || wires.length === 0) {
+    return undefined;
+  }
+  const labels: string[] = [];
+  for (const port of wires) {
+    if (!Array.isArray(port)) {
+      continue;
+    }
+    for (const targetId of port) {
+      if (typeof targetId !== 'string' || !targetId) {
+        continue;
+      }
+      const target = allNodes.get(targetId);
+      if (target) {
+        labels.push(nodeName(target) ?? target.type);
+      } else {
+        labels.push(targetId);
+      }
+    }
+  }
+  return labels.length > 0 ? labels.join(', ') : undefined;
+}
+
+const KEY_FIELD_TEXT_KEYS = new Set(['func', 'template', 'code', 'text']);
+
+function buildKeyFields(node: FlowNode, allNodes: Map<string, FlowNode>): PresenceProperty[] {
+  const fields: PresenceProperty[] = [];
+  const name = nodeName(node);
+  if (name) {
+    fields.push({ key: 'name', kind: 'scalar', value: name });
+  }
+  const wireLabels = describeWires(node, allNodes);
+  if (wireLabels) {
+    fields.push({ key: 'wires', kind: 'scalar', value: wireLabels });
+  }
+  for (const key of KEY_FIELD_TEXT_KEYS) {
+    if (!(key in node)) {
+      continue;
+    }
+    const text = asText(node[key]);
+    if (text === null || text.length === 0) {
+      continue;
+    }
+    fields.push(toPresenceProperty(node, key, text));
+  }
+  return fields;
+}
+
+function buildPresenceSummary(
+  node: FlowNode,
+  kind: 'added' | 'removed',
+  flowLabel: string
+): string {
+  const type = node.type || 'node';
+  const name = nodeName(node);
+  const verb = kind === 'added' ? 'Adds' : 'Removes';
+  const prep = kind === 'added' ? 'to' : 'from';
+  const namePart = name ? ` ${JSON.stringify(name)}` : '';
+  const flowPart = flowLabel ? ` ${prep} flow ${JSON.stringify(flowLabel)}` : '';
+  let sentence = `${verb} ${type} node${namePart}${flowPart}`;
+
+  if (kind === 'added' && type === 'template') {
+    const field = typeof node.field === 'string' && node.field ? node.field : '';
+    if (field) {
+      sentence += `, output to msg.${field}`;
+    }
+  }
+  return sentence;
+}
+
+function toPresenceNode(
+  node: FlowNode,
+  kind: 'added' | 'removed',
+  flowLabel: string,
+  allNodes: Map<string, FlowNode>
+): PresenceNodeDiff {
   const entry: PresenceNodeDiff = {
     id: node.id,
     type: node.type,
+    summary: buildPresenceSummary(node, kind, flowLabel),
+    keyFields: buildKeyFields(node, allNodes),
     properties: nodeProperties(node),
   };
   const name = nodeName(node);
@@ -235,12 +343,18 @@ function compareTabMeta(before: Partial<FlowTab>, after: Partial<FlowTab>): stri
 /**
  * Pure compare of a proposed flow tab against a before (base or live) tab.
  */
+function flowLabelOf(flow: Partial<FlowTab>): string {
+  return typeof flow.label === 'string' && flow.label.trim() ? flow.label.trim() : '';
+}
+
 export function buildDiffSections(
   afterFlow: Partial<FlowTab>,
   beforeFlow: Partial<FlowTab>
 ): DiffSections {
   const beforeNodes = collectNodes(beforeFlow);
   const afterNodes = collectNodes(afterFlow);
+  const afterLabel = flowLabelOf(afterFlow) || flowLabelOf(beforeFlow);
+  const beforeLabel = flowLabelOf(beforeFlow) || flowLabelOf(afterFlow);
 
   const added: PresenceNodeDiff[] = [];
   const removed: PresenceNodeDiff[] = [];
@@ -248,12 +362,12 @@ export function buildDiffSections(
 
   for (const [id, node] of afterNodes) {
     if (!beforeNodes.has(id)) {
-      added.push(toPresenceNode(node));
+      added.push(toPresenceNode(node, 'added', afterLabel, afterNodes));
     }
   }
   for (const [id, node] of beforeNodes) {
     if (!afterNodes.has(id)) {
-      removed.push(toPresenceNode(node));
+      removed.push(toPresenceNode(node, 'removed', beforeLabel, beforeNodes));
     }
   }
   for (const [id, after] of afterNodes) {

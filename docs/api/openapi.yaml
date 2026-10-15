@@ -468,6 +468,12 @@ paths:
         `version_mismatch` if stale). On approve, a stale revision marks the
         proposal `rejected` with a resubmit message (no deploy).
 
+        Optional `title` (≤80 chars) is stored as a human-friendly label; when
+        omitted it is auto-generated from the change set. Responses always
+        include `title`, `displayName` (`title ·` local submitted time), and
+        `reviewUrl` (`/mcp#proposal=<id>`). AI clients should cite
+        `displayName` + `reviewUrl` to users (not the raw id).
+
         `payload.flow` must be a tab object (`id`, `type`, `label?`, `nodes[]`,
         optional `configs[]`). Payloads over 1_500_000 bytes return **413**.
       operationId: createProposal
@@ -1130,6 +1136,9 @@ components:
         - createdBy
         - createdAt
         - updatedAt
+        - title
+        - displayName
+        - reviewUrl
       properties:
         id:
           type: string
@@ -1148,6 +1157,23 @@ components:
             Flow tab snapshot at `expectedRev` when the proposal was submitted.
             Diffs compare `payload.flow` against this base. Omitted on legacy
             proposals created before this field existed.
+        title:
+          type: string
+          maxLength: 80
+          description: |
+            Short human title. Set at submit (AI-supplied or auto-generated).
+            Always present on API responses (resolved for legacy rows).
+        displayName:
+          type: string
+          description: |
+            `title · <submitted datetime>` in Node-RED server local time
+            (e.g. `Edit fn1 (function) · 16 Oct 01:35`). Prefer this when
+            referring to the proposal with a human.
+        reviewUrl:
+          type: string
+          description: |
+            Relative deep link `/mcp#proposal=<id>` that opens the admin page,
+            switches to Proposals, and scrolls/highlights this item.
         createdBy:
           $ref: '#/components/schemas/ProposalCreator'
         createdAt:
@@ -1211,11 +1237,18 @@ components:
         expected_rev:
           type: string
           description: Alias for expectedRev
+        title:
+          type: string
+          maxLength: 80
+          description: |
+            Optional short human title (≤80 chars, sanitized). Auto-generated
+            from the change set when omitted.
         payload:
           $ref: '#/components/schemas/ReplaceFlowPayload'
       example:
         type: replace_flow
         expectedRev: 'abc123rev'
+        title: Rename inject to Hello
         payload:
           flowId: tab1
           flow:
@@ -1305,12 +1338,17 @@ components:
           type: string
           enum: [scalar, text]
         value: {}
+        preview:
+          type: string
+          enum: [html]
+          description: When set, the /mcp UI may offer a sandboxed HTML preview.
 
     ProposalDiffPresenceNode:
       type: object
-      required: [id, type, properties]
+      required: [id, type, summary, keyFields, properties]
       description: |
-        Added or removed node as one block (UI: "Node added" / "Node removed").
+        Added or removed node as one readable block: summary sentence, key
+        fields (name, wires by node name, code/HTML), and full properties.
       properties:
         id:
           type: string
@@ -1318,8 +1356,17 @@ components:
           type: string
         name:
           type: string
+        summary:
+          type: string
+          description: |
+            Human sentence, e.g. Adds template node "demo-html" to flow "Test Flow".
+        keyFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffPresenceProperty'
         properties:
           type: array
+          description: 'Full property list (UI: under All properties).'
           items:
             $ref: '#/components/schemas/ProposalDiffPresenceProperty'
 

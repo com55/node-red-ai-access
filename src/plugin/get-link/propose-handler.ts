@@ -63,6 +63,7 @@ export function getLinkProposeHandler(
     const rev = queryString(req.query, 'rev');
     const nodeId = queryString(req.query, 'node');
     const summary = queryString(req.query, 'summary');
+    const titleParam = queryString(req.query, 'title') ?? summary;
     const patchEncoded = queryString(req.query, 'patch');
     const setProps = collectSetProps(req.query);
 
@@ -167,6 +168,7 @@ export function getLinkProposeHandler(
           type: 'replace_flow',
           expectedRev,
           payload: { flowId: builtFlowId, flow: builtFlow },
+          ...(titleParam ? { title: titleParam } : {}),
         },
         flowAdapter
       );
@@ -174,7 +176,9 @@ export function getLinkProposeHandler(
         ok: true,
         proposal,
         ...(summary ? { summary } : {}),
-        hint: 'Waiting for human approval on /mcp. Poll GET …/proposals/<id>.',
+        hint:
+          `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
+          `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,
       });
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);

@@ -49,6 +49,11 @@ export interface Proposal {
    * Optional on legacy proposals created before this field existed.
    */
   baseFlow?: Partial<FlowTab>;
+  /**
+   * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
+   * Optional on legacy proposals; API responses always resolve a title.
+   */
+  title?: string;
   createdBy: ProposalCreator;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +69,8 @@ export interface CreateProposalInput {
   /** Live flow tab at expectedRev (stored for stable diffs). */
   baseFlow: Partial<FlowTab>;
   createdBy: ProposalCreator;
+  /** Sanitized short title (≤80 chars). */
+  title: string;
 }
 
 export class ProposalNotFoundError extends Error {
@@ -161,6 +168,12 @@ export class ProposalStore {
     if (baseFlow !== undefined) {
       record.baseFlow = baseFlow;
     }
+    if (typeof proposal.title === 'string' && proposal.title.length > 0) {
+      record.title = proposal.title.replace(/\0/g, '').slice(0, 80).trim();
+      if (!record.title) {
+        delete record.title;
+      }
+    }
 
     if (proposal.decidedBy) {
       const decidedBy: ProposalDecisionBy = { kind: 'admin' };
@@ -201,6 +214,7 @@ export class ProposalStore {
         flow: input.payload.flow,
       },
       baseFlow: input.baseFlow,
+      title: input.title,
       createdBy: input.createdBy,
       createdAt: at,
       updatedAt: at,
