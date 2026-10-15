@@ -108,6 +108,58 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /settings:
+    get:
+      tags: [Status]
+      summary: Get effective AI Access settings
+      description: |
+        Returns effective settings with precedence metadata
+        (`disk` → `settings.js` → built-in defaults). Admin `read` or `*`.
+        `read` users get `canEdit: false`; `*` can PUT.
+      operationId: getAiAccessSettings
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Effective settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAccessSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [Status]
+      summary: Update AI Access settings (persist to disk)
+      description: |
+        Requires `*`. Writes `<userDir>/.ai-access/settings.json` and applies
+        immediately (no restart). Partial body merges into existing disk
+        overrides.
+      operationId: putAiAccessSettings
+      security:
+        - AdminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiAccessSettingsPatch'
+      responses:
+        '200':
+          description: Updated effective settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiAccessSettingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
   /links:
     get:
       tags: [Access links]
@@ -618,12 +670,89 @@ components:
             currentRev:
               type: string
 
+    AiAccessSettingsPatch:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        allowWithoutAdminAuth:
+          type: boolean
+        defaultLinkTtlSeconds:
+          type: integer
+          minimum: 1
+        defaultDeploymentType:
+          $ref: '#/components/schemas/DeploymentType'
+        maxActiveLinks:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+
+    AiAccessSettingsResponse:
+      type: object
+      required:
+        - ok
+        - adminAuthEnabled
+        - canEdit
+        - mcpPageUrl
+        - settings
+        - sources
+        - precedence
+      properties:
+        ok:
+          type: boolean
+        adminAuthEnabled:
+          type: boolean
+        canEdit:
+          type: boolean
+        permission:
+          oneOf:
+            - type: string
+              enum: [read, '*']
+            - type: 'null'
+        mcpPageUrl:
+          type: string
+        apiBase:
+          type: string
+        settings:
+          type: object
+          required:
+            - enabled
+            - allowWithoutAdminAuth
+            - defaultLinkTtlSeconds
+            - defaultDeploymentType
+            - maxActiveLinks
+          properties:
+            enabled:
+              type: boolean
+            allowWithoutAdminAuth:
+              type: boolean
+            defaultLinkTtlSeconds:
+              type: integer
+            defaultDeploymentType:
+              $ref: '#/components/schemas/DeploymentType'
+            maxActiveLinks:
+              type: integer
+        sources:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [default, settings.js, disk]
+        disk:
+          type: object
+          additionalProperties: true
+        precedence:
+          type: array
+          items:
+            type: string
+          description: Highest-wins order for effective values
+
     Status:
       type: object
       required:
         - ok
         - version
         - adminAuthEnabled
+        - aiAccessEnabled
         - aiFeaturesEnabled
         - allowWithoutAdminAuth
         - permission
@@ -639,6 +768,9 @@ components:
           type: string
         adminAuthEnabled:
           type: boolean
+        aiAccessEnabled:
+          type: boolean
+          description: Master switch from resolved settings (disk / settings.js)
         aiFeaturesEnabled:
           type: boolean
         allowWithoutAdminAuth:

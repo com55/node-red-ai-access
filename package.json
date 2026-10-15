@@ -25,6 +25,7 @@
     "dist",
     "docs/api/openapi.yaml",
     "ai-access.cjs",
+    "ai-access.html",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

@@ -9,6 +9,11 @@ import type { Express, NextFunction, Request, Response } from 'express';
  */
 export interface AiAccessSettings {
   /**
+   * Master switch. When false, AI features stay off even with adminAuth.
+   * Default: true. Editable from the editor User Settings tab.
+   */
+  enabled?: boolean;
+  /**
    * When adminAuth is not configured, AI features stay off unless this is true
    * (intended for local-only setups).
    */
@@ -46,6 +51,8 @@ export interface AiAccessStatus {
   ok: boolean;
   version: string;
   adminAuthEnabled: boolean;
+  /** Effective master switch (settings.js / disk). */
+  aiAccessEnabled: boolean;
   aiFeaturesEnabled: boolean;
   allowWithoutAdminAuth: boolean;
   /**

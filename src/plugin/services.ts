@@ -13,10 +13,11 @@ import type { FlowAdapter, RedRuntimeHost } from '../runtime/types.js';
 import { AuditLog } from '../storage/audit-log.js';
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../storage/paths.js';
 import { ProposalStore } from '../storage/proposals.js';
+import { SettingsStore } from '../storage/settings-store.js';
 
 import { createConfiguredLinkStore } from './links.js';
 import { ProposalService } from './proposal-service.js';
-import { isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
+import { bindSettingsStore, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type { NodeRedPluginAPI } from './types.js';
 
 /** Adapter that fails every call with a clear misconfiguration error. */
@@ -36,11 +37,15 @@ export interface PluginServices {
   auditLog: AuditLog;
   flowAdapter: FlowAdapter;
   proposalService: ProposalService;
+  settingsStore: SettingsStore;
 }
 
 export interface CreatePluginServicesOptions {
   flowAdapter?: FlowAdapter;
   linkStore?: AccessLinkStore;
+  settingsStore?: SettingsStore;
+  /** When false, do not bind the process-wide settings store (tests). Default true. */
+  bindSettings?: boolean;
 }
 
 function localAdminBaseUrl(RED: NodeRedPluginAPI): string {
@@ -61,7 +66,16 @@ export function createPluginServices(
   const aiPaths = resolveAiAccessPaths(RED.settings.userDir);
   ensureAiAccessDirs(aiPaths);
 
+  const settingsStore = options.settingsStore ?? new SettingsStore(aiPaths, RED.settings.aiAccess);
+  if (options.bindSettings !== false) {
+    bindSettingsStore(settingsStore);
+  }
+
   const linkStore = options.linkStore ?? createConfiguredLinkStore(RED);
+  linkStore.configureDefaults({
+    defaultTtlSeconds: settingsStore.getEffective().defaultLinkTtlSeconds,
+    maxActiveLinks: settingsStore.getEffective().maxActiveLinks,
+  });
   const proposalStore = new ProposalStore(aiPaths);
   const auditLog = new AuditLog(aiPaths);
   let flowAdapter: FlowAdapter;
@@ -92,5 +106,12 @@ export function createPluginServices(
     () => resolveAiAccessSettings(RED.settings).defaultDeploymentType
   );
 
-  return { linkStore, proposalStore, auditLog, flowAdapter, proposalService };
+  return {
+    linkStore,
+    proposalStore,
+    auditLog,
+    flowAdapter,
+    proposalService,
+    settingsStore,
+  };
 }
