@@ -18,7 +18,7 @@ import {
   requireStarPermission,
 } from './auth.js';
 import { getFlowHandler, listFlowsHandler } from './flows-routes.js';
-import { mcpJsonErrorHandler } from './json-errors.js';
+import { attachMcpJsonErrorHandlers } from './json-errors.js';
 import {
   createConfiguredLinkStore,
   createLinkHandler,
@@ -169,8 +169,9 @@ export function registerRoutes(
     listLogsHandler(services.auditLog)
   );
 
-  // JSON / JSON-RPC errors for /mcp* (no HTML stack traces).
-  RED.httpAdmin.use(mcpJsonErrorHandler());
+  // JSON / JSON-RPC errors for /mcp* on plugin + parent editor-api apps
+  // (body-parser lives on the parent; nested runtime.adminApp alone never sees it).
+  attachMcpJsonErrorHandlers(RED);
 }
 
 /**

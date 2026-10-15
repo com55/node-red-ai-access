@@ -77,9 +77,35 @@ export function capabilitiesFor(
 }
 
 /**
+ * `RED.auth.needsPermission` uses passport; when all strategies fail it sends
+ * plain-text `Unauthorized` via `res.end` and never calls next. For API mode,
+ * intercept that 401 and rewrite it as JSON with a stable `code`.
+ */
+function interceptNeedsPermissionUnauthorized(res: Response): () => void {
+  const originalEnd = res.end.bind(res) as (...args: unknown[]) => unknown;
+  let active = true;
+
+  res.end = ((...args: unknown[]) => {
+    if (active && res.statusCode === 401 && !res.headersSent) {
+      active = false;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return originalEnd(
+        JSON.stringify({ error: 'Authentication required', code: 'auth_required' })
+      );
+    }
+    return originalEnd(...args);
+  }) as typeof res.end;
+
+  return () => {
+    active = false;
+    res.end = originalEnd as typeof res.end;
+  };
+}
+
+/**
  * Require a logged-in admin user when adminAuth is enabled.
  * Unauthenticated page hits redirect to httpAdminRoot (editor login).
- * Unauthenticated API hits return 401.
+ * Unauthenticated API hits return 401 JSON `{ code: 'auth_required' }`.
  *
  * When adminAuth is off, requests continue; AI feature enablement is enforced
  * separately via settings (see areAiFeaturesEnabled).
@@ -93,7 +119,10 @@ export function requireAdminSession(RED: NodeRedPluginAPI, mode: AdminGateMode) 
       return;
     }
 
+    const restoreEnd = mode === 'api' ? interceptNeedsPermissionUnauthorized(res) : null;
+
     RED.auth.needsPermission(permissionNeeded)(req, res, (err?: unknown) => {
+      restoreEnd?.();
       if (err) {
         next(err as Error);
         return;
