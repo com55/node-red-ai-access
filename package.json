@@ -27,6 +27,7 @@
   },
   "files": [
     "dist",
+    "docs/api/openapi.yaml",
     "ai-access.cjs",
     "README.md",
     "LICENSE",

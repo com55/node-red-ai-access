@@ -23,6 +23,7 @@ import {
   revokeLinkHandler,
 } from './links.js';
 import { listLogsHandler } from './logs-routes.js';
+import { openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import {
   approveProposalHandler,
@@ -84,6 +85,9 @@ export function registerRoutes(
       res.json(buildStatus(RED, req));
     }
   );
+
+  // Documentation only — no admin session required.
+  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
 
   const linkGuards = [
     limiter,
