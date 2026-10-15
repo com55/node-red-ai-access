@@ -7,7 +7,6 @@ import WebSocket from 'ws';
 
 import { SSEHandler } from '../server/sse-handler.js';
 import {
-  NodeRedFlowEvent,
   NodeRedNodeEvent,
   NodeRedRuntimeEvent,
   NodeRedStatusEvent,
@@ -31,8 +30,29 @@ export interface NodeRedWsConfig {
 // two-element array in one WebSocket message).
 interface CommsMessage {
   topic?: string;
-  data?: any;
+  data?: unknown;
   auth?: 'ok' | 'fail';
+}
+
+function asCommsFrames(parsed: unknown): CommsMessage[] {
+  if (Array.isArray(parsed)) {
+    return parsed.filter(
+      (item): item is CommsMessage => typeof item === 'object' && item !== null
+    );
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    return [parsed];
+  }
+  return [];
+}
+
+function readDataRecord(data: unknown): Record<string, unknown> {
+  return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
+}
+
+function readStringField(data: Record<string, unknown>, key: string): string | undefined {
+  const value = data[key];
+  return typeof value === 'string' ? value : undefined;
 }
 
 export class NodeRedWsClient {
@@ -104,8 +124,9 @@ export class NodeRedWsClient {
       // Node-RED's /comms auth is entirely in-band: the connection headers
       // above do nothing for Node-RED's own adminAuth. Per Node-RED's docs,
       // the client must send { auth: "<token>" } as its first message.
-      if (token) {
-        this.ws!.send(JSON.stringify({ auth: token }));
+      const socket = this.ws;
+      if (token && socket) {
+        socket.send(JSON.stringify({ auth: token }));
       }
     });
 
@@ -115,8 +136,7 @@ export class NodeRedWsClient {
         const parsed: unknown = JSON.parse(raw.toString());
         // Node-RED batches multiple events into a JSON array per WS message;
         // the auth handshake reply is always a single flat object.
-        const frames: CommsMessage[] = Array.isArray(parsed) ? parsed : [parsed];
-        for (const msg of frames) {
+        for (const msg of asCommsFrames(parsed)) {
           this._handleMessage(msg);
         }
       } catch {
@@ -167,6 +187,7 @@ export class NodeRedWsClient {
     if (typeof msg.topic !== 'string') return;
     const { topic, data } = msg;
     const timestamp = new Date().toISOString();
+    const record = readDataRecord(data);
 
     if (topic.startsWith('status/')) {
       const nodeId = topic.slice('status/'.length);
@@ -176,9 +197,9 @@ export class NodeRedWsClient {
         data: {
           id: nodeId,
           status: {
-            fill: data?.fill,
-            shape: data?.shape,
-            text: data?.text,
+            fill: readStringField(record, 'fill') as NodeRedStatusEvent['data']['status']['fill'],
+            shape: readStringField(record, 'shape') as NodeRedStatusEvent['data']['status']['shape'],
+            text: readStringField(record, 'text'),
           },
         },
       };
@@ -191,7 +212,7 @@ export class NodeRedWsClient {
         type: 'node',
         timestamp,
         data: {
-          id: data?.id ?? 'unknown',
+          id: readStringField(record, 'id') ?? 'unknown',
           type: 'debug',
           event: 'output',
           msg: data,
@@ -202,7 +223,7 @@ export class NodeRedWsClient {
     }
 
     if (topic === 'notification/runtime-state') {
-      const state: string = data?.state ?? 'unknown';
+      const state = readStringField(record, 'state') ?? 'unknown';
       const event: NodeRedRuntimeEvent = {
         type: 'runtime',
         timestamp,
@@ -221,10 +242,10 @@ export class NodeRedWsClient {
         type: 'node',
         timestamp,
         data: {
-          id: data?.id ?? 'unknown',
-          type: data?.type ?? 'unknown',
+          id: readStringField(record, 'id') ?? 'unknown',
+          type: readStringField(record, 'type') ?? 'unknown',
           event: 'status',
-          msg: { action, ...data },
+          msg: { action, ...record },
         },
       };
       this.sseHandler.broadcast(event);

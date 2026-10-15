@@ -4,13 +4,12 @@
  * Comprehensive tests for the Node-RED API client service
  */
 
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, {  AxiosError } from 'axios';
 import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
 
 import {
   mockFlows,
   mockFlowTab,
-  mockFlowSummaries,
   mockFlowStatus,
   mockCreatedFlow,
   mockDisabledFlow,
@@ -20,17 +19,12 @@ import {
 } from '../../test/fixtures/flows.js';
 import {
   mockSettings,
-  mockRuntimeInfo,
   mockDiagnosticsReport,
   mockNodeTypes,
-  mockInstalledModules,
-  mockSearchResult,
-  mockInstallSuccess,
   mockNpmSearchResponse,
   mockErrorResponses,
   mockGlobalContext,
   mockLibraryEntries,
-  mockHealthCheck,
   mockAuthToken,
   mockAuthStatus,
 } from '../../test/fixtures/responses.js';
@@ -1274,7 +1268,7 @@ describe('NodeRedAPIClient', () => {
       it('should get specific flow context key', async () => {
         mockAxiosInstance.get.mockResolvedValueOnce({ data: { flowVar: 'value' } });
 
-        const context = await client.getFlowContext('flow-1', 'flowVar');
+        const _context = await client.getFlowContext('flow-1', 'flowVar');
 
         expect(mockAxiosInstance.get).toHaveBeenCalledWith('/context/flow/flow-1/flowVar');
       });
@@ -1307,7 +1301,7 @@ describe('NodeRedAPIClient', () => {
       it('should get library entries with custom type', async () => {
         mockAxiosInstance.get.mockResolvedValueOnce({ data: mockLibraryEntries });
 
-        const entries = await client.getLibraryEntries('functions');
+        const _entries = await client.getLibraryEntries('functions');
 
         expect(mockAxiosInstance.get).toHaveBeenCalledWith('/library/functions');
       });

@@ -7,14 +7,34 @@
 import { SSEHandler } from '../server/sse-handler.js';
 import {
   NodeRedFlowEvent,
-  NodeRedNodeEvent,
   NodeRedRuntimeEvent,
   NodeRedStatusEvent,
-  NodeRedErrorEvent,
 } from '../types/nodered.js';
 
 import { NodeRedAPIClient } from './nodered-api.js';
 import { NodeRedWsClient } from './nodered-ws-client.js';
+
+type StatusFill = NonNullable<NodeRedStatusEvent['data']['status']['fill']>;
+type StatusShape = NonNullable<NodeRedStatusEvent['data']['status']['shape']>;
+
+const STATUS_FILLS = new Set<string>(['red', 'green', 'yellow', 'blue', 'grey']);
+const STATUS_SHAPES = new Set<string>(['ring', 'dot']);
+
+function toStatusFill(value: string | undefined): StatusFill | undefined {
+  return value !== undefined && STATUS_FILLS.has(value) ? (value as StatusFill) : undefined;
+}
+
+function toStatusShape(value: string | undefined): StatusShape | undefined {
+  return value !== undefined && STATUS_SHAPES.has(value) ? (value as StatusShape) : undefined;
+}
+
+function baseURLFromClient(client: NodeRedAPIClient): string {
+  return client
+    .getCommsWsUrl()
+    .replace(/\/comms$/, '')
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://');
+}
 
 export class NodeRedEventListener {
   private sseHandler: SSEHandler;
@@ -27,10 +47,7 @@ export class NodeRedEventListener {
     if (wsClient) {
       this.wsClient = wsClient;
     } else {
-      const baseURL =
-        (nodeRedClient as any).config?.baseURL ??
-        process.env.NODERED_URL ??
-        'http://localhost:1880';
+      const baseURL = baseURLFromClient(nodeRedClient);
       this.wsClient = new NodeRedWsClient(sseHandler, {
         baseURL,
         onEvent: () => {
@@ -83,7 +100,7 @@ export class NodeRedEventListener {
       type: 'flow',
       timestamp: new Date().toISOString(),
       data: {
-        id: flowId || 'global',
+        id: flowId ?? 'global',
         event: 'deploy',
         message: flowId ? `Flow ${flowId} deployed` : 'All flows deployed',
       },
@@ -100,8 +117,8 @@ export class NodeRedEventListener {
       data: {
         id: nodeId,
         status: {
-          fill: status.fill as any,
-          shape: status.shape as any,
+          fill: toStatusFill(status.fill),
+          shape: toStatusShape(status.shape),
           text: status.text ?? undefined,
         },
       },

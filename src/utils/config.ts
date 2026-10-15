@@ -26,7 +26,7 @@ export class AppConfig {
 
       // Additional runtime validation
       this.validateConfiguration();
-    } catch (error) {
+    } catch {
       // Configuration validation failed - exit silently
       process.exit(1);
     }
@@ -36,9 +36,7 @@ export class AppConfig {
    * Get singleton instance of AppConfig
    */
   public static getInstance(): AppConfig {
-    if (!AppConfig.instance) {
-      AppConfig.instance = new AppConfig();
-    }
+    AppConfig.instance ??= new AppConfig();
     return AppConfig.instance;
   }
 

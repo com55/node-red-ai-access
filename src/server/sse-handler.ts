@@ -2,10 +2,9 @@
  * Server-Sent Events (SSE) handler for real-time Node-RED monitoring
  */
 
-import { Request, Response } from 'express';
+import {  Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 
-import { NodeRedEvent } from '../types/nodered.js';
 import {
   SSEConnection,
   SSEMessage,
@@ -15,9 +14,7 @@ import {
   SSEEvent,
   SSEHeartbeat,
   SSESystemInfo,
-  SSEConnectionStatus,
   SSEError,
-  SSEEventType,
   SSEClientInfo,
 } from '../types/sse.js';
 import { AuthRequest } from '../utils/auth.js';
@@ -31,12 +28,12 @@ export class SSEHandler {
 
   constructor(config: Partial<SSEConfig> = {}) {
     this.config = {
-      heartbeatInterval: parseInt(process.env.SSE_HEARTBEAT_INTERVAL || '30000'),
-      maxConnections: parseInt(process.env.SSE_MAX_CONNECTIONS || '100'),
-      retryTimeout: parseInt(process.env.SSE_RETRY_TIMEOUT || '5000'),
+      heartbeatInterval: parseInt(process.env.SSE_HEARTBEAT_INTERVAL ?? '30000'),
+      maxConnections: parseInt(process.env.SSE_MAX_CONNECTIONS ?? '100'),
+      retryTimeout: parseInt(process.env.SSE_RETRY_TIMEOUT ?? '5000'),
       compression: true,
       cors: {
-        origin: process.env.CORS_ORIGIN || '*',
+        origin: process.env.CORS_ORIGIN ?? '*',
         credentials: process.env.CORS_CREDENTIALS === 'true',
       },
       ...config,
@@ -66,8 +63,8 @@ export class SSEHandler {
     }
 
     const connectionId = uuidv4();
-    const userAgent = req.get('User-Agent') || 'unknown';
-    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const userAgent = req.get('User-Agent') ?? 'unknown';
+    const ip = (req.ip ?? req.connection.remoteAddress) ?? 'unknown';
 
     // Set SSE headers
     res.writeHead(200, {
@@ -165,7 +162,7 @@ export class SSEHandler {
 
       // Update stats
       this.stats.connectionsByEventType[eventType] =
-        (this.stats.connectionsByEventType[eventType] || 0) + 1;
+        (this.stats.connectionsByEventType[eventType] ?? 0) + 1;
     }
 
     connection.clientInfo.lastActivity = new Date();
@@ -185,15 +182,13 @@ export class SSEHandler {
 
     // Store filter if provided
     if (filter) {
-      if (!connection.filters) {
-        connection.filters = new Map();
-      }
+      connection.filters ??= new Map();
       connection.filters.set(eventType, filter);
     }
 
     // Update stats
     this.stats.connectionsByEventType[eventType] =
-      (this.stats.connectionsByEventType[eventType] || 0) + 1;
+      (this.stats.connectionsByEventType[eventType] ?? 0) + 1;
     connection.clientInfo.lastActivity = new Date();
   }
 
@@ -513,16 +508,26 @@ export class SSEHandler {
     }
 
     // For Node-RED events, check additional filters
-    if ('data' in event && typeof event.data === 'object') {
-      const eventData = event.data;
+    if ('data' in event && typeof event.data === 'object' && event.data !== null) {
+      const eventData = event.data as Record<string, unknown>;
+      const nodeId = eventData.id;
+      const flowId = eventData.flowId;
 
       // Filter by node IDs
-      if (filter.nodeIds && eventData.id && !filter.nodeIds.includes(eventData.id)) {
+      if (
+        filter.nodeIds &&
+        typeof nodeId === 'string' &&
+        !filter.nodeIds.includes(nodeId)
+      ) {
         return false;
       }
 
       // Filter by flow IDs
-      if (filter.flowIds && eventData.flowId && !filter.flowIds.includes(eventData.flowId)) {
+      if (
+        filter.flowIds &&
+        typeof flowId === 'string' &&
+        !filter.flowIds.includes(flowId)
+      ) {
         return false;
       }
     }

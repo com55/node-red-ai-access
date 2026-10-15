@@ -26,9 +26,9 @@ const BM25_K1 = 1.5;
 const BM25_B = 0.75;
 
 export class BM25Provider implements EmbeddingProvider {
-  async search(query: string, documents: IndexedDocument[], topK: number): Promise<SearchResult[]> {
+  search(query: string, documents: IndexedDocument[], topK: number): Promise<SearchResult[]> {
     const queryTerms = tokenize(query);
-    if (queryTerms.length === 0 || documents.length === 0) return [];
+    if (queryTerms.length === 0 || documents.length === 0) return Promise.resolve([]);
 
     const df = new Map<string, number>();
     const tokenizedDocs = documents.map(doc => {
@@ -58,13 +58,15 @@ export class BM25Provider implements EmbeddingProvider {
     });
 
     const maxScore = Math.max(...raw.map(r => r.score));
-    if (maxScore <= 0) return [];
+    if (maxScore <= 0) return Promise.resolve([]);
 
-    return raw
-      .filter(r => r.score > 0)
-      .map(r => ({ ...r, score: r.score / maxScore }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+    return Promise.resolve(
+      raw
+        .filter(r => r.score > 0)
+        .map(r => ({ ...r, score: r.score / maxScore }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK)
+    );
   }
 }
 
@@ -72,10 +74,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0,
     na = 0,
     nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i]! * b[i]!;
-    na += a[i]! * a[i]!;
-    nb += b[i]! * b[i]!;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    dot += ai * bi;
+    na += ai * ai;
+    nb += bi * bi;
   }
   return na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
@@ -90,10 +95,10 @@ export class ExternalApiProvider implements EmbeddingProvider {
     if (documents.length === 0) return [];
     const texts = [query, ...documents.map(d => d.text)];
     const embeddings = await this.embed(texts);
-    const queryVec = embeddings[0]!;
+    const queryVec = embeddings[0] ?? [];
     const raw = documents.map((doc, i) => ({
       id: doc.id,
-      score: cosineSimilarity(queryVec, embeddings[i + 1]!),
+      score: cosineSimilarity(queryVec, embeddings[i + 1] ?? []),
       metadata: doc.metadata,
     }));
     const maxScore = Math.max(...raw.map(r => r.score));
@@ -109,7 +114,7 @@ export class ExternalApiProvider implements EmbeddingProvider {
     const res = await fetch(`${this.apiUrl}/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: texts, model: this.model || undefined }),
+      body: JSON.stringify({ input: texts, model: this.model ?? undefined }),
     });
     if (!res.ok) throw new Error(`Embedding API error: ${res.status} ${res.statusText}`);
     const data = (await res.json()) as { data: { embedding: number[] }[] };

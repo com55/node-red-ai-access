@@ -3,7 +3,7 @@
  * 2025 Observability & Monitoring Standards
  */
 
-import pino from 'pino';
+import pino, { type Bindings } from 'pino';
 import pinoPretty from 'pino-pretty';
 
 import { appConfig } from './config.js';
@@ -32,9 +32,9 @@ function createLogger() {
     // Base fields added to every log entry
     base: {
       pid: process.pid,
-      hostname: process.env.HOSTNAME || 'localhost',
+      hostname: process.env.HOSTNAME ?? 'localhost',
       service: '@com55/node-red-ai-access',
-      version: process.env.npm_package_version || '1.0.0',
+      version: process.env.npm_package_version ?? '1.0.0',
     },
 
     // High-resolution timestamps
@@ -85,11 +85,19 @@ function createLogger() {
     ...baseConfig,
     formatters: {
       level: label => ({ level: label.toUpperCase() }),
-      bindings: bindings => ({
-        service: bindings.name,
-        pid: bindings.pid,
-        hostname: bindings.hostname,
-      }),
+      bindings: (bindings: Bindings): {
+        service?: string;
+        pid?: number;
+        hostname?: string;
+      } => {
+        // pino's Bindings values are typed as any; narrow via unknown.
+        const raw = bindings as unknown as Record<string, unknown>;
+        const out: { service?: string; pid?: number; hostname?: string } = {};
+        if (typeof raw.name === 'string') out.service = raw.name;
+        if (typeof raw.pid === 'number') out.pid = raw.pid;
+        if (typeof raw.hostname === 'string') out.hostname = raw.hostname;
+        return out;
+      },
     },
   });
 }
@@ -147,7 +155,7 @@ export const generateRequestId = () =>
  * Enhanced error logging with context
  */
 export const logError = (
-  error: Error | unknown,
+  error: unknown,
   context?: string,
   metadata?: Record<string, unknown>
 ) => {
@@ -167,7 +175,7 @@ export const logError = (
       error: errorInfo,
       ...metadata,
     },
-    `Error in ${context || 'application'}`
+    `Error in ${context ?? 'application'}`
   );
 };
 

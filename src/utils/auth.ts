@@ -47,7 +47,7 @@ export interface AuthRequest extends Request {
  */
 export function generateToken(payload: Omit<AuthPayload, 'iat' | 'exp'>): string {
   return jwt.sign(payload, getJwtSecret(), {
-    expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+    expiresIn: process.env.JWT_EXPIRES_IN ?? '24h',
     algorithm: 'HS256',
   } as jwt.SignOptions);
 }
@@ -75,7 +75,7 @@ export function extractToken(authHeader: string): string | null {
     return null;
   }
 
-  return parts[1] || null;
+  return parts[1] ?? null;
 }
 
 /**
@@ -105,7 +105,7 @@ export function authenticateJWT(req: AuthRequest, res: Response, next: NextFunct
     userId: payload.userId,
     permissions: payload.permissions,
     isAuthenticated: true,
-    tokenExpiry: new Date(payload.exp! * 1000),
+    ...(typeof payload.exp === 'number' ? { tokenExpiry: new Date(payload.exp * 1000) } : {}),
   };
 
   next();
@@ -276,20 +276,22 @@ export function requirePermission(permission: string) {
  */
 export function createAuthContext(req: AuthRequest): McpAuthContext {
   return (
-    req.auth || {
+    req.auth ?? {
       permissions: [],
       isAuthenticated: false,
     }
   );
 }
 
+export type NodeRedAuthConfig =
+  | { type: 'bearer'; credentials: { token: string } }
+  | { type: 'basic'; credentials: { username: string; password: string } }
+  | { type: 'none' };
+
 /**
  * Validate Node-RED credentials
  */
-export function validateNodeRedAuth(): {
-  type: 'basic' | 'bearer' | 'none';
-  credentials?: { username?: string; password?: string; token?: string };
-} {
+export function validateNodeRedAuth(): NodeRedAuthConfig {
   const nodeRedUsername = process.env.NODERED_USERNAME;
   const nodeRedPassword = process.env.NODERED_PASSWORD;
   const nodeRedToken = process.env.NODERED_API_TOKEN;
@@ -325,12 +327,12 @@ export function getNodeRedAuthHeader(): Record<string, string> {
   switch (authConfig.type) {
     case 'bearer':
       return {
-        Authorization: `Bearer ${authConfig.credentials!.token}`,
+        Authorization: `Bearer ${authConfig.credentials.token}`,
       };
 
     case 'basic': {
       const credentials = Buffer.from(
-        `${authConfig.credentials!.username}:${authConfig.credentials!.password}`
+        `${authConfig.credentials.username}:${authConfig.credentials.password}`
       ).toString('base64');
       return {
         Authorization: `Basic ${credentials}`,
@@ -356,9 +358,7 @@ let nodeRedTokenFetch: Promise<CachedNodeRedToken> | null = null;
 // throw away a poolable connection each time.
 let nodeRedTokenHttpsAgent: https.Agent | null = null;
 function getNodeRedTokenHttpsAgent(): https.Agent {
-  if (!nodeRedTokenHttpsAgent) {
-    nodeRedTokenHttpsAgent = new https.Agent({ rejectUnauthorized: getTlsRejectUnauthorized() });
-  }
+  nodeRedTokenHttpsAgent ??= new https.Agent({ rejectUnauthorized: getTlsRejectUnauthorized() });
   return nodeRedTokenHttpsAgent;
 }
 
@@ -404,8 +404,8 @@ export function getNodeRedAuthScope(): string {
 }
 
 async function fetchNodeRedToken(username: string, password: string): Promise<CachedNodeRedToken> {
-  const baseURL = (process.env.NODERED_URL || 'http://localhost:1880').replace(/\/+$/, '');
-  const response = await axios.post(
+  const baseURL = (process.env.NODERED_URL ?? 'http://localhost:1880').replace(/\/+$/, '');
+  const response = await axios.post<{ access_token: string; expires_in?: number }>(
     `${baseURL}/auth/token`,
     {
       client_id: 'node-red-admin',
@@ -415,7 +415,7 @@ async function fetchNodeRedToken(username: string, password: string): Promise<Ca
       password,
     },
     {
-      timeout: parseInt(process.env.NODERED_TIMEOUT || '5000'),
+      timeout: parseInt(process.env.NODERED_TIMEOUT ?? '5000'),
       httpsAgent: getNodeRedTokenHttpsAgent(),
     }
   );
@@ -455,7 +455,7 @@ async function resolveBearerToken(forceRefresh: boolean): Promise<string | undef
   const authConfig = validateNodeRedAuth();
 
   if (authConfig.type === 'bearer') {
-    return authConfig.credentials!.token;
+    return authConfig.credentials.token;
   }
 
   if (authConfig.type !== 'basic' || !isNodeRedAdminAuthEnabled()) {
@@ -471,8 +471,8 @@ async function resolveBearerToken(forceRefresh: boolean): Promise<string | undef
   }
 
   if (!nodeRedTokenFetch) {
-    const { username, password } = authConfig.credentials!;
-    nodeRedTokenFetch = fetchNodeRedToken(username!, password!).finally(() => {
+    const { username, password } = authConfig.credentials;
+    nodeRedTokenFetch = fetchNodeRedToken(username, password).finally(() => {
       nodeRedTokenFetch = null;
     });
   }
@@ -531,6 +531,6 @@ export function getRateLimitKey(req: Request): string {
     return `user:${authReq.auth.userId}`;
   }
 
-  const ip = req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress;
+  const ip = req.ip ?? req.socket.remoteAddress ?? req.connection.remoteAddress;
   return `ip:${ip ? ipKeyGenerator(ip) : 'unknown'}`;
 }

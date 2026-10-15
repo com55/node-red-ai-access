@@ -101,7 +101,7 @@ vi.mock('../utils/auth.js', () => ({
     next();
   }),
   verifyToken: vi.fn(() => null),
-  getRateLimitKey: vi.fn((req: any) => req.ip || '127.0.0.1'),
+  getRateLimitKey: vi.fn((req: any) => req.ip ?? '127.0.0.1'),
 }));
 
 // Import after mocks
@@ -116,8 +116,8 @@ describe('ExpressApp', () => {
     vi.clearAllMocks();
 
     // Suppress console output during tests
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => { /* empty */ });
+    vi.spyOn(console, 'error').mockImplementation(() => { /* empty */ });
 
     // Set up environment
     process.env.PORT = '3001';
@@ -723,8 +723,8 @@ describe('ExpressApp', () => {
 describe('ExpressApp Configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => { /* empty */ });
+    vi.spyOn(console, 'error').mockImplementation(() => { /* empty */ });
   });
 
   afterEach(() => {
@@ -768,7 +768,7 @@ describe('parseTrustProxy', () => {
   });
 
   it('should accept true but warn that it allows X-Forwarded-For spoofing', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => { /* empty */ });
 
     try {
       expect(parseTrustProxy('true')).toBe(true);
@@ -803,8 +803,8 @@ describe('ExpressApp trust proxy', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => { /* empty */ });
+    vi.spyOn(console, 'error').mockImplementation(() => { /* empty */ });
   });
 
   afterEach(() => {

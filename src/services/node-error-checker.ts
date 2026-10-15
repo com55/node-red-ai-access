@@ -32,8 +32,18 @@ interface RawStatus {
 
 interface CommsFrame {
   topic?: string;
-  data?: any;
+  data?: unknown;
   auth?: 'ok' | 'fail';
+}
+
+function asCommsFrames(parsed: unknown): CommsFrame[] {
+  if (Array.isArray(parsed)) {
+    return parsed.filter((item): item is CommsFrame => typeof item === 'object' && item !== null);
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    return [parsed];
+  }
+  return [];
 }
 
 async function collectStatuses(
@@ -78,7 +88,7 @@ async function collectStatuses(
       });
     } catch (err) {
       clearTimeout(timer);
-      reject(err);
+      reject(err instanceof Error ? err : new Error(String(err)));
       return;
     }
 
@@ -97,9 +107,7 @@ async function collectStatuses(
         const parsed: unknown = JSON.parse(raw.toString());
         // Node-RED batches multiple events into a JSON array per WS message;
         // the auth handshake reply is always a single flat object.
-        const frames: CommsFrame[] = Array.isArray(parsed) ? parsed : [parsed];
-
-        for (const msg of frames) {
+        for (const msg of asCommsFrames(parsed)) {
           if (typeof msg.auth === 'string') {
             // Trusting the WebSocket peer's own auth-handshake reply is
             // inherent to implementing Node-RED's documented /comms protocol
@@ -117,7 +125,7 @@ async function collectStatuses(
             } else {
               // Invalidate the cached token so the *next* check() call
               // re-exchanges instead of retrying with the same bad token.
-              resolveNodeRedAuthToken(true).catch(() => {});
+              resolveNodeRedAuthToken(true).catch(() => { /* empty */ });
               finish(new AuthenticationError('Node-RED WebSocket auth failed'));
             }
             continue;
@@ -175,22 +183,46 @@ export class NodeErrorChecker {
       this.apiClient.getFlows().catch((): Awaited<ReturnType<NodeRedAPIClient['getFlows']>> => []),
     ]);
 
+    const nodeIndex = this.buildNodeIndex(flows);
+    const { errors, warnings } = this.collectErrorEntries(statuses, nodeIndex, includeWarnings);
+
+    // Two independent reasons the status snapshot might be incomplete: the
+    // WS transport never connected, or it connected but never confirmed auth.
+    const authIncomplete = authExpected && !authConfirmed;
+
+    return {
+      errors,
+      warnings,
+      statusesMayBeIncomplete: !connected || authIncomplete,
+    };
+  }
+
+  private buildNodeIndex(
+    flows: Awaited<ReturnType<NodeRedAPIClient['getFlows']>>
+  ): Map<string, { nodeType: string; label: string; flowId: string; flowName: string }> {
     const nodeIndex = new Map<
       string,
       { nodeType: string; label: string; flowId: string; flowName: string }
     >();
     for (const flow of flows) {
       const flowName = flow.label ?? flow.id;
-      for (const node of flow.nodes ?? []) {
+      for (const node of flow.nodes) {
         nodeIndex.set(node.id, {
-          nodeType: node.type ?? 'unknown',
+          nodeType: node.type,
           label: node.name ?? '',
           flowId: flow.id,
           flowName,
         });
       }
     }
+    return nodeIndex;
+  }
 
+  private collectErrorEntries(
+    statuses: Map<string, RawStatus>,
+    nodeIndex: Map<string, { nodeType: string; label: string; flowId: string; flowName: string }>,
+    includeWarnings: boolean
+  ): { errors: NodeErrorEntry[]; warnings: NodeErrorEntry[] } {
     const errors: NodeErrorEntry[] = [];
     const warnings: NodeErrorEntry[] = [];
 
@@ -216,14 +248,6 @@ export class NodeErrorChecker {
       }
     }
 
-    // Two independent reasons the status snapshot might be incomplete: the
-    // WS transport never connected, or it connected but never confirmed auth.
-    const authIncomplete = authExpected && !authConfirmed;
-
-    return {
-      errors,
-      warnings,
-      statusesMayBeIncomplete: !connected || authIncomplete,
-    };
+    return { errors, warnings };
   }
 }
