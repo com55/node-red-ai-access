@@ -145,11 +145,28 @@ function createFakeJQuery() {
   return $;
 }
 
+/** Extract the first inline script body without an HTML-filter regex (CodeQL). */
+function extractInlineScript(html: string): string | null {
+  const lower = html.toLowerCase();
+  const open = lower.indexOf('<script');
+  if (open < 0) return null;
+  const openEnd = html.indexOf('>', open);
+  if (openEnd < 0) return null;
+  const close = lower.indexOf('</script', openEnd + 1);
+  if (close < 0) return null;
+  let closeEnd = close + '</script'.length;
+  while (closeEnd < html.length && /\s/.test(html.charAt(closeEnd))) {
+    closeEnd += 1;
+  }
+  if (html.charAt(closeEnd) !== '>') return null;
+  return html.slice(openEnd + 1, close);
+}
+
 describe('ai-access.html sidebar tab', () => {
   it('registers RED.sidebar.addTab with content element and no userSettings', () => {
     const html = readFileSync(htmlPath, 'utf8');
-    const scriptMatch = /<script\b[^>]*>([\s\S]*?)<\/script>/i.exec(html);
-    expect(scriptMatch).toBeTruthy();
+    const scriptBody = extractInlineScript(html);
+    expect(scriptBody).toBeTruthy();
     expect(html).toMatch(/RED\.sidebar\.addTab/);
     expect(html).not.toMatch(/RED\.userSettings\.add/);
     expect(html).toMatch(/#red-ui-sidebar-ai-access/);
@@ -190,7 +207,7 @@ describe('ai-access.html sidebar tab', () => {
       console,
     };
 
-    runInNewContext(scriptMatch![1]!, context);
+    runInNewContext(scriptBody!, context);
 
     expect(added).toHaveLength(1);
     expect(added[0]?.id).toBe('ai-access');
