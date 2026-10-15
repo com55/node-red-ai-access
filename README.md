@@ -46,6 +46,18 @@ module.exports = {
 
 Data for later proposal/log features is stored under `<userDir>/.ai-access`.
 
+### Flow runtime adapter
+
+Phase 1 includes a `FlowAdapter` used by later proposal/approve work:
+
+- **RedAdapter** — in-process `RED.runtime.flows` (`getFlows` / `getFlow` /
+  `setFlows`)
+- **HttpAdapter** — localhost Admin API v2 fallback
+- **Factory** — prefers RED; falls back to HTTP when runtime methods are missing
+- **`updateFlow`** — requires `expectedRev`; default deployment type is `nodes`
+  (also `flows` | `full`); stale rev → `FlowRevisionConflictError` (HTTP 409
+  semantics)
+
 ## 🌟 Features
 
 ### 🔧 23 MCP Tools
