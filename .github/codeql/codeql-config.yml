@@ -1,4 +1,4 @@
-name: "Node-RED AI Access CodeQL"
+name: 'Node-RED AI Access CodeQL'
 queries:
   - uses: security-and-quality
 query-filters:

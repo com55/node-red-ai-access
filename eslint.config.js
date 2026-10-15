@@ -169,7 +169,6 @@ export default tseslint.config(
     },
   },
 
-
   // Ignore patterns
   {
     ignores: [
