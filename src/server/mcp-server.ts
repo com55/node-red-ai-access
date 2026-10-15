@@ -1,0 +1,1678 @@
+/**
+ * Main MCP Server implementation for Node-RED integration
+ */
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import {
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  CallToolRequestSchema,
+  ReadResourceRequestSchema,
+  GetPromptRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+
+import { promptRegistry } from '../prompts/index.js';
+import { createEmbeddingProvider } from '../services/embedding-provider.js';
+import { NodeErrorChecker } from '../services/node-error-checker.js';
+import { NodeRedAPIClient } from '../services/nodered-api.js';
+import { SemanticFlowIndex } from '../services/semantic-index.js';
+import {
+  McpServerConfig,
+  McpToolResult,
+  FlowManagementToolParams,
+  NodeManagementToolParams,
+  MonitoringToolParams,
+  NodeRedFlowResource,
+  NodeRedSystemResource,
+  NodeRedSSEResource,
+  NodeRedPromptTemplate,
+} from '../types/mcp-extensions.js';
+import type { NodeRedCredentials } from '../types/oauth.js';
+import { isReadOnlyMode } from '../utils/auth.js';
+import {
+  AppError,
+  NodeRedError,
+  logDebug,
+  safeStringify,
+  validateRequired,
+  validateTypes,
+} from '../utils/error-handling.js';
+
+import {
+  applyPagination,
+  caseInsensitiveIncludes,
+  isPaginated,
+  parsePagination,
+  parseSort,
+  stableSortBy,
+} from './pagination.js';
+import { SSEHandler } from './sse-handler.js';
+
+const SEARCH_RESULTS_LIMIT = 10;
+const SEARCH_SKIP_PROPS = new Set(['id', 'z', 'x', 'y', 'wires']);
+const UPSTREAM_RESPONSE_LIMIT = 2000;
+
+/**
+ * Truncate an upstream response body so a large flow dump or HTML login page
+ * doesn't get echoed back to the client in full.
+ */
+function truncateUpstreamResponse(response: unknown): unknown {
+  if (response === undefined || response === null) return undefined;
+
+  const serialized = typeof response === 'string' ? response : JSON.stringify(response);
+  if (serialized === undefined) return undefined;
+  if (serialized.length <= UPSTREAM_RESPONSE_LIMIT) return response;
+
+  return `${serialized.slice(0, UPSTREAM_RESPONSE_LIMIT)}… (truncated, ${serialized.length} bytes)`;
+}
+
+/**
+ * Turn a thrown value into an error message plus structured detail.
+ *
+ * Tool failures used to collapse to `error.message` — or the literal string
+ * "Unknown error" for anything that wasn't an `Error` — which left callers with
+ * no way to tell a 403 from a 404 or a network failure.
+ */
+function describeToolFailure(
+  toolName: string,
+  error: unknown
+): Pick<McpToolResult, 'error' | 'errorDetails'> {
+  if (error instanceof NodeRedError) {
+    return {
+      error: error.message,
+      errorDetails: {
+        code: error.code,
+        statusCode: error.statusCode,
+        ...(error.nodeRedStatusCode !== undefined
+          ? { upstreamStatus: error.nodeRedStatusCode }
+          : {}),
+        ...(error.nodeRedResponse !== undefined
+          ? { upstreamResponse: truncateUpstreamResponse(error.nodeRedResponse) }
+          : {}),
+      },
+    };
+  }
+
+  if (error instanceof AppError) {
+    return {
+      error: error.message,
+      errorDetails: { code: error.code, statusCode: error.statusCode },
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      error: error.message || `${error.name} thrown with no message`,
+      errorDetails: { code: error.name || 'INTERNAL_ERROR' },
+    };
+  }
+
+  return {
+    error: `Tool '${toolName}' threw a non-Error value: ${safeStringify(error)}`,
+    errorDetails: { code: 'INTERNAL_ERROR' },
+  };
+}
+
+const NODERED_RESOURCE_META: Record<string, { name: string; description: string }> = {
+  flows: { name: 'Node-RED Flows', description: 'All flow tabs in the Node-RED instance' },
+  subflows: { name: 'Node-RED Subflows', description: 'All reusable subflow definitions' },
+  nodes: {
+    name: 'Installed Node Modules',
+    description: 'Node-RED palette modules currently installed',
+  },
+  'context/global': {
+    name: 'Global Context',
+    description: 'Node-RED global context store (all key/value pairs)',
+  },
+};
+
+function buildCollectionResponse(uri: string, name: string, description: string, payload: object) {
+  return {
+    contents: [
+      {
+        uri,
+        mimeType: 'application/json',
+        text: JSON.stringify(
+          { uri, name, description, mimeType: 'application/json', ...payload },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
+interface FlowSearchMatch {
+  nodeId: string;
+  nodeType: string;
+  nodeName: string;
+  flowId: string;
+  flowLabel: string;
+}
+
+interface FlowValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+function validateFlowData(flow: { nodes?: unknown[] }): FlowValidationResult {
+  const errors: string[] = [];
+  const nodes = Array.isArray(flow?.nodes) ? (flow.nodes as Record<string, unknown>[]) : [];
+  const nodeIds = new Set<string>();
+
+  for (const [i, node] of nodes.entries()) {
+    const id = typeof node.id === 'string' ? node.id : '';
+    const label = id ? `Node "${id}"` : `Node[${i}]`;
+
+    if (!id) errors.push(`${label}: missing required field "id"`);
+    if (!node.type) errors.push(`${label}: missing required field "type"`);
+
+    if (id) {
+      if (nodeIds.has(id)) {
+        errors.push(`Duplicate node ID: "${id}"`);
+      } else {
+        nodeIds.add(id);
+      }
+    }
+  }
+
+  for (const [i, node] of nodes.entries()) {
+    const id = typeof node.id === 'string' ? node.id : '';
+    const label = id ? `Node "${id}"` : `Node[${i}]`;
+    if (!Array.isArray(node.wires)) continue;
+    for (const group of node.wires as unknown[]) {
+      if (!Array.isArray(group)) {
+        errors.push(`${label}: wires must be an array of arrays`);
+        continue;
+      }
+      for (const target of group as unknown[]) {
+        if (typeof target !== 'string') {
+          errors.push(`${label}: wire target must be a string`);
+          continue;
+        }
+        if (!nodeIds.has(target)) {
+          errors.push(`${label}: wire references unknown node "${target}"`);
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+function validateFlowOrThrow(flowData: { nodes?: unknown[] }): void {
+  const validation = validateFlowData(flowData);
+  if (!validation.valid) {
+    throw new Error(`Validation failed:\n${validation.errors.map(e => `- ${e}`).join('\n')}`);
+  }
+}
+
+const FLOW_SORT_KEYS = ['label', 'nodeCount', 'disabled'] as const;
+type FlowSortKey = (typeof FLOW_SORT_KEYS)[number];
+
+/** Shared by `replace_flow` and its deprecated `update_flow` alias. */
+const REPLACE_FLOW_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    flowId: { type: 'string', description: 'Flow ID to replace' },
+    flowData: { type: 'object', description: 'Full replacement tab content' },
+    validate: {
+      type: 'boolean',
+      description: 'If true, validate flowData for structural errors before replacing',
+      default: false,
+    },
+  },
+  required: ['flowId', 'flowData'],
+} as const;
+
+const FLOW_SORT_KEY_FNS: Record<FlowSortKey, (f: any) => string | number | boolean> = {
+  label: f => String(f?.label ?? '').toLowerCase(),
+  nodeCount: f => (typeof f?.nodeCount === 'number' ? f.nodeCount : (f?.nodes?.length ?? 0)),
+  disabled: f => Boolean(f?.disabled),
+};
+
+export class McpNodeRedServer {
+  private server: Server;
+  private nodeRedClient: NodeRedAPIClient;
+  private sseHandler: SSEHandler;
+  private config: McpServerConfig;
+  private semanticIndex: SemanticFlowIndex;
+
+  constructor(config: Partial<McpServerConfig> = {}) {
+    this.config = {
+      name: process.env.MCP_SERVER_NAME || 'nodered-mcp-server',
+      version: process.env.MCP_SERVER_VERSION || '1.0.0',
+      capabilities: {
+        tools: true,
+        resources: true,
+        prompts: true,
+        logging: true,
+        elicitation: true,
+      },
+      nodeRed: {
+        url: process.env.NODERED_URL || 'http://localhost:1880',
+        timeout: parseInt(process.env.NODERED_TIMEOUT || '5000'),
+        retries: parseInt(process.env.NODERED_RETRIES || '3'),
+      },
+      sse: {
+        enabled: process.env.SSE_ENABLED !== 'false',
+        port: parseInt(process.env.SSE_PORT || '3001'),
+        heartbeatInterval: parseInt(process.env.SSE_HEARTBEAT_INTERVAL || '30000'),
+        maxConnections: parseInt(process.env.SSE_MAX_CONNECTIONS || '100'),
+      },
+      ...config,
+    };
+
+    this.server = new Server(
+      {
+        name: this.config.name,
+        version: this.config.version,
+      },
+      {
+        capabilities: {
+          tools: this.config.capabilities.tools ? {} : undefined,
+          resources: this.config.capabilities.resources ? {} : undefined,
+          prompts: this.config.capabilities.prompts ? {} : undefined,
+          logging: this.config.capabilities.logging ? {} : undefined,
+          elicitation: this.config.capabilities.elicitation !== false ? {} : undefined,
+        } as any,
+      }
+    );
+
+    this.nodeRedClient = new NodeRedAPIClient(this.config.nodeRed);
+    this.sseHandler = new SSEHandler(this.config.sse);
+    this.semanticIndex = new SemanticFlowIndex(
+      this.nodeRedClient,
+      createEmbeddingProvider(this.config.semantic),
+      this.config.semantic?.indexTtlMs
+    );
+
+    this.setupHandlers();
+  }
+
+  /**
+   * Setup MCP request handlers
+   */
+  private setupHandlers(): void {
+    // Tools handlers
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: this.getToolDefinitions(),
+    }));
+
+    this.server.setRequestHandler(CallToolRequestSchema, async request => {
+      const { name, arguments: args } = request.params;
+      return await this.callTool(name, args || {});
+    });
+
+    // Resources handlers
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: await this.getResourceList(),
+    }));
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, async request => {
+      const { uri } = request.params;
+      return await this.getResource(uri);
+    });
+
+    // Prompts handlers
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+      prompts: this.getPromptDefinitions(),
+    }));
+
+    this.server.setRequestHandler(GetPromptRequestSchema, async request => {
+      const { name, arguments: args } = request.params;
+      const rendered = await this.getPrompt(name, args || {});
+      return { description: rendered.description, messages: rendered.messages };
+    });
+  }
+
+  // Raw elicitInput wrapper — single point for the (server as any) cast and try/catch
+  private async tryElicitField<T>(
+    message: string,
+    requestedSchema: object,
+    pick: (content: any) => T | null
+  ): Promise<T | null> {
+    try {
+      const res = await (this.server as any).elicitInput({
+        mode: 'form',
+        message,
+        requestedSchema,
+      });
+      return res?.action === 'accept' ? pick(res.content) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private tryElicitString(message: string, title: string, field: string): Promise<string | null> {
+    return this.tryElicitField(
+      message,
+      { type: 'object', properties: { [field]: { type: 'string', title } }, required: [field] },
+      c => (c?.[field] ? String(c[field]) : null)
+    );
+  }
+
+  private async tryElicitFlowId(verb: string): Promise<string | null> {
+    let list = '';
+    try {
+      const flows = await this.nodeRedClient.getFlowSummaries(['tab', 'subflow']);
+      list = `\n\nAvailable flows:\n${flows
+        .slice(0, 15)
+        .map((f: any) => `• ${f.label || '(no label)'} — ${f.id}`)
+        .join('\n')}`;
+    } catch {
+      // getFlowSummaries failed — proceed without list
+    }
+    return this.tryElicitString(`Which flow do you want to ${verb}?${list}`, 'Flow ID', 'flowId');
+  }
+
+  private async tryElicitConfirm(message: string): Promise<boolean> {
+    return (
+      (await this.tryElicitField(
+        message,
+        {
+          type: 'object',
+          properties: {
+            confirmed: {
+              type: 'boolean',
+              title: 'Confirm',
+              description: 'Set to true to proceed, false to cancel',
+            },
+          },
+          required: ['confirmed'],
+        },
+        c => (c?.confirmed === true ? true : null)
+      )) ?? false
+    );
+  }
+
+  private async resolveFlowId(args: any, verb: string): Promise<string> {
+    const flowId = args?.flowId ?? (await this.tryElicitFlowId(verb));
+    if (!flowId) throw new Error('Missing required parameter: flowId');
+    return flowId;
+  }
+
+  /**
+   * Get tool definitions, filtered to read-only tools when MCP_READ_ONLY is set
+   */
+  public getToolDefinitions() {
+    const tools = this.getAllToolDefinitions();
+    return isReadOnlyMode() ? tools.filter(tool => tool.annotations?.readOnlyHint) : tools;
+  }
+
+  /**
+   * Full, unfiltered tool definitions (used internally so callTool can give a
+   * clear error when a write tool is called while read-only mode is active,
+   * rather than an ambiguous "unknown tool" error)
+   */
+  private getAllToolDefinitions() {
+    return [
+      // Core Flow Management Tools (Optimized)
+      {
+        name: 'get_flows',
+        description:
+          'Get Node-RED flows with flexible filtering (summary info by default, use includeDetails for full data). Supports pagination (limit/offset), sorting (label/nodeCount/disabled), and filtering by disabled state or label substring. Also returns the current Admin API v2 flow revision as a top-level `rev` field (alongside `data`) — pass that value as `expected_rev` to deploy_flow / deploy_nodes.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            includeDetails: {
+              type: 'boolean',
+              description:
+                'Include full flow details with nodes (default: false for token efficiency)',
+              default: false,
+            },
+            types: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Flow types to include (default: ["tab", "subflow"]). Options: "tab" (main flows), "subflow" (reusable subflows)',
+              default: ['tab', 'subflow'],
+            },
+            limit: {
+              type: 'number',
+              description:
+                'Maximum items to return (1-500). When set, response is wrapped in pagination envelope { items, total, limit, offset, hasMore }.',
+              minimum: 1,
+              maximum: 500,
+            },
+            offset: {
+              type: 'number',
+              description: 'Items to skip. When set, response is wrapped in pagination envelope.',
+              minimum: 0,
+            },
+            sortBy: {
+              type: 'string',
+              enum: [...FLOW_SORT_KEYS],
+              description: 'Sort key. Secondary sort by id keeps slice boundaries deterministic.',
+            },
+            order: {
+              type: 'string',
+              enum: ['asc', 'desc'],
+              description: 'Sort order (default: asc).',
+              default: 'asc',
+            },
+            disabled: {
+              type: 'boolean',
+              description: 'Filter by disabled state (true = only disabled, false = only enabled).',
+            },
+            labelContains: {
+              type: 'string',
+              description: 'Case-insensitive substring filter on flow label.',
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'get_flow',
+        description:
+          'Get specific Node-RED flow by ID. Also returns the current Admin API v2 flow revision as a top-level `rev` field (alongside `data`) — pass that value as `expected_rev` to deploy_flow / deploy_nodes.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: { type: 'string', description: 'Flow ID to retrieve' },
+          },
+          required: ['flowId'],
+        },
+      },
+      {
+        name: 'validate_flow',
+        description:
+          'Validate a Node-RED flow for structural errors: missing required node fields, duplicate node IDs, and wire references to non-existent nodes.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: { type: 'string', description: 'ID of the flow to fetch and validate' },
+          },
+          required: ['flowId'],
+        },
+      },
+      {
+        name: 'create_flow',
+        description: 'Create a new Node-RED flow',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowData: {
+              type: 'object',
+              description: 'Flow configuration data',
+              properties: {
+                label: { type: 'string' },
+                nodes: { type: 'array' },
+                disabled: { type: 'boolean' },
+              },
+            },
+            validate: {
+              type: 'boolean',
+              description: 'If true, validate flowData for structural errors before creating',
+              default: false,
+            },
+          },
+          required: ['flowData'],
+        },
+      },
+      {
+        name: 'replace_flow',
+        description:
+          'Replace an entire Node-RED tab via PUT /flow/:id. WARNING: replaces the whole tab, restarts all of its nodes, deletes any nodes omitted from flowData, and does not check the flow revision (rev) — concurrent editor changes can be overwritten. Prefer deploy_flow or deploy_nodes for revision-checked safe edits.',
+        annotations: { readOnlyHint: false },
+        inputSchema: REPLACE_FLOW_INPUT_SCHEMA,
+      },
+      {
+        name: 'update_flow',
+        description:
+          'Deprecated alias for replace_flow (same PUT /flow/:id behavior). Will be removed in a future release — use replace_flow, or deploy_flow / deploy_nodes for revision-checked edits.',
+        annotations: { readOnlyHint: false },
+        inputSchema: REPLACE_FLOW_INPUT_SCHEMA,
+      },
+      {
+        name: 'deploy_flow',
+        description:
+          "Safely replace one tab's contents using Admin API v2 optimistic concurrency. Requires expected_rev from a prior get_flows/get_flow. Only that tab object and nodes with z equal to the tab id are replaced; every other tab, subflow, and global config node is left untouched. WARNING: any existing node on this tab that is omitted from flowData.nodes/configs is deleted. Prefer this over replace_flow / update_flow. If expected_rev is stale (human edited in the editor, etc.), fails with HTTP 409 — re-read flows, re-apply your change, and retry with the new rev. Returns the new rev on success. Default deployment type is 'flows'; pass type 'nodes' for modified-nodes deploy.",
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: { type: 'string', description: 'Tab id to replace' },
+            flowData: {
+              type: 'object',
+              description:
+                'Full replacement tab content (same shape as replace_flow): label/disabled/info/env plus nodes (and optional configs). Omitted nodes on this tab are deleted.',
+            },
+            expected_rev: {
+              type: 'string',
+              description:
+                'Flow revision from the prior get_flows/get_flow read. Posted as Admin API v2 `rev` for optimistic concurrency.',
+            },
+            type: {
+              type: 'string',
+              enum: ['flows', 'nodes'],
+              description:
+                "Node-RED-Deployment-Type for the POST (default: 'flows'). Use 'nodes' to restart only changed nodes.",
+              default: 'flows',
+            },
+            validate: {
+              type: 'boolean',
+              description: 'If true, validate flowData for structural errors before deploying',
+              default: false,
+            },
+          },
+          required: ['flowId', 'flowData', 'expected_rev'],
+        },
+      },
+      {
+        name: 'deploy_nodes',
+        description:
+          "Add or update specific nodes and deploy ONLY those nodes — equivalent to the editor's 'Modified Nodes' button (Admin API v2, Node-RED-Deployment-Type: nodes). Requires expected_rev from a prior get_flows/get_flow. Every node not listed here is left untouched and does not restart. An existing node id is replaced in place; a new id is added to whichever tab its `z` field points to. If expected_rev is stale, fails with HTTP 409 — re-read flows, re-apply your change, and retry. Returns the new rev on success. Optional credentials uses the v2 top-level credentials object.",
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              description:
+                'Full node objects to add or replace by id (each needs at minimum id and type; flow nodes usually also need z and wires, plus type-specific properties). Inline node.credentials is also accepted.',
+              items: { type: 'object' },
+              minItems: 1,
+            },
+            expected_rev: {
+              type: 'string',
+              description:
+                'Flow revision from the prior get_flows/get_flow read. Posted as Admin API v2 `rev` for optimistic concurrency.',
+            },
+            credentials: {
+              type: 'object',
+              description:
+                'Optional Admin API v2 credentials object: either a map of node id → credential fields, or an encrypted blob with a `$` key. Omit to leave the runtime credential store unchanged for nodes without inline credentials.',
+              additionalProperties: true,
+            },
+          },
+          required: ['nodes', 'expected_rev'],
+        },
+      },
+      {
+        name: 'enable_flow',
+        description: 'Enable a specific Node-RED flow',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: { type: 'string', description: 'Flow ID to enable' },
+          },
+          required: ['flowId'],
+        },
+      },
+      {
+        name: 'disable_flow',
+        description: 'Disable a specific Node-RED flow',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: { type: 'string', description: 'Flow ID to disable' },
+          },
+          required: ['flowId'],
+        },
+      },
+      {
+        name: 'search_modules',
+        description: 'Search for Node-RED palette modules online via npm registry',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query for modules (e.g., "mqtt", "dashboard", "influxdb")',
+            },
+            category: {
+              type: 'string',
+              enum: ['all', 'contrib', 'dashboard'],
+              description: 'Module category to search (default: all)',
+              default: 'all',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of results to return (default: 10)',
+              default: 10,
+              minimum: 1,
+              maximum: 50,
+            },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'install_module',
+        description: 'Install a Node-RED palette module via Node-RED palette management API',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            moduleName: {
+              type: 'string',
+              description: 'Name of the module to install (e.g., "node-red-contrib-ui-led")',
+            },
+            version: {
+              type: 'string',
+              description: 'Specific version to install (optional, defaults to latest)',
+            },
+          },
+          required: ['moduleName'],
+        },
+      },
+      {
+        name: 'get_installed_modules',
+        description:
+          'Get list of currently installed Node-RED palette modules. Supports pagination (limit/offset) and a case-insensitive substring filter (query). When any of these is provided, response is wrapped in pagination envelope.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Case-insensitive substring filter on module name.',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum items to return (1-500).',
+              minimum: 1,
+              maximum: 500,
+            },
+            offset: {
+              type: 'number',
+              description: 'Items to skip.',
+              minimum: 0,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'get_context',
+        description: 'Read Node-RED context variables (global or flow scope).',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scope: {
+              type: 'string',
+              enum: ['global', 'flow'],
+              description: 'Context scope (default: "global")',
+              default: 'global',
+            },
+            key: {
+              type: 'string',
+              description: 'Variable name to read. Omit to return all variables in this scope.',
+            },
+            flowId: {
+              type: 'string',
+              description: 'Flow tab ID (required when scope is "flow")',
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'set_context',
+        description: 'Write a Node-RED context variable.',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scope: {
+              type: 'string',
+              enum: ['global', 'flow'],
+              description: 'Context scope (default: "global")',
+              default: 'global',
+            },
+            key: {
+              type: 'string',
+              description: 'Variable name to write',
+            },
+            value: {
+              description: 'Value to store (any JSON-serialisable type)',
+            },
+            flowId: {
+              type: 'string',
+              description: 'Flow tab ID (required when scope is "flow")',
+            },
+          },
+          required: ['key', 'value'],
+        },
+      },
+      {
+        name: 'delete_context',
+        description: 'Delete a Node-RED global context variable.',
+        annotations: { readOnlyHint: false },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Variable name to delete',
+            },
+          },
+          required: ['key'],
+        },
+      },
+      {
+        name: 'delete_flow',
+        description:
+          'Delete a Node-RED flow. Default is dry-run — shows what would be deleted without acting. To delete for real: set dryRun: false AND confirm: true.',
+        annotations: { readOnlyHint: false, destructiveHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: {
+              type: 'string',
+              description: 'ID of the flow to delete',
+            },
+            dryRun: {
+              type: 'boolean',
+              description: 'When true (default), returns flow details without deleting',
+              default: true,
+            },
+            confirm: {
+              type: 'boolean',
+              description:
+                'Must be true when dryRun is false — explicit confirmation of destructive action',
+            },
+          },
+          required: ['flowId'],
+        },
+      },
+      {
+        name: 'search_flows',
+        description:
+          'Search for nodes in Node-RED flows by type, name, or property value. At least one search parameter is required. Supports pagination (limit/offset replaces the internal 10-cap), node type prefix filter, and flow exclusion list.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              description:
+                'Substring match on node type (case-insensitive, e.g. "function", "mqtt")',
+            },
+            query: {
+              type: 'string',
+              description:
+                'Substring match on node name or any string property value (case-insensitive)',
+            },
+            flowId: {
+              type: 'string',
+              description: 'Restrict search to a specific flow ID',
+            },
+            nodeTypePrefix: {
+              type: 'string',
+              description:
+                'Case-insensitive prefix match on node type — useful for namespaced types.',
+            },
+            excludeFlowIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Exclude these flow IDs from the search.',
+            },
+            limit: {
+              type: 'number',
+              description:
+                'Maximum matches to return (1-500). When set, replaces the default 10-cap and wraps response in pagination envelope.',
+              minimum: 1,
+              maximum: 500,
+            },
+            offset: {
+              type: 'number',
+              description: 'Matches to skip. When set, response is wrapped in pagination envelope.',
+              minimum: 0,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'get_flow_state',
+        description:
+          'Get the runtime state of Node-RED flows (running or stopped). Supports pagination over the per-flow array via limit/offset.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description:
+                'Maximum flows to return (1-500). When set, response is wrapped in pagination envelope (state remains at top level).',
+              minimum: 1,
+              maximum: 500,
+            },
+            offset: {
+              type: 'number',
+              description: 'Flows to skip.',
+              minimum: 0,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'get_settings',
+        description: 'Get Node-RED runtime settings (HTTP root paths, logging configuration, etc.)',
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: 'object', properties: {}, required: [] },
+      },
+      {
+        name: 'get_runtime_info',
+        description:
+          'Get Node-RED runtime information: version, runtime/flow state, per-type node counts, installed modules, memory usage, and Node.js/OS details',
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: 'object', properties: {}, required: [] },
+      },
+      {
+        name: 'get_node_errors',
+        description:
+          'Check Node-RED for nodes that are in an error state (red status) after deployment. Connects to the Node-RED event bus, collects retained node statuses, and returns any nodes with active errors or warnings. Use after create_flow, replace_flow, or deploy_flow to catch nodes with missing required configuration.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            includeWarnings: {
+              type: 'boolean',
+              description: 'Also return nodes with yellow (warning) status (default: false)',
+              default: false,
+            },
+            timeoutMs: {
+              type: 'number',
+              description:
+                'How long to collect statuses from the event bus in milliseconds (default: 2000, max: 30000)',
+              default: 2000,
+              minimum: 100,
+              maximum: 30000,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'semantic_search_flows',
+        description:
+          'Search Node-RED flows and nodes using semantic similarity (BM25 by default; set EMBEDDING_API_URL for vector search). Returns ranked results with scores.',
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Natural-language search query',
+            },
+            topK: {
+              type: 'number',
+              description: 'Maximum number of results to return (default: 10)',
+              default: 10,
+              minimum: 1,
+              maximum: 100,
+            },
+            scope: {
+              type: 'string',
+              enum: ['flows', 'nodes', 'all'],
+              description:
+                'Restrict search to flow-level docs, node-level docs, or all (default: all)',
+              default: 'all',
+            },
+            refresh: {
+              type: 'boolean',
+              description: 'Force re-index from Node-RED before searching (default: false)',
+              default: false,
+            },
+          },
+          required: [],
+        },
+      },
+    ];
+  }
+
+  /**
+   * Call a specific tool
+   */
+  public async callTool(name: string, args: any): Promise<{ content: any[] }> {
+    const timestamp = new Date().toISOString();
+    let result: McpToolResult;
+
+    try {
+      if (isReadOnlyMode()) {
+        const tool = this.getAllToolDefinitions().find(t => t.name === name);
+        if (tool && !tool.annotations?.readOnlyHint) {
+          throw new Error(
+            `Tool '${name}' is unavailable: the server is running in read-only mode (MCP_READ_ONLY=true)`
+          );
+        }
+      }
+
+      switch (name) {
+        // Core Flow Management Tools
+        case 'get_flows': {
+          const includeDetails = args?.includeDetails || false;
+          const types = args?.types || ['tab', 'subflow'];
+          // Fetch rev alongside the legacy data shape so deploy_* can use
+          // expected_rev without breaking existing consumers of `data`.
+          const [{ rev }, flowDataRaw] = await Promise.all([
+            this.nodeRedClient.getFlowsWithRev(),
+            includeDetails
+              ? this.nodeRedClient.getFlows()
+              : this.nodeRedClient.getFlowSummaries(types),
+          ]);
+          let flowData: any[] = flowDataRaw;
+
+          const { sortBy, order } = parseSort(args, FLOW_SORT_KEYS);
+
+          if (args?.disabled !== undefined) {
+            const wantDisabled = Boolean(args.disabled);
+            flowData = flowData.filter((f: any) => Boolean(f?.disabled) === wantDisabled);
+          }
+          if (typeof args?.labelContains === 'string') {
+            const q = args.labelContains;
+            flowData = flowData.filter((f: any) => caseInsensitiveIncludes(f?.label, q));
+          }
+
+          if (sortBy) {
+            flowData = stableSortBy(flowData, FLOW_SORT_KEY_FNS[sortBy], order);
+          }
+
+          if (isPaginated(args)) {
+            result = { success: true, data: applyPagination(flowData, args), rev, timestamp };
+          } else {
+            result = { success: true, data: flowData, rev, timestamp };
+          }
+          break;
+        }
+
+        case 'get_flow': {
+          const flowId = await this.resolveFlowId(args, 'get');
+          const [flow, { rev }] = await Promise.all([
+            this.nodeRedClient.getFlow(flowId),
+            this.nodeRedClient.getFlowsWithRev(),
+          ]);
+          result = { success: true, data: flow, rev, timestamp };
+          break;
+        }
+
+        case 'validate_flow': {
+          const flowId = await this.resolveFlowId(args, 'validate');
+          const flow = await this.nodeRedClient.getFlow(flowId);
+          result = { success: true, data: validateFlowData(flow), timestamp };
+          break;
+        }
+
+        case 'create_flow':
+          validateRequired(args, ['flowData']);
+          if (args?.validate) validateFlowOrThrow(args.flowData);
+          const createdFlow = await this.nodeRedClient.createFlow(args.flowData);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Flow created: ${createdFlow.id || createdFlow.label}`,
+              },
+            ],
+          };
+
+        case 'replace_flow':
+        case 'update_flow': {
+          // update_flow is a deprecated alias for replace_flow (same PUT /flow/:id).
+          const flowId = await this.resolveFlowId(args, 'replace');
+          if (!args?.flowData) throw new Error('Missing required parameter: flowData');
+          if (args?.validate) validateFlowOrThrow(args.flowData);
+          await this.nodeRedClient.updateFlow(flowId, args.flowData);
+          return { content: [{ type: 'text', text: `Flow ${flowId} replaced successfully` }] };
+        }
+
+        case 'deploy_flow': {
+          const flowId = await this.resolveFlowId(args, 'deploy');
+          if (!args?.flowData) throw new Error('Missing required parameter: flowData');
+          const expectedRev = args?.expected_rev;
+          if (typeof expectedRev !== 'string' || expectedRev.length === 0) {
+            throw new Error(
+              'Missing required parameter: expected_rev (from get_flows / get_flow `rev`)'
+            );
+          }
+          if (args?.validate) validateFlowOrThrow(args.flowData);
+          const deployType = args?.type === 'nodes' ? 'nodes' : 'flows';
+          const deployed = await this.nodeRedClient.deployFlow(flowId, args.flowData, {
+            expectedRev,
+            type: deployType,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    message: `Deployed flow ${flowId} (type=${deployType})`,
+                    rev: deployed.rev,
+                    timestamp,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        case 'deploy_nodes': {
+          const nodes = args?.nodes;
+          if (!Array.isArray(nodes) || nodes.length === 0) {
+            throw new Error('Missing required parameter: nodes (non-empty array)');
+          }
+          const expectedRev = args?.expected_rev;
+          if (typeof expectedRev !== 'string' || expectedRev.length === 0) {
+            throw new Error(
+              'Missing required parameter: expected_rev (from get_flows / get_flow `rev`)'
+            );
+          }
+          const seenIds = new Set<string>();
+          for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+            if (!node || typeof node !== 'object' || Array.isArray(node)) {
+              throw new Error(`nodes[${i}] must be a node object`);
+            }
+            if (typeof node.id !== 'string' || node.id.length === 0) {
+              throw new Error(`nodes[${i}] needs a non-empty string id`);
+            }
+            if (typeof node.type !== 'string' || node.type.length === 0) {
+              throw new Error(`nodes[${i}] (id=${node.id}) needs a non-empty string type`);
+            }
+            if (seenIds.has(node.id)) {
+              throw new Error(`Duplicate node id in nodes: ${node.id}`);
+            }
+            seenIds.add(node.id);
+          }
+          const credentials = args?.credentials;
+          if (
+            credentials !== undefined &&
+            (credentials === null || typeof credentials !== 'object' || Array.isArray(credentials))
+          ) {
+            throw new Error(
+              'credentials must be an object keyed by node id (or encrypted `$` form)'
+            );
+          }
+          const deployed = await this.nodeRedClient.deployModifiedNodes(
+            nodes,
+            expectedRev,
+            credentials
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    message: `Deployed ${nodes.length} node(s): ${nodes.map((n: { id: string }) => n.id).join(', ')}`,
+                    rev: deployed.rev,
+                    timestamp,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        case 'enable_flow': {
+          const flowId = await this.resolveFlowId(args, 'enable');
+          await this.nodeRedClient.enableFlow(flowId);
+          return { content: [{ type: 'text', text: `Flow ${flowId} enabled` }] };
+        }
+
+        case 'disable_flow': {
+          const flowId = await this.resolveFlowId(args, 'disable');
+          await this.nodeRedClient.disableFlow(flowId);
+          return { content: [{ type: 'text', text: `Flow ${flowId} disabled` }] };
+        }
+
+        case 'search_modules': {
+          const query =
+            args?.query ??
+            (await this.tryElicitString(
+              'What would you like to search for in Node-RED modules? (e.g., "mqtt", "dashboard")',
+              'Search query',
+              'query'
+            ));
+          if (!query) throw new Error('Missing required parameter: query');
+          const searchResults = await this.nodeRedClient.searchModules(
+            query,
+            args?.category || 'all',
+            args?.limit || 10
+          );
+          return { content: [{ type: 'text', text: JSON.stringify(searchResults, null, 2) }] };
+        }
+
+        case 'install_module':
+          validateRequired(args, ['moduleName']);
+          const moduleName = args.moduleName;
+          const moduleVersion = args.version;
+          const installResult = await this.nodeRedClient.installModule(moduleName, moduleVersion);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(installResult, null, 2),
+              },
+            ],
+          };
+
+        case 'get_installed_modules': {
+          const installedModules = await this.nodeRedClient.getInstalledModules();
+          const queryFilter = args?.query;
+          const hasNewParams = isPaginated(args) || typeof queryFilter === 'string';
+
+          if (!hasNewParams) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(installedModules, null, 2),
+                },
+              ],
+            };
+          }
+
+          let modules: any[] = Array.isArray(installedModules) ? installedModules : [];
+          if (typeof queryFilter === 'string') {
+            modules = modules.filter((m: any) => {
+              const name = typeof m === 'string' ? m : (m?.name ?? m?.id ?? '');
+              return caseInsensitiveIncludes(name, queryFilter);
+            });
+          }
+          result = { success: true, data: applyPagination(modules, args), timestamp };
+          break;
+        }
+
+        case 'get_context': {
+          const scope = args?.scope || 'global';
+          const key = args?.key;
+          if (scope === 'flow') {
+            validateRequired(args, ['flowId']);
+          }
+          const contextData =
+            scope === 'flow'
+              ? await this.nodeRedClient.getFlowContext(args.flowId, key)
+              : await this.nodeRedClient.getGlobalContext(key);
+          result = { success: true, data: contextData, timestamp };
+          break;
+        }
+
+        case 'set_context': {
+          validateRequired(args, ['key', 'value']);
+          const scope = args?.scope || 'global';
+          if (scope === 'flow') {
+            validateRequired(args, ['flowId']);
+            await this.nodeRedClient.setFlowContext(args.flowId, args.key, args.value);
+          } else {
+            await this.nodeRedClient.setGlobalContext(args.key, args.value);
+          }
+          result = { success: true, data: { scope, key: args.key }, timestamp };
+          break;
+        }
+
+        case 'delete_context': {
+          validateRequired(args, ['key']);
+          await this.nodeRedClient.deleteGlobalContext(args.key);
+          result = { success: true, data: { key: args.key }, timestamp };
+          break;
+        }
+
+        case 'delete_flow': {
+          const flowId = await this.resolveFlowId(args, 'delete');
+          const dryRun = args?.dryRun !== false;
+          const flow = await this.nodeRedClient.getFlow(flowId);
+          const flowInfo = {
+            id: flow.id,
+            label: flow.label ?? '',
+            nodeCount: flow.nodes?.length ?? 0,
+          };
+
+          if (dryRun) {
+            result = { success: true, data: { dryRun: true, wouldDelete: flowInfo }, timestamp };
+            break;
+          }
+
+          let confirmed = Boolean(args?.confirm);
+          if (!confirmed) {
+            confirmed = await this.tryElicitConfirm(
+              `Delete flow "${flowInfo.label || flowId}"? This will permanently remove ${flowInfo.nodeCount} node(s) and cannot be undone.`
+            );
+          }
+          if (!confirmed) throw new Error('Deletion requires confirm: true and dryRun: false');
+
+          await this.nodeRedClient.deleteFlow(flowId);
+          result = { success: true, data: { deleted: flowInfo }, timestamp };
+          break;
+        }
+
+        case 'search_flows': {
+          const typeFilter = args?.type as string | undefined;
+          const query = args?.query as string | undefined;
+          const filterFlowId = args?.flowId as string | undefined;
+          const nodeTypePrefix = args?.nodeTypePrefix as string | undefined;
+          const excludeFlowIds = Array.isArray(args?.excludeFlowIds)
+            ? new Set(args.excludeFlowIds as string[])
+            : undefined;
+
+          if (!typeFilter && !query && !filterFlowId && !nodeTypePrefix) {
+            throw new Error(
+              'At least one search parameter is required: type, query, flowId, or nodeTypePrefix'
+            );
+          }
+
+          const flows = await this.nodeRedClient.getFlows();
+          const typeFilterLower = typeFilter?.toLowerCase();
+          const queryLower = query?.toLowerCase();
+          const nodeTypePrefixLower = nodeTypePrefix?.toLowerCase();
+
+          const paginated = isPaginated(args);
+          const { limit: pageLimit, offset: pageOffset } = paginated
+            ? parsePagination(args)
+            : { limit: SEARCH_RESULTS_LIMIT, offset: 0 };
+          const windowEnd = pageOffset + pageLimit;
+          const matches: FlowSearchMatch[] = [];
+          let total = 0;
+
+          for (const flow of flows) {
+            if (filterFlowId && flow.id !== filterFlowId) continue;
+            if (excludeFlowIds?.has(flow.id)) continue;
+            for (const node of flow.nodes ?? []) {
+              const nodeTypeLower = node.type.toLowerCase();
+              if (typeFilterLower && !nodeTypeLower.includes(typeFilterLower)) continue;
+              if (nodeTypePrefixLower && !nodeTypeLower.startsWith(nodeTypePrefixLower)) continue;
+              if (queryLower) {
+                let matched = (node.name ?? '').toLowerCase().includes(queryLower);
+                if (!matched) {
+                  for (const k of Object.keys(node)) {
+                    if (SEARCH_SKIP_PROPS.has(k) || k === 'name') continue;
+                    const v = (node as Record<string, unknown>)[k];
+                    if (typeof v === 'string' && v.toLowerCase().includes(queryLower)) {
+                      matched = true;
+                      break;
+                    }
+                  }
+                }
+                if (!matched) continue;
+              }
+              if (total >= pageOffset && total < windowEnd) {
+                matches.push({
+                  nodeId: node.id,
+                  nodeType: node.type,
+                  nodeName: node.name ?? '',
+                  flowId: flow.id,
+                  flowLabel: flow.label ?? '',
+                });
+              }
+              total++;
+            }
+          }
+
+          if (paginated) {
+            result = {
+              success: true,
+              data: {
+                items: matches,
+                total,
+                limit: pageLimit,
+                offset: pageOffset,
+                hasMore: pageOffset + matches.length < total,
+              },
+              timestamp,
+            };
+          } else {
+            result = { success: true, data: { matches, total }, timestamp };
+          }
+          break;
+        }
+
+        case 'get_flow_state': {
+          const status: any = await this.nodeRedClient.getFlowStatus();
+          if (isPaginated(args)) {
+            const flows = Array.isArray(status?.flows) ? status.flows : [];
+            const envelope = applyPagination(flows, args);
+            result = {
+              success: true,
+              data: { state: status?.state, ...envelope },
+              timestamp,
+            };
+          } else {
+            result = { success: true, data: status, timestamp };
+          }
+          break;
+        }
+
+        case 'get_settings': {
+          result = { success: true, data: await this.nodeRedClient.getSettings(), timestamp };
+          break;
+        }
+
+        case 'get_runtime_info': {
+          result = { success: true, data: await this.nodeRedClient.getRuntimeInfo(), timestamp };
+          break;
+        }
+
+        case 'get_node_errors': {
+          const checker = new NodeErrorChecker(this.nodeRedClient);
+          const data = await checker.check({
+            includeWarnings: args?.includeWarnings ?? false,
+            timeoutMs: args?.timeoutMs,
+          });
+          result = { success: true, data, timestamp };
+          break;
+        }
+
+        case 'semantic_search_flows': {
+          const query =
+            args?.query ??
+            (await this.tryElicitString(
+              'What are you looking for in your Node-RED flows?',
+              'Search query',
+              'query'
+            ));
+          if (!query) throw new Error('Missing required parameter: query');
+          if (args?.refresh) await this.semanticIndex.refresh();
+          const results = await this.semanticIndex.search(
+            query,
+            args?.topK ?? 10,
+            args?.scope ?? 'all'
+          );
+          result = { success: true, data: results, timestamp };
+          break;
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    } catch (error) {
+      result = {
+        success: false,
+        ...describeToolFailure(name, error),
+        timestamp,
+      };
+
+      logDebug(`Tool '${name}' failed`, {
+        tool: name,
+        args,
+        error: result.error,
+        details: result.errorDetails,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
+
+  /**
+   * Get list of available resources
+   */
+  public async getResourceList() {
+    const resources: { uri: string; name: string; description: string; mimeType: string }[] = [
+      ...Object.entries(NODERED_RESOURCE_META).map(([path, { name, description }]) => ({
+        uri: `nodered://${path}`,
+        name,
+        description,
+        mimeType: 'application/json' as const,
+      })),
+      {
+        uri: 'system://runtime',
+        name: 'Node-RED System Info',
+        description: 'Node-RED runtime and connection status',
+        mimeType: 'application/json',
+      },
+    ];
+
+    try {
+      const flows = await this.nodeRedClient.getFlows();
+      for (const flow of flows) {
+        resources.push({
+          uri: `flow://${flow.id}`,
+          name: flow.label || flow.id,
+          description: `Node-RED flow: ${flow.label || flow.id}`,
+          mimeType: 'application/json',
+        });
+      }
+    } catch {
+      // Dynamic per-flow resources unavailable; static collection resources still listed
+    }
+
+    return resources;
+  }
+
+  /**
+   * Get specific resource
+   */
+  public async getResource(uri: string) {
+    const [protocol, path] = uri.split('://');
+
+    switch (protocol) {
+      case 'flow': {
+        if (!path) {
+          throw new Error('Flow path is required');
+        }
+        const flow = await this.nodeRedClient.getFlow(path);
+        const resource: NodeRedFlowResource = {
+          uri,
+          name: flow.label || flow.id,
+          description: `Node-RED flow: ${flow.label || flow.id}`,
+          mimeType: 'application/json',
+          flow,
+          metadata: {
+            lastModified: new Date().toISOString(),
+            nodeCount: flow.nodes?.length || 0,
+            status: flow.disabled ? 'inactive' : 'active',
+          },
+        };
+        return {
+          contents: [
+            {
+              uri,
+              text: JSON.stringify(resource, null, 2),
+              mimeType: 'application/json',
+            },
+          ],
+        };
+      }
+
+      case 'system': {
+        const systemInfo = await this.nodeRedClient.getRuntimeInfo();
+        const resource: NodeRedSystemResource = {
+          uri,
+          name: 'Node-RED System Info',
+          description: 'Node-RED runtime and connection status',
+          mimeType: 'application/json',
+          system: systemInfo,
+          metadata: {
+            timestamp: new Date().toISOString(),
+            serverVersion: this.config.version,
+            connected: true,
+          },
+        };
+        return {
+          contents: [
+            {
+              uri,
+              text: JSON.stringify(resource, null, 2),
+              mimeType: 'application/json',
+            },
+          ],
+        };
+      }
+
+      case 'nodered': {
+        if (!path) throw new Error('Invalid resource URI: missing path');
+        const meta = NODERED_RESOURCE_META[path];
+        if (!meta) throw new Error(`Unsupported nodered resource path: ${path}`);
+        const { name, description } = meta;
+        const timestamp = new Date().toISOString();
+        switch (path) {
+          case 'flows': {
+            const items = await this.nodeRedClient.getFlowSummaries(['tab']);
+            return buildCollectionResponse(uri, name, description, {
+              items,
+              metadata: { count: items.length, timestamp },
+            });
+          }
+          case 'subflows': {
+            const items = await this.nodeRedClient.getFlowSummaries(['subflow']);
+            return buildCollectionResponse(uri, name, description, {
+              items,
+              metadata: { count: items.length, timestamp },
+            });
+          }
+          case 'nodes': {
+            const modules = await this.nodeRedClient.getInstalledModules();
+            const items = Array.isArray(modules) ? modules : [];
+            return buildCollectionResponse(uri, name, description, {
+              items,
+              metadata: { count: items.length, timestamp },
+            });
+          }
+          case 'context/global': {
+            const data = await this.nodeRedClient.getGlobalContext();
+            return buildCollectionResponse(uri, name, description, {
+              data,
+              metadata: { timestamp },
+            });
+          }
+          default:
+            throw new Error(`Unsupported nodered resource path: ${path}`);
+        }
+      }
+
+      default:
+        throw new Error(`Unsupported resource protocol: ${protocol}`);
+    }
+  }
+
+  /**
+   * Get prompt definitions (delegates to prompt registry)
+   */
+  private getPromptDefinitions() {
+    return promptRegistry.list();
+  }
+
+  /**
+   * Get specific prompt (delegates to prompt registry)
+   */
+  private async getPrompt(name: string, args: any) {
+    return await promptRegistry.get(name, args);
+  }
+
+  /**
+   * Get the underlying server instance
+   */
+  getServer(): Server {
+    return this.server;
+  }
+
+  /**
+   * Get SSE handler instance
+   */
+  getSSEHandler(): SSEHandler {
+    return this.sseHandler;
+  }
+
+  /**
+   * Get Node-RED client instance
+   */
+  getNodeRedClient(): NodeRedAPIClient {
+    return this.nodeRedClient;
+  }
+
+  /**
+   * Start the MCP server
+   */
+  async start(): Promise<void> {
+    // Test Node-RED connection
+    const connected = await this.nodeRedClient.testConnection();
+    // Connection test completed silently
+  }
+
+  /**
+   * Stop the MCP server
+   */
+  async stop(): Promise<void> {
+    this.sseHandler.destroy();
+    // Server stopped - logging disabled in stdio mode
+  }
+
+  /**
+   * Public method to list tools (for HTTP API)
+   */
+  async listTools() {
+    return { tools: this.getToolDefinitions() };
+  }
+
+  /**
+   * Public method to call tools (for HTTP API)
+   * Accepts optional per-request Node-RED credentials from the OAuth token.
+   */
+  async callToolPublic(name: string, args: any, nodeRedCredentials?: NodeRedCredentials) {
+    if (nodeRedCredentials) {
+      const savedClient = this.nodeRedClient;
+      const authHeader =
+        nodeRedCredentials.authType === 'basic'
+          ? `Basic ${Buffer.from(`${nodeRedCredentials.username}:${nodeRedCredentials.password}`).toString('base64')}`
+          : nodeRedCredentials.token
+            ? `Bearer ${nodeRedCredentials.token}`
+            : undefined;
+      this.nodeRedClient = new NodeRedAPIClient({
+        baseURL: nodeRedCredentials.url,
+        headers: authHeader ? { Authorization: authHeader } : {},
+      });
+      try {
+        return await this.callTool(name, args);
+      } finally {
+        this.nodeRedClient = savedClient;
+      }
+    }
+    return await this.callTool(name, args);
+  }
+
+  /**
+   * Public method to list resources (for HTTP API)
+   */
+  async listResources() {
+    return { resources: await this.getResourceList() };
+  }
+
+  /**
+   * Public method to read resource (for HTTP API)
+   */
+  async readResource(uri: string) {
+    return await this.getResource(uri);
+  }
+
+  /**
+   * Public method to list prompts (for HTTP API)
+   */
+  async listPrompts() {
+    return { prompts: this.getPromptDefinitions() };
+  }
+
+  /**
+   * Public method to get prompt (for HTTP API)
+   */
+  async getPromptPublic(name: string, args: any) {
+    return await this.getPrompt(name, args);
+  }
+}

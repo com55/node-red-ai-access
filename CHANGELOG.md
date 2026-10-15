@@ -1,0 +1,213 @@
+# Changelog
+
+All notable changes to the MCP Node-RED Server project will be documented in
+this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased] - 2025-11-22
+
+### Added
+
+- **`replace_flow` tool**: Replaces an entire tab via `PUT /flow/:id` (no
+  revision check). Warns that the whole tab is replaced, its nodes restart,
+  omitted nodes are deleted, and concurrent edits can be overwritten — prefer
+  `deploy_flow` / `deploy_nodes` for revision-checked edits.
+- **`deploy_flow` tool**: Revision-safe replacement of one tab via Admin API v2.
+  Requires `expected_rev` from a prior `get_flows` / `get_flow` read (optimistic
+  concurrency like two editor sessions). Merges only that tab + its `z`
+  children, then `POST /flows` with the caller's `expected_rev`. Default
+  deployment type is `flows` (optional `nodes`). Nodes omitted from the provided
+  tab content are deleted. Returns the new `rev` on success. Prefer over
+  `replace_flow` / `update_flow` for concurrent-safe edits. Shares the
+  `deployFlows` helper with `deploy_nodes`.
+- **`deploy_nodes` tool**: Upsert specific nodes by id and deploy with
+  `Node-RED-Deployment-Type: nodes` (editor "Modified Nodes"). Requires
+  `expected_rev` from a prior read; only the listed nodes restart. Optional
+  top-level `credentials`. Stale `expected_rev` fails fast with HTTP 409
+  guidance; returns the new `rev` on success.
+- **Flow `rev` on reads**: `get_flows` and `get_flow` return the current Admin
+  API v2 revision as a top-level `rev` sibling of `data` (existing `data` shape
+  unchanged) for use as `expected_rev` on deploy tools.
+- **Read-Only Mode (`MCP_READ_ONLY`)**: Structurally prevents mutation of
+  Node-RED flows when exposing this server to remote agents
+  - Write tools (`create_flow`, `replace_flow`, `update_flow`, `deploy_flow`,
+    `deploy_nodes`, `delete_flow`, `enable_flow`, `disable_flow`, `set_context`,
+    `delete_context`, `install_module`) are removed from
+    `getToolDefinitions()`/tool listings entirely, so clients never see them as
+    available capabilities
+  - `callTool` also rejects these tools if called directly by name, as
+    defense-in-depth against a client that caches an older tool list
+  - Derived from each tool's existing `readOnlyHint` annotation rather than a
+    separately maintained tool-name list
+  - Pairs with `delete_flow`'s existing `dryRun` default; all read, search,
+    diagnostic, resource, and prompt capabilities remain available
+- **MCP SDK 1.22.0 Upgrade**: Updated from 1.17.5 to latest SDK version with
+  protocol improvements
+- **Circuit Breaker Pattern**: Implemented comprehensive circuit breaker for
+  Node-RED API calls
+  - Configurable failure threshold (default: 5 failures)
+  - Configurable success threshold for recovery (default: 2 successes)
+  - Automatic state transitions (closed → open → half-open → closed)
+  - Real-time state change monitoring
+- **Exponential Backoff Retry Logic**: Smart retry mechanism with:
+  - Configurable max retries (default: 3)
+  - Exponential backoff with configurable multiplier (default: 2x)
+  - Max delay caps to prevent excessive waits
+  - Smart retry predicates (skip 4xx errors except 429 rate limits)
+  - Detailed retry attempt logging
+- **Server Discovery Endpoint**: Implemented `.well-known/mcp.json` per November
+  2025 MCP spec
+  - Exposes server capabilities and metadata
+  - Lists available tools, resources, and prompts
+  - Provides endpoint information for HTTP and SSE
+  - Includes vendor and documentation links
+  - Enables MCP registry integration
+- **Timeout Management**: Comprehensive timeout handling with proper cleanup
+  - Request-level timeouts
+  - Operation-level timeouts
+  - Race condition prevention
+- **Enhanced Error Handling**: Production-ready error management
+  - Custom error classes with proper inheritance
+  - Standardized error responses
+  - Request correlation IDs
+  - Context-aware error logging
+- **Test Coverage**: Added 19 comprehensive tests for retry and circuit breaker
+  - Unit tests for exponential backoff
+  - Circuit breaker state transition tests
+  - Timeout handling tests
+  - Integration tests for retry with circuit breaker
+
+### Deprecated
+
+- **`update_flow` tool**: Deprecated alias of `replace_flow` (same
+  `PUT /flow/:id` implementation). Will be removed in a future release — use
+  `replace_flow`, or `deploy_flow` / `deploy_nodes` for revision-checked edits.
+
+### Fixed
+
+- **`deployFlows` null body**: `POST /flows` with a null body returns HTTP 400
+  for `full` / `nodes` / `flows` on Node-RED 4.x. `deployFlows` now re-posts the
+  current v2 `{ rev, flows }` (or uses `reload` with no body). `enableFlow` /
+  `disableFlow` no longer call a redundant follow-up deploy — `PUT /flow/:id`
+  already persists and deploys the tab.
+- **Node-RED Username/Password Authentication**: when `NODERED_USERNAME` +
+  `NODERED_PASSWORD` are Node-RED's own `adminAuth` credentials, sending them as
+  a static HTTP Basic header on every request doesn't work — Node-RED's admin
+  API only accepts Bearer tokens issued via the `/auth/token` password grant, so
+  every request in this mode failed with `401`
+  - New opt-in `NODERED_ADMIN_AUTH_ENABLED=true` switches to exchanging the
+    credentials for a Bearer token on demand, cached in memory and transparently
+    re-exchanged shortly before expiry or immediately after a `401`. Left unset
+    (the default), the existing static Basic header is sent unchanged — for
+    deployments where these credentials actually belong to a reverse proxy in
+    front of Node-RED rather than Node-RED's own `adminAuth`, which is a real,
+    supported setup and not something this fix should break
+  - Node-RED's `/comms` WebSocket (used by `get_node_errors`) authenticates
+    entirely in-band — an `{ auth: "<token>" }` message sent right after the
+    connection opens, not via connection headers — so it was never actually
+    authenticating regardless of Basic vs. Bearer. Both WebSocket entry points
+    now send the real handshake when `NODERED_ADMIN_AUTH_ENABLED` or
+    `NODERED_API_TOKEN` provide a token, and correctly parse Node-RED's actual
+    wire format (a flat `{ auth: "ok" | "fail" }` reply; regular events arrive
+    batched as a JSON array per message, not one object per message)
+  - `get_node_errors`'s `statusesMayBeIncomplete` previously reflected only
+    whether the socket was open, so an unauthenticated connection (silently
+    muted by Node-RED rather than closed) reported a confident, wrong "no
+    errors" — it now also accounts for whether the handshake was actually
+    confirmed
+  - A client constructed with an explicit `Authorization` header (used by the
+    per-tenant OAuth path in `callToolPublic`) is left untouched — the new token
+    resolution never overwrites tenant-supplied credentials
+  - The token exchange respects `NODERED_TIMEOUT` like the rest of the client,
+    instead of being able to hang indefinitely
+  - Added unit tests covering token caching/reuse, forced refresh, concurrent
+    request de-duplication, the 401-retry-once path, the per-tenant override,
+    the opt-in gate, and the WebSocket handshake (including the batched-array
+    wire format and the corrected `statusesMayBeIncomplete` logic)
+- **TypeScript Strict Mode Compliance**: Resolved all
+  `exactOptionalPropertyTypes` errors
+  - Fixed SSEConnection, SSEClientInfo, SSEError type definitions
+  - Fixed ApiResponse and LogEntry optional properties
+  - Fixed ModuleInstallResult version field
+  - Fixed error handling class optional properties
+- **Undefined Function Reference**: Removed undefined `logFunction` call in
+  mcp-server.ts
+- **OpenTelemetry Resource Import**: Fixed Resource import to prevent runtime
+  errors
+- **Pino Logger Signature**: Corrected logger.info parameter order (metadata
+  first, message second)
+- **Method Visibility**: Made MCP server methods public for testing
+  accessibility
+
+### Changed
+
+- **Node-RED API Client**: Enhanced with circuit breaker and retry logic
+  - All API calls now protected by circuit breaker
+  - Automatic retry with exponential backoff
+  - Improved resilience against transient failures
+- **Build System**: Verified all builds succeed with strict TypeScript checking
+- **Documentation**: Updated README with 2025 reliability features
+
+### Technical Details
+
+#### Retry Implementation
+
+```typescript
+- Initial delay: 1000ms
+- Max delay: 10000ms
+- Backoff multiplier: 2x
+- Max retries: 3 (configurable)
+- Smart retry logic: Skip 4xx errors except 429
+```
+
+#### Circuit Breaker Configuration
+
+```typescript
+- Failure threshold: 5 consecutive failures
+- Success threshold: 2 consecutive successes (in half-open state)
+- Timeout: 60000ms (1 minute)
+- State monitoring with callbacks
+```
+
+#### Server Discovery Format
+
+```json
+{
+  "name": "nodered-mcp-server",
+  "version": "1.0.0",
+  "protocolVersion": "2024-11-05",
+  "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
+  "endpoints": { "http": {...}, "sse": {...} }
+}
+```
+
+### Migration Notes
+
+- No breaking changes in this release
+- All existing MCP tool APIs remain compatible
+- Circuit breaker is transparent to clients
+- Server discovery endpoint is opt-in for discovery
+
+### References
+
+- [MCP November 2025 Protocol Updates](https://modelcontextprotocol.io/development/roadmap)
+- [MCP SDK 1.22.0 Release](https://github.com/modelcontextprotocol/typescript-sdk/releases)
+- [Circuit Breaker Pattern](https://martinfowler.com/bliki/CircuitBreaker.html)
+- [Exponential Backoff Strategy](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)
+
+---
+
+## [1.0.0] - 2025-06-12
+
+### Initial Release
+
+- Basic MCP server implementation with stdio transport
+- Node-RED Admin API integration
+- SSE support for real-time monitoring
+- Tool, resource, and prompt implementations
+- Express HTTP server with security middleware
+- TypeScript 5.7+ with strict mode
+- Comprehensive test framework setup
