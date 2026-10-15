@@ -56,9 +56,33 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/actionBadge/);
     expect(client).toMatch(/Created/);
     expect(client).toMatch(/Approved/);
+    expect(client).toMatch(/actorPlain/);
+    expect(client).toMatch(/col-actor" title="/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/action-badge/);
     expect(styles).toMatch(/col-action[\s\S]*white-space:\s*nowrap/);
     expect(styles).toMatch(/col-actor[\s\S]*white-space:\s*nowrap/);
+  });
+
+  it('uses a wide responsive layout and side-by-side diff toggle', () => {
+    const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
+    expect(styles).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
+    expect(styles).toMatch(/\.diff-split/);
+    expect(styles).toMatch(/\.diff-mode-toggle/);
+    expect(styles).toMatch(/overflow-x:\s*auto/);
+    expect(styles).toMatch(/\.diff-line/);
+    const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
+    expect(client).toMatch(/data-diff-mode="split"/);
+    expect(client).toMatch(/data-diff-mode="unified"/);
+    expect(client).toMatch(/renderSplitTextDiff|Side by side/);
+    expect(client).toMatch(/bindDiffModeToggle/);
+  });
+});
+
+describe('ai-access sidebar TTL layout', () => {
+  it('stacks long labels above inputs', () => {
+    const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
+    expect(html).toMatch(/red-ui-settings-row stacked/);
+    expect(html).toMatch(/\.red-ui-settings-row\.stacked[\s\S]*flex-direction:\s*column/);
   });
 });

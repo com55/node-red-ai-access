@@ -11,6 +11,7 @@ import { aiOpsErrorToHttp, submitReplaceFlowProposal } from '../ai-ops.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
+  applyFlowNodeOps,
   buildPatchedFlowTab,
   collectSetProps,
   decodeBase64UrlJson,
@@ -18,6 +19,34 @@ import {
 } from './flow-patch.js';
 import { jsonError, rejectOversizedGetUrl, setNoStore } from './middleware.js';
 import { queryString } from './query.js';
+
+function proposeErrorHint(code: string): string | undefined {
+  switch (code) {
+    case 'version_mismatch':
+      return 'Re-read the flow and retry with the current rev.';
+    case 'node_not_found':
+      return 'Call GET …/flows/<id> and use a node id from that response.';
+    case 'node_already_exists':
+      return 'Choose a new node id, or use op:set / op:remove on the existing node.';
+    case 'flow_not_found':
+      return 'Call GET …/flows to list valid ids.';
+    case 'protected_property':
+      return 'Omit id, type, z, and wires from set props (use op:add for new nodes).';
+    case 'invalid_patch':
+    case 'invalid_patch_json':
+      return 'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.';
+    case 'missing_edits':
+      return 'Provide set.<prop>=value, or patch nodes with at least one op.';
+    case 'missing_node_id':
+      return 'Pass node=<id> with set.<prop>=, or include id on each patch.nodes entry.';
+    case 'missing_flow_id':
+      return 'Pass flow=<id> from GET …/flows.';
+    case 'missing_expected_rev':
+      return 'Pass rev from GET …/flows or …/flows/<id>.';
+    default:
+      return undefined;
+  }
+}
 
 export function getLinkProposeHandler(
   proposalStore: ProposalStore,
@@ -43,7 +72,7 @@ export function getLinkProposeHandler(
         400,
         'rev query parameter is required',
         'missing_expected_rev',
-        'Pass rev from GET …/flows or …/flows/<id>.'
+        proposeErrorHint('missing_expected_rev')
       );
       return;
     }
@@ -61,26 +90,22 @@ export function getLinkProposeHandler(
       if (patchEncoded) {
         const interpreted = interpretPatch(decodeBase64UrlJson(patchEncoded), flowId);
         builtFlowId = interpreted.flowId;
-        if (interpreted.kind === 'replace_flow' && interpreted.flow) {
+        if (interpreted.kind === 'replace_flow') {
           builtFlow = {
             ...interpreted.flow,
-            id: interpreted.flow.id ?? builtFlowId,
+            id: interpreted.flow.id || builtFlowId,
             type: interpreted.flow.type ?? 'tab',
             nodes: interpreted.flow.nodes ?? [],
           };
         } else {
-          const patched = await buildPatchedFlowTab(
-            flowAdapter,
-            builtFlowId,
-            interpreted.edits ?? []
-          );
+          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
           if (patched.expectedRev !== rev) {
             res.status(409).json({
               error: 'Flow revision mismatch',
               code: 'version_mismatch',
               expectedRev: rev,
               currentRev: patched.expectedRev,
-              hint: 'Re-read the flow and retry with the current rev.',
+              hint: proposeErrorHint('version_mismatch'),
             });
             return;
           }
@@ -94,7 +119,7 @@ export function getLinkProposeHandler(
             400,
             'flow query parameter is required',
             'missing_flow_id',
-            'Pass flow=<id> from GET …/flows.'
+            proposeErrorHint('missing_flow_id')
           );
           return;
         }
@@ -104,7 +129,7 @@ export function getLinkProposeHandler(
             400,
             'node query parameter is required (or pass patch=)',
             'missing_node_id',
-            'Pass node=<id> and set.<prop>=value, or patch=<base64url JSON>.'
+            proposeErrorHint('missing_node_id')
           );
           return;
         }
@@ -114,7 +139,7 @@ export function getLinkProposeHandler(
             400,
             'At least one set.<prop>=value is required',
             'missing_edits',
-            'Example: set.name=Hello'
+            proposeErrorHint('missing_edits')
           );
           return;
         }
@@ -125,7 +150,7 @@ export function getLinkProposeHandler(
             code: 'version_mismatch',
             expectedRev: rev,
             currentRev: patched.expectedRev,
-            hint: 'Re-read the flow and retry with the current rev.',
+            hint: proposeErrorHint('version_mismatch'),
           });
           return;
         }
@@ -154,9 +179,10 @@ export function getLinkProposeHandler(
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
+        const hint = proposeErrorHint(mapped.body.code);
         res.status(mapped.statusCode).json({
           ...mapped.body,
-          hint: 'Fix the reported code, re-read flows if rev is stale, then retry.',
+          ...(hint ? { hint } : {}),
         });
         return;
       }

@@ -119,7 +119,10 @@ export class DraftStore {
     const atMs = this.now();
     this.purgeExpired(atMs);
     const draft = this.drafts.get(draftId);
-    if (!draft || draft.linkId !== linkId || draft.expiresAtMs <= atMs) {
+    if (draft?.linkId !== linkId) {
+      throw new DraftNotFoundError(draftId);
+    }
+    if (draft.expiresAtMs <= atMs) {
       throw new DraftNotFoundError(draftId);
     }
     return draft;
@@ -138,7 +141,9 @@ export class DraftStore {
     draft: DraftRecord;
     receivedSeqs: number[];
     missingSeqs: number[];
+    /** Decoded UTF-8 / binary bytes across all chunks (not base64url length). */
     totalBytes: number;
+    maxBytes: number;
   } {
     if (!Number.isInteger(seq) || seq < 0) {
       throw new DraftValidationError('seq must be a non-negative integer', 'invalid_seq');
@@ -157,10 +162,17 @@ export class DraftStore {
         );
       }
     } else {
-      const nextBytes = draft.totalBytes + Buffer.byteLength(data, 'utf8');
+      // Count decoded payload bytes (not base64url character length).
+      let decodedLen: number;
+      try {
+        decodedLen = Buffer.from(data, 'base64url').byteLength;
+      } catch {
+        throw new DraftValidationError('data must be a base64url string', 'invalid_chunk');
+      }
+      const nextBytes = draft.totalBytes + decodedLen;
       if (nextBytes > this.maxBytes) {
         throw new DraftValidationError(
-          `Draft exceeds limit of ${this.maxBytes} bytes`,
+          `Draft exceeds limit of ${this.maxBytes} bytes (decoded)`,
           'payload_too_large'
         );
       }
@@ -170,16 +182,27 @@ export class DraftStore {
 
     const receivedSeqs = [...draft.chunks.keys()].sort((a, b) => a - b);
     const missingSeqs: number[] = [];
-    if (receivedSeqs.length > 0) {
-      const max = receivedSeqs[receivedSeqs.length - 1]!;
-      for (let i = 0; i <= max; i += 1) {
+    const maxSeq = receivedSeqs.at(-1);
+    if (maxSeq !== undefined) {
+      for (let i = 0; i <= maxSeq; i += 1) {
         if (!draft.chunks.has(i)) {
           missingSeqs.push(i);
         }
       }
     }
 
-    return { draft, receivedSeqs, missingSeqs, totalBytes: draft.totalBytes };
+    return {
+      draft,
+      receivedSeqs,
+      missingSeqs,
+      totalBytes: draft.totalBytes,
+      maxBytes: this.maxBytes,
+    };
+  }
+
+  /** Expose the configured decoded-byte cap (for append responses). */
+  getMaxBytes(): number {
+    return this.maxBytes;
   }
 
   /**
@@ -200,7 +223,10 @@ export class DraftStore {
     }
 
     const receivedSeqs = [...draft.chunks.keys()].sort((a, b) => a - b);
-    const max = receivedSeqs[receivedSeqs.length - 1]!;
+    const max = receivedSeqs.at(-1);
+    if (max === undefined) {
+      throw new DraftValidationError('Draft has no chunks', 'draft_empty');
+    }
     const missing: number[] = [];
     for (let i = 0; i <= max; i += 1) {
       if (!draft.chunks.has(i)) {
@@ -213,7 +239,11 @@ export class DraftStore {
 
     const parts: string[] = [];
     for (let i = 0; i <= max; i += 1) {
-      parts.push(draft.chunks.get(i)!);
+      const part = draft.chunks.get(i);
+      if (part === undefined) {
+        throw new DraftValidationError(`Missing chunk seqs: ${i}`, 'missing_chunks');
+      }
+      parts.push(part);
     }
     // Chunks are base64url payloads; decode each then concatenate bytes.
     const buffers = parts.map(part => {

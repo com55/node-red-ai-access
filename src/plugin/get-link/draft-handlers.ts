@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 
 import type { Response } from 'express';
 
-import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
+import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
@@ -14,12 +14,169 @@ import { aiOpsErrorToHttp, submitReplaceFlowProposal } from '../ai-ops.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import { DraftNotFoundError, DraftStore, DraftValidationError } from './draft-store.js';
-import { buildPatchedFlowTab, decodeBase64UrlJson, interpretPatch } from './flow-patch.js';
+import {
+  applyFlowNodeOps,
+  buildPatchedFlowTab,
+  decodeBase64UrlJson,
+  interpretPatch,
+} from './flow-patch.js';
 import { jsonError, rejectOversizedGetUrl, setNoStore } from './middleware.js';
 import { queryString } from './query.js';
 
-export function getLinkDraftNewHandler(draftStore: DraftStore) {
-  return (req: AuthenticatedRequest, res: Response): void => {
+function draftErrorHint(code: string): string | undefined {
+  switch (code) {
+    case 'draft_not_found':
+      return 'Start a new draft with GET …/draft/new.';
+    case 'chunk_conflict':
+      return 'Re-send the same data for that seq, or start a new draft.';
+    case 'payload_too_large':
+      return 'Shrink the content; totalBytes counts decoded bytes against maxBytes.';
+    case 'invalid_seq':
+      return 'seq must be a non-negative integer (0, 1, 2, …).';
+    case 'invalid_chunk':
+      return 'data must be base64url of the raw chunk bytes.';
+    case 'missing_chunks':
+      return 'Upload every seq from 0 through max before submit.';
+    case 'draft_hash_mismatch':
+      return 'sha256 must be the hex digest of the assembled UTF-8 bytes (before base64url).';
+    case 'draft_empty':
+      return 'Append at least one chunk before submit.';
+    case 'node_not_found':
+      return 'Call GET …/flows/<id> and use a node id from that response (or use mode=json with op:add).';
+    case 'field_not_found':
+      return 'Use a property that exists on the node, or mode=json to add/replace nodes.';
+    case 'missing_draft_params':
+      return 'Example: …/draft/new?flow=tab1&rev=abc&node=n1&field=template';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Validate field-mode targets against the live flow so callers fail before
+ * uploading chunks. Skipped for mode=json (document may add/remove nodes).
+ */
+async function validateFieldDraftTargets(
+  flowAdapter: FlowAdapter,
+  flowId: string,
+  targets: { nodeId: string; field: string }[]
+): Promise<{ code: string; message: string } | null> {
+  let snapshot: { rev: string; flow: Partial<FlowTab> };
+  try {
+    snapshot = await flowAdapter.getFlow(flowId);
+  } catch (error) {
+    const mapped = aiOpsErrorToHttp(error);
+    if (mapped) {
+      return { code: mapped.body.code, message: mapped.body.error };
+    }
+    throw error;
+  }
+  const nodes: FlowNode[] = [
+    ...(Array.isArray(snapshot.flow.nodes) ? snapshot.flow.nodes : []),
+    ...(Array.isArray(snapshot.flow.configs) ? snapshot.flow.configs : []),
+  ];
+  for (const t of targets) {
+    const node = nodes.find(n => n.id === t.nodeId);
+    if (!node) {
+      return {
+        code: 'node_not_found',
+        message: `Node '${t.nodeId}' was not found in flow '${flowId}'`,
+      };
+    }
+    if (!(t.field in node)) {
+      return {
+        code: 'field_not_found',
+        message: `Field '${t.field}' was not found on node '${t.nodeId}'`,
+      };
+    }
+  }
+  return null;
+}
+
+type DraftModePlan =
+  | { ok: true; mode: 'field' | 'json'; targets?: { nodeId: string; field: string }[] }
+  | { ok: false; status: number; error: string; code: string; hint?: string };
+
+function planDraftMode(
+  nodeId: string | undefined,
+  field: string | undefined,
+  modeParam: string | undefined,
+  targetsEncoded: string | undefined
+): DraftModePlan {
+  if (targetsEncoded) {
+    try {
+      const parsed = decodeBase64UrlJson(targetsEncoded);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('targets must be a non-empty array');
+      }
+      const targets = parsed.map(entry => {
+        if (!entry || typeof entry !== 'object') {
+          throw new Error('bad target');
+        }
+        const t = entry as { node?: unknown; nodeId?: unknown; field?: unknown };
+        const n =
+          typeof t.nodeId === 'string' ? t.nodeId : typeof t.node === 'string' ? t.node : '';
+        const f = typeof t.field === 'string' ? t.field : '';
+        if (!n || !f) throw new Error('bad target');
+        return { nodeId: n, field: f };
+      });
+      return { ok: true, mode: 'field', targets };
+    } catch {
+      return {
+        ok: false,
+        status: 400,
+        error: 'targets must be base64url JSON array of {nodeId,field}',
+        code: 'invalid_targets',
+      };
+    }
+  }
+  if (modeParam === 'json' || (!nodeId && !field)) {
+    return { ok: true, mode: 'json' };
+  }
+  if (!nodeId || !field) {
+    const hint = draftErrorHint('missing_draft_params');
+    return {
+      ok: false,
+      status: 400,
+      error: 'node and field are required for field drafts (or pass mode=json)',
+      code: 'missing_draft_params',
+      ...(hint ? { hint } : {}),
+    };
+  }
+  return { ok: true, mode: 'field' };
+}
+
+async function rejectInvalidFieldTargets(
+  res: Response,
+  flowAdapter: FlowAdapter,
+  flowId: string,
+  targets: { nodeId: string; field: string }[]
+): Promise<boolean> {
+  try {
+    const invalid = await validateFieldDraftTargets(flowAdapter, flowId, targets);
+    if (invalid) {
+      jsonError(res, 400, invalid.message, invalid.code, draftErrorHint(invalid.code));
+      return true;
+    }
+  } catch (error) {
+    const mapped = aiOpsErrorToHttp(error);
+    if (mapped) {
+      jsonError(
+        res,
+        mapped.statusCode,
+        mapped.body.error,
+        mapped.body.code,
+        draftErrorHint(mapped.body.code)
+      );
+      return true;
+    }
+    throw error;
+  }
+  return false;
+}
+
+export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: FlowAdapter) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (rejectOversizedGetUrl(req, res)) return;
     setNoStore(res);
 
@@ -37,7 +194,7 @@ export function getLinkDraftNewHandler(draftStore: DraftStore) {
         400,
         'flow and rev query parameters are required',
         'missing_draft_params',
-        'Example: …/draft/new?flow=tab1&rev=abc&node=n1&field=template'
+        draftErrorHint('missing_draft_params')
       );
       return;
     }
@@ -46,56 +203,37 @@ export function getLinkDraftNewHandler(draftStore: DraftStore) {
       return;
     }
 
-    let mode: 'field' | 'json' = 'field';
-    let targets: { nodeId: string; field: string }[] | undefined;
+    const plan = planDraftMode(nodeId, field, modeParam, targetsEncoded);
+    if (!plan.ok) {
+      jsonError(res, plan.status, plan.error, plan.code, plan.hint);
+      return;
+    }
 
-    if (targetsEncoded) {
-      try {
-        const parsed = decodeBase64UrlJson(targetsEncoded);
-        if (!Array.isArray(parsed) || parsed.length === 0) {
-          throw new Error('targets must be a non-empty array');
-        }
-        targets = parsed.map(entry => {
-          if (!entry || typeof entry !== 'object') {
-            throw new Error('bad target');
-          }
-          const t = entry as { node?: unknown; nodeId?: unknown; field?: unknown };
-          const n =
-            typeof t.nodeId === 'string' ? t.nodeId : typeof t.node === 'string' ? t.node : '';
-          const f = typeof t.field === 'string' ? t.field : '';
-          if (!n || !f) throw new Error('bad target');
-          return { nodeId: n, field: f };
-        });
-        mode = 'field';
-      } catch {
-        jsonError(
-          res,
-          400,
-          'targets must be base64url JSON array of {nodeId,field}',
-          'invalid_targets'
-        );
+    // Field drafts: validate node/field exist before upload.
+    // mode=json may add/remove nodes via nodes[{op:'add'|'remove'|'set',...}].
+    if (plan.mode === 'field') {
+      const checkTargets =
+        plan.targets && plan.targets.length > 0
+          ? plan.targets
+          : nodeId && field
+            ? [{ nodeId, field }]
+            : [];
+      if (
+        checkTargets.length > 0 &&
+        (await rejectInvalidFieldTargets(res, flowAdapter, flowId, checkTargets))
+      ) {
         return;
       }
-    } else if (modeParam === 'json' || (!nodeId && !field)) {
-      mode = 'json';
-    } else if (!nodeId || !field) {
-      jsonError(
-        res,
-        400,
-        'node and field are required for field drafts (or pass mode=json)',
-        'missing_draft_params'
-      );
-      return;
     }
 
     const draft = draftStore.create({
       linkId: req.accessLink.id,
       flowId,
       expectedRev: rev,
-      mode,
+      mode: plan.mode,
       ...(nodeId ? { nodeId } : {}),
       ...(field ? { field } : {}),
-      ...(targets ? { targets } : {}),
+      ...(plan.targets ? { targets: plan.targets } : {}),
       ...(summary ? { summary } : {}),
     });
 
@@ -105,7 +243,9 @@ export function getLinkDraftNewHandler(draftStore: DraftStore) {
       mode: draft.mode,
       expiresAt: new Date(draft.expiresAtMs).toISOString(),
       maxBytes: MAX_PROPOSAL_JSON_BYTES,
-      hint: 'Upload base64url chunks with GET …/draft/<draftId>/append?seq=N&data=… then submit with sha256.',
+      hint:
+        'Upload base64url chunks (~4–5 KB raw each; base64 adds ~33%; keep URL under ~8 KB) ' +
+        'with GET …/draft/<draftId>/append?seq=N&data=… then submit with sha256.',
     });
   };
 }
@@ -144,20 +284,15 @@ export function getLinkDraftAppendHandler(draftStore: DraftStore) {
         receivedSeqs: result.receivedSeqs,
         missingSeqs: result.missingSeqs,
         totalBytes: result.totalBytes,
+        maxBytes: result.maxBytes,
         hint:
           result.missingSeqs.length === 0
-            ? 'All seqs through max are present. Call …/submit?sha256=<hex> when done.'
+            ? 'No gaps so far; call submit when all chunks are uploaded'
             : `Upload missing seqs: ${result.missingSeqs.join(',')}`,
       });
     } catch (error) {
       if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
-        jsonError(
-          res,
-          error.statusCode,
-          error.message,
-          error.code,
-          'Start a new draft if expired.'
-        );
+        jsonError(res, error.statusCode, error.message, error.code, draftErrorHint(error.code));
         return;
       }
       throw error;
@@ -179,9 +314,9 @@ function editsFromFieldDraft(
     try {
       parsed = JSON.parse(assembled);
     } catch {
-      if (draft.targets.length === 1) {
-        const t = draft.targets[0]!;
-        return [{ nodeId: t.nodeId, set: { [t.field]: assembled } }];
+      const only = draft.targets[0];
+      if (draft.targets.length === 1 && only) {
+        return [{ nodeId: only.nodeId, set: { [only.field]: assembled } }];
       }
       throw new DraftValidationError('Multi-target draft body must be JSON', 'invalid_draft_body');
     }
@@ -275,19 +410,15 @@ export function getLinkDraftSubmitHandler(
       } else {
         const interpreted = interpretPatch(JSON.parse(assembled) as unknown, draft.flowId);
         builtFlowId = interpreted.flowId;
-        if (interpreted.kind === 'replace_flow' && interpreted.flow) {
+        if (interpreted.kind === 'replace_flow') {
           builtFlow = {
             ...interpreted.flow,
-            id: interpreted.flow.id ?? builtFlowId,
+            id: interpreted.flow.id || builtFlowId,
             type: interpreted.flow.type ?? 'tab',
             nodes: interpreted.flow.nodes ?? [],
           };
         } else {
-          const patched = await buildPatchedFlowTab(
-            flowAdapter,
-            builtFlowId,
-            interpreted.edits ?? []
-          );
+          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
           if (patched.expectedRev !== draft.expectedRev) {
             res.status(409).json({
               error: 'Flow revision mismatch',
@@ -323,7 +454,7 @@ export function getLinkDraftSubmitHandler(
       });
     } catch (error) {
       if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {
-        jsonError(res, error.statusCode, error.message, error.code);
+        jsonError(res, error.statusCode, error.message, error.code, draftErrorHint(error.code));
         return;
       }
       if (error instanceof SyntaxError) {
@@ -332,7 +463,10 @@ export function getLinkDraftSubmitHandler(
       }
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
-        res.status(mapped.statusCode).json(mapped.body);
+        res.status(mapped.statusCode).json({
+          ...mapped.body,
+          ...(draftErrorHint(mapped.body.code) ? { hint: draftErrorHint(mapped.body.code) } : {}),
+        });
         return;
       }
       throw error;

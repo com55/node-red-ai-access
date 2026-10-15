@@ -46,10 +46,11 @@ export function buildAccessLinkUrl(
     return path;
   }
   const forwarded = req.get('x-forwarded-proto');
-  const proto =
+  const firstForwarded =
     typeof forwarded === 'string' && forwarded.length > 0
-      ? forwarded.split(',')[0]!.trim()
-      : req.protocol || 'http';
+      ? forwarded.split(',')[0]?.trim()
+      : undefined;
+  const proto = firstForwarded ?? (req.protocol || 'http');
   return `${proto}://${host}${path}`;
 }
 

@@ -168,14 +168,14 @@
         )
         .appendTo(body);
 
-      row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
+      row = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
       $('<label for="ai-access-deploy"></label>').text('Default deploy type').appendTo(row);
       var select = $('<select id="ai-access-deploy"></select>').appendTo(row);
       $('<option value="nodes">nodes</option>').appendTo(select);
       $('<option value="flows">flows</option>').appendTo(select);
       $('<option value="full">full</option>').appendTo(select);
 
-      row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
+      row = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
       $('<label for="ai-access-ttl"></label>')
         .text('Default access-link TTL (seconds)')
         .appendTo(row);
@@ -272,10 +272,25 @@
     align-items: flex-start;
     padding: 5px 0 2px;
   }
+  #red-ui-sidebar-ai-access .red-ui-settings-row.stacked {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
   #red-ui-sidebar-ai-access .red-ui-settings-row label {
     display: inline-block;
     min-width: 0;
     flex: 1 1 auto;
+  }
+  #red-ui-sidebar-ai-access .red-ui-settings-row.stacked label {
+    flex: none;
+    width: 100%;
+  }
+  #red-ui-sidebar-ai-access .red-ui-settings-row.stacked input,
+  #red-ui-sidebar-ai-access .red-ui-settings-row.stacked select {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   #red-ui-sidebar-ai-access .red-ui-settings-row label p {
     margin: 0 0 2px;

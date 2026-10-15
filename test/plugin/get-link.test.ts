@@ -296,4 +296,126 @@ describe('GET /mcp/a/<token> access links', () => {
       '/mcp/a/<redacted>/status'
     );
   });
+
+  it('unknown paths under /mcp/a return JSON not_found without echoing the token', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: '404' });
+    const res = await request(app).get(`/mcp/a/${link.token}/whatever`);
+    expect(res.status).toBe(404);
+    expect(res.headers['content-type']).toMatch(/json/);
+    expect(res.headers['cache-control']).toMatch(/no-store/);
+    expect(res.body).toEqual({ error: 'Not found', code: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain(link.token);
+    expect(res.text).not.toContain(link.token);
+    expect(res.text).not.toMatch(/Cannot GET/i);
+
+    const bogus = await request(app).get('/mcp/a/aia_not-a-real-token/nope');
+    expect(bogus.status).toBe(404);
+    expect(bogus.body.code).toBe('not_found');
+    expect(bogus.text).not.toContain('aia_not-a-real-token');
+  });
+
+  it('draft append reports decoded totalBytes vs maxBytes', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'bytes' });
+    const created = await request(app).get(
+      `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=n2&field=template`
+    );
+    expect(created.status).toBe(201);
+    const draftId = created.body.draftId as string;
+    const raw = Buffer.from('hello-world-bytes', 'utf8');
+    const data = raw.toString('base64url');
+    expect(Buffer.byteLength(data, 'utf8')).toBeGreaterThan(raw.byteLength);
+
+    const appended = await request(app).get(
+      `/mcp/a/${link.token}/draft/${draftId}/append?seq=0&data=${data}`
+    );
+    expect(appended.status).toBe(200);
+    expect(appended.body.totalBytes).toBe(raw.byteLength);
+    expect(appended.body.maxBytes).toBeGreaterThan(0);
+    expect(String(appended.body.hint)).toMatch(/No gaps so far; call submit/i);
+    expect(String(appended.body.hint)).not.toMatch(/All seqs through max are present/i);
+  });
+
+  it('draft/new rejects nonexistent node/field before upload', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'validate' });
+
+    const badNode = await request(app).get(
+      `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=missing&field=template`
+    );
+    expect(badNode.status).toBe(400);
+    expect(badNode.body.code).toBe('node_not_found');
+    expect(String(badNode.body.hint ?? '')).not.toMatch(/rev is stale/i);
+
+    const badField = await request(app).get(
+      `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=n2&field=nope`
+    );
+    expect(badField.status).toBe(400);
+    expect(badField.body.code).toBe('field_not_found');
+
+    // mode=json may add nodes — skip live node/field validation
+    const jsonMode = await request(app).get(
+      `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&mode=json`
+    );
+    expect(jsonMode.status).toBe(201);
+    expect(jsonMode.body.mode).toBe('json');
+  });
+
+  it('chunk_conflict hint is specific (not generic stale-rev)', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'conflict' });
+    const created = await request(app).get(
+      `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=n2&field=template`
+    );
+    const draftId = created.body.draftId as string;
+    const a = Buffer.from('aaa', 'utf8').toString('base64url');
+    const b = Buffer.from('bbb', 'utf8').toString('base64url');
+    await request(app).get(`/mcp/a/${link.token}/draft/${draftId}/append?seq=0&data=${a}`);
+    const conflict = await request(app).get(
+      `/mcp/a/${link.token}/draft/${draftId}/append?seq=0&data=${b}`
+    );
+    expect(conflict.status).toBe(400);
+    expect(conflict.body.code).toBe('chunk_conflict');
+    expect(String(conflict.body.hint)).toMatch(/same data|new draft/i);
+    expect(String(conflict.body.hint)).not.toMatch(/rev is stale|re-read flows if rev/i);
+  });
+
+  it('propose patch can add and remove nodes via op', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'ops' });
+    const patch = {
+      nodes: [
+        { op: 'add', node: { id: 'n9', type: 'debug', z: 'tab-1', name: 'out', wires: [[]] } },
+        { op: 'remove', id: 'n1' },
+        { op: 'set', id: 'n2', set: { name: 'Tpl2' } },
+      ],
+    };
+    const encoded = Buffer.from(JSON.stringify(patch), 'utf8').toString('base64url');
+    const res = await request(app).get(
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}`
+    );
+    expect(res.status).toBe(201);
+    const nodes = res.body.proposal.payload.flow.nodes as { id: string; name?: string }[];
+    expect(nodes.some(n => n.id === 'n9')).toBe(true);
+    expect(nodes.some(n => n.id === 'n1')).toBe(false);
+    expect(nodes.find(n => n.id === 'n2')?.name).toBe('Tpl2');
+
+    const docs = await request(app).get(`/mcp/a/${link.token}`);
+    expect(docs.text).toMatch(/op.: .add/);
+    expect(docs.text).toMatch(/4–5 KB|4-5 KB|~4/);
+    expect(docs.text).toMatch(/mode=json/);
+  });
+
+  it('propose node_not_found hint is not the generic stale-rev message', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'hints' });
+    const res = await request(app).get(
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=missing&set.name=X`
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('node_not_found');
+    expect(String(res.body.hint ?? '')).toMatch(/flows/i);
+    expect(String(res.body.hint ?? '')).not.toMatch(/re-read flows if rev is stale/i);
+  });
 });

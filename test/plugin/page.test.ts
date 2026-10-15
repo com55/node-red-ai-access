@@ -136,6 +136,9 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/proposals\/.*\/diff|loadProposalDiff/);
     expect(res.text).toMatch(/accessLinkCopyText|Copy link for AI|token-copy-btn/);
     expect(res.text).toMatch(/mcpRpc|openapi\.yaml|Self-contained GET link|mcp\/a\//);
+    expect(res.text).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
+    expect(res.text).toMatch(/Side by side|data-diff-mode/);
+    expect(res.text).toMatch(/diff-split|diff-line/);
   });
 
   it('keeps /mcp/api/v1/status behind admin auth', async () => {

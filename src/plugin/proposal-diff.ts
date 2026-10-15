@@ -66,8 +66,10 @@ export interface ProposalDiffResult {
     modified: number;
     tabChanges: string[];
   };
-  added: NodeRef[];
-  removed: NodeRef[];
+  /** Added nodes with full property changes (text fields as all-added line diffs). */
+  added: ModifiedNodeDiff[];
+  /** Removed nodes with full property changes (text fields as all-removed line diffs). */
+  removed: ModifiedNodeDiff[];
   modified: ModifiedNodeDiff[];
 }
 
@@ -81,13 +83,69 @@ function nodeName(node: FlowNode): string | undefined {
   return undefined;
 }
 
-function toNodeRef(node: FlowNode): NodeRef {
-  const ref: NodeRef = { id: node.id, type: node.type };
+/**
+ * Snapshot every comparable property of a node as added or removed changes
+ * so reviewers can see full content (including long template/func text).
+ */
+function snapshotNodeChanges(node: FlowNode, side: 'added' | 'removed'): PropertyChange[] {
+  const changes: PropertyChange[] = [];
+  const keys = [...Object.keys(node)].sort();
+  for (const key of keys) {
+    if (IGNORE_NODE_KEYS.has(key) || key === 'id' || key === 'z') {
+      continue;
+    }
+    const value = node[key];
+    const text = asText(value);
+    if (TEXT_PROPERTY_KEYS.has(key) && text !== null) {
+      if (side === 'added') {
+        changes.push({
+          key,
+          kind: 'text',
+          before: '',
+          after: text,
+          lines: diffLines('', text),
+        });
+      } else {
+        changes.push({
+          key,
+          kind: 'text',
+          before: text,
+          after: '',
+          lines: diffLines(text, ''),
+        });
+      }
+      continue;
+    }
+    if (side === 'added') {
+      changes.push({
+        key,
+        kind: 'scalar',
+        before: null,
+        after: value === undefined ? null : value,
+      });
+    } else {
+      changes.push({
+        key,
+        kind: 'scalar',
+        before: value === undefined ? null : value,
+        after: null,
+      });
+    }
+  }
+  return changes;
+}
+
+function toNodeDetail(node: FlowNode, side: 'added' | 'removed'): ModifiedNodeDiff {
+  const entry: ModifiedNodeDiff = {
+    id: node.id,
+    type: node.type,
+    changes: snapshotNodeChanges(node, side),
+  };
   const name = nodeName(node);
   if (name !== undefined) {
-    ref.name = name;
+    entry.name = name;
   }
-  return ref;
+  return entry;
 }
 
 function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
@@ -184,18 +242,18 @@ export function buildProposalDiff(
   const beforeNodes = collectNodes(current.flow);
   const afterNodes = collectNodes(proposal.payload.flow);
 
-  const added: NodeRef[] = [];
-  const removed: NodeRef[] = [];
+  const added: ModifiedNodeDiff[] = [];
+  const removed: ModifiedNodeDiff[] = [];
   const modified: ModifiedNodeDiff[] = [];
 
   for (const [id, node] of afterNodes) {
     if (!beforeNodes.has(id)) {
-      added.push(toNodeRef(node));
+      added.push(toNodeDetail(node, 'added'));
     }
   }
   for (const [id, node] of beforeNodes) {
     if (!afterNodes.has(id)) {
-      removed.push(toNodeRef(node));
+      removed.push(toNodeDetail(node, 'removed'));
     }
   }
   for (const [id, after] of afterNodes) {

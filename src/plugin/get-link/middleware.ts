@@ -159,3 +159,15 @@ export function jsonError(
     ...extra,
   });
 }
+
+/**
+ * JSON 404 for unmatched paths under `/mcp/a/*`.
+ * Never echo the request path (it may contain the access-link token).
+ */
+export function getLinkNotFoundHandler() {
+  return (req: Request, res: Response): void => {
+    redactTokenFromRequestUrl(req);
+    setNoStore(res);
+    res.status(404).json({ error: 'Not found', code: 'not_found' });
+  };
+}

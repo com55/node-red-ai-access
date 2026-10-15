@@ -8,8 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Unknown paths under `/mcp/a/*` return JSON `{ code: not_found }` without
+  echoing the access-link token (no HTML `Cannot GET`).
+- Draft `append` `totalBytes` counts **decoded** chunk bytes vs `maxBytes` (not
+  base64url character length).
+- Field-mode `draft/new` validates that `node`/`field` exist on the live flow
+  before upload (`mode=json` may add/remove nodes and skips that check).
+- Proposal diffs for added/removed nodes include all properties; long text
+  fields (`template`, `func`, …) are line-diffed as all-added / all-removed.
+- Draft append “no gaps” hint no longer reads like the upload is finished; error
+  hints are code-specific (e.g. `chunk_conflict` vs stale rev).
+- `/mcp` audit log actor cells expose the full label via `title` when truncated;
+  sidebar AI Access TTL/deploy labels stack above their inputs.
+- `/mcp` page uses a wide responsive container (`max-width` ~1400px / 95vw);
+  proposal diffs default to side-by-side on wide screens with a unified toggle;
+  long code/diff blocks scroll horizontally with monospace line numbers.
+
 ### Added
 
+- GET patch / `mode=json` drafts support `nodes:[{op:'add'|'remove'|'set',...}]`
+  (plus full `replace_flow`); docs cover exact JSON shapes and ~4–5 KB raw chunk
+  guidance.
 - Self-contained GET access links at `/mcp/a/<token>` for chat AIs that can only
   HTTP GET (markdown docs; scoped status/flows/proposals/propose/drafts; chunked
   drafts for large fields; `Cache-Control: no-store`; per-link rate limit; token

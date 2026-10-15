@@ -119,6 +119,20 @@ function pageClientScriptPartAFormat(): string {
     if (!s) return '';
     return '<code class="id-short" title="' + esc(s) + '">' + esc(shortId(s, keep)) + '</code>';
   }
+  function actorPlain(actor) {
+    actor = actor || {};
+    if (actor.kind === 'access-link') {
+      if (actor.label) {
+        return 'AI link "' + String(actor.label) + '"';
+      }
+      return 'AI link ' + String(actor.linkId || '');
+    }
+    if (actor.kind === 'admin') {
+      return actor.username ? 'user ' + String(actor.username) : 'user';
+    }
+    if (actor.kind === 'system') return 'system';
+    return String(actor.kind || 'unknown');
+  }
   function actorLabel(actor) {
     actor = actor || {};
     if (actor.kind === 'access-link') {
@@ -361,30 +375,124 @@ function pageClientScriptPartB(): string {
       ' · nodes ' + nodes +
       ' · configs ' + configs;
   }
+`;
+}
 
-  function renderNodeRef(n) {
-    var label = (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
-    return '<li><code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' + label + '</li>';
+function pageClientScriptPartBDiff(): string {
+  return `
+  var DIFF_MODE_KEY = 'ai-access-diff-mode';
+  function getDiffMode() {
+    try {
+      var v = localStorage.getItem(DIFF_MODE_KEY);
+      if (v === 'unified' || v === 'split') return v;
+    } catch (e) { /* ignore */ }
+    // Prefer side-by-side on wide screens; unified stays easier to read when narrow.
+    return (typeof window !== 'undefined' && window.matchMedia &&
+      window.matchMedia('(min-width: 900px)').matches) ? 'split' : 'unified';
+  }
+  function setDiffMode(mode) {
+    try { localStorage.setItem(DIFF_MODE_KEY, mode); } catch (e) { /* ignore */ }
   }
 
-  function renderPropertyChange(ch) {
+  function renderDiffLine(opts) {
+    var cls = opts.cls || 'diff-eq';
+    var ln = opts.ln == null ? '' : String(opts.ln);
+    var gutter = opts.gutter == null ? ' ' : opts.gutter;
+    var text = opts.text == null ? '' : opts.text;
+    return '<div class="diff-line ' + cls + '">' +
+      '<span class="ln">' + esc(ln) + '</span>' +
+      '<span class="gutter">' + esc(gutter) + '</span>' +
+      '<span class="code">' + esc(text) + '</span></div>';
+  }
+
+  function renderUnifiedTextDiff(ch) {
+    var beforeLn = 0;
+    var afterLn = 0;
+    var lines = (ch.lines || []).map(function (line) {
+      if (line.op === 'add') {
+        afterLn += 1;
+        return renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: line.text });
+      }
+      if (line.op === 'remove') {
+        beforeLn += 1;
+        return renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: line.text });
+      }
+      beforeLn += 1;
+      afterLn += 1;
+      return renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: line.text });
+    }).join('');
+    return '<div class="diff-block" role="region" aria-label="Unified line diff for ' + esc(ch.key) + '">' +
+      lines + '</div>';
+  }
+
+  function renderSplitTextDiff(ch) {
+    var left = [];
+    var right = [];
+    var beforeLn = 0;
+    var afterLn = 0;
+    (ch.lines || []).forEach(function (line) {
+      if (line.op === 'equal') {
+        beforeLn += 1;
+        afterLn += 1;
+        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: line.text }));
+        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: line.text }));
+        return;
+      }
+      if (line.op === 'remove') {
+        beforeLn += 1;
+        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: line.text }));
+        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
+        return;
+      }
+      if (line.op === 'add') {
+        afterLn += 1;
+        left.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
+        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: line.text }));
+      }
+    });
+    return '<div class="diff-split" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
+      '<div class="diff-pane"><div class="pane-head">Before</div>' + left.join('') + '</div>' +
+      '<div class="diff-pane"><div class="pane-head">After</div>' + right.join('') + '</div>' +
+      '</div>';
+  }
+
+`;
+}
+
+function pageClientScriptPartBDiffView(): string {
+  return `
+  function renderNodeDetail(n, mode) {
+    var label = (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
+    var changes = (n.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('');
+    return '<div class="modified-node">' +
+      '<div><code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' + label + '</div>' +
+      changes +
+      '</div>';
+  }
+
+  function renderPropertyChange(ch, mode) {
     if (ch.kind === 'text') {
-      var lines = (ch.lines || []).map(function (line) {
-        var cls = line.op === 'add' ? 'diff-add' : line.op === 'remove' ? 'diff-remove' : 'diff-eq';
-        var prefix = line.op === 'add' ? '+' : line.op === 'remove' ? '-' : ' ';
-        return '<div class="' + cls + '">' + esc(prefix + line.text) + '</div>';
-      }).join('');
+      var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
+      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' + body + '</div>';
+    }
+    if (mode === 'split') {
       return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' +
-        '<div class="diff-block" role="region" aria-label="Line diff for ' + esc(ch.key) + '">' +
-        lines + '</div></div>';
+        '<div class="prop-change-scalar split">' +
+        '<div class="scalar-side"><span class="side-label">Before</span>' +
+        '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code></div>' +
+        '<span class="scalar-arrow" aria-hidden="true">→</span>' +
+        '<div class="scalar-side"><span class="side-label">After</span>' +
+        '<code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>' +
+        '</div></div>';
     }
     return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>: ' +
       '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
       ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
   }
 
-  function renderDiffView(diff) {
+  function renderDiffView(diff, mode) {
     if (!diff) return '<p class="muted">Diff unavailable.</p>';
+    mode = mode || getDiffMode();
     var stale = diff.baseRevStale
       ? '<p class="stale-banner" role="status">Base revision is stale — approve would fail. Ask the AI to re-read flows and resubmit.</p>'
       : '';
@@ -399,14 +507,20 @@ function pageClientScriptPartB(): string {
       '</p>';
     var meta = '<p class="muted">expectedRev ' + tipId(diff.expectedRev, 8) +
       ' · currentRev ' + tipId(diff.currentRev, 8) + '</p>';
+    var toolbar =
+      '<div class="diff-toolbar">' + counts +
+      '<div class="diff-mode-toggle" role="group" aria-label="Diff layout">' +
+      '<button type="button" data-diff-mode="split" aria-pressed="' + (mode === 'split' ? 'true' : 'false') + '">Side by side</button>' +
+      '<button type="button" data-diff-mode="unified" aria-pressed="' + (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
+      '</div></div>';
     var sections = '';
     if (diff.added && diff.added.length) {
-      sections += '<div class="diff-section"><h4>Added nodes</h4><ul>' +
-        diff.added.map(renderNodeRef).join('') + '</ul></div>';
+      sections += '<div class="diff-section"><h4>Added nodes</h4>' +
+        diff.added.map(function (n) { return renderNodeDetail(n, mode); }).join('') + '</div>';
     }
     if (diff.removed && diff.removed.length) {
-      sections += '<div class="diff-section"><h4>Removed nodes</h4><ul>' +
-        diff.removed.map(renderNodeRef).join('') + '</ul></div>';
+      sections += '<div class="diff-section"><h4>Removed nodes</h4>' +
+        diff.removed.map(function (n) { return renderNodeDetail(n, mode); }).join('') + '</div>';
     }
     if (diff.modified && diff.modified.length) {
       sections += '<div class="diff-section"><h4>Modified nodes</h4>' +
@@ -414,14 +528,14 @@ function pageClientScriptPartB(): string {
           return '<div class="modified-node">' +
             '<div><code title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</code> ' +
             (m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?') + '</div>' +
-            (m.changes || []).map(renderPropertyChange).join('') +
+            (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
             '</div>';
         }).join('') + '</div>';
     }
     if (!sections) {
       sections = '<p class="muted">No node changes vs the current flow.</p>';
     }
-    return stale + counts + meta + sections;
+    return stale + toolbar + meta + sections;
   }
 `;
 }
@@ -489,12 +603,25 @@ function pageClientScriptPartB2(): string {
     }
   }
 
+  function bindDiffModeToggle(host, diff) {
+    host.querySelectorAll('[data-diff-mode]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var mode = btn.getAttribute('data-diff-mode');
+        if (mode !== 'split' && mode !== 'unified') return;
+        setDiffMode(mode);
+        host.innerHTML = renderDiffView(diff, mode);
+        bindDiffModeToggle(host, diff);
+      });
+    });
+  }
+
   async function loadProposalDiff(id) {
     var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
     if (!host) return;
     try {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
       host.innerHTML = renderDiffView(diff);
+      bindDiffModeToggle(host, diff);
     } catch (e) {
       host.innerHTML = '<p class="muted">Could not load diff: ' + esc(e.message || String(e)) + '</p>';
     }
@@ -560,7 +687,7 @@ function pageClientScriptPartC(): string {
         return '<tr>' +
           '<td class="col-when" title="' + esc(e.at) + '">' + esc(fmtCompact(e.at)) + '</td>' +
           '<td class="col-action">' + actionBadge(e.action) + '</td>' +
-          '<td class="col-actor">' + actorLabel(e.actor) + '</td>' +
+          '<td class="col-actor" title="' + esc(actorPlain(e.actor)) + '">' + actorLabel(e.actor) + '</td>' +
           '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
           '<details class="audit-raw"><summary>raw</summary><pre>' + raw + '</pre></details></td>' +
           '</tr>';
@@ -702,6 +829,8 @@ export function pageClientScript(): string {
     pageClientScriptPartATabs() +
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
+    pageClientScriptPartBDiff() +
+    pageClientScriptPartBDiffView() +
     pageClientScriptPartB2() +
     pageClientScriptPartC() +
     pageClientScriptPartD()
