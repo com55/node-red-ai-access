@@ -52,6 +52,8 @@ info:
     `code: storage_payload_too_large` (never silently truncate). Malformed JSON
     bodies return **400** JSON (`code: invalid_json` on REST;
     JSON-RPC `-32700` Parse error on `/mcp/rpc`) — never HTML stack traces.
+    Unauthenticated admin API calls return JSON `{ code: auth_required }`
+    (not plain-text `Unauthorized` from `needsPermission`).
     The MCP endpoint shares the same limits, rate limiting, and audit logging
     as REST.
 
