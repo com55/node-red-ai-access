@@ -1,17 +1,17 @@
 > **Note:** This project is derived from
-> [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It will
-> become **Node-RED AI Access** — a Node-RED plugin that gives AI clients
-> temporary, owner-approved access.
+> [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp). It is
+> being developed as **Node-RED AI Access** — a Node-RED plugin that gives AI
+> clients temporary, owner-approved access.
 
-# 🚀 MCP Node-RED Server
+# 🚀 Node-RED AI Access
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7%2B-blue.svg)](https://www.typescriptlang.org/)
-[![CI/CD](https://github.com/ziv-daniel/node-red-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ziv-daniel/node-red-mcp/actions)
+[![CI](https://github.com/com55/node-red-ai-access/actions/workflows/ci.yml/badge.svg)](https://github.com/com55/node-red-ai-access/actions)
 
-> A modern, production-ready Model Context Protocol (MCP) server for Node-RED
-> integration.
+> Temporary, owner-approved Node-RED access for AI clients, exposed via the
+> Model Context Protocol (MCP).
 
 ## 🌟 Features
 
@@ -69,8 +69,8 @@ nodes in error/warning state in real time.
 ### Native Installation
 
 ```bash
-git clone https://github.com/ziv-daniel/node-red-mcp.git
-cd node-red-mcp
+git clone https://github.com/com55/node-red-ai-access.git
+cd node-red-ai-access
 yarn install
 yarn build
 ```
@@ -83,7 +83,7 @@ docker run -e NODERED_URL=http://your-nodered:1880 \
            -e NODERED_PASSWORD=password \
            -e MCP_TRANSPORT=http \
            -p 3000:3000 \
-           ghcr.io/ziv-daniel/node-red-mcp:latest
+           ghcr.io/com55/node-red-ai-access:latest
 ```
 
 ## 🔧 Available MCP Tools
@@ -202,7 +202,7 @@ endpoint.
   "mcpServers": {
     "nodered": {
       "command": "node",
-      "args": ["path/to/node-red-mcp/dist/index.mjs"],
+      "args": ["path/to/node-red-ai-access/dist/index.mjs"],
       "env": {
         "MCP_TRANSPORT": "stdio",
         "NODERED_URL": "https://your-nodered-instance.com",

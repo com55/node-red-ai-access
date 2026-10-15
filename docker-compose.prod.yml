@@ -1,6 +1,6 @@
 #
-# Production Docker Compose — node-red-mcp
-# Uses the pre-built image from ghcr.io (built by CI/CD).
+# Production Docker Compose — node-red-ai-access
+# Uses the pre-built image from ghcr.io (built by CI).
 #
 # Setup:
 #   cp .env.prod.example .env.prod
@@ -10,8 +10,8 @@
 
 services:
   mcp-server:
-    image: ghcr.io/ziv-daniel/node-red-mcp:latest
-    container_name: mcp-nodered-server
+    image: ghcr.io/com55/node-red-ai-access:latest
+    container_name: node-red-ai-access
     restart: unless-stopped
     pull_policy: always
 
@@ -29,7 +29,7 @@ services:
       NODERED_SKIP_CREDENTIAL_VALIDATION: 'true'
 
       # OAuth / public URL (used in discovery metadata + redirect URIs)
-      PUBLIC_URL: ${PUBLIC_URL:-https://mcp.danielshaprvt.work}
+      PUBLIC_URL: ${PUBLIC_URL:-https://mcp.example.com}
 
       # Security
       JWT_SECRET: ${JWT_SECRET}

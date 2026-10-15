@@ -348,13 +348,13 @@ jobs:
         with:
           context: .
           push: false
-          tags: mcp-nodered-server:${{ github.sha }}
+          tags: node-red-ai-access:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Test Docker image
         run: |
-          docker run -d -p 3000:3000 --name test-container mcp-nodered-server:${{ github.sha }}
+          docker run -d -p 3000:3000 --name test-container node-red-ai-access:${{ github.sha }}
           sleep 10
           curl -f http://localhost:3000/health || exit 1
           docker stop test-container
@@ -391,13 +391,13 @@ services:
 
 ```bash
 # Local development build
-docker build -t mcp-nodered-server:dev .
+docker build -t node-red-ai-access:dev .
 
 # Production build
-docker build -t mcp-nodered-server:latest --target production .
+docker build -t node-red-ai-access:latest --target production .
 
 # Test the image
-docker run -p 3000:3000 --env-file .env mcp-nodered-server:latest
+docker run -p 3000:3000 --env-file .env node-red-ai-access:latest
 
 # Using docker-compose
 docker-compose up --build

@@ -231,7 +231,7 @@ describe('ExpressApp', () => {
         expect(res.status).toBe(200);
         expect(res.body).toHaveProperty('status', 'ok');
         expect(res.body).toHaveProperty('timestamp');
-        expect(res.body).toHaveProperty('server', 'MCP Node-RED Server');
+        expect(res.body).toHaveProperty('server', 'Node-RED AI Access');
       });
     });
 
@@ -262,7 +262,7 @@ describe('ExpressApp', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
-        expect(res.body.data).toHaveProperty('name', 'MCP Node-RED Server');
+        expect(res.body.data).toHaveProperty('name', 'Node-RED AI Access');
         expect(res.body.data).toHaveProperty('version', '1.0.0');
         expect(res.body.data.capabilities).toHaveProperty('tools', true);
         expect(res.body.data.capabilities).toHaveProperty('sse', true);

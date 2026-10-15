@@ -239,14 +239,14 @@ search or Algolia DocSearch
 # docs/api/openapi.yaml
 openapi: 3.1.0
 info:
-  title: MCP Node-RED Server API
+  title: Node-RED AI Access API
   version: 1.0.0
   description: |
     Model Context Protocol server for Node-RED integration with
     real-time SSE support for flow monitoring and management.
   contact:
     name: API Support
-    url: https://github.com/ziv-daniel/node-red-mcp
+    url: https://github.com/com55/node-red-ai-access
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -434,8 +434,8 @@ Create a new Node-RED flow.
 ### 1. Install and Build
 
 ```bash
-git clone https://github.com/ziv-daniel/node-red-mcp.git
-cd node-red-mcp
+git clone https://github.com/com55/node-red-ai-access.git
+cd node-red-ai-access
 yarn install
 yarn build
 ````
@@ -488,7 +488,7 @@ const swaggerDocument = YAML.load('./docs/api/openapi.yaml');
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
   customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: 'MCP Node-RED Server API'
+  customSiteTitle: 'Node-RED AI Access API'
 }));
 ````
 

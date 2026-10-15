@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "MCP Server Monitor",
     "disabled": false,
-    "info": "Monitor and interact with the MCP Node-RED server using Node-RED v4 features",
+    "info": "Monitor and interact with Node-RED AI Access using Node-RED v4 features",
     "env": []
   },
   {

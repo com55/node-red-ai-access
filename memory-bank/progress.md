@@ -1,10 +1,10 @@
-# Progress: MCP Node-RED SSE Integration Server
+# Progress: Node-RED AI Access
 
 ## Current Status Overview (June 12, 2025)
 
 ### Project Progress: ~65% Complete
 
-The MCP Node-RED SSE Integration Server has made significant progress with core functionality implemented and real-time features in active development.
+The Node-RED AI Access has made significant progress with core functionality implemented and real-time features in active development.
 
 ## What Works ✅
 

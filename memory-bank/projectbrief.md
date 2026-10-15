@@ -1,4 +1,4 @@
-# Project Brief: MCP Node-RED SSE Integration Server
+# Project Brief: Node-RED AI Access
 
 ## Core Mission
 Build a comprehensive **Model Context Protocol (MCP)** server that provides seamless Node-RED integration with real-time Server-Sent Events (SSE) support for flow monitoring and management.

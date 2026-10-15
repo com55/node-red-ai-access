@@ -7,7 +7,7 @@
 
 ## Context
 
-The MCP Node-RED server currently has basic observability features but lacks
+The Node-RED AI Access currently has basic observability features but lacks
 comprehensive production-grade monitoring, logging, and tracing capabilities:
 
 ### Current State
@@ -63,7 +63,7 @@ Implement a comprehensive observability stack using **Pino for logging** and
   "pid": 12345,
   "hostname": "mcp-server-pod-abc",
   "correlationId": "req-123-456-789",
-  "service": "mcp-nodered-server",
+  "service": "@com55/node-red-ai-access",
   "version": "1.0.0",
   "tool": "get_flows",
   "userId": "user-123",
@@ -266,7 +266,7 @@ export const logger = pino({
     level: label => ({ level: label }),
   },
   base: {
-    service: 'mcp-nodered-server',
+    service: '@com55/node-red-ai-access',
     version: process.env.npm_package_version,
     environment: process.env.NODE_ENV,
   },
@@ -307,7 +307,7 @@ import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
 export function initTelemetry() {
   const sdk = new NodeSDK({
     resource: new Resource({
-      [SemanticResourceAttributes.SERVICE_NAME]: 'mcp-nodered-server',
+      [SemanticResourceAttributes.SERVICE_NAME]: '@com55/node-red-ai-access',
       [SemanticResourceAttributes.SERVICE_VERSION]:
         process.env.npm_package_version,
     }),
@@ -336,7 +336,7 @@ export function initTelemetry() {
 // src/telemetry/metrics.ts
 import { metrics } from '@opentelemetry/api';
 
-const meter = metrics.getMeter('mcp-nodered-server');
+const meter = metrics.getMeter('@com55/node-red-ai-access');
 
 export const toolInvocationCounter = meter.createCounter(
   'mcp.tool.invocations',
@@ -411,7 +411,7 @@ export function correlationMiddleware(req, res, next) {
 # .env
 LOG_LEVEL=info
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
-OTEL_SERVICE_NAME=mcp-nodered-server
+OTEL_SERVICE_NAME=@com55/node-red-ai-access
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.1  # Sample 10% of traces
 ```

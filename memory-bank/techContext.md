@@ -1,4 +1,4 @@
-# Tech Context: MCP Node-RED SSE Integration Server
+# Tech Context: Node-RED AI Access
 
 ## Technology Stack
 
@@ -172,4 +172,4 @@ npm run lint         # Check code quality
 4. **Monitoring**: Prometheus metrics, health dashboards
 5. **Clustering**: Multi-process support with shared state
 
-This technical foundation provides a solid base for the MCP Node-RED integration while maintaining flexibility for future enhancements and scaling requirements.
+This technical foundation provides a solid base for the Node-RED AI Access while maintaining flexibility for future enhancements and scaling requirements.

@@ -1,4 +1,4 @@
-# System Patterns: MCP Node-RED SSE Integration Server
+# System Patterns: Node-RED AI Access
 
 ## Architecture Overview
 

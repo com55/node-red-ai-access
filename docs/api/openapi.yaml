@@ -1,7 +1,7 @@
 openapi: 3.1.0
 
 info:
-  title: MCP Node-RED Server API
+  title: Node-RED AI Access API
   description: |
     A comprehensive Model Context Protocol (MCP) server for Node-RED integration.
 
@@ -30,11 +30,11 @@ info:
     - **Max Requests**: 100 per window (configurable)
     - **Headers**: `X-RateLimit-*` headers in responses
 
-  version: 1.0.0
+  version: 0.1.0
   contact:
-    name: MCP Node-RED Server Team
+    name: com55
     email: support@example.com
-    url: https://github.com/your-org/nodered-mcp
+    url: https://github.com/com55/node-red-ai-access
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -969,5 +969,5 @@ tags:
       Convenience APIs for common Node-RED operations.
 
 externalDocs:
-  description: Find more information about MCP Node-RED Server
-  url: https://github.com/your-org/nodered-mcp
+  description: Find more information about Node-RED AI Access
+  url: https://github.com/com55/node-red-ai-access

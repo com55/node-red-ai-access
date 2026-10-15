@@ -617,9 +617,9 @@ export class ExpressApp {
           },
         },
         vendor: {
-          author: 'ziv-daniel',
-          repository: 'https://github.com/ziv-daniel/node-red-mcp',
-          documentation: 'https://github.com/ziv-daniel/node-red-mcp#readme',
+          author: 'com55',
+          repository: 'https://github.com/com55/node-red-ai-access',
+          documentation: 'https://github.com/com55/node-red-ai-access#readme',
         },
         tools: {
           count: 9,
@@ -652,7 +652,7 @@ export class ExpressApp {
       res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        server: 'MCP Node-RED Server',
+        server: 'Node-RED AI Access',
       });
     });
 
@@ -709,7 +709,7 @@ export class ExpressApp {
       const response: ApiResponse = {
         success: true,
         data: {
-          name: 'MCP Node-RED Server',
+          name: 'Node-RED AI Access',
           version: '1.0.0',
           description: 'Model Context Protocol server for Node-RED integration',
           capabilities: {

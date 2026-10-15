@@ -2,15 +2,15 @@
 
 - **Status**: Accepted
 - **Date**: 2024-12-17
-- **Authors**: MCP Node-RED Server Team
+- **Authors**: com55
 - **Reviewers**: Architecture Review Board
 
 ## Context
 
-The MCP Node-RED Server requires a robust testing strategy to ensure
-reliability, maintainability, and confidence in deployments. The project serves
-as a critical integration layer between Claude Desktop and Node-RED, making test
-coverage essential for:
+The Node-RED AI Access requires a robust testing strategy to ensure reliability,
+maintainability, and confidence in deployments. The project serves as a critical
+integration layer between Claude Desktop and Node-RED, making test coverage
+essential for:
 
 1. **MCP Protocol Compliance**: Ensuring correct implementation of MCP
    specification

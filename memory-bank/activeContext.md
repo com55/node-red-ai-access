@@ -1,4 +1,4 @@
-# Active Context: MCP Node-RED SSE Integration Server
+# Active Context: Node-RED AI Access
 
 ## Current Work Focus (June 12, 2025)
 

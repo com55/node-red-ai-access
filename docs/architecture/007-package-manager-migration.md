@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2024-12-17
-- **Authors**: MCP Node-RED Server Team
+- **Authors**: com55
 - **Reviewers**: Architecture Review Board
 
 ## Context
