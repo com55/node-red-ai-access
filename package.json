@@ -1,7 +1,7 @@
 {
   "name": "@com55/node-red-ai-access",
   "version": "0.1.0",
-  "description": "Node-RED AI Access — temporary, owner-approved Node-RED access for AI clients (MCP server)",
+  "description": "Node-RED plugin and MCP server that gives AI agents temporary, owner-approved access to a Node-RED instance",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -16,6 +16,34 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./plugin": {
+      "require": {
+        "types": "./dist/plugin.d.cts",
+        "default": "./dist/plugin.cjs"
+      },
+      "default": "./dist/plugin.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "ai-access.cjs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "node-red": {
+    "version": ">=4.0.0",
+    "plugins": {
+      "ai-access": "ai-access.cjs"
+    }
+  },
+  "peerDependencies": {
+    "node-red": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "node-red": {
+      "optional": true
     }
   },
   "scripts": {
