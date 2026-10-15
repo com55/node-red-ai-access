@@ -24,11 +24,15 @@ info:
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
     2. `GET {url}/status`, `/flows`, `/flows/{id}`, `/proposals`, …
     3. Small edits: `GET {url}/propose?flow=&rev=&node=&set.<prop>=&summary=`
-    4. Larger / multi-node: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
-       (URL soft-cap ~8KB → use chunked drafts).
+    4. Larger / multi-node / add / remove: `GET {url}/propose?flow=&rev=&patch=<base64url JSON>`
+       where the JSON is either `nodes:[{op:'set'|'add'|'remove',...}]` or a
+       full `replace_flow` document (URL soft-cap ~8KB → use chunked drafts;
+       prefer ~4–5 KB raw chunks; base64url adds ~33%).
     5. Chunked drafts: `…/draft/new` → `…/draft/{id}/append?seq=&data=` →
-       `…/draft/{id}/submit?sha256=` (30 min expiry, 1.5MB cap).
+       `…/draft/{id}/submit?sha256=` (30 min expiry, 1.5MB **decoded** bytes;
+       field mode validates node/field at `draft/new`; `mode=json` may add nodes).
     6. Human approves on `/mcp`. JSON uses `Cache-Control: no-store`.
+       Unknown paths under `/mcp/a/*` return JSON `not_found` (never echo the token).
 
     ### Bearer REST (clients that can send headers)
 
@@ -527,6 +531,8 @@ paths:
         Compares the proposal payload to the live flow tab. Returns counts of
         added / removed / modified nodes, per-node change details, and
         line-level diffs for text fields such as `func` and `template`.
+        Added and removed nodes include **all** comparable properties (long
+        text fields appear as all-added / all-removed line diffs).
         `baseRevStale` is true when `expectedRev` does not match the current
         revision (approve would fail with a revision conflict).
 
@@ -1262,17 +1268,6 @@ components:
               items:
                 $ref: '#/components/schemas/ProposalDiffLine'
 
-    ProposalDiffNodeRef:
-      type: object
-      required: [id, type]
-      properties:
-        id:
-          type: string
-        type:
-          type: string
-        name:
-          type: string
-
     ProposalDiffModifiedNode:
       type: object
       required: [id, type, changes]
@@ -1285,6 +1280,10 @@ components:
           type: string
         changes:
           type: array
+          description: |
+            For modified nodes: only changed properties.
+            For added nodes: every comparable property (text fields as all-added lines).
+            For removed nodes: every comparable property (text fields as all-removed lines).
           items:
             $ref: '#/components/schemas/ProposalDiffPropertyChange'
 
@@ -1329,11 +1328,11 @@ components:
         added:
           type: array
           items:
-            $ref: '#/components/schemas/ProposalDiffNodeRef'
+            $ref: '#/components/schemas/ProposalDiffModifiedNode'
         removed:
           type: array
           items:
-            $ref: '#/components/schemas/ProposalDiffNodeRef'
+            $ref: '#/components/schemas/ProposalDiffModifiedNode'
         modified:
           type: array
           items:

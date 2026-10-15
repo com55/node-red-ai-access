@@ -10,6 +10,14 @@ export interface NodePropertyEdit {
   set: Record<string, unknown>;
 }
 
+/** Node-level ops for patch / mode=json drafts. */
+export type FlowNodeOp =
+  | { op: 'set'; nodeId: string; set: Record<string, unknown> }
+  | { op: 'add'; node: FlowNode }
+  | { op: 'remove'; nodeId: string };
+
+const PROTECTED_KEYS = new Set(['id', 'type', 'z', 'wires']);
+
 /**
  * Load a flow, apply property edits to named nodes, return the full tab
  * suitable for a `replace_flow` proposal (approve with deploymentType `nodes`).
@@ -19,10 +27,25 @@ export async function buildPatchedFlowTab(
   flowId: string,
   edits: NodePropertyEdit[]
 ): Promise<{ expectedRev: string; flow: FlowTab }> {
+  return applyFlowNodeOps(
+    adapter,
+    flowId,
+    edits.map(edit => ({ op: 'set' as const, nodeId: edit.nodeId, set: edit.set }))
+  );
+}
+
+/**
+ * Apply set / add / remove ops onto a live flow tab.
+ */
+export async function applyFlowNodeOps(
+  adapter: FlowAdapter,
+  flowId: string,
+  ops: FlowNodeOp[]
+): Promise<{ expectedRev: string; flow: FlowTab }> {
   if (!flowId) {
     throw new AiOpsValidationError('flow id is required', 'missing_flow_id');
   }
-  if (!edits.length) {
+  if (!ops.length) {
     throw new AiOpsValidationError('At least one node edit is required', 'missing_edits');
   }
 
@@ -30,26 +53,72 @@ export async function buildPatchedFlowTab(
   const nodes: FlowNode[] = Array.isArray(snapshot.flow.nodes) ? [...snapshot.flow.nodes] : [];
   const flow: FlowTab = {
     ...snapshot.flow,
-    id: snapshot.flow.id ?? flowId,
+    id: snapshot.flow.id,
     type: snapshot.flow.type ?? 'tab',
     nodes,
   };
 
-  for (const edit of edits) {
-    if (!edit.nodeId || typeof edit.nodeId !== 'string') {
+  for (const op of ops) {
+    if (op.op === 'add') {
+      const node = op.node;
+      if (!node.id || typeof node.id !== 'string') {
+        throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
+      }
+      if (!node.type || typeof node.type !== 'string') {
+        throw new AiOpsValidationError('add op needs node.type', 'missing_node_type');
+      }
+      if (nodes.some(n => n.id === node.id)) {
+        throw new AiOpsValidationError(
+          `Node '${node.id}' already exists in flow '${flowId}'`,
+          'node_already_exists'
+        );
+      }
+      const next: FlowNode = {
+        ...node,
+        id: node.id,
+        type: node.type,
+        z: typeof node.z === 'string' && node.z ? node.z : flowId,
+      };
+      nodes.push(next);
+      continue;
+    }
+
+    if (op.op === 'remove') {
+      if (!op.nodeId || typeof op.nodeId !== 'string') {
+        throw new AiOpsValidationError('remove op needs id', 'missing_node_id');
+      }
+      const idx = nodes.findIndex(n => n.id === op.nodeId);
+      if (idx < 0) {
+        throw new AiOpsValidationError(
+          `Node '${op.nodeId}' was not found in flow '${flowId}'`,
+          'node_not_found'
+        );
+      }
+      nodes.splice(idx, 1);
+      continue;
+    }
+
+    // set
+    if (!op.nodeId || typeof op.nodeId !== 'string') {
       throw new AiOpsValidationError('Each edit needs a node id', 'missing_node_id');
     }
-    const idx = nodes.findIndex(n => n.id === edit.nodeId);
+    const idx = nodes.findIndex(n => n.id === op.nodeId);
     if (idx < 0) {
       throw new AiOpsValidationError(
-        `Node '${edit.nodeId}' was not found in flow '${flowId}'`,
+        `Node '${op.nodeId}' was not found in flow '${flowId}'`,
         'node_not_found'
       );
     }
-    const current = nodes[idx]!;
+    const current = nodes[idx];
+    if (!current) {
+      throw new AiOpsValidationError(
+        `Node '${op.nodeId}' was not found in flow '${flowId}'`,
+        'node_not_found'
+      );
+    }
     const next: FlowNode = { ...current, id: current.id, type: current.type };
-    for (const [key, value] of Object.entries(edit.set)) {
-      if (key === 'id' || key === 'type' || key === 'z' || key === 'wires') {
+    for (const [key, value] of Object.entries(op.set)) {
+      if (PROTECTED_KEYS.has(key)) {
         throw new AiOpsValidationError(
           `Cannot change protected node property '${key}' via GET propose`,
           'protected_property'
@@ -135,18 +204,74 @@ function resolveReplaceFlowId(
   return fallbackFlowId;
 }
 
+function parseNodeOp(entry: Record<string, unknown>): FlowNodeOp {
+  const rawOp = typeof entry.op === 'string' ? entry.op.toLowerCase() : 'set';
+
+  if (rawOp === 'add') {
+    const nested = entry.node;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const node = nested as FlowNode;
+      return { op: 'add', node };
+    }
+    const rest: Record<string, unknown> = { ...entry };
+    delete rest.op;
+    return { op: 'add', node: rest as FlowNode };
+  }
+
+  if (rawOp === 'remove') {
+    const nodeId =
+      typeof entry.id === 'string'
+        ? entry.id
+        : typeof entry.nodeId === 'string'
+          ? entry.nodeId
+          : '';
+    if (!nodeId) {
+      throw new AiOpsValidationError('remove op needs id', 'missing_node_id');
+    }
+    return { op: 'remove', nodeId };
+  }
+
+  if (rawOp !== 'set') {
+    throw new AiOpsValidationError("nodes[].op must be 'add', 'remove', or 'set'", 'invalid_patch');
+  }
+
+  const nodeId =
+    typeof entry.id === 'string' ? entry.id : typeof entry.nodeId === 'string' ? entry.nodeId : '';
+  if (!nodeId) {
+    throw new AiOpsValidationError('Each patch.nodes entry needs id', 'missing_node_id');
+  }
+  const setRaw = entry.set;
+  const set: Record<string, unknown> = {};
+  if (setRaw && typeof setRaw === 'object' && !Array.isArray(setRaw)) {
+    Object.assign(set, setRaw);
+  } else {
+    for (const [k, v] of Object.entries(entry)) {
+      if (k === 'id' || k === 'nodeId' || k === 'set' || k === 'op') continue;
+      set[k] = v;
+    }
+  }
+  return { op: 'set', nodeId, set };
+}
+
+/** Result of decoding a GET patch / mode=json draft document. */
+export type InterpretedPatch =
+  | { kind: 'nodes'; flowId: string; ops: FlowNodeOp[]; edits: NodePropertyEdit[] }
+  | { kind: 'replace_flow'; flowId: string; flow: FlowTab };
+
 /**
- * Interpret a decoded patch object as either node edits or a full replace_flow tab.
+ * Interpret a decoded patch object as either node ops or a full replace_flow tab.
+ *
+ * Node-level document shapes:
+ * - `{ "nodes": [ { "op":"set", "id":"n1", "set":{ "name":"Hi" } }, … ] }`
+ * - `{ "nodes": [ { "op":"add", "node":{ "id":"n3", "type":"debug", … } } ] }`
+ * - `{ "nodes": [ { "op":"remove", "id":"n2" } ] }`
+ * - Legacy set without `op`: `{ "nodes": [ { "id":"n1", "set":{…} } ] }`
+ * - Full replace: `{ "type":"replace_flow", "flowId":"tab1", "flow":{…} }`
  */
 export function interpretPatch(
   patch: unknown,
   fallbackFlowId: string | undefined
-): {
-  kind: 'nodes' | 'replace_flow';
-  flowId: string;
-  edits?: NodePropertyEdit[];
-  flow?: FlowTab;
-} {
+): InterpretedPatch {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     throw new AiOpsValidationError('patch must be a JSON object', 'invalid_patch');
   }
@@ -169,29 +294,17 @@ export function interpretPatch(
     if (!flowId) {
       throw new AiOpsValidationError('patch.nodes needs flow id', 'missing_flow_id');
     }
-    const edits: NodePropertyEdit[] = [];
+    const ops: FlowNodeOp[] = [];
     for (const entry of obj.nodes) {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         throw new AiOpsValidationError('Each patch.nodes entry must be an object', 'invalid_patch');
       }
-      const node = entry as Record<string, unknown>;
-      const nodeId = typeof node.id === 'string' ? node.id : undefined;
-      if (!nodeId) {
-        throw new AiOpsValidationError('Each patch.nodes entry needs id', 'missing_node_id');
-      }
-      const setRaw = node.set;
-      const set: Record<string, unknown> = {};
-      if (setRaw && typeof setRaw === 'object' && !Array.isArray(setRaw)) {
-        Object.assign(set, setRaw);
-      } else {
-        for (const [k, v] of Object.entries(node)) {
-          if (k === 'id' || k === 'set') continue;
-          set[k] = v;
-        }
-      }
-      edits.push({ nodeId, set });
+      ops.push(parseNodeOp(entry as Record<string, unknown>));
     }
-    return { kind: 'nodes', flowId, edits };
+    const edits: NodePropertyEdit[] = ops
+      .filter((o): o is Extract<FlowNodeOp, { op: 'set' }> => o.op === 'set')
+      .map(o => ({ nodeId: o.nodeId, set: o.set }));
+    return { kind: 'nodes', flowId, ops, edits };
   }
 
   throw new AiOpsValidationError(

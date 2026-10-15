@@ -233,5 +233,7 @@ describe('ai-access.html sidebar tab', () => {
     expect(html).toMatch(/ai-access-save/);
     expect(html).toMatch(/Open \/mcp/);
     expect(html).toMatch(/canEdit|readonly|\*/);
+    expect(html).toMatch(/red-ui-settings-row stacked/);
+    expect(html).toMatch(/flex-direction:\s*column/);
   });
 });

@@ -52,13 +52,48 @@ describe('buildProposalDiff', () => {
       tabChanges: ['label'],
     });
     expect(diff.baseRevStale).toBe(false);
-    expect(diff.added).toEqual([{ id: 'n3', type: 'debug', name: 'out' }]);
-    expect(diff.removed).toEqual([{ id: 'n2', type: 'function', name: 'fn' }]);
+    expect(diff.added).toHaveLength(1);
+    expect(diff.added[0]).toMatchObject({ id: 'n3', type: 'debug', name: 'out' });
+    expect(diff.added[0]?.changes.some(c => c.key === 'type' && c.kind === 'scalar')).toBe(true);
+    expect(diff.added[0]?.changes.some(c => c.key === 'name')).toBe(true);
+    expect(diff.removed).toHaveLength(1);
+    expect(diff.removed[0]).toMatchObject({ id: 'n2', type: 'function', name: 'fn' });
+    const removedFunc = diff.removed[0]?.changes.find(c => c.key === 'func');
+    expect(removedFunc?.kind).toBe('text');
+    if (removedFunc?.kind === 'text') {
+      expect(removedFunc.lines.every(l => l.op === 'remove')).toBe(true);
+      expect(removedFunc.before).toContain('return msg;');
+      expect(removedFunc.after).toBe('');
+    }
     expect(diff.modified).toHaveLength(1);
     expect(diff.modified[0]?.id).toBe('n1');
     expect(diff.modified[0]?.changes).toEqual([
       { key: 'topic', kind: 'scalar', before: 'old', after: 'changed' },
     ]);
+  });
+
+  it('shows all-added line diffs for template on newly added nodes', () => {
+    const html = '<h1>Hello</h1>\n<p>World</p>';
+    const diff = buildProposalDiff(
+      proposal({
+        payload: {
+          flowId: 'tab1',
+          flow: {
+            nodes: [{ id: 'nNew', type: 'template', name: 'Tpl', template: html }],
+          },
+        },
+      }),
+      { rev: 'rev-1', flow: { nodes: [] } }
+    );
+    expect(diff.added).toHaveLength(1);
+    const tpl = diff.added[0]?.changes.find(c => c.key === 'template');
+    expect(tpl?.kind).toBe('text');
+    if (tpl?.kind === 'text') {
+      expect(tpl.before).toBe('');
+      expect(tpl.after).toBe(html);
+      expect(tpl.lines.every(l => l.op === 'add')).toBe(true);
+      expect(tpl.lines.map(l => l.text).join('\n')).toBe(html);
+    }
   });
 
   it('includes line diffs for function func changes', () => {

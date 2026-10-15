@@ -20,6 +20,7 @@ import {
 import { DraftStore } from './get-link/draft-store.js';
 import {
   createGetLinkRateLimiter,
+  getLinkNotFoundHandler,
   jsonError,
   requireGetLinkToken,
   setNoStore,
@@ -112,20 +113,56 @@ export function registerGetLinkRoutes(
     }
   });
 
+  registerGetLinkProposalRoutes(app, base, gate, options);
+
+  app.get(
+    `${base}/propose`,
+    ...gate,
+    getLinkProposeHandler(options.proposalStore, options.auditLog, options.flowAdapter)
+  );
+
+  registerGetLinkDraftRoutes(app, base, gate, draftStore, options);
+
+  // JSON 404 for unmatched /mcp/a/* paths — never echo the token (no HTML "Cannot GET").
+  app.use('/mcp/a', getLinkNotFoundHandler());
+
+  return draftStore;
+}
+
+type GetLinkGate = (
+  ReturnType<typeof requireGetLinkToken> | ReturnType<typeof createGetLinkRateLimiter>
+)[];
+
+function registerGetLinkProposalRoutes(
+  app: Express,
+  base: string,
+  gate: GetLinkGate,
+  options: RegisterGetLinkRoutesOptions
+): void {
   app.get(`${base}/proposals`, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
-    res.json({ proposals: listMyProposals(options.proposalStore, req.accessLink!) });
+    const link = req.accessLink;
+    if (!link) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
+    res.json({ proposals: listMyProposals(options.proposalStore, link) });
   });
 
   app.get(`${base}/proposals/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
     const id = req.params.id;
+    const link = req.accessLink;
     if (typeof id !== 'string' || !id) {
       jsonError(res, 400, 'Missing proposal id', 'missing_proposal_id');
       return;
     }
+    if (!link) {
+      jsonError(res, 401, 'Access link required', 'access_link_missing');
+      return;
+    }
     try {
-      res.json(getMyProposal(options.proposalStore, req.accessLink!, id));
+      res.json(getMyProposal(options.proposalStore, link, id));
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
       if (mapped) {
@@ -145,12 +182,17 @@ export function registerGetLinkRoutes(
     async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
       const id = req.params.id;
+      const link = req.accessLink;
       if (typeof id !== 'string' || !id) {
         jsonError(res, 400, 'Missing proposal id', 'missing_proposal_id');
         return;
       }
+      if (!link) {
+        jsonError(res, 401, 'Access link required', 'access_link_missing');
+        return;
+      }
       try {
-        const proposal = getMyProposal(options.proposalStore, req.accessLink!, id);
+        const proposal = getMyProposal(options.proposalStore, link, id);
         res.json(await computeProposalDiff(proposal, options.flowAdapter));
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error);
@@ -162,14 +204,16 @@ export function registerGetLinkRoutes(
       }
     }
   );
+}
 
-  app.get(
-    `${base}/propose`,
-    ...gate,
-    getLinkProposeHandler(options.proposalStore, options.auditLog, options.flowAdapter)
-  );
-
-  app.get(`${base}/draft/new`, ...gate, getLinkDraftNewHandler(draftStore));
+function registerGetLinkDraftRoutes(
+  app: Express,
+  base: string,
+  gate: GetLinkGate,
+  draftStore: DraftStore,
+  options: RegisterGetLinkRoutesOptions
+): void {
+  app.get(`${base}/draft/new`, ...gate, getLinkDraftNewHandler(draftStore, options.flowAdapter));
   app.get(`${base}/draft/:draftId/append`, ...gate, getLinkDraftAppendHandler(draftStore));
   app.get(
     `${base}/draft/:draftId/submit`,
@@ -181,6 +225,4 @@ export function registerGetLinkRoutes(
       options.flowAdapter
     )
   );
-
-  return draftStore;
 }
