@@ -33,19 +33,7 @@ interface RawStatus {
 interface CommsFrame {
   topic?: string;
   data?: unknown;
-  auth?: string;
-}
-
-function asCommsFrames(parsed: unknown): CommsFrame[] {
-  if (Array.isArray(parsed)) {
-    return parsed.filter(
-      (entry): entry is CommsFrame => entry !== null && typeof entry === 'object'
-    );
-  }
-  if (parsed !== null && typeof parsed === 'object') {
-    return [parsed];
-  }
-  return [];
+  auth?: 'ok' | 'fail';
 }
 
 async function collectStatuses(
@@ -109,7 +97,10 @@ async function collectStatuses(
         const parsed: unknown = JSON.parse(raw.toString());
         // Node-RED batches multiple events into a JSON array per WS message;
         // the auth handshake reply is always a single flat object.
-        for (const msg of asCommsFrames(parsed)) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- CommsFrame shape narrowed below
+        const frames: CommsFrame[] = Array.isArray(parsed) ? parsed : [parsed];
+
+        for (const msg of frames) {
           if (typeof msg.auth === 'string') {
             // Trusting the WebSocket peer's own auth-handshake reply is
             // inherent to implementing Node-RED's documented /comms protocol
@@ -145,10 +136,7 @@ async function collectStatuses(
 
           if (msg.topic.startsWith('status/')) {
             const nodeId = msg.topic.slice('status/'.length);
-            const d =
-              msg.data !== null && typeof msg.data === 'object'
-                ? (msg.data as Record<string, unknown>)
-                : {};
+            const d = (msg.data ?? {}) as Record<string, unknown>;
             const fill = typeof d.fill === 'string' ? d.fill : undefined;
             const shape = typeof d.shape === 'string' ? d.shape : undefined;
             const text = typeof d.text === 'string' ? d.text : undefined;
@@ -176,6 +164,7 @@ async function collectStatuses(
 export class NodeErrorChecker {
   constructor(private readonly apiClient: NodeRedAPIClient) {}
 
+  // eslint-disable-next-line complexity -- aggregates WS statuses across flows
   async check(
     opts: {
       includeWarnings?: boolean;
