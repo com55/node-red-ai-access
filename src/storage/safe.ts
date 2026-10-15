@@ -10,6 +10,20 @@ const SAFE_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
 /** Proposal ids we mint: `prop-` + hex (or test doubles using the same charset). */
 const SAFE_PROPOSAL_ID_RE = /^prop-[A-Za-z0-9_-]+$/;
 
+/** Top-level FlowTab fields we persist (nodes/configs handled separately). */
+const FLOW_TAB_KEYS = ['id', 'type', 'label', 'disabled', 'info', 'env'] as const;
+
+/** Audit detail keys we persist. */
+const AUDIT_DETAIL_KEYS = [
+  'proposalId',
+  'flowId',
+  'expectedRev',
+  'resultRev',
+  'reason',
+  'code',
+  'currentRev',
+] as const;
+
 export function assertSafeSegment(value: string, paramName: string): string {
   if (!value || !SAFE_SEGMENT_RE.test(value) || value.includes('..')) {
     throw new Error(`Invalid ${paramName}`);
@@ -40,41 +54,72 @@ export function resolveUnderDir(dir: string, fileName: string): string {
   return target;
 }
 
+function sanitizeString(value: unknown, max = 100_000): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  return value.replace(/\0/g, '').slice(0, max);
+}
+
 /**
- * Copy a plain JSON value with length caps so disk writes do not keep a
- * remote-taint edge on arbitrary nested payloads.
+ * Copy a flow tab using fixed key names only (avoids remote property injection).
+ * Node/config objects are size-capped via JSON round-trip.
  */
-export function sanitizeJsonValue(value: unknown, depth = 0): unknown {
-  if (depth > 20) {
-    return null;
-  }
-  if (value === null || typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === 'string') {
-    return value.replace(/\0/g, '').slice(0, 100_000);
-  }
-  if (Array.isArray(value)) {
-    return value.slice(0, 5_000).map(item => sanitizeJsonValue(item, depth + 1));
-  }
-  if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    let count = 0;
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      if (count >= 500) {
-        break;
-      }
-      const safeKey = String(key).replace(/\0/g, '').slice(0, 200);
-      if (!safeKey) {
-        continue;
-      }
-      out[safeKey] = sanitizeJsonValue(nested, depth + 1);
-      count += 1;
+export function sanitizeFlowTab(value: unknown): Record<string, unknown> {
+  const src =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+
+  const out: Record<string, unknown> = {};
+  for (const key of FLOW_TAB_KEYS) {
+    if (!(key in src)) {
+      continue;
     }
-    return out;
+    const nested = src[key];
+    if (key === 'disabled' && typeof nested === 'boolean') {
+      out[key] = nested;
+      continue;
+    }
+    if (key === 'env' && Array.isArray(nested)) {
+      const encoded = JSON.stringify(nested);
+      if (encoded.length <= 500_000) {
+        out[key] = JSON.parse(encoded) as unknown[];
+      }
+      continue;
+    }
+    const asString = sanitizeString(nested, 10_000);
+    if (asString !== undefined) {
+      out[key] = asString;
+    }
   }
-  return null;
+
+  for (const listKey of ['nodes', 'configs'] as const) {
+    const list = src[listKey];
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    const encoded = JSON.stringify(list.slice(0, 5_000));
+    if (encoded.length > 1_500_000) {
+      continue;
+    }
+    out[listKey] = JSON.parse(encoded) as unknown[];
+  }
+
+  return out;
+}
+
+/** Copy only known audit detail fields with fixed key names. */
+export function sanitizeAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of AUDIT_DETAIL_KEYS) {
+    if (!(key in details)) {
+      continue;
+    }
+    const asString = sanitizeString(details[key], 2_000);
+    if (asString !== undefined) {
+      out[key] = asString;
+    }
+  }
+  return out;
 }

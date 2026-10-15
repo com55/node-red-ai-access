@@ -12,7 +12,7 @@ import {
   ProposalNotPendingError,
   type ProposalStore,
 } from '../storage/proposals.js';
-import { assertSafeSegment, sanitizeJsonValue } from '../storage/safe.js';
+import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
@@ -81,7 +81,7 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
       return;
     }
 
-    const safeFlow = sanitizeJsonValue(flow) as Partial<FlowTab>;
+    const safeFlow = sanitizeFlowTab(flow) as Partial<FlowTab>;
 
     const createdBy: {
       kind: 'access-link';

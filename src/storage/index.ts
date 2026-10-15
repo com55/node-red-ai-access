@@ -25,5 +25,6 @@ export {
   assertSafeProposalId,
   assertSafeSegment,
   resolveUnderDir,
-  sanitizeJsonValue,
+  sanitizeAuditDetails,
+  sanitizeFlowTab,
 } from './safe.js';

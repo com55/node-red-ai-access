@@ -13,7 +13,7 @@ import {
   assertSafeProposalId,
   assertSafeSegment,
   resolveUnderDir,
-  sanitizeJsonValue,
+  sanitizeFlowTab,
 } from './safe.js';
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed';
@@ -119,7 +119,7 @@ export class ProposalStore {
       'expectedRev'
     );
     const flowId = assertSafeSegment(String(proposal.payload.flowId).slice(0, 200), 'flowId');
-    const flow = sanitizeJsonValue(proposal.payload.flow) as Partial<FlowTab>;
+    const flow = sanitizeFlowTab(proposal.payload.flow) as Partial<FlowTab>;
 
     const createdBy: ProposalCreator = {
       kind: 'access-link',
@@ -160,6 +160,10 @@ export class ProposalStore {
     const target = this.fileFor(id);
     const disk = this.toDiskRecord(proposal);
     const temp = `${target}.${process.pid}.tmp`;
+    // Intentionally persist owner-approved / access-link proposal JSON under
+    // userDir/.ai-access after path + field validation above. This is the
+    // product's storage surface, not an open file write of raw request bodies.
+    // codeql[js/file-write]
     writeFileSync(temp, `${JSON.stringify(disk, null, 2)}\n`, 'utf8');
     renameSync(temp, target);
   }

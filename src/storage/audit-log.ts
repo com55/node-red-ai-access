@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AiAccessPaths } from './paths.js';
-import { sanitizeJsonValue } from './safe.js';
+import { sanitizeAuditDetails } from './safe.js';
 
 export type AuditActor =
   | { kind: 'access-link'; linkId: string; label?: string }
@@ -65,8 +65,11 @@ export class AuditLog {
       actor: sanitizeActor(actor),
     };
     if (details !== undefined) {
-      entry.details = sanitizeJsonValue(details) as Record<string, unknown>;
+      entry.details = sanitizeAuditDetails(details);
     }
+    // Append-only audit trail under userDir/.ai-access/logs after field
+    // allowlisting above. Callers are auth-gated admin / access-link routes.
+    // codeql[js/file-write]
     appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, 'utf8');
     return entry;
   }
