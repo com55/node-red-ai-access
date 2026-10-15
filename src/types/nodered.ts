@@ -41,14 +41,14 @@ export interface NodeRedNode {
   wires?: string[][];
   info?: string;
   disabled?: boolean;
-  [key: string]: any; // Additional node-specific properties
+  [key: string]: unknown; // Additional node-specific properties
 }
 
 export interface NodeRedConfig {
   id: string;
   type: string;
   name?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface NodeRedSubflow {
@@ -109,9 +109,9 @@ export interface NodeRedSettings {
   mqttReconnectTime?: number;
   serialReconnectTime?: number;
   debugMaxLength?: number;
-  functionGlobalContext?: Record<string, any>;
+  functionGlobalContext?: Record<string, unknown>;
   exportGlobalContextKeys?: boolean;
-  contextStorage?: Record<string, any>;
+  contextStorage?: Record<string, unknown>;
   adminAuth?: {
     type: string;
     users?: {
@@ -227,7 +227,7 @@ export interface NodeRedAPIError {
 export interface NodeRedEvent {
   type: 'node' | 'flow' | 'runtime' | 'error' | 'status';
   timestamp: string;
-  data: any;
+  data: unknown;
 }
 
 export interface NodeRedNodeEvent extends NodeRedEvent {
@@ -236,7 +236,7 @@ export interface NodeRedNodeEvent extends NodeRedEvent {
     id: string;
     type: string;
     event: 'input' | 'output' | 'error' | 'status';
-    msg?: any;
+    msg?: unknown;
     error?: string;
   };
 }
