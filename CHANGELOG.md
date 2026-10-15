@@ -11,14 +11,18 @@ and this project adheres to
 
 ### Added
 
+- **`replace_flow` tool**: Replaces an entire tab via `PUT /flow/:id` (no
+  revision check). Warns that the whole tab is replaced, its nodes restart,
+  omitted nodes are deleted, and concurrent edits can be overwritten — prefer
+  `deploy_flow` / `deploy_nodes` for revision-checked edits.
 - **`deploy_flow` tool**: Revision-safe replacement of one tab via Admin API v2.
   Requires `expected_rev` from a prior `get_flows` / `get_flow` read (optimistic
   concurrency like two editor sessions). Merges only that tab + its `z`
   children, then `POST /flows` with the caller's `expected_rev`. Default
   deployment type is `flows` (optional `nodes`). Nodes omitted from the provided
   tab content are deleted. Returns the new `rev` on success. Prefer over
-  `update_flow` for concurrent-safe edits. Shares the `deployFlows` helper with
-  `deploy_nodes`.
+  `replace_flow` / `update_flow` for concurrent-safe edits. Shares the
+  `deployFlows` helper with `deploy_nodes`.
 - **`deploy_nodes` tool**: Upsert specific nodes by id and deploy with
   `Node-RED-Deployment-Type: nodes` (editor "Modified Nodes"). Requires
   `expected_rev` from a prior read; only the listed nodes restart. Optional
@@ -29,8 +33,8 @@ and this project adheres to
   unchanged) for use as `expected_rev` on deploy tools.
 - **Read-Only Mode (`MCP_READ_ONLY`)**: Structurally prevents mutation of
   Node-RED flows when exposing this server to remote agents
-  - Write tools (`create_flow`, `update_flow`, `deploy_flow`, `deploy_nodes`,
-    `delete_flow`, `enable_flow`, `disable_flow`, `set_context`,
+  - Write tools (`create_flow`, `replace_flow`, `update_flow`, `deploy_flow`,
+    `deploy_nodes`, `delete_flow`, `enable_flow`, `disable_flow`, `set_context`,
     `delete_context`, `install_module`) are removed from
     `getToolDefinitions()`/tool listings entirely, so clients never see them as
     available capabilities
@@ -75,6 +79,12 @@ and this project adheres to
   - Circuit breaker state transition tests
   - Timeout handling tests
   - Integration tests for retry with circuit breaker
+
+### Deprecated
+
+- **`update_flow` tool**: Deprecated alias of `replace_flow` (same
+  `PUT /flow/:id` implementation). Will be removed in a future release — use
+  `replace_flow`, or `deploy_flow` / `deploy_nodes` for revision-checked edits.
 
 ### Fixed
 

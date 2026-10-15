@@ -211,6 +211,21 @@ function validateFlowOrThrow(flowData: { nodes?: unknown[] }): void {
 const FLOW_SORT_KEYS = ['label', 'nodeCount', 'disabled'] as const;
 type FlowSortKey = (typeof FLOW_SORT_KEYS)[number];
 
+/** Shared by `replace_flow` and its deprecated `update_flow` alias. */
+const REPLACE_FLOW_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    flowId: { type: 'string', description: 'Flow ID to replace' },
+    flowData: { type: 'object', description: 'Full replacement tab content' },
+    validate: {
+      type: 'boolean',
+      description: 'If true, validate flowData for structural errors before replacing',
+      default: false,
+    },
+  },
+  required: ['flowId', 'flowData'],
+} as const;
+
 const FLOW_SORT_KEY_FNS: Record<FlowSortKey, (f: any) => string | number | boolean> = {
   label: f => String(f?.label ?? '').toLowerCase(),
   nodeCount: f => (typeof f?.nodeCount === 'number' ? f.nodeCount : (f?.nodes?.length ?? 0)),
@@ -502,28 +517,23 @@ export class McpNodeRedServer {
         },
       },
       {
+        name: 'replace_flow',
+        description:
+          'Replace an entire Node-RED tab via PUT /flow/:id. WARNING: replaces the whole tab, restarts all of its nodes, deletes any nodes omitted from flowData, and does not check the flow revision (rev) — concurrent editor changes can be overwritten. Prefer deploy_flow or deploy_nodes for revision-checked safe edits.',
+        annotations: { readOnlyHint: false },
+        inputSchema: REPLACE_FLOW_INPUT_SCHEMA,
+      },
+      {
         name: 'update_flow',
         description:
-          'Replace an existing Node-RED tab via PUT /flow/:id (no revision check). Prefer deploy_flow for concurrent-safe edits that use Admin API v2 rev checking.',
+          'Deprecated alias for replace_flow (same PUT /flow/:id behavior). Will be removed in a future release — use replace_flow, or deploy_flow / deploy_nodes for revision-checked edits.',
         annotations: { readOnlyHint: false },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            flowId: { type: 'string', description: 'Flow ID to update' },
-            flowData: { type: 'object', description: 'Updated flow data' },
-            validate: {
-              type: 'boolean',
-              description: 'If true, validate flowData for structural errors before updating',
-              default: false,
-            },
-          },
-          required: ['flowId', 'flowData'],
-        },
+        inputSchema: REPLACE_FLOW_INPUT_SCHEMA,
       },
       {
         name: 'deploy_flow',
         description:
-          "Safely replace one tab's contents using Admin API v2 optimistic concurrency. Requires expected_rev from a prior get_flows/get_flow. Only that tab object and nodes with z equal to the tab id are replaced; every other tab, subflow, and global config node is left untouched. WARNING: any existing node on this tab that is omitted from flowData.nodes/configs is deleted. Prefer this over update_flow. If expected_rev is stale (human edited in the editor, etc.), fails with HTTP 409 — re-read flows, re-apply your change, and retry with the new rev. Returns the new rev on success. Default deployment type is 'flows'; pass type 'nodes' for modified-nodes deploy.",
+          "Safely replace one tab's contents using Admin API v2 optimistic concurrency. Requires expected_rev from a prior get_flows/get_flow. Only that tab object and nodes with z equal to the tab id are replaced; every other tab, subflow, and global config node is left untouched. WARNING: any existing node on this tab that is omitted from flowData.nodes/configs is deleted. Prefer this over replace_flow / update_flow. If expected_rev is stale (human edited in the editor, etc.), fails with HTTP 409 — re-read flows, re-apply your change, and retry with the new rev. Returns the new rev on success. Default deployment type is 'flows'; pass type 'nodes' for modified-nodes deploy.",
         annotations: { readOnlyHint: false },
         inputSchema: {
           type: 'object',
@@ -532,7 +542,7 @@ export class McpNodeRedServer {
             flowData: {
               type: 'object',
               description:
-                'Full replacement tab content (same shape as update_flow): label/disabled/info/env plus nodes (and optional configs). Omitted nodes on this tab are deleted.',
+                'Full replacement tab content (same shape as replace_flow): label/disabled/info/env plus nodes (and optional configs). Omitted nodes on this tab are deleted.',
             },
             expected_rev: {
               type: 'string',
@@ -865,7 +875,7 @@ export class McpNodeRedServer {
       {
         name: 'get_node_errors',
         description:
-          'Check Node-RED for nodes that are in an error state (red status) after deployment. Connects to the Node-RED event bus, collects retained node statuses, and returns any nodes with active errors or warnings. Use after create_flow or update_flow to catch nodes with missing required configuration.',
+          'Check Node-RED for nodes that are in an error state (red status) after deployment. Connects to the Node-RED event bus, collects retained node statuses, and returns any nodes with active errors or warnings. Use after create_flow, replace_flow, or deploy_flow to catch nodes with missing required configuration.',
         annotations: { readOnlyHint: true },
         inputSchema: {
           type: 'object',
@@ -1010,12 +1020,14 @@ export class McpNodeRedServer {
             ],
           };
 
+        case 'replace_flow':
         case 'update_flow': {
-          const flowId = await this.resolveFlowId(args, 'update');
+          // update_flow is a deprecated alias for replace_flow (same PUT /flow/:id).
+          const flowId = await this.resolveFlowId(args, 'replace');
           if (!args?.flowData) throw new Error('Missing required parameter: flowData');
           if (args?.validate) validateFlowOrThrow(args.flowData);
           await this.nodeRedClient.updateFlow(flowId, args.flowData);
-          return { content: [{ type: 'text', text: `Flow ${flowId} updated successfully` }] };
+          return { content: [{ type: 'text', text: `Flow ${flowId} replaced successfully` }] };
         }
 
         case 'deploy_flow': {

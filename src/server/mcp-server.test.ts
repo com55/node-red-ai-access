@@ -248,13 +248,30 @@ describe('McpNodeRedServer', () => {
       expect(createFlowTool?.inputSchema.required).toContain('flowData');
     });
 
-    it('should include update_flow tool with required parameters', () => {
+    it('should include replace_flow and deprecated update_flow alias with shared schema', () => {
       const tools = mcpServer.getToolDefinitions();
+      const replaceFlowTool = tools.find(t => t.name === 'replace_flow');
       const updateFlowTool = tools.find(t => t.name === 'update_flow');
 
+      expect(replaceFlowTool).toBeDefined();
       expect(updateFlowTool).toBeDefined();
-      expect(updateFlowTool?.inputSchema.required).toContain('flowId');
-      expect(updateFlowTool?.inputSchema.required).toContain('flowData');
+      expect(replaceFlowTool?.inputSchema.required).toContain('flowId');
+      expect(replaceFlowTool?.inputSchema.required).toContain('flowData');
+      expect(updateFlowTool?.inputSchema).toEqual(replaceFlowTool?.inputSchema);
+      expect(replaceFlowTool?.annotations?.readOnlyHint).toBe(false);
+      expect(updateFlowTool?.annotations?.readOnlyHint).toBe(false);
+      expect(replaceFlowTool?.description).toMatch(/PUT \/flow\/:id/);
+      expect(replaceFlowTool?.description).toMatch(/restarts/i);
+      expect(replaceFlowTool?.description).toMatch(/omitted/i);
+      expect(replaceFlowTool?.description).toMatch(/deletes?/i);
+      expect(replaceFlowTool?.description).toMatch(
+        /no.*revision|does not check the flow revision/i
+      );
+      expect(replaceFlowTool?.description).toMatch(/deploy_flow/);
+      expect(replaceFlowTool?.description).toMatch(/deploy_nodes/);
+      expect(updateFlowTool?.description).toMatch(/deprecated/i);
+      expect(updateFlowTool?.description).toMatch(/replace_flow/);
+      expect(updateFlowTool?.description).toMatch(/removed in a future release/i);
     });
 
     it('should include enable_flow tool', () => {
@@ -343,9 +360,9 @@ describe('McpNodeRedServer', () => {
       expect(tool?.annotations?.readOnlyHint).toBe(true);
     });
 
-    it('should have exactly 22 tools defined', () => {
+    it('should have exactly 23 tools defined', () => {
       const tools = mcpServer.getToolDefinitions();
-      expect(tools.length).toBe(22);
+      expect(tools.length).toBe(23);
     });
 
     it('should include semantic_search_flows tool', () => {
@@ -499,22 +516,65 @@ describe('McpNodeRedServer', () => {
     });
   });
 
-  describe('Tool Execution - update_flow', () => {
-    it('should update existing flow', async () => {
+  describe('Tool Execution - replace_flow / update_flow alias', () => {
+    it('should replace an existing flow via replace_flow', async () => {
       const flowData = { label: 'Updated Flow' };
-      const result = await mcpServer.callTool('update_flow', {
+      const result = await mcpServer.callTool('replace_flow', {
         flowId: 'flow-1',
         flowData,
       });
 
       expect(mockNodeRedClient.updateFlow).toHaveBeenCalledWith('flow-1', flowData);
-      expect(result.content[0].text).toContain('updated successfully');
+      expect(result.content[0].text).toContain('replaced successfully');
+    });
+
+    it('should behave identically when called as deprecated update_flow alias', async () => {
+      const flowData = { label: 'Updated Flow' };
+      const replaceResult = await mcpServer.callTool('replace_flow', {
+        flowId: 'flow-1',
+        flowData,
+      });
+      mockNodeRedClient.updateFlow.mockClear();
+
+      const aliasResult = await mcpServer.callTool('update_flow', {
+        flowId: 'flow-1',
+        flowData,
+      });
+
+      expect(mockNodeRedClient.updateFlow).toHaveBeenCalledWith('flow-1', flowData);
+      expect(aliasResult.content[0].text).toBe(replaceResult.content[0].text);
+      expect(aliasResult.content[0].text).toContain('replaced successfully');
     });
 
     it('should throw validation error when required params missing', async () => {
-      const result = await mcpServer.callTool('update_flow', { flowId: 'flow-1' });
+      const replaceResult = await mcpServer.callTool('replace_flow', { flowId: 'flow-1' });
+      const aliasResult = await mcpServer.callTool('update_flow', { flowId: 'flow-1' });
 
-      expect(result.content[0].text).toContain('flowData');
+      expect(replaceResult.content[0].text).toContain('flowData');
+      expect(aliasResult.content[0].text).toContain('flowData');
+    });
+
+    it('is hidden and rejected in read-only mode for both names', async () => {
+      process.env.MCP_READ_ONLY = 'true';
+      try {
+        const tools = mcpServer.getToolDefinitions();
+        expect(tools.find(t => t.name === 'replace_flow')).toBeUndefined();
+        expect(tools.find(t => t.name === 'update_flow')).toBeUndefined();
+
+        const replaceResult = await mcpServer.callTool('replace_flow', {
+          flowId: 'flow-1',
+          flowData: { label: 'x' },
+        });
+        const aliasResult = await mcpServer.callTool('update_flow', {
+          flowId: 'flow-1',
+          flowData: { label: 'x' },
+        });
+        expect(replaceResult.content[0].text).toContain('read-only mode');
+        expect(aliasResult.content[0].text).toContain('read-only mode');
+        expect(mockNodeRedClient.updateFlow).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.MCP_READ_ONLY;
+      }
     });
   });
 
@@ -593,17 +653,18 @@ describe('McpNodeRedServer', () => {
       }
     });
 
-    it('describes omission-deletes and recommends itself from update_flow', () => {
+    it('describes omission-deletes and recommends itself over replace_flow', () => {
       const tools = mcpServer.getToolDefinitions();
       const deployFlow = tools.find(t => t.name === 'deploy_flow');
-      const updateFlow = tools.find(t => t.name === 'update_flow');
+      const replaceFlow = tools.find(t => t.name === 'replace_flow');
 
       expect(deployFlow?.description).toMatch(/omitted/i);
       expect(deployFlow?.description).toMatch(/deleted/i);
       expect(deployFlow?.description).toMatch(/expected_rev/);
       expect(deployFlow?.inputSchema.required).toContain('expected_rev');
-      expect(updateFlow?.description).toMatch(/PUT \/flow\/:id/);
-      expect(updateFlow?.description).toMatch(/deploy_flow/);
+      expect(deployFlow?.description).toMatch(/replace_flow/);
+      expect(replaceFlow?.description).toMatch(/PUT \/flow\/:id/);
+      expect(replaceFlow?.description).toMatch(/deploy_flow/);
     });
   });
 
@@ -1126,15 +1187,15 @@ describe('McpNodeRedServer', () => {
     });
   });
 
-  describe('Tool Execution - update_flow with validate flag', () => {
-    it('should block update when validate:true and flowData has duplicate IDs', async () => {
+  describe('Tool Execution - replace_flow with validate flag', () => {
+    it('should block replace when validate:true and flowData has duplicate IDs', async () => {
       const flowData = {
         nodes: [
           { id: 'dup', type: 'inject' },
           { id: 'dup', type: 'debug' },
         ],
       };
-      const result = await mcpServer.callTool('update_flow', {
+      const result = await mcpServer.callTool('replace_flow', {
         flowId: 'flow-1',
         flowData,
         validate: true,
@@ -1146,18 +1207,18 @@ describe('McpNodeRedServer', () => {
       expect(parsed.error).toContain('Validation failed');
     });
 
-    it('should update flow when validate:true and flowData is valid', async () => {
+    it('should replace flow when validate:true and flowData is valid', async () => {
       const flowData = {
         nodes: [{ id: 'n1', type: 'inject' }],
       };
-      const result = await mcpServer.callTool('update_flow', {
+      const result = await mcpServer.callTool('replace_flow', {
         flowId: 'flow-1',
         flowData,
         validate: true,
       });
 
       expect(mockNodeRedClient.updateFlow).toHaveBeenCalledWith('flow-1', flowData);
-      expect(result.content[0].text).toContain('updated successfully');
+      expect(result.content[0].text).toContain('replaced successfully');
     });
   });
 
