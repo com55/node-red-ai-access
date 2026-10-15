@@ -23,6 +23,11 @@ and this project adheres to
   fields (name, wires by node name, code/HTML), and hide the rest under “All
   properties”. HTML templates offer a sandboxed iframe Preview toggle (`sandbox`
   with no `allow-scripts`, `srcdoc`) plus the code view.
+- `/mcp` Access Links: Copy link on each active row and on create (brief Copied
+  state + clipboard fallback); empty states; relative timestamps with absolute
+  on hover; confirm before revoke/approve/reject. List API includes `url` for
+  active in-memory links (raw `token` still create-only). Diff lines wrap in
+  unified and side-by-side views.
 
 ### Fixed
 

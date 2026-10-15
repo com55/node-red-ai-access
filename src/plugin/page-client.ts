@@ -93,7 +93,7 @@ function pageClientScriptPartA(): string {
 `;
 }
 
-function pageClientScriptPartAFormat(): string {
+function pageClientScriptPartATimeCopy(): string {
   return `
   function fmtCompact(iso) {
     try {
@@ -110,6 +110,71 @@ function pageClientScriptPartAFormat(): string {
       return String(iso);
     }
   }
+  function fmtRelative(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      var diffMs = d.getTime() - Date.now();
+      var abs = Math.abs(diffMs);
+      var mins = Math.round(abs / 60000);
+      var hours = Math.round(abs / 3600000);
+      var days = Math.round(abs / 86400000);
+      var phrase;
+      if (mins < 1) phrase = 'just now';
+      else if (mins < 60) phrase = mins + 'm';
+      else if (hours < 48) phrase = hours + 'h';
+      else phrase = days + 'd';
+      if (phrase === 'just now') return phrase;
+      return diffMs >= 0 ? 'in ' + phrase : phrase + ' ago';
+    } catch (e) {
+      return String(iso);
+    }
+  }
+  function timeCell(iso) {
+    return '<time datetime="' + esc(iso) + '" title="' + esc(fmtCompact(iso)) + '">' +
+      esc(fmtRelative(iso)) + '</time>';
+  }
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) resolve();
+        else reject(new Error('copy failed'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  function markCopied(btn, flash, okMsg) {
+    if (!btn) return;
+    var prev = btn.getAttribute('data-label') || btn.textContent || 'Copy';
+    btn.setAttribute('data-label', prev);
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    btn.disabled = true;
+    if (flash && okMsg) showFlash(flash, okMsg, true);
+    setTimeout(function () {
+      btn.textContent = btn.getAttribute('data-label') || 'Copy link';
+      btn.classList.remove('copied');
+      btn.disabled = false;
+    }, 1600);
+  }
+`;
+}
+
+function pageClientScriptPartAFormat(): string {
+  return `
   function shortId(value, keep) {
     var s = String(value == null ? '' : value);
     var n = keep || 8;
@@ -275,18 +340,37 @@ function pageClientScriptPartA2(): string {
       var data = await api('/links');
       var links = (data && data.links) || [];
       if (!links.length) {
-        list.innerHTML = '<p class="muted">No active access links.</p>';
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">No active access links</p>' +
+          '<p class="muted">Create a link above to give an AI temporary GET/REST access.</p></div>';
         return;
       }
-      list.innerHTML = '<table><thead><tr><th>Id</th><th>Label</th><th>Expires</th><th></th></tr></thead><tbody>' +
+      list.innerHTML = '<table class="links-table"><thead><tr><th>Id</th><th>Label</th><th>Expires</th><th></th></tr></thead><tbody>' +
         links.map(function (l) {
+          var copyDisabled = l.url ? '' : ' disabled title="URL unavailable"';
           return '<tr data-id="' + esc(l.id) + '">' +
-            '<td><code>' + esc(l.id) + '</code></td>' +
+            '<td><code title="' + esc(l.id) + '">' + tipId(l.id, 10) + '</code></td>' +
             '<td>' + esc(l.label || '—') + '</td>' +
-            '<td>' + esc(fmt(l.expiresAt)) + '</td>' +
-            '<td><button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button></td>' +
-            '</tr>';
+            '<td>' + timeCell(l.expiresAt) + '</td>' +
+            '<td class="row-actions">' +
+            '<button type="button" class="action secondary copy-link" data-id="' + esc(l.id) + '"' +
+            ' data-url="' + esc(l.url || '') + '"' + copyDisabled + '>Copy link</button> ' +
+            '<button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button>' +
+            '</td></tr>';
         }).join('') + '</tbody></table>';
+      list.querySelectorAll('.copy-link').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var url = btn.getAttribute('data-url') || '';
+          if (!url) {
+            showFlash(flash, 'Clipboard unavailable — create a new link to copy.', false);
+            return;
+          }
+          copyTextToClipboard(url).then(function () {
+            markCopied(btn, flash, 'Link copied.');
+          }).catch(function () {
+            showFlash(flash, 'Clipboard unavailable — select the URL from a new create.', false);
+          });
+        });
+      });
       list.querySelectorAll('.revoke-link').forEach(function (btn) {
         btn.addEventListener('click', function () { revokeLink(btn.getAttribute('data-id')); });
       });
@@ -297,6 +381,9 @@ function pageClientScriptPartA2(): string {
 
   async function revokeLink(id) {
     var flash = $('links-flash');
+    if (!window.confirm('Revoke this access link? The AI will lose access immediately.')) {
+      return;
+    }
     try {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
@@ -359,19 +446,19 @@ function pageClientScriptPartB(): string {
       }
       var copyBtn = $('token-copy-btn');
       if (copyBtn) {
+        copyBtn.textContent = 'Copy link for AI';
+        copyBtn.classList.remove('copied');
+        copyBtn.disabled = false;
         copyBtn.onclick = function () {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(copyText).then(function () {
-              showFlash(flash, 'Copied token + API base + docs hint.', true);
-            }).catch(function () {
-              showFlash(flash, 'Copy failed — select the text below manually.', false);
-            });
-          } else {
+          copyTextToClipboard(copyText).then(function () {
+            markCopied(copyBtn, flash, 'Copied link for AI.');
+          }).catch(function () {
+            if (copyBlock) copyBlock.hidden = false;
             showFlash(flash, 'Clipboard unavailable — select the text below manually.', false);
-          }
+          });
         };
       }
-      showFlash(flash, 'Link created. Copy the token now — it will not be shown again.', true);
+      showFlash(flash, 'Link created. Use Copy link for AI — the raw token stays available while active.', true);
       loadLinks();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
@@ -683,7 +770,8 @@ function pageClientScriptPartB2(): string {
       var data = await api('/proposals');
       var proposals = (data && data.proposals) || [];
       if (!proposals.length) {
-        list.innerHTML = '<p class="muted">No proposals yet.</p>';
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">No proposals yet</p>' +
+          '<p class="muted">When an AI submits a change it will appear here for review.</p></div>';
         return;
       }
       list.innerHTML = proposals.map(function (p) {
@@ -719,7 +807,7 @@ function pageClientScriptPartB2(): string {
           '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
           '<span class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
-          ' · created ' + esc(fmtCompact(p.createdAt)) +
+          ' · created ' + timeCell(p.createdAt) +
           createdBy +
           '</span>' +
           reason +
@@ -813,6 +901,9 @@ function pageClientScriptPartC(): string {
     var flash = $('proposals-flash');
     var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
     var deploymentType = select ? select.value : defaultDeploy;
+    if (!window.confirm('Approve and deploy this proposal (' + deploymentType + ')?')) {
+      return;
+    }
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
@@ -836,6 +927,9 @@ function pageClientScriptPartC(): string {
     var flash = $('proposals-flash');
     var input = document.querySelector('input.reject-reason[data-id="' + id + '"]');
     var reason = input && input.value.trim() ? input.value.trim() : 'Rejected by admin';
+    if (!window.confirm('Reject this proposal?')) {
+      return;
+    }
     try {
       await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
@@ -854,7 +948,8 @@ function pageClientScriptPartC(): string {
   function renderLogsTable(logs) {
     var list = $('logs-list');
     if (!logs.length) {
-      list.innerHTML = '<p class="muted">No matching audit entries.</p>';
+      list.innerHTML = '<div class="empty-state"><p class="empty-title">No matching audit entries</p>' +
+        '<p class="muted">Try another filter, or wait for proposal activity.</p></div>';
       return;
     }
     list.innerHTML = '<table class="audit-table"><thead><tr>' +
@@ -863,7 +958,7 @@ function pageClientScriptPartC(): string {
       logs.map(function (e) {
         var raw = esc(JSON.stringify(e.details || {}, null, 2));
         return '<tr>' +
-          '<td class="col-when" title="' + esc(e.at) + '">' + esc(fmtCompact(e.at)) + '</td>' +
+          '<td class="col-when">' + timeCell(e.at) + '</td>' +
           '<td class="col-action">' + actionBadge(e.action) + '</td>' +
           '<td class="col-actor" title="' + esc(actorPlain(e.actor)) + '">' + actorLabel(e.actor) + '</td>' +
           '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
@@ -1013,6 +1108,7 @@ function pageClientScriptPartD(): string {
 export function pageClientScript(): string {
   return (
     pageClientScriptPartA() +
+    pageClientScriptPartATimeCopy() +
     pageClientScriptPartAFormat() +
     pageClientScriptPartATabs() +
     pageClientScriptPartA2() +

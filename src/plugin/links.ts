@@ -33,8 +33,18 @@ export function createConfiguredLinkStore(RED: NodeRedPluginAPI): AccessLinkStor
 }
 
 export function listLinksHandler(RED: NodeRedPluginAPI, store: AccessLinkStore) {
-  return (_req: AuthenticatedRequest, res: Response): void => {
-    const active = storeForRequest(RED, store).list();
+  return (req: AuthenticatedRequest, res: Response): void => {
+    const linkStore = storeForRequest(RED, store);
+    const active = linkStore.list().map(link => {
+      const token = linkStore.peekToken(link.id);
+      if (!token) {
+        return link;
+      }
+      return {
+        ...link,
+        url: buildAccessLinkUrl(req, RED.settings.httpAdminRoot, token),
+      };
+    });
     res.json({ links: active });
   };
 }

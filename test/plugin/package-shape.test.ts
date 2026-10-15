@@ -73,6 +73,8 @@ describe('/mcp audit log page client', () => {
     expect(styles).toMatch(/white-space:\s*pre-wrap/);
     expect(styles).toMatch(/overflow-wrap:\s*anywhere/);
     expect(styles).toMatch(/DIFF_SPLIT_MIN_PX/);
+    expect(styles).toMatch(/\.empty-state/);
+    expect(styles).toMatch(/button\.action\.copied/);
     const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
     expect(client).toMatch(/data-diff-mode="split"/);
     expect(client).toMatch(/data-diff-mode="unified"/);
@@ -82,6 +84,10 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/localStorage\.setItem\(DIFF_MODE_KEY/);
     expect(client).toMatch(/isCollapsiblePresenceText|PRESENCE_SHORT_TEXT_MAX/);
     expect(client).toMatch(/presence-inline/);
+    expect(client).toMatch(/copy-link|Copy link/);
+    expect(client).toMatch(/markCopied|Copied/);
+    expect(client).toMatch(/fmtRelative|timeCell/);
+    expect(client).toMatch(/window\.confirm/);
   });
 
   it('renders added/removed nodes as single presence blocks', () => {

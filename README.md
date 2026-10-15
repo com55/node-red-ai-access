@@ -148,8 +148,10 @@ invalid/expired/revoked tokens return **401** `access_link_invalid` (both with
 error JSON includes a `code`.
 
 Access links are **in memory** (default TTL **4h**, max 10). Creating a link
-returns the raw token once plus a self-contained `url` (`/mcp/a/<token>`). After
-a restart every old token is invalid.
+returns the raw `token` plus a self-contained `url` (`/mcp/a/<token>`). While
+the link remains active, `GET /links` includes `url` again so admins can re-copy
+from `/mcp` (the raw `token` field stays create-only). After a restart every old
+token is invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
 `expectedRev`. Submit checks the live rev (**409** if stale). Approve may send

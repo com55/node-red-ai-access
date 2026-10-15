@@ -20,13 +20,15 @@ export interface AccessLinkPublic {
 }
 
 export interface AccessLinkCreated extends AccessLinkPublic {
-  /** Raw token — returned only at creation time. */
+  /** Raw token — available while the in-memory link is active. */
   token: string;
 }
 
 export interface AccessLinkRecord {
   id: string;
   tokenHash: string;
+  /** Raw token kept in memory so admins can re-copy the GET URL. */
+  token: string;
   label?: string;
   createdAtMs: number;
   expiresAtMs: number;
@@ -162,6 +164,7 @@ export class AccessLinkStore {
     const record: AccessLinkRecord = {
       id,
       tokenHash: hashToken(token),
+      token,
       createdAtMs: atMs,
       expiresAtMs: atMs + ttlSeconds * 1000,
     };
@@ -178,6 +181,18 @@ export class AccessLinkStore {
       ...toPublic(record),
       token,
     };
+  }
+
+  /**
+   * Raw token for an active link (in-memory only). Used to rebuild the GET URL
+   * for admin "Copy link" — never logs the value.
+   */
+  peekToken(linkId: string): string | null {
+    const record = this.links.get(linkId);
+    if (!record || !this.isActive(record, this.now())) {
+      return null;
+    }
+    return record.token;
   }
 
   revoke(linkId: string): AccessLinkPublic {

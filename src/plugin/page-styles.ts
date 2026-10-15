@@ -114,6 +114,38 @@ function pageStylesPartB(): string {
   font-weight: 650;
 }
 .muted { color: var(--muted); font-size: 0.92rem; }
+.empty-state {
+  padding: 1.25rem 0.85rem;
+  text-align: left;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+.empty-state .empty-title {
+  margin: 0 0 0.25rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+.empty-state .muted { margin: 0; }
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+.links-table { width: 100%; border-collapse: collapse; }
+.links-table th, .links-table td {
+  text-align: left;
+  padding: 0.45rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+button.action.copied {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .row {
   display: flex;
   flex-wrap: wrap;
