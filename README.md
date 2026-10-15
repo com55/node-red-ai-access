@@ -7,7 +7,9 @@
 
 Temporary, owner-approved Node-RED access for AI clients. Phase 1 ships as a
 **Node-RED 4.x+ plugin** with an admin page at `/mcp` and a versioned REST API
-under `/mcp/api/v1`. A standalone MCP server remains available for advanced use.
+under `/mcp/api/v1`. Phase 2 adds an MCP JSON-RPC endpoint at `/mcp/rpc`
+(Streamable HTTP) over the same services. A standalone MCP server remains
+available for advanced use.
 
 Derived from
 [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
@@ -68,6 +70,7 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | Path                                     | Purpose                                          |
 | ---------------------------------------- | ------------------------------------------------ |
 | `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
+| `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
 | `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
 | `GET /mcp/api/v1/status`                 | Plugin status JSON                               |
 | `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
@@ -81,6 +84,21 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)  |
 | `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)         |
 | `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |
+
+### MCP JSON-RPC (`POST /mcp/rpc`)
+
+AI clients can use the official MCP Streamable HTTP transport against
+`{httpAdminRoot}/mcp/rpc` with the same access-link Bearer token as the REST
+API. Tools mirror the AI-facing REST surface only:
+
+`get_status`, `list_flows`, `get_flow`, `submit_proposal` (including
+`replace_flow` with `expected_rev` / `expectedRev`), `list_my_proposals`,
+`get_proposal`.
+
+Approve, reject, and access-link management stay human-only on the `/mcp` admin
+page (and the corresponding REST routes). Rate limits, payload size limits, and
+audit logging match REST. Invalid or expired tokens return **401** telling the
+AI to ask the user for a new access link.
 
 Access links are **in memory** (default TTL 24h, max 10). The raw token is
 returned once at creation; after a restart every old token is invalid.
@@ -99,13 +117,12 @@ other deploy errors mark it **failed**. Reject never mutates flows.
 
 1. An owner with `*` opens `/mcp` → **Access links** → create a link (copy the
    token once).
-2. The AI client sends `Authorization: Bearer <token>` to:
+2. The AI client sends `Authorization: Bearer <token>` to REST and/or MCP:
 
-   - `GET /mcp/api/v1/flows` and `GET /mcp/api/v1/flows/{id}` — read flows and
-     the current `rev`
-   - `POST /mcp/api/v1/proposals` — submit a `replace_flow` proposal with
-     `expectedRev` (or `expected_rev`) and `payload: { flowId, flow }`
-   - `GET /mcp/api/v1/proposals` — list that link’s own proposals
+   - REST: `GET /mcp/api/v1/flows`, `GET /mcp/api/v1/flows/{id}`,
+     `POST /mcp/api/v1/proposals`, `GET /mcp/api/v1/proposals`
+   - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow`, `submit_proposal`,
+     `list_my_proposals` (same access-link auth and limits)
 
 3. The owner reviews the proposal on `/mcp` and approves or rejects it.
 4. If the token is invalid, expired, revoked, or cleared by a restart, the API
