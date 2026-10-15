@@ -110,6 +110,30 @@ function pageClientScriptPartATimeCopy(): string {
       return String(iso);
     }
   }
+  /** Browser-local short stamp matching API displayName style (D Mon HH:mm). */
+  function fmtLocalShort(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      var day = d.getDate();
+      var month = months[d.getMonth()] || 'Jan';
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      return day + ' ' + month + ' ' + hh + ':' + mm;
+    } catch (e) {
+      return String(iso);
+    }
+  }
+  function proposalHeading(p) {
+    // Prefer title + browser-local time — API displayName embeds server TZ.
+    if (p.title && p.createdAt) {
+      return esc(p.title) + ' · ' + esc(fmtLocalShort(p.createdAt));
+    }
+    if (p.title) return esc(p.title);
+    if (p.displayName) return esc(p.displayName);
+    return tipId(p.id, 12);
+  }
   function fmtRelative(iso) {
     try {
       var d = new Date(iso);
@@ -238,19 +262,24 @@ function pageClientScriptPartAFormat(): string {
     };
     return labels[action] ? labels[action] + ' (' + action + ')' : action;
   }
-  function auditProposalLabel(d) {
-    if (d.displayName) {
-      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
+  function auditProposalLabel(d, atIso) {
+    // Prefer title + browser-local time; fall back to server displayName.
+    if (d.title && atIso) {
+      return '<strong class="audit-display-name">' + esc(String(d.title)) +
+        ' · ' + esc(fmtLocalShort(atIso)) + '</strong>';
     }
     if (d.title) {
       return '<strong class="audit-display-name">' + esc(String(d.title)) + '</strong>';
+    }
+    if (d.displayName) {
+      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
     }
     return d.proposalId ? tipId(d.proposalId, 12) : '';
   }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
-    var prop = auditProposalLabel(d);
+    var prop = auditProposalLabel(d, entry.at);
     var flow = d.flowId != null ? esc(String(d.flowId)) : '';
     if (action === 'proposal.created') {
       return (prop || 'Proposal') + ' created' + (flow ? ' for flow "' + flow + '"' : '');
@@ -282,18 +311,87 @@ function pageClientScriptPartAFormat(): string {
 
 function pageClientScriptPartATabs(): string {
   return `
+  // Hash helpers — keep in sync with page-hash.ts
+  function hashForTab(tab) {
+    if (tab === 'logs') return 'audit';
+    if (tab === 'status' || tab === 'links' || tab === 'proposals') return tab;
+    return 'status';
+  }
+
+  function tabFromHash(hash) {
+    var raw = String(hash || '').replace(/^#/, '');
+    if (!raw || raw.indexOf('proposal=') === 0) return '';
+    if (raw === 'audit' || raw === 'logs') return 'logs';
+    if (raw === 'status' || raw === 'links' || raw === 'proposals') return raw;
+    return '';
+  }
+
+  function initialTabFromHash(hash) {
+    if (readProposalHashIdFrom(hash)) return 'proposals';
+    return tabFromHash(hash) || 'status';
+  }
+
+  function readProposalHashIdFrom(hash) {
+    try {
+      var m = String(hash || '').match(/^#proposal=([^&]+)/);
+      if (!m) return '';
+      return decodeURIComponent(m[1]);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function replaceLocationHash(hash) {
+    var next = '';
+    if (hash) {
+      next = hash.charAt(0) === '#' ? hash : '#' + hash;
+    }
+    if (String(location.hash || '') === next) return;
+    try {
+      history.replaceState(null, '', location.pathname + location.search + next);
+    } catch (e) {
+      location.hash = next;
+    }
+  }
+
+  function clearProposalHighlight() {
+    document.querySelectorAll('.proposal-detail.proposal-highlight').forEach(function (node) {
+      node.classList.remove('proposal-highlight');
+    });
+  }
+
+  function selectTab(target, options) {
+    options = options || {};
+    if (!target) return;
+    document.querySelectorAll('nav.tabs button').forEach(function (b) {
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
+    });
+    document.querySelectorAll('section.panel').forEach(function (sec) {
+      sec.classList.toggle('active', sec.id === 'section-' + target);
+    });
+    if (target !== 'proposals') {
+      clearProposalHighlight();
+    }
+    if (!options.skipHash) {
+      if (options.proposalId && target === 'proposals') {
+        replaceLocationHash('#proposal=' + encodeURIComponent(String(options.proposalId)));
+      } else {
+        replaceLocationHash('#' + hashForTab(target));
+      }
+    }
+  }
+
+  function loadTabData(target) {
+    if (target === 'links') loadLinks();
+    if (target === 'proposals') loadProposals();
+    if (target === 'logs') loadLogs();
+  }
+
   document.querySelectorAll('nav.tabs button').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var target = btn.getAttribute('data-tab');
-      document.querySelectorAll('nav.tabs button').forEach(function (b) {
-        b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
-      });
-      document.querySelectorAll('section.panel').forEach(function (sec) {
-        sec.classList.toggle('active', sec.id === 'section-' + target);
-      });
-      if (target === 'links') loadLinks();
-      if (target === 'proposals') loadProposals();
-      if (target === 'logs') loadLogs();
+      selectTab(target);
+      loadTabData(target);
     });
   });
 
@@ -530,29 +628,63 @@ function pageClientScriptPartBDiff(): string {
       lines + '</div>';
   }
 
+  /**
+   * Pair remove/add runs so large replaces (many removes then many adds) show
+   * BEFORE and AFTER content side-by-side — keep in sync with alignSplitDiffLines.
+   */
+  function alignSplitDiffLines(lines) {
+    var rows = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line) { i += 1; continue; }
+      if (line.op === 'equal') {
+        rows.push({ left: line, right: line });
+        i += 1;
+        continue;
+      }
+      var removes = [];
+      while (i < lines.length && lines[i] && lines[i].op === 'remove') {
+        removes.push(lines[i]);
+        i += 1;
+      }
+      var adds = [];
+      while (i < lines.length && lines[i] && lines[i].op === 'add') {
+        adds.push(lines[i]);
+        i += 1;
+      }
+      var n = Math.max(removes.length, adds.length);
+      for (var k = 0; k < n; k += 1) {
+        rows.push({ left: removes[k] || null, right: adds[k] || null });
+      }
+    }
+    return rows;
+  }
+
   function renderSplitTextDiff(ch) {
     var left = [];
     var right = [];
     var beforeLn = 0;
     var afterLn = 0;
-    (ch.lines || []).forEach(function (line) {
-      if (line.op === 'equal') {
+    alignSplitDiffLines(ch.lines || []).forEach(function (row) {
+      if (row.left && row.left.op === 'equal' && row.right && row.right.op === 'equal') {
         beforeLn += 1;
         afterLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: line.text }));
-        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: line.text }));
+        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: row.left.text }));
+        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: row.right.text }));
         return;
       }
-      if (line.op === 'remove') {
+      if (row.left && row.left.op === 'remove') {
         beforeLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: line.text }));
-        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-        return;
-      }
-      if (line.op === 'add') {
-        afterLn += 1;
+        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: row.left.text }));
+      } else {
         left.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: line.text }));
+      }
+      if (row.right && row.right.op === 'add') {
+        afterLn += 1;
+        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: row.right.text }));
+      } else {
+        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
       }
     });
     return '<div class="diff-split" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
@@ -810,11 +942,8 @@ function pageClientScriptPartB2(): string {
             createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
           }
         }
-        var heading = p.displayName
-          ? esc(p.displayName)
-          : (p.title ? esc(p.title) : tipId(p.id, 12));
         return '<article class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) + '">' +
-          '<h3 class="proposal-heading">' + heading +
+          '<h3 class="proposal-heading">' + proposalHeading(p) +
           ' · <code>' + esc(p.status) + '</code></h3>' +
           '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
@@ -842,41 +971,30 @@ function pageClientScriptPartB2(): string {
   }
 
   function readProposalHashId() {
-    try {
-      var hash = String(location.hash || '');
-      var m = hash.match(/^#proposal=([^&]+)/);
-      if (!m) return '';
-      return decodeURIComponent(m[1]);
-    } catch (e) {
-      return '';
-    }
+    return readProposalHashIdFrom(location.hash || '');
   }
 
-  function selectTab(target) {
-    document.querySelectorAll('nav.tabs button').forEach(function (b) {
-      b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
-    });
-    document.querySelectorAll('section.panel').forEach(function (sec) {
-      sec.classList.toggle('active', sec.id === 'section-' + target);
-    });
-  }
-
+  /**
+   * Deep-link focus: scroll/highlight once, then replace #proposal=<id> with
+   * #proposals so reload / returning to the tab does not re-trigger.
+   */
   function focusProposalFromHash() {
     var id = readProposalHashId();
-    if (!id) return;
-    selectTab('proposals');
+    if (!id) return false;
+    selectTab('proposals', { skipHash: true });
     var el = document.getElementById('proposal-' + id) ||
       document.querySelector('.proposal-detail[data-id="' + id + '"]');
-    if (!el) return;
-    document.querySelectorAll('.proposal-detail.proposal-highlight').forEach(function (node) {
-      node.classList.remove('proposal-highlight');
-    });
+    if (!el) return false;
+    clearProposalHighlight();
     el.classList.add('proposal-highlight');
     try {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       el.scrollIntoView(true);
     }
+    // Consume the deep link so it is not sticky across reloads/tab returns.
+    replaceLocationHash('#proposals');
+    return true;
   }
 
   function bindDiffModeToggle(host, diff) {
@@ -1075,13 +1193,13 @@ function pageClientScriptPartD(): string {
       $('section-links').hidden = false;
       $('section-proposals').hidden = false;
       $('section-logs').hidden = false;
+      // Restore tab from hash (or default #status); keep #proposal=<id> until focus consumes it.
+      var initialTab = initialTabFromHash(location.hash || '');
+      selectTab(initialTab, { skipHash: !!readProposalHashId() });
       if (aiOn) {
         if (canManage) loadLinks();
         loadProposals();
         loadLogs();
-        if (readProposalHashId()) {
-          selectTab('proposals');
-        }
       }
     } catch (e) {
       showFlash($('boot-flash'), e.message || String(e), false);
@@ -1106,10 +1224,15 @@ function pageClientScriptPartD(): string {
   }
 
   window.addEventListener('hashchange', function () {
-    if (readProposalHashId()) {
-      selectTab('proposals');
-      focusProposalFromHash();
+    var proposalId = readProposalHashId();
+    if (proposalId) {
+      selectTab('proposals', { skipHash: true });
+      loadTabData('proposals');
+      return;
     }
+    var tab = tabFromHash(location.hash) || 'status';
+    selectTab(tab, { skipHash: true });
+    loadTabData(tab);
   });
 
   boot();

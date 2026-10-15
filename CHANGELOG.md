@@ -8,8 +8,26 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Proposal `reviewUrl` is now an **absolute** URL from the request Host/protocol
+  (`X-Forwarded-*` only when Express `trust proxy` is set). Responses also
+  include relative `reviewPath` (`/mcp#proposal=<id>`).
+- `displayName` datetime includes an explicit UTC offset and is documented as
+  **server local time**; `/mcp` renders proposal/audit times in the browser's
+  local timezone. `createdAt` remains ISO-8601.
+- `/mcp` is served with `Cache-Control: no-store` so plugin upgrades do not keep
+  serving a cached admin client (inline CSS/JS).
+- `/mcp` location hash reflects the active tab (`#status`, `#links`,
+  `#proposals`, `#audit`) via `history.replaceState`. `#proposal=<id>` is only
+  used while focusing a proposal deep link and is replaced with `#proposals`
+  after the scroll/highlight is consumed (so reload / returning to Proposals
+  does not re-trigger).
+
 ### Fixed
 
+- Side-by-side (split) diffs for large field replaces pair remove/add runs so
+  the AFTER column is visible instead of a long blank placeholder stack.
 - Unknown flow ids return **404** `flow_not_found` (with hint to use ids from
   `GET ./flows`) instead of **502** `upstream_error` on RedAdapter.
 - Invalid draft chunk base64url (e.g. `@@@`) returns **400**

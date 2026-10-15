@@ -33,7 +33,7 @@ import {
 } from './ai-ops.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { computeProposalDiff } from './proposal-diff.js';
-import { presentProposal, presentProposals } from './proposal-present.js';
+import { presentOptionsFor, presentProposal, presentProposals } from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
 
@@ -45,7 +45,12 @@ function adminActor(req: AuthenticatedRequest) {
   return actor;
 }
 
-export function createProposalHandler(store: ProposalStore, audit: AuditLog, adapter: FlowAdapter) {
+export function createProposalHandler(
+  store: ProposalStore,
+  audit: AuditLog,
+  adapter: FlowAdapter,
+  httpAdminRoot?: string
+) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.accessLink) {
       res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
@@ -65,7 +70,8 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog, ada
           payload?: unknown;
           title?: unknown;
         },
-        adapter
+        adapter,
+        presentOptionsFor(req, httpAdminRoot)
       );
       const siblings = siblingsOnSameRev(store, proposal);
       res.status(201).json({
@@ -83,29 +89,31 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog, ada
   };
 }
 
-export function listProposalsHandler(store: ProposalStore) {
+export function listProposalsHandler(store: ProposalStore, httpAdminRoot?: string) {
   return (req: AuthenticatedRequest, res: Response): void => {
+    const presentOpts = presentOptionsFor(req, httpAdminRoot);
     if (req.accessLink) {
-      res.json({ proposals: listMyProposals(store, req.accessLink) });
+      res.json({ proposals: listMyProposals(store, req.accessLink, presentOpts) });
       return;
     }
-    res.json({ proposals: presentProposals(store.list()) });
+    res.json({ proposals: presentProposals(store.list(), presentOpts) });
   };
 }
 
-export function getProposalHandler(store: ProposalStore) {
+export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string) {
   return (req: AuthenticatedRequest, res: Response): void => {
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       res.status(400).json({ error: 'Missing proposal id' });
       return;
     }
+    const presentOpts = presentOptionsFor(req, httpAdminRoot);
     try {
       if (req.accessLink) {
-        res.json(getMyProposal(store, req.accessLink, id));
+        res.json(getMyProposal(store, req.accessLink, id, presentOpts));
         return;
       }
-      res.json(presentProposal(store.get(id)));
+      res.json(presentProposal(store.get(id), presentOpts));
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
         res.status(404).json({ error: error.message, code: error.code });
@@ -121,7 +129,7 @@ export function getProposalHandler(store: ProposalStore) {
   };
 }
 
-export function approveProposalHandler(service: ProposalService) {
+export function approveProposalHandler(service: ProposalService, httpAdminRoot?: string) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
@@ -143,7 +151,7 @@ export function approveProposalHandler(service: ProposalService) {
     }
     try {
       const proposal = await service.approve(id, adminActor(req), approveOptions);
-      res.json(presentProposal(proposal));
+      res.json(presentProposal(proposal, presentOptionsFor(req, httpAdminRoot)));
     } catch (error) {
       if (
         error instanceof ProposalNotFoundError ||
@@ -159,7 +167,7 @@ export function approveProposalHandler(service: ProposalService) {
   };
 }
 
-export function rejectProposalHandler(service: ProposalService) {
+export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: string) {
   return (req: AuthenticatedRequest, res: Response): void => {
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
@@ -169,7 +177,10 @@ export function rejectProposalHandler(service: ProposalService) {
     const body = (req.body ?? {}) as { reason?: unknown };
     const reason = typeof body.reason === 'string' ? body.reason : 'Rejected by admin';
     try {
-      const proposal = presentProposal(service.reject(id, adminActor(req), reason));
+      const proposal = presentProposal(
+        service.reject(id, adminActor(req), reason),
+        presentOptionsFor(req, httpAdminRoot)
+      );
       res.json(proposal);
     } catch (error) {
       if (

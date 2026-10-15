@@ -75,6 +75,35 @@ export { SettingsStore } from '../storage/settings-store.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
+/** Public shell + discovery (no authorization middleware — safe to extract). */
+function registerMcpShellAndDiscovery(
+  RED: NodeRedPluginAPI,
+  limiter: ReturnType<typeof createAiAccessRateLimiter>
+): void {
+  // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
+  // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
+  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res
+      .type('html')
+      .status(200)
+      .send(
+        renderMcpPage({
+          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
+          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
+          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
+        })
+      );
+  });
+
+  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
+}
+
 export function registerRoutes(
   RED: NodeRedPluginAPI,
   serviceOptions: CreatePluginServicesOptions = {}
@@ -93,24 +122,7 @@ export function registerRoutes(
     flowAdapter: services.flowAdapter,
   });
 
-  // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
-  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
-    res
-      .type('html')
-      .status(200)
-      .send(
-        renderMcpPage({
-          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
-          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
-          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
-          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
-        })
-      );
-  });
-
-  // Discovery index — no auth (plain HTTP AI clients start here).
-  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
-  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
+  registerMcpShellAndDiscovery(RED, limiter);
 
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
@@ -120,9 +132,6 @@ export function registerRoutes(
       res.json(buildStatus(RED, req));
     }
   );
-
-  // Documentation only — no admin session required.
-  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
 
   // Settings API (sidebar AI Access tab) — admin session; PUT requires *.
   RED.httpAdmin.get(
@@ -167,44 +176,50 @@ export function registerRoutes(
   RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(services.flowAdapter));
   RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowHandler(services.flowAdapter));
 
+  // Proposal routes stay in this function so CodeQL can see the local `limiter`
+  // (passing it into a helper breaks missing-rate-limiting dataflow).
+  const httpAdminRoot = RED.settings.httpAdminRoot;
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals',
     ...sharedRead,
-    listProposalsHandler(services.proposalStore)
+    listProposalsHandler(services.proposalStore, httpAdminRoot)
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id',
     ...sharedRead,
-    getProposalHandler(services.proposalStore)
+    getProposalHandler(services.proposalStore, httpAdminRoot)
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id/diff',
     ...sharedRead,
     getProposalDiffHandler(services.proposalStore, services.flowAdapter)
   );
-
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals',
     limiter,
     requireAccessLink(RED, services.linkStore),
-    createProposalHandler(services.proposalStore, services.auditLog, services.flowAdapter)
+    createProposalHandler(
+      services.proposalStore,
+      services.auditLog,
+      services.flowAdapter,
+      httpAdminRoot
+    )
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/approve',
+    ...linkGuards,
+    approveProposalHandler(services.proposalService, httpAdminRoot)
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/reject',
+    ...linkGuards,
+    rejectProposalHandler(services.proposalService, httpAdminRoot)
   );
 
   const mcpRpcGuards = [limiter, requireAccessLink(RED, services.linkStore)];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
-
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/approve',
-    ...linkGuards,
-    approveProposalHandler(services.proposalService)
-  );
-  RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/reject',
-    ...linkGuards,
-    rejectProposalHandler(services.proposalService)
-  );
 
   RED.httpAdmin.get(
     '/mcp/api/v1/logs',

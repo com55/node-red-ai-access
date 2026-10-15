@@ -201,11 +201,14 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(created.body.status).toBe('pending');
     expect(created.body.title).toBeTruthy();
     expect(created.body.displayName).toContain(created.body.title);
-    expect(created.body.reviewUrl).toBe(`/mcp#proposal=${created.body.id}`);
+    expect(created.body.displayName).toMatch(/[+-]\d{2}:\d{2}$/);
+    expect(created.body.reviewPath).toBe(`/mcp#proposal=${created.body.id}`);
+    expect(created.body.reviewUrl).toMatch(new RegExp(`/mcp#proposal=${created.body.id}$`));
 
     const withTitle = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
+      .set('Host', 'nr.example:1880')
       .send({
         type: 'replace_flow',
         expectedRev: 'rev-1',
@@ -218,15 +221,19 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(withTitle.status).toBe(201);
     expect(withTitle.body.title).toBe('Add inject sensor');
     expect(withTitle.body.displayName.startsWith('Add inject sensor · ')).toBe(true);
-    expect(withTitle.body.reviewUrl).toBe(`/mcp#proposal=${withTitle.body.id}`);
+    expect(withTitle.body.reviewPath).toBe(`/mcp#proposal=${withTitle.body.id}`);
+    expect(withTitle.body.reviewUrl).toBe(
+      `http://nr.example:1880/mcp#proposal=${withTitle.body.id}`
+    );
 
     const listed = await request(app)
       .get('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`);
     expect(listed.status).toBe(200);
     expect(
-      listed.body.proposals.every((p: { displayName?: string; reviewUrl?: string }) =>
-        Boolean(p.displayName && p.reviewUrl)
+      listed.body.proposals.every(
+        (p: { displayName?: string; reviewUrl?: string; reviewPath?: string }) =>
+          Boolean(p.displayName && p.reviewUrl && p.reviewPath)
       )
     ).toBe(true);
 

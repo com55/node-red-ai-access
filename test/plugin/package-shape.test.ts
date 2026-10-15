@@ -98,9 +98,14 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/presence-all-props|All properties/);
     expect(client).toMatch(/presence-preview-toggle|Preview/);
     expect(client).toMatch(/sandbox=""/);
-    expect(client).toMatch(/displayName|proposal-heading/);
+    expect(client).toMatch(/displayName|proposal-heading|proposalHeading|fmtLocalShort/);
+    expect(client).toMatch(/alignSplitDiffLines/);
     expect(client).toMatch(/#proposal=/);
     expect(client).toMatch(/focusProposalFromHash|proposal-highlight/);
+    expect(client).toMatch(/history\.replaceState|replaceLocationHash/);
+    expect(client).toMatch(/hashForTab|tabFromHash|initialTabFromHash/);
+    expect(client).toMatch(/tab === 'logs'\) return 'audit'/);
+    expect(client).toMatch(/replaceLocationHash\('#proposals'\)/);
     expect(client).toMatch(/vsCurrent|vs current flow/i);
     expect(client).toMatch(/base snapshot/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');

@@ -123,6 +123,13 @@ describe('/mcp admin page', () => {
 
     const res = await request(app).get('/mcp');
     expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toMatch(/no-store/);
+    expect(res.headers.pragma).toMatch(/no-cache/i);
+    expect(res.text).toMatch(/http-equiv="Cache-Control"[^>]*no-store/);
+    expect(res.text).toMatch(/alignSplitDiffLines/);
+    expect(res.text).toMatch(/history\.replaceState/);
+    expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
+    expect(res.text).toMatch(/initialTabFromHash/);
     expect(res.text).toMatch(/data-config=/);
     expect(res.text).toMatch(/editorRoot/);
     expect(res.text).toMatch(/auth-tokens-editor/);
