@@ -15,6 +15,7 @@ import {
   requireAccessLink,
 } from '../../src/plugin/access-link-auth.js';
 import registerAiAccessPlugin from '../../src/plugin/index.js';
+import { createAiAccessRateLimiter } from '../../src/plugin/rate-limit.js';
 import type { AiAccessSettings, NodeRedPluginAPI } from '../../src/plugin/types.js';
 
 interface MockUser {
@@ -176,6 +177,15 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
 });
 
 describe('requireAccessLink middleware', () => {
+  function probeApp(RED: NodeRedPluginAPI, store: AccessLinkStore) {
+    const app = express();
+    const limiter = createAiAccessRateLimiter();
+    app.get('/probe', limiter, requireAccessLink(RED, store), (req, res) => {
+      res.json({ ok: true, id: (req as Request & { accessLink?: { id: string } }).accessLink?.id });
+    });
+    return app;
+  }
+
   it('accepts a valid Bearer token and rejects unknown/expired/revoked/restarted', async () => {
     let now = 1_000_000;
     const store = new AccessLinkStore({
@@ -188,10 +198,7 @@ describe('requireAccessLink middleware', () => {
       settings: { userDir: '/tmp', adminAuth: { type: 'credentials' } },
     } as NodeRedPluginAPI;
 
-    const app = express();
-    app.get('/probe', requireAccessLink(RED, store), (req, res) => {
-      res.json({ ok: true, id: (req as Request & { accessLink?: { id: string } }).accessLink?.id });
-    });
+    const app = probeApp(RED, store);
 
     const ok = await request(app).get('/probe').set('Authorization', `Bearer ${created.token}`);
     expect(ok.status).toBe(200);
@@ -215,8 +222,7 @@ describe('requireAccessLink middleware', () => {
     });
     const second = store2.create({ ttlSeconds: 100 });
     store2.revoke(second.id);
-    const app2 = express();
-    app2.get('/probe', requireAccessLink(RED, store2), (_req, res) => res.json({ ok: true }));
+    const app2 = probeApp(RED, store2);
     const revoked = await request(app2)
       .get('/probe')
       .set('Authorization', `Bearer ${second.token}`);
@@ -225,8 +231,7 @@ describe('requireAccessLink middleware', () => {
     const store3 = new AccessLinkStore({ randomToken: () => 'aia_restarted' });
     const third = store3.create();
     store3.clear();
-    const app3 = express();
-    app3.get('/probe', requireAccessLink(RED, store3), (_req, res) => res.json({ ok: true }));
+    const app3 = probeApp(RED, store3);
     const restarted = await request(app3)
       .get('/probe')
       .set('Authorization', `Bearer ${third.token}`);
@@ -241,8 +246,7 @@ describe('requireAccessLink middleware', () => {
       settings: { userDir: '/tmp' },
     } as NodeRedPluginAPI;
 
-    const app = express();
-    app.get('/probe', requireAccessLink(RED, store), (_req, res) => res.json({ ok: true }));
+    const app = probeApp(RED, store);
 
     const res = await request(app).get('/probe').set('Authorization', `Bearer ${created.token}`);
     expect(res.status).toBe(403);
@@ -254,8 +258,7 @@ describe('requireAccessLink middleware', () => {
     const RED = {
       settings: { userDir: '/tmp', adminAuth: { type: 'credentials' } },
     } as NodeRedPluginAPI;
-    const app = express();
-    app.get('/probe', requireAccessLink(RED, store), (_req, res) => res.json({ ok: true }));
+    const app = probeApp(RED, store);
 
     const res = await request(app).get('/probe').set('Authorization', 'Basic YWRtaW46cGFzc3dvcmQ=');
     expect(res.status).toBe(401);
@@ -273,8 +276,7 @@ describe('requireAccessLink middleware', () => {
     const RED = {
       settings: { userDir: '/tmp', adminAuth: { type: 'credentials' } },
     } as NodeRedPluginAPI;
-    const app = express();
-    app.get('/probe', requireAccessLink(RED, store), (_req, res) => res.json({ ok: true }));
+    const app = probeApp(RED, store);
 
     const res = await request(app).get('/probe');
     expect(res.status).toBe(401);
