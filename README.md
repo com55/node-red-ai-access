@@ -184,9 +184,10 @@ errors mark it **failed**. Reject never mutates flows.
    TTL **4 hours**). Copy the full URL
    `http(s)://<host><httpAdminRoot>/mcp/a/<token>` (or **Copy link for AI**).
 2. The AI opens that URL for markdown docs, then uses GET-only routes under the
-   same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose`,
-   chunked `/draft/…` for large HTML/fields; URL soft-cap ~8KB; prefer ~4–5 KB
-   raw chunks — base64url adds ~33%). Patch / `mode=json` drafts support
+   same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose` with
+   preferred `replace_text` for small string edits, chunked `/draft/…` for large
+   HTML/fields; URL soft-cap ~8KB; prefer ~4–5 KB raw chunks — base64url adds
+   ~33%). Patch / `mode=json` drafts support
    `nodes:[{op:'add'|'remove'|'set',...}]` (or a full `replace_flow` document).
    Field drafts validate node/field at `draft/new`. Unknown `/mcp/a/*` paths
    return JSON `not_found` without echoing the token.
@@ -200,9 +201,11 @@ errors mark it **failed**. Reject never mutates flows.
 2. Send `Authorization: Bearer <token>` to REST and/or MCP:
 
    - REST: `GET /mcp/api/v1/status`, `GET /mcp/api/v1/flows`,
-     `GET /mcp/api/v1/flows/{id}`, `POST /mcp/api/v1/proposals`,
-     `GET /mcp/api/v1/proposals`
-   - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow`, `submit_proposal`,
+     `GET /mcp/api/v1/flows/{id}?summary=1`, `GET /mcp/api/v1/nodes/{id}`,
+     `GET /mcp/api/v1/nodes/{id}/field/{name}`, `GET /mcp/api/v1/search`,
+     `POST /mcp/api/v1/proposals`, `GET /mcp/api/v1/proposals`
+   - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow` (optional `summary`),
+     `get_node`, `get_node_field`, `search_flows`, `submit_proposal`,
      `list_my_proposals` (same access-link auth and limits)
 
 3. The owner reviews the proposal on `/mcp` and approves or rejects it.

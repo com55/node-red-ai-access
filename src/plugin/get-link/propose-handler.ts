@@ -39,13 +39,25 @@ function proposeErrorHint(code: string): string | undefined {
     case 'invalid_patch_json':
       return 'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.';
     case 'missing_edits':
-      return 'Provide set.<prop>=value, or patch nodes with at least one op.';
+      return 'Provide set.<prop>=value, find+replace+field, or patch nodes with at least one op.';
     case 'missing_node_id':
-      return 'Pass node=<id> with set.<prop>=, or include id on each patch.nodes entry.';
+      return 'Pass node=<id> with set.<prop>= or find/replace, or include id on each patch.nodes entry.';
     case 'missing_flow_id':
       return 'Pass flow=<id> from GET …/flows.';
     case 'missing_expected_rev':
       return 'Pass rev from GET …/flows or …/flows/<id>.';
+    case 'missing_field':
+      return 'Pass field=<prop> (e.g. template, func) with find= and replace=.';
+    case 'missing_find':
+      return 'Pass a non-empty find= string (URL-encoded).';
+    case 'text_not_found':
+      return 'Re-read the node field; find must match exactly (case-sensitive).';
+    case 'ambiguous_match':
+      return 'find matched more than once — pass occurrence=N (1-based) or a more unique find string.';
+    case 'invalid_occurrence':
+      return 'occurrence must be a 1-based index within the match count.';
+    case 'field_not_string':
+      return 'replace_text only works on string fields (template, func, …).';
     default:
       return undefined;
   }
@@ -127,6 +139,157 @@ async function buildFromSetProps(
   };
 }
 
+async function buildFromReplaceText(
+  flowAdapter: FlowAdapter,
+  flowId: string,
+  nodeId: string,
+  field: string,
+  find: string,
+  replace: string,
+  occurrence: number | undefined,
+  rev: string
+): Promise<BuiltPropose> {
+  const patched = await applyFlowNodeOps(flowAdapter, flowId, [
+    {
+      op: 'replace_text',
+      nodeId,
+      field,
+      find,
+      replace,
+      ...(occurrence !== undefined ? { occurrence } : {}),
+    },
+  ]);
+  if (patched.expectedRev !== rev) {
+    return {
+      ok: false,
+      kind: 'version_mismatch',
+      expectedRev: rev,
+      currentRev: patched.expectedRev,
+    };
+  }
+  return {
+    ok: true,
+    builtFlowId: flowId,
+    builtFlow: patched.flow,
+    expectedRev: patched.expectedRev,
+  };
+}
+
+interface ProposeQuery {
+  flowId: string | undefined;
+  rev: string | undefined;
+  nodeId: string | undefined;
+  patchEncoded: string | undefined;
+  setProps: Record<string, string>;
+  findText: string | undefined;
+  replaceText: string | undefined;
+  fieldName: string | undefined;
+  occurrenceRaw: string | undefined;
+}
+
+function readProposeQuery(req: AuthenticatedRequest): ProposeQuery {
+  const replacePresent = Object.prototype.hasOwnProperty.call(req.query, 'replace');
+  return {
+    flowId: queryString(req.query, 'flow'),
+    rev: queryString(req.query, 'rev'),
+    nodeId: queryString(req.query, 'node'),
+    patchEncoded: queryString(req.query, 'patch'),
+    setProps: collectSetProps(req.query),
+    findText: queryString(req.query, 'find'),
+    replaceText: replacePresent ? (queryString(req.query, 'replace') ?? '') : undefined,
+    fieldName: queryString(req.query, 'field'),
+    occurrenceRaw: queryString(req.query, 'occurrence'),
+  };
+}
+
+function jsonProposeError(res: Response, code: string, error: string): void {
+  jsonError(res, 400, error, code, proposeErrorHint(code));
+}
+
+function parseOccurrenceQuery(
+  res: Response,
+  raw: string | undefined
+): { ok: true; occurrence?: number } | { ok: false } {
+  if (raw === undefined || raw === '') {
+    return { ok: true };
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    jsonProposeError(res, 'invalid_occurrence', 'occurrence must be a positive integer');
+    return { ok: false };
+  }
+  return { ok: true, occurrence: Math.trunc(n) };
+}
+
+async function buildProposeFromQuery(
+  res: Response,
+  flowAdapter: FlowAdapter,
+  q: ProposeQuery,
+  rev: string
+): Promise<BuiltPropose | null> {
+  if (q.patchEncoded) {
+    return buildFromPatch(flowAdapter, q.patchEncoded, q.flowId, rev);
+  }
+
+  const wantsReplaceText =
+    q.findText !== undefined || q.replaceText !== undefined || q.fieldName !== undefined;
+
+  if (wantsReplaceText) {
+    if (!q.flowId) {
+      jsonProposeError(res, 'missing_flow_id', 'flow query parameter is required');
+      return null;
+    }
+    if (!q.nodeId) {
+      jsonProposeError(res, 'missing_node_id', 'node query parameter is required');
+      return null;
+    }
+    if (!q.fieldName) {
+      jsonProposeError(res, 'missing_field', 'field query parameter is required for replace_text');
+      return null;
+    }
+    if (q.findText === undefined || q.findText.length === 0) {
+      jsonProposeError(res, 'missing_find', 'find query parameter must be a non-empty string');
+      return null;
+    }
+    if (q.replaceText === undefined) {
+      jsonProposeError(
+        res,
+        'invalid_replace',
+        'replace query parameter is required (may be empty)'
+      );
+      return null;
+    }
+    const occ = parseOccurrenceQuery(res, q.occurrenceRaw);
+    if (!occ.ok) {
+      return null;
+    }
+    return buildFromReplaceText(
+      flowAdapter,
+      q.flowId,
+      q.nodeId,
+      q.fieldName,
+      q.findText,
+      q.replaceText,
+      occ.occurrence,
+      rev
+    );
+  }
+
+  if (!q.flowId) {
+    jsonProposeError(res, 'missing_flow_id', 'flow query parameter is required');
+    return null;
+  }
+  if (!q.nodeId) {
+    jsonProposeError(res, 'missing_node_id', 'node query parameter is required (or pass patch=)');
+    return null;
+  }
+  if (Object.keys(q.setProps).length === 0) {
+    jsonProposeError(res, 'missing_edits', 'At least one set.<prop>=value is required');
+    return null;
+  }
+  return buildFromSetProps(flowAdapter, q.flowId, q.nodeId, q.setProps, rev);
+}
+
 export function getLinkProposeHandler(
   proposalStore: ProposalStore,
   auditLog: AuditLog,
@@ -139,22 +302,12 @@ export function getLinkProposeHandler(
     }
     setNoStore(res);
 
-    const flowId = queryString(req.query, 'flow');
-    const rev = queryString(req.query, 'rev');
-    const nodeId = queryString(req.query, 'node');
+    const q = readProposeQuery(req);
     const summary = queryString(req.query, 'summary');
     const titleParam = queryString(req.query, 'title') ?? summary;
-    const patchEncoded = queryString(req.query, 'patch');
-    const setProps = collectSetProps(req.query);
 
-    if (!rev) {
-      jsonError(
-        res,
-        400,
-        'rev query parameter is required',
-        'missing_expected_rev',
-        proposeErrorHint('missing_expected_rev')
-      );
+    if (!q.rev) {
+      jsonProposeError(res, 'missing_expected_rev', 'rev query parameter is required');
       return;
     }
     if (!req.accessLink) {
@@ -163,43 +316,10 @@ export function getLinkProposeHandler(
     }
 
     try {
-      let built: BuiltPropose;
-      if (patchEncoded) {
-        built = await buildFromPatch(flowAdapter, patchEncoded, flowId, rev);
-      } else {
-        if (!flowId) {
-          jsonError(
-            res,
-            400,
-            'flow query parameter is required',
-            'missing_flow_id',
-            proposeErrorHint('missing_flow_id')
-          );
-          return;
-        }
-        if (!nodeId) {
-          jsonError(
-            res,
-            400,
-            'node query parameter is required (or pass patch=)',
-            'missing_node_id',
-            proposeErrorHint('missing_node_id')
-          );
-          return;
-        }
-        if (Object.keys(setProps).length === 0) {
-          jsonError(
-            res,
-            400,
-            'At least one set.<prop>=value is required',
-            'missing_edits',
-            proposeErrorHint('missing_edits')
-          );
-          return;
-        }
-        built = await buildFromSetProps(flowAdapter, flowId, nodeId, setProps, rev);
+      const built = await buildProposeFromQuery(res, flowAdapter, q, q.rev);
+      if (!built) {
+        return;
       }
-
       if (!built.ok) {
         sendVersionMismatch(res, built.expectedRev, built.currentRev);
         return;

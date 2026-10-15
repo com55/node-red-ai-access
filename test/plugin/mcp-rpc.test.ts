@@ -254,6 +254,9 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'get_status',
         'list_flows',
         'get_flow',
+        'get_node',
+        'get_node_field',
+        'search_flows',
         'submit_proposal',
         'list_my_proposals',
         'get_proposal',
@@ -276,10 +279,13 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(names.sort()).toEqual(
       [
         'get_flow',
+        'get_node',
+        'get_node_field',
         'get_proposal',
         'get_status',
         'list_flows',
         'list_my_proposals',
+        'search_flows',
         'submit_proposal',
       ].sort()
     );
@@ -310,12 +316,11 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(submit.inputSchema?.required).toEqual(
       expect.arrayContaining(['type', 'expectedRev', 'payload'])
     );
-    expect(submit.inputSchema?.properties?.payload?.properties?.flow?.required).toEqual(
-      expect.arrayContaining(['nodes'])
-    );
+    // flow.nodes is optional (replace_text / nodes ops can omit a full tab).
     expect(submit.inputSchema?.properties?.payload?.properties?.flow?.properties?.nodes?.type).toBe(
       'array'
     );
+    expect(submit.inputSchema?.properties?.payload?.properties?.nodes?.type).toBe('array');
     const getStatus = tools.find(t => t.name === 'get_status');
     expect(getStatus?.description).toMatch(/permission is null|permission.*null/i);
   });
@@ -348,6 +353,22 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(one.status).toBe(200);
     const oneJson = parseToolJson(one.result) as { rev: string; flow: { id: string } };
     expect(oneJson.flow.id).toBe('tab-1');
+
+    const summary = await callTool(app, link.token, 'get_flow', { id: 'tab-1', summary: true });
+    expect(summary.status).toBe(200);
+    const summaryJson = parseToolJson(summary.result) as {
+      flowId: string;
+      nodes: { id: string; bytes: number }[];
+      nodeCount: number;
+    };
+    expect(summaryJson.flowId).toBe('tab-1');
+    expect(summaryJson.nodeCount).toBeGreaterThanOrEqual(1);
+    expect(summaryJson.nodes[0]?.bytes).toBeGreaterThan(0);
+
+    const node = await callTool(app, link.token, 'get_node', { id: 'n1', flow: 'tab-1' });
+    expect(node.status).toBe(200);
+    const nodeJson = parseToolJson(node.result) as { node: { id: string }; flowId: string | null };
+    expect(nodeJson.node.id).toBe('n1');
 
     const submitted = await callTool(app, link.token, 'submit_proposal', {
       type: 'replace_flow',

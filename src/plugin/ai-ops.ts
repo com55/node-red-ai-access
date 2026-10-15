@@ -58,12 +58,22 @@ export function siblingsOnSameRev(store: ProposalStore, proposal: Proposal): Sib
 }
 
 export class AiOpsValidationError extends Error {
-  readonly statusCode = 400;
+  readonly statusCode: number;
   readonly code: string;
-  constructor(message: string, code = 'validation_error') {
+  /** Extra JSON fields (e.g. matchCount for ambiguous_match). */
+  readonly details?: Record<string, unknown>;
+  constructor(
+    message: string,
+    code = 'validation_error',
+    options: { statusCode?: number; details?: Record<string, unknown> } = {}
+  ) {
     super(message);
     this.name = 'AiOpsValidationError';
     this.code = code;
+    this.statusCode = options.statusCode ?? 400;
+    if (options.details) {
+      this.details = options.details;
+    }
   }
 }
 
@@ -97,6 +107,12 @@ export interface SubmitReplaceFlowInput {
   expectedRev?: unknown;
   expected_rev?: unknown;
   payload?: unknown;
+  /**
+   * Optional node-level ops (set / add / remove / replace_text). When present
+   * without `payload.flow`, the server loads the live tab and applies ops in
+   * order before creating the proposal.
+   */
+  nodes?: unknown;
   /** Optional short title (≤80 chars); auto-generated when omitted. */
   title?: unknown;
 }
@@ -112,6 +128,42 @@ export function resolveExpectedRev(body: SubmitReplaceFlowInput): string | undef
     return body.expected_rev;
   }
   return undefined;
+}
+
+/**
+ * When the client sends node ops (including replace_text) without a full tab,
+ * load the live flow and apply ops in order. Dynamic import avoids a cycle with
+ * get-link/flow-patch (which imports AiOpsValidationError from this module).
+ */
+async function materializePayloadFromNodes(
+  adapter: FlowAdapter,
+  expectedRev: string,
+  payload: Record<string, unknown>,
+  topLevelNodes: unknown
+): Promise<{ flowId: string; flow: FlowTab }> {
+  const { applyFlowNodeOps, interpretPatch } = await import('./get-link/flow-patch.js');
+  const nodes = Array.isArray(payload.nodes)
+    ? payload.nodes
+    : Array.isArray(topLevelNodes)
+      ? topLevelNodes
+      : null;
+  if (!nodes) {
+    throw new AiOpsValidationError('payload.flow is required', 'missing_flow');
+  }
+  const flowIdRaw = payload.flowId;
+  const flowId = typeof flowIdRaw === 'string' ? flowIdRaw : '';
+  if (!flowId) {
+    throw new AiOpsValidationError('payload.flowId is required', 'missing_flow_id');
+  }
+  const interpreted = interpretPatch({ nodes, flowId }, flowId);
+  if (interpreted.kind !== 'nodes') {
+    throw new AiOpsValidationError('payload.nodes must be node ops', 'invalid_patch');
+  }
+  const patched = await applyFlowNodeOps(adapter, interpreted.flowId, interpreted.ops);
+  if (patched.expectedRev !== expectedRev) {
+    throw new FlowRevisionConflictError(expectedRev, patched.expectedRev, 'submit_proposal');
+  }
+  return { flowId: interpreted.flowId, flow: patched.flow };
 }
 
 export async function submitReplaceFlowProposal(
@@ -135,8 +187,22 @@ export async function submitReplaceFlowProposal(
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
   }
-  const flowId = (payload as { flowId?: unknown }).flowId;
-  const flow = (payload as { flow?: unknown }).flow;
+  const payloadObj = payload as Record<string, unknown>;
+  let flowId = payloadObj.flowId;
+  let flow = payloadObj.flow;
+  if (
+    (!flow || typeof flow !== 'object' || Array.isArray(flow)) &&
+    (Array.isArray(payloadObj.nodes) || Array.isArray(body.nodes))
+  ) {
+    const materialized = await materializePayloadFromNodes(
+      adapter,
+      expectedRev,
+      payloadObj,
+      body.nodes
+    );
+    flowId = materialized.flowId;
+    flow = materialized.flow;
+  }
   if (typeof flowId !== 'string' || flowId.length === 0) {
     throw new AiOpsValidationError('payload.flowId is required', 'missing_flow_id');
   }
@@ -248,12 +314,23 @@ export function getMyProposal(
 /** Map shared op errors to REST-style `{ statusCode, body }` for HTTP handlers. */
 export function aiOpsErrorToHttp(error: unknown): {
   statusCode: number;
-  body: { error: string; code: string; expectedRev?: string; currentRev?: string };
+  body: {
+    error: string;
+    code: string;
+    expectedRev?: string;
+    currentRev?: string;
+    matchCount?: number;
+    [key: string]: unknown;
+  };
 } | null {
   if (error instanceof AiOpsValidationError) {
     return {
       statusCode: error.statusCode,
-      body: { error: error.message, code: error.code },
+      body: {
+        error: error.message,
+        code: error.code,
+        ...(error.details ?? {}),
+      },
     };
   }
   if (error instanceof FlowRevisionConflictError) {

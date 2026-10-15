@@ -9,7 +9,7 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import type { ProposalStore } from '../storage/proposals.js';
 
-import { aiOpsErrorToHttp, getFlow, getMyProposal, listFlows, listMyProposals } from './ai-ops.js';
+import { aiOpsErrorToHttp, getMyProposal, listFlows, listMyProposals } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
@@ -27,6 +27,12 @@ import {
 } from './get-link/middleware.js';
 import { getLinkProposeHandler } from './get-link/propose-handler.js';
 import { queryString } from './get-link/query.js';
+import {
+  getFlowOrSummaryHandler,
+  getNodeFieldHandler,
+  getNodeHandler,
+  searchFlowsHandler,
+} from './layered-read-routes.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
@@ -100,29 +106,21 @@ export function registerGetLinkRoutes(
     }
   });
 
-  app.get(`${base}/flows/:id`, ...gate, async (req: AuthenticatedRequest, res: Response) => {
+  app.get(`${base}/flows/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
     setNoStore(res);
-    const flowId = req.params.id;
-    if (typeof flowId !== 'string' || !flowId) {
-      jsonError(res, 400, 'Missing flow id', 'missing_flow_id');
-      return;
-    }
-    try {
-      res.json(await getFlow(options.flowAdapter, flowId));
-    } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
-      if (mapped) {
-        res.status(mapped.statusCode).json({
-          ...mapped.body,
-          hint:
-            mapped.body.code === 'flow_not_found'
-              ? 'Use an id from GET ./flows'
-              : 'Call GET …/flows to list valid ids.',
-        });
-        return;
-      }
-      jsonError(res, 502, error instanceof Error ? error.message : String(error), 'upstream_error');
-    }
+    void getFlowOrSummaryHandler(options.flowAdapter)(req, res);
+  });
+  app.get(`${base}/nodes/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void getNodeHandler(options.flowAdapter)(req, res);
+  });
+  app.get(`${base}/nodes/:id/field/:name`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void getNodeFieldHandler(options.flowAdapter)(req, res);
+  });
+  app.get(`${base}/search`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void searchFlowsHandler(options.flowAdapter)(req, res);
   });
 
   const httpAdminRoot = RED.settings.httpAdminRoot;

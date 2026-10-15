@@ -59,26 +59,42 @@ Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 
 1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\`.
 2. \`GET ./flows\` — list tabs + current \`rev\`.
-3. \`GET ./flows/<id>\` — get one tab (\`type\` is always present) + \`rev\`.
-4. Propose a small node property change (optional \`title\` ≤80 chars; \`summary\`
-   is accepted as a title fallback):
+3. **Layered read (prefer this before loading whole tabs):**
+   - \`GET ./flows/<id>?summary=1\` — node list with \`id\`/\`type\`/\`name\`/\`wires\` +
+     per-node \`bytes\` (no field contents).
+   - \`GET ./search?q=<text>&flow=<id>\` — hits with node id, field, line numbers,
+     short snippet (\`truncated:true\` when the result cap is hit).
+   - \`GET ./nodes/<id>\` — one full node (\`flowId\` included when known).
+   - \`GET ./nodes/<id>/field/<name>?lines=A-B\` — one field (optional 1-based
+     line range) plus \`totalLines\` and \`bytes\`.
+4. Prefer a **targeted text replace** for small edits inside long string fields
+   (\`template\`, \`func\`, …) — unique \`find\` (or \`occurrence\`) keeps the diff short:
+
+\`\`\`
+GET ./propose?flow=<flowId>&rev=<rev>&node=<nodeId>&field=<prop>&find=<text>&replace=<text>&occurrence=<n>&title=<text>
+\`\`\`
+
+5. Or set whole properties (optional \`title\` ≤80 chars; \`summary\` is a title fallback):
 
 \`\`\`
 GET ./propose?flow=<flowId>&rev=<rev>&node=<nodeId>&set.<prop>=<urlencoded>&title=<text>
 \`\`\`
 
-5. Or multi-node / add / remove / full tab via base64url JSON patch:
+6. Or multi-node / add / remove / \`replace_text\` / full tab via base64url JSON patch:
 
 \`\`\`
 GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 \`\`\`
 
-6. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
+7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
    Cite \`displayName\` + \`reviewUrl\` from the response when updating the user.
-7. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
+8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
    with a summary sentence; pending+stale may include \`vsCurrent\`.
+
+**Recommended edit loop:** summary → search → read a line range →
+\`replace_text\` → propose.
 
 If another pending proposal shares the same flow + rev, the propose/draft
 response includes \`siblingsOnSameRev\` and a warning — approve order may
@@ -95,6 +111,10 @@ function docsUrlTable(): string {
 | Status | \`GET ./status\` |
 | List flows | \`GET ./flows\` |
 | One flow | \`GET ./flows/<id>\` |
+| Flow summary (no field bodies) | \`GET ./flows/<id>?summary=1\` |
+| One node | \`GET ./nodes/<id>\` |
+| One field (optional lines) | \`GET ./nodes/<id>/field/<name>?lines=A-B\` |
+| Text search | \`GET ./search?q=&flow=\` |
 | My proposals | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
@@ -111,13 +131,50 @@ and the token is never echoed).
 function docsProposeExamples(): string {
   return `## Propose examples
 
+**Recommended for small edits to long fields** — \`replace_text\` (find must be
+**unique** unless you pass \`occurrence\` as a 1-based index). Creates a normal
+pending proposal with a short readable diff:
+
+\`\`\`
+GET ./propose?flow=tab1&rev=abc123&node=n1&field=template&find=Hello&replace=Hi&title=Tweak%20greeting
+\`\`\`
+
+Errors: \`400 text_not_found\`; \`409 ambiguous_match\` (body includes \`matchCount\`).
+
+Same op in patch JSON (multiple \`replace_text\` ops apply **in order**):
+
+\`\`\`json
+{
+  "nodes": [
+    { "op": "replace_text", "node": "n1", "field": "func", "find": "oldFn()", "replace": "newFn()" },
+    { "op": "replace_text", "node": "n1", "field": "func", "find": "TODO", "replace": "done", "occurrence": 2 }
+  ]
+}
+\`\`\`
+
+REST / MCP \`submit_proposal\` can send the same ops without a full tab:
+
+\`\`\`json
+{
+  "type": "replace_flow",
+  "expectedRev": "abc123",
+  "title": "Tweak greeting",
+  "payload": {
+    "flowId": "tab1",
+    "nodes": [
+      { "op": "replace_text", "node": "n1", "field": "template", "find": "Hello", "replace": "Hi" }
+    ]
+  }
+}
+\`\`\`
+
 **Rename a node** (URL-encode values):
 
 \`\`\`
 GET ./propose?flow=tab1&rev=abc123&node=n1&set.name=Hello&title=Rename%20inject
 \`\`\`
 
-**Patch JSON** — node-level ops (\`set\` / \`add\` / \`remove\`):
+**Patch JSON** — node-level ops (\`set\` / \`add\` / \`remove\` / \`replace_text\`):
 
 \`\`\`json
 {
@@ -192,7 +249,27 @@ with the same shapes as \`patch\` above, then submit:
 \`\`\`
 
 Or a full \`replace_flow\` document. JSON-mode drafts **may add nodes**, so
-\`draft/new\` does not require an existing \`node\`/\`field\`.
+\`draft/new\` does not require an existing \`node\`/\`field\`. Prefer
+\`replace_text\` (or a field-mode draft of only the changed region via a unique
+find/replace) when you only need a small edit inside a large field.
+`;
+}
+
+function docsLastResortPaste(): string {
+  return `## Last resort: content larger than chunked drafts
+
+If the field is still too large for chunked drafts (decoded size over the
+proposal cap), use this fallback only after drafts fail:
+
+1. Propose the node with **empty or short placeholder** content (via
+   \`set.<field>=\` / patch \`set\` / a tiny draft) and tell the user clearly.
+2. The human **approves and deploys** that placeholder proposal on \`/mcp\`.
+3. You then give the user the **full content to paste** into the node in the
+   Node-RED editor.
+
+**Trade-off:** pasted content is **not** reviewed through the proposal diff.
+Prefer \`replace_text\` or chunked drafts whenever they fit so the human can
+still see a readable change on \`/mcp\`.
 `;
 }
 
@@ -205,9 +282,11 @@ function docsErrorsAndAlso(rest: string, openapi: string, rpc: string): string {
 | \`url_too_long\` | GET URL over ~8KB | Use drafts or Bearer POST |
 | \`version_mismatch\` | Stale \`rev\` | Re-read flows and retry |
 | \`node_not_found\` / \`field_not_found\` | Unknown node/field at draft/new or propose | Re-read the flow |
+| \`text_not_found\` | \`replace_text\` find had no match | Re-read the field; find is exact |
+| \`ambiguous_match\` | \`replace_text\` find matched more than once | Pass \`occurrence\` (1-based) or a unique find |
 | \`chunk_conflict\` | Same seq, different data | Re-send identical data or new draft |
 | \`draft_hash_mismatch\` / \`missing_chunks\` | Draft incomplete | Fix seqs / sha256 |
-| \`payload_too_large\` | Over decoded size cap | Shrink content |
+| \`payload_too_large\` | Over decoded size cap | Shrink content or use last-resort paste |
 | \`rate_limited\` | Too many calls (per IP or per token) | Wait \`retryAfter\` seconds (\`Retry-After\` header) |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
 
@@ -235,6 +314,7 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
     docsUrlTable(),
     docsProposeExamples(),
     docsDrafts(),
+    docsLastResortPaste(),
     docsErrorsAndAlso(rest, openapi, rpc),
   ].join('\n');
 }

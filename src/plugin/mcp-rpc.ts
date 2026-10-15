@@ -32,6 +32,7 @@ import {
   listMyProposals,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { presentOptionsFor } from './proposal-present.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
@@ -156,15 +157,89 @@ function registerReadTools(
     {
       description:
         'Get one tab/subflow by id with nested nodes/configs and the current rev. ' +
-        'Returns { rev, flow } where flow is { id, type, label?, nodes[], configs?, ... }. ' +
-        'Use the returned rev as expectedRev when calling submit_proposal.',
+        'Pass summary=true for a lightweight node list (id/type/name/wires/bytes, no field contents). ' +
+        'Prefer summary → search_flows → get_node_field(lines) → replace_text → submit_proposal. ' +
+        'Returns { rev, flow } or summary shape. Use rev as expectedRev when submitting.',
       inputSchema: {
         id: z.string().min(1).describe('Flow / tab id'),
+        summary: z
+          .boolean()
+          .optional()
+          .describe('When true, return node list with sizes only (no field contents)'),
       },
     },
-    async ({ id }) => {
+    async ({ id, summary }) => {
       try {
+        if (summary) {
+          return jsonResult(await getFlowSummary(services.flowAdapter, id));
+        }
         return jsonResult(await getFlow(services.flowAdapter, id));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_node',
+    {
+      description:
+        'Get one full node by id (includes owning flowId when known). Optional flow scopes the lookup.',
+      inputSchema: {
+        id: z.string().min(1).describe('Node id'),
+        flow: z.string().min(1).optional().describe('Optional tab id to scope the lookup'),
+      },
+    },
+    async ({ id, flow }) => {
+      try {
+        return jsonResult(await getNodeById(services.flowAdapter, id, flow));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_node_field',
+    {
+      description:
+        'Get one string field from a node. Optional lines="A-B" (1-based inclusive) returns a slice; ' +
+        'response always includes totalLines and bytes.',
+      inputSchema: {
+        id: z.string().min(1).describe('Node id'),
+        field: z.string().min(1).describe('Field name (e.g. template, func)'),
+        lines: z.string().optional().describe('Optional 1-based line range A or A-B'),
+        flow: z.string().min(1).optional().describe('Optional tab id to scope the lookup'),
+      },
+    },
+    async ({ id, field, lines, flow }) => {
+      try {
+        return jsonResult(
+          await getNodeField(services.flowAdapter, id, field, {
+            ...(flow ? { flowId: flow } : {}),
+            ...(lines ? { lines } : {}),
+          })
+        );
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'search_flows',
+    {
+      description:
+        'Text search across string fields. Returns hits with node id, field, line numbers, and a short snippet. ' +
+        'Results are capped; truncated=true when the cap is hit. Optional flow scopes to one tab.',
+      inputSchema: {
+        q: z.string().min(1).describe('Substring to find (case-sensitive)'),
+        flow: z.string().min(1).optional().describe('Optional tab id'),
+      },
+    },
+    async ({ q, flow }) => {
+      try {
+        return jsonResult(await searchFlows(services.flowAdapter, q, flow ? { flowId: flow } : {}));
       } catch (error) {
         return jsonError(error, 502);
       }
@@ -185,13 +260,15 @@ function registerProposalTools(
     {
       description:
         'Submit a replace_flow proposal for owner approval (does not deploy). ' +
-        'Call get_flow first and reuse that nested shape: payload.flow should be the get_flow ' +
-        'result (id, type, label?, nodes[], optional configs[]) for the tab you are replacing. ' +
-        'Inputs: type="replace_flow", expectedRev (required; from get_flow/list_flows; expected_rev alias accepted), ' +
-        'optional title (≤80 chars, human-friendly), ' +
-        `payload: { flowId, flow } with flow.nodes required. ` +
+        'Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", ' +
+        'node, field, find, replace, occurrence? }] } — find must be unique unless occurrence ' +
+        '(1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. ' +
+        'Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). ' +
+        'Inputs: type="replace_flow", expectedRev (required; expected_rev alias accepted), ' +
+        'optional title (≤80 chars), payload: { flowId, flow? } and/or payload.nodes / top-level nodes. ' +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
+        'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Returns the pending proposal with title, displayName (title · server-local datetime with offset), ' +
         'reviewUrl (absolute when Host is known), and reviewPath (relative /mcp#proposal=<id>). ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
@@ -214,6 +291,12 @@ function registerProposalTools(
           .describe(
             'Optional short human title (≤80 chars). Auto-generated from changes when omitted.'
           ),
+        nodes: z
+          .array(z.record(z.string(), z.unknown()))
+          .optional()
+          .describe(
+            'Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted.'
+          ),
         payload: z
           .object({
             flowId: z.string().min(1).describe('Tab id to replace'),
@@ -224,13 +307,21 @@ function registerProposalTools(
                 label: z.string().optional(),
                 nodes: z
                   .array(z.record(z.string(), z.unknown()))
-                  .describe('Child nodes for the tab (required; from get_flow.nodes)'),
+                  .optional()
+                  .describe('Child nodes for the tab (from get_flow.nodes)'),
                 configs: z.array(z.record(z.string(), z.unknown())).optional(),
               })
               .passthrough()
-              .describe('Nested get_flow tab object (id, type, label?, nodes[], configs?)'),
+              .optional()
+              .describe('Full tab from get_flow; omit when using nodes ops'),
+            nodes: z
+              .array(z.record(z.string(), z.unknown()))
+              .optional()
+              .describe(
+                'Node ops applied to the live tab (prefer replace_text for small string edits)'
+              ),
           })
-          .describe('Replacement flow payload'),
+          .describe('Replacement flow payload and/or node ops'),
       },
     },
     async args => {
