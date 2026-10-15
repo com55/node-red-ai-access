@@ -131,11 +131,14 @@ AI clients can use the official MCP Streamable HTTP transport against
 API. Tools mirror the AI-facing REST surface only:
 
 `get_status`, `list_flows`, `get_flow`, `submit_proposal` (including
-`replace_flow` with `expectedRev`; `expected_rev` accepted as alias),
-`list_my_proposals`, `get_proposal`. Tool descriptions document purpose, inputs,
-returns, and when to use them. For access-link callers, `get_status` reports
-`permission: null` and `caller.kind: "access-link"` (expected — AI tokens are
-not admin sessions).
+`replace_flow` with `expectedRev`; `expected_rev` accepted as alias; optional
+`title` ≤80 chars), `list_my_proposals`, `get_proposal`. Tool descriptions
+document purpose, inputs, returns, and when to use them. Proposal
+create/list/get responses include `title`, `displayName` (`title ·` server-local
+datetime), and `reviewUrl` (`/mcp#proposal=<id>`). AI clients should refer to
+proposals by `displayName` + `reviewUrl`, not the raw id. For access-link
+callers, `get_status` reports `permission: null` and
+`caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
 
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and
@@ -145,8 +148,10 @@ invalid/expired/revoked tokens return **401** `access_link_invalid` (both with
 error JSON includes a `code`.
 
 Access links are **in memory** (default TTL **4h**, max 10). Creating a link
-returns the raw token once plus a self-contained `url` (`/mcp/a/<token>`). After
-a restart every old token is invalid.
+returns the raw `token` plus a self-contained `url` (`/mcp/a/<token>`). While
+the link remains active, `GET /links` includes `url` again so admins can re-copy
+from `/mcp` (the raw `token` field stays create-only). After a restart every old
+token is invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
 `expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
@@ -202,6 +207,7 @@ Example create body:
 {
   "type": "replace_flow",
   "expectedRev": "abc123",
+  "title": "Rename inject to Hello",
   "payload": {
     "flowId": "tab-1",
     "flow": {

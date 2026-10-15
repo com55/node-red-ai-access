@@ -31,6 +31,7 @@ import {
   submitReplaceFlowProposal,
 } from './ai-ops.js';
 import { computeProposalDiff } from './proposal-diff.js';
+import { presentProposal, presentProposals } from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
 
@@ -60,6 +61,7 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog, ada
           expectedRev?: unknown;
           expected_rev?: unknown;
           payload?: unknown;
+          title?: unknown;
         },
         adapter
       );
@@ -81,7 +83,7 @@ export function listProposalsHandler(store: ProposalStore) {
       res.json({ proposals: listMyProposals(store, req.accessLink) });
       return;
     }
-    res.json({ proposals: store.list() });
+    res.json({ proposals: presentProposals(store.list()) });
   };
 }
 
@@ -97,7 +99,7 @@ export function getProposalHandler(store: ProposalStore) {
         res.json(getMyProposal(store, req.accessLink, id));
         return;
       }
-      res.json(store.get(id));
+      res.json(presentProposal(store.get(id)));
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
         res.status(404).json({ error: error.message, code: error.code });
@@ -135,7 +137,7 @@ export function approveProposalHandler(service: ProposalService) {
     }
     try {
       const proposal = await service.approve(id, adminActor(req), approveOptions);
-      res.json(proposal);
+      res.json(presentProposal(proposal));
     } catch (error) {
       if (
         error instanceof ProposalNotFoundError ||
@@ -161,7 +163,7 @@ export function rejectProposalHandler(service: ProposalService) {
     const body = (req.body ?? {}) as { reason?: unknown };
     const reason = typeof body.reason === 'string' ? body.reason : 'Rejected by admin';
     try {
-      const proposal = service.reject(id, adminActor(req), reason);
+      const proposal = presentProposal(service.reject(id, adminActor(req), reason));
       res.json(proposal);
     } catch (error) {
       if (

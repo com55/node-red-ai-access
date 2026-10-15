@@ -27,6 +27,8 @@ export interface DraftRecord {
   /** Optional multi field targets (simple). */
   targets?: DraftTarget[];
   summary?: string;
+  /** Optional proposal title carried through to submit. */
+  title?: string;
   chunks: Map<number, string>;
   createdAtMs: number;
   expiresAtMs: number;
@@ -42,6 +44,7 @@ export interface CreateDraftInput {
   field?: string;
   targets?: DraftTarget[];
   summary?: string;
+  title?: string;
 }
 
 export class DraftValidationError extends Error {
@@ -111,6 +114,7 @@ export class DraftStore {
     if (input.field !== undefined) record.field = input.field;
     if (input.targets !== undefined) record.targets = input.targets;
     if (input.summary !== undefined) record.summary = input.summary;
+    if (input.title !== undefined) record.title = input.title;
     this.drafts.set(id, record);
     return record;
   }

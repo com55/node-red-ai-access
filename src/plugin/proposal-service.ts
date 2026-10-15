@@ -12,8 +12,23 @@ import {
   type ProposalStore,
 } from '../storage/proposals.js';
 
+import { presentProposal } from './proposal-present.js';
+
 const REV_CONFLICT_RESUBMIT =
   'Flow revision conflict: the expectedRev is stale. Ask the AI to re-read flows and resubmit a new proposal.';
+
+function auditProposalMeta(proposal: Proposal): {
+  proposalId: string;
+  title: string;
+  displayName: string;
+} {
+  const presented = presentProposal(proposal);
+  return {
+    proposalId: proposal.id,
+    title: presented.title,
+    displayName: presented.displayName,
+  };
+}
 
 export class ProposalService {
   constructor(
@@ -29,6 +44,7 @@ export class ProposalService {
     options: { deploymentType?: DeploymentType } = {}
   ): Promise<Proposal> {
     const proposal = this.proposals.beginApprove(id);
+    const meta = auditProposalMeta(proposal);
     const deploymentType = options.deploymentType ?? this.getDeploymentType();
     try {
       // Guard for future proposal types (today only replace_flow exists).
@@ -40,7 +56,7 @@ export class ProposalService {
           `Unsupported proposal type '${proposalType}'`
         );
         this.audit.append('proposal.failed', decidedBy, {
-          proposalId: id,
+          ...meta,
           reason: failed.reason,
         });
         return failed;
@@ -55,7 +71,7 @@ export class ProposalService {
         });
         const approved = this.proposals.markApproved(id, decidedBy, result.rev);
         this.audit.append('proposal.approved', decidedBy, {
-          proposalId: id,
+          ...meta,
           resultRev: result.rev,
           flowId: proposal.payload.flowId,
         });
@@ -64,7 +80,7 @@ export class ProposalService {
         if (error instanceof FlowRevisionConflictError) {
           const rejected = this.proposals.markRejected(id, decidedBy, REV_CONFLICT_RESUBMIT);
           this.audit.append('proposal.rejected', decidedBy, {
-            proposalId: id,
+            ...meta,
             reason: rejected.reason,
             code: error.code,
             expectedRev: error.expectedRev,
@@ -75,7 +91,7 @@ export class ProposalService {
         const message = error instanceof Error ? error.message : String(error);
         const failed = this.proposals.markFailed(id, decidedBy, message);
         this.audit.append('proposal.failed', decidedBy, {
-          proposalId: id,
+          ...meta,
           reason: message,
         });
         return failed;
@@ -90,13 +106,14 @@ export class ProposalService {
     if (proposal.status !== 'pending') {
       throw new ProposalNotPendingError(id, proposal.status);
     }
+    const meta = auditProposalMeta(proposal);
     const rejected = this.proposals.markRejected(
       id,
       decidedBy,
       reason.trim() || 'Rejected by admin'
     );
     this.audit.append('proposal.rejected', decidedBy, {
-      proposalId: id,
+      ...meta,
       reason: rejected.reason,
     });
     return rejected;

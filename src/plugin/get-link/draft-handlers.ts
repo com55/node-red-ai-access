@@ -185,6 +185,7 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
     const nodeId = queryString(req.query, 'node');
     const field = queryString(req.query, 'field');
     const summary = queryString(req.query, 'summary');
+    const titleParam = queryString(req.query, 'title') ?? summary;
     const modeParam = queryString(req.query, 'mode');
     const targetsEncoded = queryString(req.query, 'targets');
 
@@ -235,6 +236,7 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
       ...(field ? { field } : {}),
       ...(plan.targets ? { targets: plan.targets } : {}),
       ...(summary ? { summary } : {}),
+      ...(titleParam ? { title: titleParam } : {}),
     });
 
     res.status(201).json({
@@ -366,6 +368,7 @@ export function getLinkDraftSubmitHandler(
     setNoStore(res);
     const draftId = req.params.draftId;
     const sha256 = queryString(req.query, 'sha256');
+    const titleOverride = queryString(req.query, 'title');
     if (typeof draftId !== 'string' || !draftId) {
       jsonError(res, 400, 'Missing draft id', 'missing_draft_id');
       return;
@@ -434,6 +437,7 @@ export function getLinkDraftSubmitHandler(
         }
       }
 
+      const title = titleOverride || draft.title || draft.summary;
       const proposal = await submitReplaceFlowProposal(
         proposalStore,
         auditLog,
@@ -442,6 +446,7 @@ export function getLinkDraftSubmitHandler(
           type: 'replace_flow',
           expectedRev,
           payload: { flowId: builtFlowId, flow: builtFlow },
+          ...(title ? { title } : {}),
         },
         flowAdapter
       );
@@ -450,7 +455,9 @@ export function getLinkDraftSubmitHandler(
         ok: true,
         proposal,
         sha256: createHash('sha256').update(Buffer.from(assembled, 'utf8')).digest('hex'),
-        hint: 'Waiting for human approval on /mcp. Poll GET …/proposals/<id>.',
+        hint:
+          `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
+          `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,
       });
     } catch (error) {
       if (error instanceof DraftNotFoundError || error instanceof DraftValidationError) {

@@ -114,6 +114,38 @@ function pageStylesPartB(): string {
   font-weight: 650;
 }
 .muted { color: var(--muted); font-size: 0.92rem; }
+.empty-state {
+  padding: 1.25rem 0.85rem;
+  text-align: left;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+.empty-state .empty-title {
+  margin: 0 0 0.25rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+.empty-state .muted { margin: 0; }
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+.links-table { width: 100%; border-collapse: collapse; }
+.links-table th, .links-table td {
+  text-align: left;
+  padding: 0.45rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+button.action.copied {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -390,7 +422,7 @@ function pageStylesPartE(): string {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.4;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
   max-height: 18rem;
   border: 1px solid var(--line);
@@ -401,8 +433,8 @@ function pageStylesPartE(): string {
   display: grid;
   grid-template-columns: 2.6rem 1.1rem minmax(0, 1fr);
   column-gap: 0.2rem;
-  white-space: pre;
-  min-width: max-content;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   width: 100%;
   padding: 0 0.35rem 0 0;
 }
@@ -418,7 +450,13 @@ function pageStylesPartE(): string {
   user-select: none;
   font-weight: 650;
 }
-.diff-line .code { padding-left: 0.35rem; }
+.diff-line .code {
+  padding-left: 0.35rem;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .diff-add { background: #e6f6ec; color: #145a32; }
 .diff-remove { background: #fdeceb; color: #7a1f1f; }
 .diff-eq { color: var(--muted); }
@@ -434,7 +472,7 @@ function pageStylesPartE(): string {
 }
 .diff-split .diff-pane {
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
   max-height: 18rem;
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -460,6 +498,26 @@ function pageStylesPartE(): string {
 }
 .diff-before { color: var(--danger); word-break: break-word; }
 .diff-after { color: var(--ok); word-break: break-word; }
+`;
+}
+
+function pageStylesPartF(): string {
+  return `
+.proposal-detail.proposal-highlight {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.proposal-heading {
+  font-size: 1.05rem;
+  font-weight: 650;
+  margin: 0 0 0.15rem;
+  letter-spacing: -0.01em;
+}
+.proposal-id {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+}
 .node-presence {
   margin: 0.35rem 0 0.55rem;
   border: 1px solid var(--line);
@@ -475,12 +533,59 @@ function pageStylesPartE(): string {
 .node-presence > summary::-webkit-details-marker { display: none; }
 .node-presence.node-added > summary { background: #e6f6ec; }
 .node-presence.node-removed > summary { background: #fdeceb; }
+.presence-summary-text { font-weight: 600; }
 .presence-body { padding: 0.35rem 0.55rem 0.55rem; }
+.presence-key-fields { margin-bottom: 0.35rem; }
+.presence-all-props {
+  margin-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.25rem;
+}
+.presence-all-props > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  user-select: none;
+}
 .presence-text { margin: 0.25rem 0; }
 .presence-text > summary {
   cursor: pointer;
   font-size: 0.88rem;
   user-select: none;
+}
+.presence-text-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+.presence-preview-toggle {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.presence-preview-toggle[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.presence-preview-host {
+  margin: 0.3rem 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  overflow: hidden;
+}
+.presence-preview-frame {
+  display: block;
+  width: 100%;
+  min-height: 10rem;
+  max-height: 18rem;
+  border: 0;
+  background: #fff;
 }
 .presence-pre {
   margin: 0.3rem 0 0;
@@ -529,6 +634,7 @@ export function pageStyles(): string {
     pageStylesPartB() +
     pageStylesPartC() +
     pageStylesPartD() +
-    pageStylesPartE()
+    pageStylesPartE() +
+    pageStylesPartF()
   ).trim();
 }

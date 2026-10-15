@@ -93,7 +93,7 @@ function pageClientScriptPartA(): string {
 `;
 }
 
-function pageClientScriptPartAFormat(): string {
+function pageClientScriptPartATimeCopy(): string {
   return `
   function fmtCompact(iso) {
     try {
@@ -110,6 +110,71 @@ function pageClientScriptPartAFormat(): string {
       return String(iso);
     }
   }
+  function fmtRelative(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      var diffMs = d.getTime() - Date.now();
+      var abs = Math.abs(diffMs);
+      var mins = Math.round(abs / 60000);
+      var hours = Math.round(abs / 3600000);
+      var days = Math.round(abs / 86400000);
+      var phrase;
+      if (mins < 1) phrase = 'just now';
+      else if (mins < 60) phrase = mins + 'm';
+      else if (hours < 48) phrase = hours + 'h';
+      else phrase = days + 'd';
+      if (phrase === 'just now') return phrase;
+      return diffMs >= 0 ? 'in ' + phrase : phrase + ' ago';
+    } catch (e) {
+      return String(iso);
+    }
+  }
+  function timeCell(iso) {
+    return '<time datetime="' + esc(iso) + '" title="' + esc(fmtCompact(iso)) + '">' +
+      esc(fmtRelative(iso)) + '</time>';
+  }
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) resolve();
+        else reject(new Error('copy failed'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  function markCopied(btn, flash, okMsg) {
+    if (!btn) return;
+    var prev = btn.getAttribute('data-label') || btn.textContent || 'Copy';
+    btn.setAttribute('data-label', prev);
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    btn.disabled = true;
+    if (flash && okMsg) showFlash(flash, okMsg, true);
+    setTimeout(function () {
+      btn.textContent = btn.getAttribute('data-label') || 'Copy link';
+      btn.classList.remove('copied');
+      btn.disabled = false;
+    }, 1600);
+  }
+`;
+}
+
+function pageClientScriptPartAFormat(): string {
+  return `
   function shortId(value, keep) {
     var s = String(value == null ? '' : value);
     var n = keep || 8;
@@ -173,17 +238,27 @@ function pageClientScriptPartAFormat(): string {
     };
     return labels[action] ? labels[action] + ' (' + action + ')' : action;
   }
+  function auditProposalLabel(d) {
+    if (d.displayName) {
+      return '<strong class="audit-display-name">' + esc(String(d.displayName)) + '</strong>';
+    }
+    if (d.title) {
+      return '<strong class="audit-display-name">' + esc(String(d.title)) + '</strong>';
+    }
+    return d.proposalId ? tipId(d.proposalId, 12) : '';
+  }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
-    var prop = d.proposalId ? tipId(d.proposalId, 12) : '';
+    var prop = auditProposalLabel(d);
     var flow = d.flowId != null ? esc(String(d.flowId)) : '';
     if (action === 'proposal.created') {
-      return 'Proposal ' + prop + ' created for flow "' + flow + '"';
+      return (prop || 'Proposal') + ' created' + (flow ? ' for flow "' + flow + '"' : '');
     }
     if (action === 'proposal.approved') {
       var rev = d.resultRev ? tipId(d.resultRev, 8) : '';
-      return 'Approved' + (d.flowId ? ' for flow "' + flow + '"' : '') +
+      return 'Approved' + (prop ? ' ' + prop : '') +
+        (d.flowId ? ' for flow "' + flow + '"' : '') +
         (rev ? ', deployed (rev ' + rev + ')' : '');
     }
     if (action === 'proposal.rejected') {
@@ -265,18 +340,37 @@ function pageClientScriptPartA2(): string {
       var data = await api('/links');
       var links = (data && data.links) || [];
       if (!links.length) {
-        list.innerHTML = '<p class="muted">No active access links.</p>';
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">No active access links</p>' +
+          '<p class="muted">Create a link above to give an AI temporary GET/REST access.</p></div>';
         return;
       }
-      list.innerHTML = '<table><thead><tr><th>Id</th><th>Label</th><th>Expires</th><th></th></tr></thead><tbody>' +
+      list.innerHTML = '<table class="links-table"><thead><tr><th>Id</th><th>Label</th><th>Expires</th><th></th></tr></thead><tbody>' +
         links.map(function (l) {
+          var copyDisabled = l.url ? '' : ' disabled title="URL unavailable"';
           return '<tr data-id="' + esc(l.id) + '">' +
-            '<td><code>' + esc(l.id) + '</code></td>' +
+            '<td><code title="' + esc(l.id) + '">' + tipId(l.id, 10) + '</code></td>' +
             '<td>' + esc(l.label || '—') + '</td>' +
-            '<td>' + esc(fmt(l.expiresAt)) + '</td>' +
-            '<td><button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button></td>' +
-            '</tr>';
+            '<td>' + timeCell(l.expiresAt) + '</td>' +
+            '<td class="row-actions">' +
+            '<button type="button" class="action secondary copy-link" data-id="' + esc(l.id) + '"' +
+            ' data-url="' + esc(l.url || '') + '"' + copyDisabled + '>Copy link</button> ' +
+            '<button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button>' +
+            '</td></tr>';
         }).join('') + '</tbody></table>';
+      list.querySelectorAll('.copy-link').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var url = btn.getAttribute('data-url') || '';
+          if (!url) {
+            showFlash(flash, 'Clipboard unavailable — create a new link to copy.', false);
+            return;
+          }
+          copyTextToClipboard(url).then(function () {
+            markCopied(btn, flash, 'Link copied.');
+          }).catch(function () {
+            showFlash(flash, 'Clipboard unavailable — select the URL from a new create.', false);
+          });
+        });
+      });
       list.querySelectorAll('.revoke-link').forEach(function (btn) {
         btn.addEventListener('click', function () { revokeLink(btn.getAttribute('data-id')); });
       });
@@ -287,6 +381,9 @@ function pageClientScriptPartA2(): string {
 
   async function revokeLink(id) {
     var flash = $('links-flash');
+    if (!window.confirm('Revoke this access link? The AI will lose access immediately.')) {
+      return;
+    }
     try {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
@@ -349,19 +446,19 @@ function pageClientScriptPartB(): string {
       }
       var copyBtn = $('token-copy-btn');
       if (copyBtn) {
+        copyBtn.textContent = 'Copy link for AI';
+        copyBtn.classList.remove('copied');
+        copyBtn.disabled = false;
         copyBtn.onclick = function () {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(copyText).then(function () {
-              showFlash(flash, 'Copied token + API base + docs hint.', true);
-            }).catch(function () {
-              showFlash(flash, 'Copy failed — select the text below manually.', false);
-            });
-          } else {
+          copyTextToClipboard(copyText).then(function () {
+            markCopied(copyBtn, flash, 'Copied link for AI.');
+          }).catch(function () {
+            if (copyBlock) copyBlock.hidden = false;
             showFlash(flash, 'Clipboard unavailable — select the text below manually.', false);
-          }
+          });
         };
       }
-      showFlash(flash, 'Link created. Copy the token now — it will not be shown again.', true);
+      showFlash(flash, 'Link created. Use Copy link for AI — the raw token stays available while active.', true);
       loadLinks();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
@@ -467,24 +564,40 @@ function pageClientScriptPartBDiff(): string {
 `;
 }
 
-function pageClientScriptPartBDiffView(): string {
+function pageClientScriptPartBDiffPresence(): string {
   return `
-  function presenceLabel(n) {
-    return (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
-  }
-
   function isCollapsiblePresenceText(value) {
     var s = String(value == null ? '' : value);
     if (s.indexOf('\\n') >= 0) return true;
     return s.length > PRESENCE_SHORT_TEXT_MAX;
   }
 
+  function renderHtmlPreviewBlock(text) {
+    // Sandboxed preview: no allow-scripts (and no other allow-* tokens).
+    var srcdoc = String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;');
+    return '<div class="presence-preview-host" hidden>' +
+      '<iframe class="presence-preview-frame" sandbox="" referrerpolicy="no-referrer" ' +
+      'title="HTML preview" srcdoc="' + srcdoc + '"></iframe></div>';
+  }
+
   function renderPresenceProperty(p) {
     if (p.kind === 'text') {
       var text = String(p.value == null ? '' : p.value);
+      var previewToggle = '';
+      var previewBlock = '';
+      if (p.preview === 'html') {
+        previewToggle =
+          '<button type="button" class="presence-preview-toggle" aria-pressed="false">' +
+          'Preview</button>';
+        previewBlock = renderHtmlPreviewBlock(text);
+      }
       if (isCollapsiblePresenceText(text)) {
         return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
           ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
+          '<div class="presence-text-toolbar">' + previewToggle + '</div>' +
+          previewBlock +
           '<pre class="presence-pre">' + esc(text) + '</pre></details>';
       }
       // Short single-line fields (format, syntax, …) stay inline expanded.
@@ -496,17 +609,59 @@ function pageClientScriptPartBDiffView(): string {
   }
 
   function renderPresenceNode(n, kind) {
-    var title = kind === 'added' ? 'Node added' : 'Node removed';
     var open = kind === 'added' ? ' open' : '';
-    var props = (n.properties || []).map(renderPresenceProperty).join('');
-    return '<details class="node-presence node-' + kind + '"' + open + '>' +
-      '<summary><strong>' + title + '</strong> · ' +
-      '<code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' +
-      presenceLabel(n) + '</summary>' +
-      '<div class="presence-body">' + (props || '<p class="muted">No properties.</p>') +
+    var summaryText = n.summary
+      ? esc(n.summary)
+      : ((kind === 'added' ? 'Node added' : 'Node removed') +
+        (n.name ? ' · ' + esc(n.name) : '') +
+        ' · ' + esc(n.type || '?'));
+    var keyFields = (n.keyFields || []).map(renderPresenceProperty).join('');
+    var allProps = (n.properties || []).map(renderPresenceProperty).join('');
+    var body =
+      (keyFields ? '<div class="presence-key-fields">' + keyFields + '</div>' : '') +
+      '<details class="presence-all-props">' +
+      '<summary>All properties</summary>' +
+      '<div class="presence-all-body">' +
+      (allProps || '<p class="muted">No properties.</p>') +
       '</div></details>';
+    return '<details class="node-presence node-' + kind + '"' + open + '>' +
+      '<summary><span class="presence-summary-text">' + summaryText + '</span> · ' +
+      '<code class="id-short muted" title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code>' +
+      '</summary>' +
+      '<div class="presence-body">' + body + '</div></details>';
   }
 
+  function bindPresencePreviewToggles(host) {
+    if (!host) return;
+    host.querySelectorAll('.presence-preview-toggle').forEach(function (btn) {
+      if (btn.getAttribute('data-bound') === '1') return;
+      btn.setAttribute('data-bound', '1');
+      btn.addEventListener('click', function () {
+        var wrap = btn.closest('.presence-text') || btn.parentElement;
+        if (!wrap) return;
+        var preview = wrap.querySelector('.presence-preview-host');
+        var code = wrap.querySelector('.presence-pre');
+        if (!preview) return;
+        var show = preview.hasAttribute('hidden');
+        if (show) {
+          preview.removeAttribute('hidden');
+          if (code) code.setAttribute('hidden', '');
+          btn.setAttribute('aria-pressed', 'true');
+          btn.textContent = 'Code';
+        } else {
+          preview.setAttribute('hidden', '');
+          if (code) code.removeAttribute('hidden');
+          btn.setAttribute('aria-pressed', 'false');
+          btn.textContent = 'Preview';
+        }
+      });
+    });
+  }
+`;
+}
+
+function pageClientScriptPartBDiffView(): string {
+  return `
   function renderPropertyChange(ch, mode) {
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
@@ -615,7 +770,8 @@ function pageClientScriptPartB2(): string {
       var data = await api('/proposals');
       var proposals = (data && data.proposals) || [];
       if (!proposals.length) {
-        list.innerHTML = '<p class="muted">No proposals yet.</p>';
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">No proposals yet</p>' +
+          '<p class="muted">When an AI submits a change it will appear here for review.</p></div>';
         return;
       }
       list.innerHTML = proposals.map(function (p) {
@@ -642,11 +798,16 @@ function pageClientScriptPartB2(): string {
             createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
           }
         }
-        return '<article class="proposal-detail" data-id="' + esc(p.id) + '">' +
-          '<strong title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</strong> · <code>' + esc(p.status) + '</code><br/>' +
+        var heading = p.displayName
+          ? esc(p.displayName)
+          : (p.title ? esc(p.title) : tipId(p.id, 12));
+        return '<article class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) + '">' +
+          '<h3 class="proposal-heading">' + heading +
+          ' · <code>' + esc(p.status) + '</code></h3>' +
+          '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
           '<span class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
-          ' · created ' + esc(fmtCompact(p.createdAt)) +
+          ' · created ' + timeCell(p.createdAt) +
           createdBy +
           '</span>' +
           reason +
@@ -662,8 +823,47 @@ function pageClientScriptPartB2(): string {
         btn.addEventListener('click', function () { rejectProposal(btn.getAttribute('data-id')); });
       });
       proposals.forEach(function (p) { loadProposalDiff(p.id); });
+      focusProposalFromHash();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+    }
+  }
+
+  function readProposalHashId() {
+    try {
+      var hash = String(location.hash || '');
+      var m = hash.match(/^#proposal=([^&]+)/);
+      if (!m) return '';
+      return decodeURIComponent(m[1]);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function selectTab(target) {
+    document.querySelectorAll('nav.tabs button').forEach(function (b) {
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
+    });
+    document.querySelectorAll('section.panel').forEach(function (sec) {
+      sec.classList.toggle('active', sec.id === 'section-' + target);
+    });
+  }
+
+  function focusProposalFromHash() {
+    var id = readProposalHashId();
+    if (!id) return;
+    selectTab('proposals');
+    var el = document.getElementById('proposal-' + id) ||
+      document.querySelector('.proposal-detail[data-id="' + id + '"]');
+    if (!el) return;
+    document.querySelectorAll('.proposal-detail.proposal-highlight').forEach(function (node) {
+      node.classList.remove('proposal-highlight');
+    });
+    el.classList.add('proposal-highlight');
+    try {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      el.scrollIntoView(true);
     }
   }
 
@@ -675,6 +875,7 @@ function pageClientScriptPartB2(): string {
         setDiffMode(mode);
         host.innerHTML = renderDiffView(diff, mode);
         bindDiffModeToggle(host, diff);
+        bindPresencePreviewToggles(host);
       });
     });
   }
@@ -686,6 +887,7 @@ function pageClientScriptPartB2(): string {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
       host.innerHTML = renderDiffView(diff);
       bindDiffModeToggle(host, diff);
+      bindPresencePreviewToggles(host);
     } catch (e) {
       host.innerHTML = '<p class="muted">Could not load diff: ' + esc(e.message || String(e)) + '</p>';
     }
@@ -699,6 +901,9 @@ function pageClientScriptPartC(): string {
     var flash = $('proposals-flash');
     var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
     var deploymentType = select ? select.value : defaultDeploy;
+    if (!window.confirm('Approve and deploy this proposal (' + deploymentType + ')?')) {
+      return;
+    }
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
@@ -722,6 +927,9 @@ function pageClientScriptPartC(): string {
     var flash = $('proposals-flash');
     var input = document.querySelector('input.reject-reason[data-id="' + id + '"]');
     var reason = input && input.value.trim() ? input.value.trim() : 'Rejected by admin';
+    if (!window.confirm('Reject this proposal?')) {
+      return;
+    }
     try {
       await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
@@ -740,7 +948,8 @@ function pageClientScriptPartC(): string {
   function renderLogsTable(logs) {
     var list = $('logs-list');
     if (!logs.length) {
-      list.innerHTML = '<p class="muted">No matching audit entries.</p>';
+      list.innerHTML = '<div class="empty-state"><p class="empty-title">No matching audit entries</p>' +
+        '<p class="muted">Try another filter, or wait for proposal activity.</p></div>';
       return;
     }
     list.innerHTML = '<table class="audit-table"><thead><tr>' +
@@ -749,7 +958,7 @@ function pageClientScriptPartC(): string {
       logs.map(function (e) {
         var raw = esc(JSON.stringify(e.details || {}, null, 2));
         return '<tr>' +
-          '<td class="col-when" title="' + esc(e.at) + '">' + esc(fmtCompact(e.at)) + '</td>' +
+          '<td class="col-when">' + timeCell(e.at) + '</td>' +
           '<td class="col-action">' + actionBadge(e.action) + '</td>' +
           '<td class="col-actor" title="' + esc(actorPlain(e.actor)) + '">' + actorLabel(e.actor) + '</td>' +
           '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
@@ -858,6 +1067,9 @@ function pageClientScriptPartD(): string {
         if (canManage) loadLinks();
         loadProposals();
         loadLogs();
+        if (readProposalHashId()) {
+          selectTab('proposals');
+        }
       }
     } catch (e) {
       showFlash($('boot-flash'), e.message || String(e), false);
@@ -881,6 +1093,13 @@ function pageClientScriptPartD(): string {
     logsFilter.addEventListener('change', applyLogFilter);
   }
 
+  window.addEventListener('hashchange', function () {
+    if (readProposalHashId()) {
+      selectTab('proposals');
+      focusProposalFromHash();
+    }
+  });
+
   boot();
 })();
 `;
@@ -889,11 +1108,13 @@ function pageClientScriptPartD(): string {
 export function pageClientScript(): string {
   return (
     pageClientScriptPartA() +
+    pageClientScriptPartATimeCopy() +
     pageClientScriptPartAFormat() +
     pageClientScriptPartATabs() +
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
     pageClientScriptPartBDiff() +
+    pageClientScriptPartBDiffPresence() +
     pageClientScriptPartBDiffView() +
     pageClientScriptPartB2() +
     pageClientScriptPartC() +

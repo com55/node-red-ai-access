@@ -123,8 +123,9 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     const listed = await request(app).get('/mcp/api/v1/links');
     expect(listed.status).toBe(200);
     expect(listed.body.links).toHaveLength(1);
+    // Raw `token` field stays create-only; active links expose `url` for re-copy.
     expect(listed.body.links[0]).not.toHaveProperty('token');
-    expect(JSON.stringify(listed.body)).not.toContain(created.body.token);
+    expect(listed.body.links[0].url).toMatch(new RegExp(`/mcp/a/${created.body.token}$`));
 
     const revoked = await request(app).delete(`/mcp/api/v1/links/${created.body.id}`);
     expect(revoked.status).toBe(200);

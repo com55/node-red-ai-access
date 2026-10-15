@@ -55,6 +55,7 @@ describe('ProposalStore + ProposalService', () => {
         flow: { label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
       },
       baseFlow: { id: 'tab-1', type: 'tab', label: 'Old', nodes: [{ id: 'n1', type: 'inject' }] },
+      title: 'Edit n1 (inject)',
       createdBy: { kind: 'access-link', linkId: 'link-1', label: 'bot' },
     });
   }

@@ -64,10 +64,13 @@ describe('buildProposalDiff', () => {
     expect(diff.baseRevStale).toBe(false);
     expect(diff.added).toHaveLength(1);
     expect(diff.added[0]).toMatchObject({ id: 'n3', type: 'debug', name: 'out' });
+    expect(diff.added[0]?.summary).toMatch(/Adds debug node "out"/);
+    expect(diff.added[0]?.keyFields.some(p => p.key === 'name')).toBe(true);
     expect(diff.added[0]?.properties.some(p => p.key === 'type' && p.kind === 'scalar')).toBe(true);
     expect(diff.added[0]?.properties.some(p => p.key === 'name')).toBe(true);
     expect(diff.removed).toHaveLength(1);
     expect(diff.removed[0]).toMatchObject({ id: 'n2', type: 'function', name: 'fn' });
+    expect(diff.removed[0]?.summary).toMatch(/Removes function node "fn"/);
     const removedFunc = diff.removed[0]?.properties.find(p => p.key === 'func');
     expect(removedFunc).toEqual({ key: 'func', kind: 'text', value: 'return msg;' });
     expect(diff.modified).toHaveLength(1);
@@ -152,7 +155,17 @@ describe('buildProposalDiff', () => {
         payload: {
           flowId: 'tab1',
           flow: {
-            nodes: [{ id: 'nNew', type: 'template', name: 'Tpl', template: html }],
+            label: 'Test Flow',
+            nodes: [
+              {
+                id: 'nNew',
+                type: 'template',
+                name: 'demo-html',
+                field: 'payload',
+                format: 'html',
+                template: html,
+              },
+            ],
           },
         },
       }),
@@ -160,8 +173,23 @@ describe('buildProposalDiff', () => {
       { compareAgainst: 'base' }
     );
     expect(diff.added).toHaveLength(1);
+    expect(diff.added[0]?.summary).toBe(
+      'Adds template node "demo-html" to flow "Test Flow", output to msg.payload'
+    );
+    const keyTpl = diff.added[0]?.keyFields.find(p => p.key === 'template');
+    expect(keyTpl).toEqual({
+      key: 'template',
+      kind: 'text',
+      value: html,
+      preview: 'html',
+    });
     const tpl = diff.added[0]?.properties.find(p => p.key === 'template');
-    expect(tpl).toEqual({ key: 'template', kind: 'text', value: html });
+    expect(tpl).toEqual({
+      key: 'template',
+      kind: 'text',
+      value: html,
+      preview: 'html',
+    });
   });
 
   it('includes line diffs for function func changes', () => {

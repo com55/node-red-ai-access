@@ -12,13 +12,20 @@ import {
 import { normalizeFlowTab } from '../runtime/flows-util.js';
 import type { FlowAdapter, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
-import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../storage/proposals.js';
+import { ProposalNotFoundError, type ProposalStore } from '../storage/proposals.js';
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
+import {
+  autoGenerateProposalTitle,
+  presentProposal,
+  sanitizeProposalTitle,
+  type PresentedProposal,
+} from './proposal-present.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
 export { MAX_PROPOSAL_JSON_BYTES };
+export type { PresentedProposal };
 
 export class AiOpsValidationError extends Error {
   readonly statusCode = 400;
@@ -60,6 +67,8 @@ export interface SubmitReplaceFlowInput {
   expectedRev?: unknown;
   expected_rev?: unknown;
   payload?: unknown;
+  /** Optional short title (≤80 chars); auto-generated when omitted. */
+  title?: unknown;
 }
 
 /**
@@ -81,7 +90,7 @@ export async function submitReplaceFlowProposal(
   accessLink: AccessLinkAuthInfo,
   body: SubmitReplaceFlowInput,
   adapter: FlowAdapter
-): Promise<Proposal> {
+): Promise<PresentedProposal> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
   const payload = body.payload;
@@ -153,6 +162,9 @@ export async function submitReplaceFlowProposal(
     createdBy.label = accessLink.label;
   }
 
+  const title =
+    sanitizeProposalTitle(body.title) ?? autoGenerateProposalTitle(safeBaseFlow, safeFlow);
+
   const proposal = store.create({
     type: 'replace_flow',
     expectedRev: safeExpectedRev,
@@ -161,27 +173,35 @@ export async function submitReplaceFlowProposal(
       flow: safeFlow,
     },
     baseFlow: safeBaseFlow,
+    title,
     createdBy,
   });
+
+  const presented = presentProposal(proposal);
 
   audit.append('proposal.created', createdBy, {
     proposalId: proposal.id,
     flowId: safeFlowId,
     expectedRev: safeExpectedRev,
+    title: presented.title,
+    displayName: presented.displayName,
   });
 
-  return proposal;
+  return presented;
 }
 
-export function listMyProposals(store: ProposalStore, accessLink: AccessLinkAuthInfo): Proposal[] {
-  return store.list({ linkId: accessLink.id });
+export function listMyProposals(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo
+): PresentedProposal[] {
+  return store.list({ linkId: accessLink.id }).map(presentProposal);
 }
 
 export function getMyProposal(
   store: ProposalStore,
   accessLink: AccessLinkAuthInfo,
   id: string
-): Proposal {
+): PresentedProposal {
   if (!id) {
     throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
   }
@@ -189,7 +209,7 @@ export function getMyProposal(
   if (proposal.createdBy.linkId !== accessLink.id) {
     throw new ProposalNotFoundError(id);
   }
-  return proposal;
+  return presentProposal(proposal);
 }
 
 /** Map shared op errors to REST-style `{ statusCode, body }` for HTTP handlers. */
