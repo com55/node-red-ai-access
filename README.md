@@ -40,10 +40,11 @@ call APIs with `Authorization: Bearer`. If no valid token is present, the page
 redirects to the editor login. All data and actions stay behind permission
 checks.
 
-On `/mcp` you can create access links, review proposals, approve or reject
-changes, and read the audit log. Users with `read` (including guest, if
-configured) get a read-only view; only users with `*` can create/revoke links
-and approve/reject proposals.
+On `/mcp` you can create access links, review proposals (with a readable
+node/property diff against the live flow), approve or reject changes, and read a
+human-readable audit log. Users with `read` (including guest, if configured) get
+a read-only view; only users with `*` can create/revoke links and approve/reject
+proposals.
 
 ## Configuration
 
@@ -114,6 +115,7 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)        |
 | `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)           |
 | `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)             |
+| `GET /mcp/api/v1/proposals/:id/diff`     | Diff proposal vs current flow (admin `read`/own) |
 | `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)  |
 | `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)         |
 | `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |

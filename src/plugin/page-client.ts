@@ -87,7 +87,85 @@ function pageClientScriptPartA(): string {
     }
     return body;
   }
+`;
+}
 
+function pageClientScriptPartAFormat(): string {
+  return `
+  function fmtCompact(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      var y = d.getFullYear();
+      var m = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      var ss = String(d.getSeconds()).padStart(2, '0');
+      return y + '-' + m + '-' + day + ' ' + hh + ':' + mm + ':' + ss;
+    } catch (e) {
+      return String(iso);
+    }
+  }
+  function shortId(value, keep) {
+    var s = String(value == null ? '' : value);
+    var n = keep || 8;
+    if (s.length <= n + 1) return s;
+    return s.slice(0, n) + '\u2026';
+  }
+  function tipId(value, keep) {
+    var s = String(value == null ? '' : value);
+    if (!s) return '';
+    return '<code class="id-short" title="' + esc(s) + '">' + esc(shortId(s, keep)) + '</code>';
+  }
+  function actorLabel(actor) {
+    actor = actor || {};
+    if (actor.kind === 'access-link') {
+      if (actor.label) {
+        return 'AI link "' + esc(actor.label) + '"';
+      }
+      return 'AI link ' + tipId(actor.linkId || '', 8);
+    }
+    if (actor.kind === 'admin') {
+      return actor.username ? 'user ' + esc(actor.username) : 'user';
+    }
+    if (actor.kind === 'system') return 'system';
+    return esc(actor.kind || 'unknown');
+  }
+  function auditSummary(entry) {
+    var d = entry.details || {};
+    var action = entry.action || '';
+    var prop = d.proposalId ? tipId(d.proposalId, 12) : '';
+    var flow = d.flowId != null ? esc(String(d.flowId)) : '';
+    if (action === 'proposal.created') {
+      return 'Proposal ' + prop + ' created for flow "' + flow + '"';
+    }
+    if (action === 'proposal.approved') {
+      var rev = d.resultRev ? tipId(d.resultRev, 8) : '';
+      return 'Approved' + (d.flowId ? ' for flow "' + flow + '"' : '') +
+        (rev ? ', deployed (rev ' + rev + ')' : '');
+    }
+    if (action === 'proposal.rejected') {
+      return 'Rejected' + (prop ? ' ' + prop : '') +
+        (d.reason ? ': ' + esc(String(d.reason)) : '');
+    }
+    if (action === 'proposal.failed') {
+      return 'Failed' + (prop ? ' ' + prop : '') +
+        (d.reason ? ': ' + esc(String(d.reason)) : '');
+    }
+    var keys = Object.keys(d);
+    if (!keys.length) return '<span class="muted">—</span>';
+    return esc(keys.slice(0, 3).map(function (k) {
+      var v = d[k];
+      if (typeof v === 'string' && v.length > 24) return k + '=' + shortId(v, 8);
+      return k + '=' + String(v);
+    }).join(', '));
+  }
+`;
+}
+
+function pageClientScriptPartATabs(): string {
+  return `
   document.querySelectorAll('nav.tabs button').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var target = btn.getAttribute('data-tab');
@@ -210,6 +288,72 @@ function pageClientScriptPartB(): string {
       ' · configs ' + configs;
   }
 
+  function renderNodeRef(n) {
+    var label = (n.name ? esc(n.name) + ' · ' : '') + esc(n.type || '?');
+    return '<li><code title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code> ' + label + '</li>';
+  }
+
+  function renderPropertyChange(ch) {
+    if (ch.kind === 'text') {
+      var lines = (ch.lines || []).map(function (line) {
+        var cls = line.op === 'add' ? 'diff-add' : line.op === 'remove' ? 'diff-remove' : 'diff-eq';
+        var prefix = line.op === 'add' ? '+' : line.op === 'remove' ? '-' : ' ';
+        return '<div class="' + cls + '">' + esc(prefix + line.text) + '</div>';
+      }).join('');
+      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' +
+        '<div class="diff-block" role="region" aria-label="Line diff for ' + esc(ch.key) + '">' +
+        lines + '</div></div>';
+    }
+    return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>: ' +
+      '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
+      ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
+  }
+
+  function renderDiffView(diff) {
+    if (!diff) return '<p class="muted">Diff unavailable.</p>';
+    var stale = diff.baseRevStale
+      ? '<p class="stale-banner" role="status">Base revision is stale — approve would fail. Ask the AI to re-read flows and resubmit.</p>'
+      : '';
+    var sum = diff.summary || {};
+    var counts = '<p class="diff-summary"><strong>+' + (sum.added || 0) +
+      '</strong> added · <strong>-' + (sum.removed || 0) +
+      '</strong> removed · <strong>~' + (sum.modified || 0) +
+      '</strong> modified' +
+      (sum.tabChanges && sum.tabChanges.length
+        ? ' · tab: ' + esc(sum.tabChanges.join(', '))
+        : '') +
+      '</p>';
+    var meta = '<p class="muted">expectedRev ' + tipId(diff.expectedRev, 8) +
+      ' · currentRev ' + tipId(diff.currentRev, 8) + '</p>';
+    var sections = '';
+    if (diff.added && diff.added.length) {
+      sections += '<div class="diff-section"><h4>Added nodes</h4><ul>' +
+        diff.added.map(renderNodeRef).join('') + '</ul></div>';
+    }
+    if (diff.removed && diff.removed.length) {
+      sections += '<div class="diff-section"><h4>Removed nodes</h4><ul>' +
+        diff.removed.map(renderNodeRef).join('') + '</ul></div>';
+    }
+    if (diff.modified && diff.modified.length) {
+      sections += '<div class="diff-section"><h4>Modified nodes</h4>' +
+        diff.modified.map(function (m) {
+          return '<div class="modified-node">' +
+            '<div><code title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</code> ' +
+            (m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?') + '</div>' +
+            (m.changes || []).map(renderPropertyChange).join('') +
+            '</div>';
+        }).join('') + '</div>';
+    }
+    if (!sections) {
+      sections = '<p class="muted">No node changes vs the current flow.</p>';
+    }
+    return stale + counts + meta + sections;
+  }
+`;
+}
+
+function pageClientScriptPartB2(): string {
+  return `
   async function loadProposals() {
     if (!aiOn) return;
     var list = $('proposals-list');
@@ -238,15 +382,24 @@ function pageClientScriptPartB(): string {
             '<label>Reject reason<input class="reject-reason" data-id="' + esc(p.id) + '" placeholder="Optional reason" /></label>';
         }
         var reason = p.reason ? '<p class="muted">Reason: ' + esc(p.reason) + '</p>' : '';
+        var createdBy = '';
+        if (p.createdBy) {
+          if (p.createdBy.label) {
+            createdBy = ' · AI link "' + esc(p.createdBy.label) + '"';
+          } else if (p.createdBy.linkId) {
+            createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
+          }
+        }
         return '<article class="proposal-detail" data-id="' + esc(p.id) + '">' +
-          '<strong>' + esc(p.id) + '</strong> · <code>' + esc(p.status) + '</code><br/>' +
+          '<strong title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</strong> · <code>' + esc(p.status) + '</code><br/>' +
           '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
-          '<span class="muted">expectedRev ' + esc(p.expectedRev) +
-          ' · created ' + esc(fmt(p.createdAt)) +
-          (p.createdBy && p.createdBy.linkId ? ' · link ' + esc(p.createdBy.linkId) : '') +
+          '<span class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
+          ' · created ' + esc(fmtCompact(p.createdAt)) +
+          createdBy +
           '</span>' +
           reason +
-          '<details><summary>Payload</summary><pre>' + esc(JSON.stringify(p.payload, null, 2)) + '</pre></details>' +
+          '<div class="proposal-diff" data-diff-for="' + esc(p.id) + '"><p class="muted">Loading diff…</p></div>' +
+          '<details><summary>Raw payload</summary><pre>' + esc(JSON.stringify(p.payload, null, 2)) + '</pre></details>' +
           actions +
           '</article>';
       }).join('');
@@ -256,8 +409,20 @@ function pageClientScriptPartB(): string {
       list.querySelectorAll('.reject-btn').forEach(function (btn) {
         btn.addEventListener('click', function () { rejectProposal(btn.getAttribute('data-id')); });
       });
+      proposals.forEach(function (p) { loadProposalDiff(p.id); });
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+    }
+  }
+
+  async function loadProposalDiff(id) {
+    var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
+    if (!host) return;
+    try {
+      var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
+      host.innerHTML = renderDiffView(diff);
+    } catch (e) {
+      host.innerHTML = '<p class="muted">Could not load diff: ' + esc(e.message || String(e)) + '</p>';
     }
   }`;
 }
@@ -305,28 +470,60 @@ function pageClientScriptPartC(): string {
     }
   }
 
+  var cachedLogs = [];
+
+  function renderLogsTable(logs) {
+    var list = $('logs-list');
+    if (!logs.length) {
+      list.innerHTML = '<p class="muted">No matching audit entries.</p>';
+      return;
+    }
+    list.innerHTML = '<table class="audit-table"><thead><tr>' +
+      '<th class="col-when">When</th><th class="col-action">Action</th>' +
+      '<th class="col-actor">Actor</th><th class="col-details">Details</th></tr></thead><tbody>' +
+      logs.map(function (e) {
+        var raw = esc(JSON.stringify(e.details || {}, null, 2));
+        return '<tr>' +
+          '<td class="col-when" title="' + esc(e.at) + '">' + esc(fmtCompact(e.at)) + '</td>' +
+          '<td class="col-action"><code>' + esc(e.action) + '</code></td>' +
+          '<td class="col-actor">' + actorLabel(e.actor) + '</td>' +
+          '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
+          '<details class="audit-raw"><summary>raw</summary><pre>' + raw + '</pre></details></td>' +
+          '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  function applyLogFilter() {
+    var filter = $('logs-filter');
+    var action = filter && filter.value ? filter.value : '';
+    var filtered = !action
+      ? cachedLogs
+      : cachedLogs.filter(function (e) { return e.action === action; });
+    renderLogsTable(filtered);
+  }
+
   async function loadLogs() {
     if (!aiOn) return;
-    var list = $('logs-list');
     var flash = $('logs-flash');
     showFlash(flash, '', true);
     try {
       var data = await api('/logs?limit=100');
-      var logs = (data && data.logs) || [];
-      if (!logs.length) {
-        list.innerHTML = '<p class="muted">Audit log is empty.</p>';
-        return;
+      cachedLogs = (data && data.logs) || [];
+      var filter = $('logs-filter');
+      if (filter) {
+        var actions = [];
+        cachedLogs.forEach(function (e) {
+          if (e.action && actions.indexOf(e.action) === -1) actions.push(e.action);
+        });
+        actions.sort();
+        var current = filter.value || '';
+        filter.innerHTML = '<option value="">All actions</option>' +
+          actions.map(function (a) {
+            return '<option value="' + esc(a) + '"' +
+              (a === current ? ' selected' : '') + '>' + esc(a) + '</option>';
+          }).join('');
       }
-      list.innerHTML = '<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>' +
-        logs.map(function (e) {
-          var actor = e.actor || {};
-          var actorLabel = actor.kind +
-            (actor.username ? ':' + actor.username : '') +
-            (actor.linkId ? ':' + actor.linkId : '');
-          return '<tr><td>' + esc(fmt(e.at)) + '</td><td><code>' + esc(e.action) +
-            '</code></td><td>' + esc(actorLabel) + '</td><td><code>' +
-            esc(JSON.stringify(e.details || {})) + '</code></td></tr>';
-        }).join('') + '</tbody></table>';
+      applyLogFilter();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
     }
@@ -414,6 +611,11 @@ function pageClientScriptPartD(): string {
     });
   }
 
+  var logsFilter = $('logs-filter');
+  if (logsFilter) {
+    logsFilter.addEventListener('change', applyLogFilter);
+  }
+
   boot();
 })();
 `;
@@ -422,8 +624,11 @@ function pageClientScriptPartD(): string {
 export function pageClientScript(): string {
   return (
     pageClientScriptPartA() +
+    pageClientScriptPartAFormat() +
+    pageClientScriptPartATabs() +
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
+    pageClientScriptPartB2() +
     pageClientScriptPartC() +
     pageClientScriptPartD()
   ).trim();

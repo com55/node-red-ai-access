@@ -100,6 +100,13 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
     <section class="panel" id="section-logs" aria-label="Audit log" hidden>
       <h2>Audit log</h2>
       <div id="logs-flash" class="flash" hidden></div>
+      <div class="row logs-toolbar">
+        <label>Action filter
+          <select id="logs-filter" aria-label="Filter audit log by action">
+            <option value="">All actions</option>
+          </select>
+        </label>
+      </div>
       <div id="logs-list"><p class="muted">Loading…</p></div>
     </section>
   </main>

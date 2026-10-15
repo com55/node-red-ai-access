@@ -4,6 +4,11 @@
 
 import type { Response } from 'express';
 
+import {
+  AdapterUnavailableError,
+  FlowNotFoundError,
+  PluginMisconfiguredError,
+} from '../runtime/errors.js';
 import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
@@ -25,6 +30,7 @@ import {
   listMyProposals,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { computeProposalDiff } from './proposal-diff.js';
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
 
@@ -164,6 +170,44 @@ export function rejectProposalHandler(service: ProposalService) {
         error instanceof StoragePayloadTooLargeError
       ) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
+      throw error;
+    }
+  };
+}
+
+/**
+ * GET /proposals/:id/diff — compare proposal payload to the live flow tab.
+ * Requires admin `read` or the owning access link (same as getProposal).
+ */
+export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapter) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      res.status(400).json({ error: 'Missing proposal id' });
+      return;
+    }
+    try {
+      const proposal = req.accessLink ? getMyProposal(store, req.accessLink, id) : store.get(id);
+      const diff = await computeProposalDiff(proposal, adapter);
+      res.json(diff);
+    } catch (error) {
+      if (error instanceof ProposalNotFoundError) {
+        res.status(404).json({ error: error.message, code: error.code });
+        return;
+      }
+      if (
+        error instanceof FlowNotFoundError ||
+        error instanceof AdapterUnavailableError ||
+        error instanceof PluginMisconfiguredError
+      ) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
+      const mapped = aiOpsErrorToHttp(error);
+      if (mapped) {
+        res.status(mapped.statusCode).json(mapped.body);
         return;
       }
       throw error;

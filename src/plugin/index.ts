@@ -32,6 +32,7 @@ import { renderMcpPage } from './page.js';
 import {
   approveProposalHandler,
   createProposalHandler,
+  getProposalDiffHandler,
   getProposalHandler,
   listProposalsHandler,
   rejectProposalHandler,
@@ -158,6 +159,11 @@ export function registerRoutes(
     '/mcp/api/v1/proposals/:id',
     ...sharedRead,
     getProposalHandler(services.proposalStore)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/proposals/:id/diff',
+    ...sharedRead,
+    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
   );
 
   RED.httpAdmin.post(
