@@ -196,9 +196,7 @@
         '<div id="ai-access-status-block" class="ai-access-status-block" style="display:none;"></div>'
       ).appendTo(body);
       $('<p></p>')
-        .html(
-          '<strong id="ai-access-pending-count">0</strong> proposal(s) waiting for review'
-        )
+        .html('<strong id="ai-access-pending-count">0</strong> proposal(s) waiting for review')
         .appendTo(status);
       $('<button type="button" id="ai-access-review" class="red-ui-button"></button>')
         .text('Review')
@@ -252,12 +250,10 @@
       });
 
       row = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
-      $('<label for="ai-access-ttl"></label>')
-        .text('Default link expiry (hours)')
-        .appendTo(row);
-      var presets = $('<div class="ai-access-ttl-presets" role="group" aria-label="Link expiry"></div>').appendTo(
-        row
-      );
+      $('<label for="ai-access-ttl"></label>').text('Default link expiry (hours)').appendTo(row);
+      var presets = $(
+        '<div class="ai-access-ttl-presets" role="group" aria-label="Link expiry"></div>'
+      ).appendTo(row);
       [1, 4, 24].forEach(function (h) {
         $('<button type="button" class="red-ui-button"></button>')
           .attr('data-hours', String(h))

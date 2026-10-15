@@ -284,6 +284,6 @@ describe('bugfix: /mcp public shell', () => {
     expect(res.text).toMatch(/localStorage/);
     expect(res.text).toMatch(/Authorization/);
     expect(res.text).toMatch(/Bearer/);
-    expect(res.text).toMatch(/Redirecting to login|Not signed in|location\.replace/i);
+    expect(res.text).toMatch(/showAuthGate|Please sign in to Node-RED first|auth-gate/i);
   });
 });
