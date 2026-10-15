@@ -332,24 +332,27 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(result.body.reason).toMatch(/resubmit/i);
   });
 
-  it('GET /proposals/:id/diff compares against the live flow', async () => {
+  it('GET /proposals/:id/diff compares against the stored base snapshot', async () => {
+    const baseNodes = [
+      { id: 'n1', type: 'inject', name: 'tick' },
+      { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
+    ];
+    let liveNodes = [...baseNodes];
+    let liveRev = 'rev-1';
     const { app, linkStore } = createApp({
       userDir,
       authenticate: asUser('read', 'guest'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+        getFlows: () => Promise.resolve({ rev: liveRev, flows: [] }),
         getFlow: () =>
           Promise.resolve({
-            rev: 'rev-1',
+            rev: liveRev,
             flow: {
               id: 'tab-1',
               type: 'tab',
               label: 'Main',
-              nodes: [
-                { id: 'n1', type: 'inject', name: 'tick' },
-                { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
-              ],
+              nodes: liveNodes.map(n => ({ ...n })),
             },
           }),
         updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),
@@ -381,6 +384,16 @@ describe('proposals / flows / logs HTTP API', () => {
         },
       });
     expect(created.status).toBe(201);
+    expect(created.body.baseFlow?.nodes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'n1' })])
+    );
+
+    // Another approval added html20k to the live flow — must not pollute this diff.
+    liveRev = 'rev-2';
+    liveNodes = [
+      ...baseNodes,
+      { id: 'html20k', type: 'template', name: 'html20k', template: '<p>big</p>' },
+    ];
 
     const asAdmin = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
     expect(asAdmin.status).toBe(200);
@@ -388,12 +401,24 @@ describe('proposals / flows / logs HTTP API', () => {
       proposalId: created.body.id,
       flowId: 'tab-1',
       expectedRev: 'rev-1',
-      currentRev: 'rev-1',
-      baseRevStale: false,
+      currentRev: 'rev-2',
+      baseRevStale: true,
+      compareAgainst: 'base',
       summary: { added: 1, removed: 1, modified: 1 },
     });
+    expect(asAdmin.body.removed).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'html20k' })])
+    );
     expect(asAdmin.body.added).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 'n3', type: 'debug' })])
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'n3',
+          type: 'debug',
+          properties: expect.arrayContaining([
+            expect.objectContaining({ key: 'name', kind: 'scalar', value: 'out' }),
+          ]),
+        }),
+      ])
     );
     expect(asAdmin.body.removed).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'n1', type: 'inject' })])
@@ -403,6 +428,9 @@ describe('proposals / flows / logs HTTP API', () => {
       ?.changes.find((c: { key: string }) => c.key === 'func');
     expect(funcChange?.kind).toBe('text');
     expect(funcChange?.lines?.some((l: { op: string }) => l.op === 'add')).toBe(true);
+    expect(asAdmin.body.vsCurrent?.removed).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'html20k' })])
+    );
 
     const asLink = await request(app)
       .get(`/mcp/api/v1/proposals/${created.body.id}/diff`)
@@ -417,7 +445,7 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(denied.status).toBe(404);
   });
 
-  it('GET /proposals/:id/diff sets baseRevStale when live rev moved', async () => {
+  it('GET /proposals/:id/diff sets baseRevStale only while pending', async () => {
     let liveRev = 'rev-1';
     const adapter: FlowAdapter = {
       kind: 'red',
@@ -446,11 +474,20 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(created.status).toBe(201);
 
     liveRev = 'rev-live';
-    const diff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
-    expect(diff.status).toBe(200);
-    expect(diff.body.baseRevStale).toBe(true);
-    expect(diff.body.currentRev).toBe('rev-live');
-    expect(diff.body.expectedRev).toBe('rev-1');
+    const pendingDiff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
+    expect(pendingDiff.status).toBe(200);
+    expect(pendingDiff.body.baseRevStale).toBe(true);
+    expect(pendingDiff.body.currentRev).toBe('rev-live');
+    expect(pendingDiff.body.expectedRev).toBe('rev-1');
+    expect(pendingDiff.body.compareAgainst).toBe('base');
+
+    await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/reject`).send({
+      reason: 'not needed',
+    });
+    const rejectedDiff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
+    expect(rejectedDiff.status).toBe(200);
+    expect(rejectedDiff.body.baseRevStale).toBe(false);
+    expect(rejectedDiff.body.compareAgainst).toBe('base');
   });
 
   it('rejects stale expectedRev at submit time with 409', async () => {

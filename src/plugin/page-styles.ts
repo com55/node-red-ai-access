@@ -457,6 +457,52 @@ function pageStylesPartE(): string {
 }
 .diff-before { color: var(--danger); word-break: break-word; }
 .diff-after { color: var(--ok); word-break: break-word; }
+.node-presence {
+  margin: 0.35rem 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbfc;
+}
+.node-presence > summary {
+  cursor: pointer;
+  padding: 0.4rem 0.55rem;
+  user-select: none;
+  list-style: none;
+}
+.node-presence > summary::-webkit-details-marker { display: none; }
+.node-presence.node-added > summary { background: #e6f6ec; }
+.node-presence.node-removed > summary { background: #fdeceb; }
+.presence-body { padding: 0.35rem 0.55rem 0.55rem; }
+.presence-text { margin: 0.25rem 0; }
+.presence-text > summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  user-select: none;
+}
+.presence-pre {
+  margin: 0.3rem 0 0;
+  white-space: pre;
+  overflow: auto;
+  max-height: 14rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.4rem 0.5rem;
+}
+.vs-current {
+  margin-top: 0.85rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.55rem;
+}
+.vs-current > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  user-select: none;
+}
 @media (max-width: 900px) {
   .diff-split { grid-template-columns: 1fr; }
   .diff-split .diff-pane + .diff-pane { border-left: 0; border-top: 1px solid var(--line); }

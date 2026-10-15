@@ -77,6 +77,18 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/renderSplitTextDiff|Side by side/);
     expect(client).toMatch(/bindDiffModeToggle/);
   });
+
+  it('renders added/removed nodes as single presence blocks', () => {
+    const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
+    expect(client).toMatch(/Node added/);
+    expect(client).toMatch(/Node removed/);
+    expect(client).toMatch(/renderPresenceNode/);
+    expect(client).toMatch(/vsCurrent|vs current flow/i);
+    expect(client).toMatch(/base snapshot/);
+    const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
+    expect(styles).toMatch(/\.node-presence/);
+    expect(styles).toMatch(/\.presence-pre/);
+  });
 });
 
 describe('ai-access sidebar TTL layout', () => {

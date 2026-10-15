@@ -133,6 +133,14 @@ export async function submitReplaceFlowProposal(
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
   }
 
+  // Snapshot the live tab at expectedRev so later diffs stay stable if the
+  // live flow moves (other approvals, editor edits, …).
+  const baseSnapshot = await adapter.getFlow(safeFlowId);
+  if (baseSnapshot.rev !== safeExpectedRev) {
+    throw new FlowRevisionConflictError(safeExpectedRev, baseSnapshot.rev, 'submit_proposal');
+  }
+  const safeBaseFlow = sanitizeFlowTab(baseSnapshot.flow) as Partial<FlowTab>;
+
   const createdBy: {
     kind: 'access-link';
     linkId: string;
@@ -152,6 +160,7 @@ export async function submitReplaceFlowProposal(
       flowId: safeFlowId,
       flow: safeFlow,
     },
+    baseFlow: safeBaseFlow,
     createdBy,
   });
 

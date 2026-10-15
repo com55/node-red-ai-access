@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- Proposal diffs compare against the **base flow snapshot** stored at submit
+  (`baseFlow`), so later approvals no longer make unrelated nodes look
+  “removed”. Pending+stale still warns and may include `vsCurrent`;
+  approved/rejected/failed never show the approve-would-fail banner.
+- Added/removed nodes in the `/mcp` UI render as single “Node added” / “Node
+  removed” blocks (properties collapsed; long text expandable).
 - Unknown paths under `/mcp/a/*` return JSON `{ code: not_found }` without
   echoing the access-link token (no HTML `Cannot GET`).
 - Draft `append` `totalBytes` counts **decoded** chunk bytes vs `maxBytes` (not

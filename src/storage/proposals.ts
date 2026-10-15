@@ -43,6 +43,12 @@ export interface Proposal {
   status: ProposalStatus;
   expectedRev: string;
   payload: ReplaceFlowPayload;
+  /**
+   * Flow tab snapshot at `expectedRev` when the proposal was submitted.
+   * Diffs compare `payload.flow` against this base (not the live flow).
+   * Optional on legacy proposals created before this field existed.
+   */
+  baseFlow?: Partial<FlowTab>;
   createdBy: ProposalCreator;
   createdAt: string;
   updatedAt: string;
@@ -55,6 +61,8 @@ export interface CreateProposalInput {
   type: ProposalType;
   expectedRev: string;
   payload: ReplaceFlowPayload;
+  /** Live flow tab at expectedRev (stored for stable diffs). */
+  baseFlow: Partial<FlowTab>;
   createdBy: ProposalCreator;
 }
 
@@ -127,6 +135,10 @@ export class ProposalStore {
     );
     const flowId = assertSafeSegment(String(proposal.payload.flowId).slice(0, 200), 'flowId');
     const flow = sanitizeFlowTab(proposal.payload.flow) as Partial<FlowTab>;
+    const baseFlow =
+      proposal.baseFlow !== undefined
+        ? (sanitizeFlowTab(proposal.baseFlow) as Partial<FlowTab>)
+        : undefined;
 
     const createdBy: ProposalCreator = {
       kind: 'access-link',
@@ -146,6 +158,9 @@ export class ProposalStore {
       createdAt: String(proposal.createdAt).slice(0, 64),
       updatedAt: String(proposal.updatedAt).slice(0, 64),
     };
+    if (baseFlow !== undefined) {
+      record.baseFlow = baseFlow;
+    }
 
     if (proposal.decidedBy) {
       const decidedBy: ProposalDecisionBy = { kind: 'admin' };
@@ -185,6 +200,7 @@ export class ProposalStore {
         flowId: input.payload.flowId,
         flow: input.payload.flow,
       },
+      baseFlow: input.baseFlow,
       createdBy: input.createdBy,
       createdAt: at,
       updatedAt: at,

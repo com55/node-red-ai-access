@@ -528,13 +528,18 @@ paths:
       tags: [Proposals]
       summary: Diff a proposal against the current flow
       description: |
-        Compares the proposal payload to the live flow tab. Returns counts of
-        added / removed / modified nodes, per-node change details, and
+        Compares the proposal payload to the **base flow snapshot** stored at
+        submit (`baseFlow` at `expectedRev`) — what the AI actually changed —
+        not the live editor flow. Returns counts of added / removed / modified
+        nodes. Added/removed nodes are single presence blocks with properties
+        (long text fields listed for expandable UI). Modified nodes include
         line-level diffs for text fields such as `func` and `template`.
-        Added and removed nodes include **all** comparable properties (long
-        text fields appear as all-added / all-removed line diffs).
-        `baseRevStale` is true when `expectedRev` does not match the current
-        revision (approve would fail with a revision conflict).
+
+        `baseRevStale` is true only for **pending** proposals when
+        `expectedRev` does not match the live revision (approve would fail).
+        Approved/rejected/failed proposals never set `baseRevStale`. When
+        pending and stale, `vsCurrent` optionally includes proposal-vs-live
+        sections for review.
 
         Admins with `read` can diff any proposal. Access-link clients can only
         diff proposals they created.
@@ -1137,6 +1142,12 @@ components:
           type: string
         payload:
           $ref: '#/components/schemas/ReplaceFlowPayload'
+        baseFlow:
+          $ref: '#/components/schemas/FlowTab'
+          description: |
+            Flow tab snapshot at `expectedRev` when the proposal was submitted.
+            Diffs compare `payload.flow` against this base. Omitted on legacy
+            proposals created before this field existed.
         createdBy:
           $ref: '#/components/schemas/ProposalCreator'
         createdAt:
@@ -1280,37 +1291,42 @@ components:
           type: string
         changes:
           type: array
-          description: |
-            For modified nodes: only changed properties.
-            For added nodes: every comparable property (text fields as all-added lines).
-            For removed nodes: every comparable property (text fields as all-removed lines).
+          description: Changed properties only (modified nodes).
           items:
             $ref: '#/components/schemas/ProposalDiffPropertyChange'
 
-    ProposalDiff:
+    ProposalDiffPresenceProperty:
       type: object
-      required:
-        - proposalId
-        - flowId
-        - expectedRev
-        - currentRev
-        - baseRevStale
-        - summary
-        - added
-        - removed
-        - modified
+      required: [key, kind, value]
       properties:
-        proposalId:
+        key:
           type: string
-        flowId:
+        kind:
           type: string
-        expectedRev:
+          enum: [scalar, text]
+        value: {}
+
+    ProposalDiffPresenceNode:
+      type: object
+      required: [id, type, properties]
+      description: |
+        Added or removed node as one block (UI: "Node added" / "Node removed").
+      properties:
+        id:
           type: string
-        currentRev:
+        type:
           type: string
-        baseRevStale:
-          type: boolean
-          description: True when expectedRev does not match the live flow revision
+        name:
+          type: string
+        properties:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffPresenceProperty'
+
+    ProposalDiffSections:
+      type: object
+      required: [summary, added, removed, modified]
+      properties:
         summary:
           type: object
           required: [added, removed, modified, tabChanges]
@@ -1328,15 +1344,51 @@ components:
         added:
           type: array
           items:
-            $ref: '#/components/schemas/ProposalDiffModifiedNode'
+            $ref: '#/components/schemas/ProposalDiffPresenceNode'
         removed:
           type: array
           items:
-            $ref: '#/components/schemas/ProposalDiffModifiedNode'
+            $ref: '#/components/schemas/ProposalDiffPresenceNode'
         modified:
           type: array
           items:
             $ref: '#/components/schemas/ProposalDiffModifiedNode'
+
+    ProposalDiff:
+      allOf:
+        - $ref: '#/components/schemas/ProposalDiffSections'
+        - type: object
+          required:
+            - proposalId
+            - flowId
+            - expectedRev
+            - currentRev
+            - baseRevStale
+            - compareAgainst
+          properties:
+            proposalId:
+              type: string
+            flowId:
+              type: string
+            expectedRev:
+              type: string
+            currentRev:
+              type: string
+            baseRevStale:
+              type: boolean
+              description: |
+                True only for pending proposals when expectedRev ≠ live rev.
+                Never true for approved/rejected/failed.
+            compareAgainst:
+              type: string
+              enum: [base, current]
+            baseSnapshotMissing:
+              type: boolean
+              description: True for legacy proposals without a stored baseFlow
+            vsCurrent:
+              $ref: '#/components/schemas/ProposalDiffSections'
+              description: |
+                Present when pending and baseRevStale — proposal vs live flow.
 
     AuditActor:
       oneOf:

@@ -54,6 +54,7 @@ describe('ProposalStore + ProposalService', () => {
         flowId: 'tab-1',
         flow: { label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
       },
+      baseFlow: { id: 'tab-1', type: 'tab', label: 'Old', nodes: [{ id: 'n1', type: 'inject' }] },
       createdBy: { kind: 'access-link', linkId: 'link-1', label: 'bot' },
     });
   }
@@ -61,6 +62,7 @@ describe('ProposalStore + ProposalService', () => {
   it('persists proposals as JSON and lists them', () => {
     const created = createPending();
     expect(store.get(created.id).status).toBe('pending');
+    expect(store.get(created.id).baseFlow).toMatchObject({ label: 'Old' });
     expect(store.list()).toHaveLength(1);
     expect(store.list({ linkId: 'other' })).toHaveLength(0);
   });

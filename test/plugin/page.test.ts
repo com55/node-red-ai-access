@@ -139,6 +139,8 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
     expect(res.text).toMatch(/Side by side|data-diff-mode/);
     expect(res.text).toMatch(/diff-split|diff-line/);
+    expect(res.text).toMatch(/Node added|Node removed/);
+    expect(res.text).toMatch(/base snapshot|vsCurrent/);
   });
 
   it('keeps /mcp/api/v1/status behind admin auth', async () => {
