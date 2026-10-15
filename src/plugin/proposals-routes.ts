@@ -13,6 +13,7 @@ import {
   type ProposalStore,
 } from '../storage/proposals.js';
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
+import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
@@ -95,23 +96,31 @@ export function createProposalHandler(store: ProposalStore, audit: AuditLog) {
       createdBy.label = req.accessLink.label;
     }
 
-    const proposal = store.create({
-      type: 'replace_flow',
-      expectedRev: safeExpectedRev,
-      payload: {
+    try {
+      const proposal = store.create({
+        type: 'replace_flow',
+        expectedRev: safeExpectedRev,
+        payload: {
+          flowId: safeFlowId,
+          flow: safeFlow,
+        },
+        createdBy,
+      });
+
+      audit.append('proposal.created', createdBy, {
+        proposalId: proposal.id,
         flowId: safeFlowId,
-        flow: safeFlow,
-      },
-      createdBy,
-    });
+        expectedRev: safeExpectedRev,
+      });
 
-    audit.append('proposal.created', createdBy, {
-      proposalId: proposal.id,
-      flowId: safeFlowId,
-      expectedRev: safeExpectedRev,
-    });
-
-    res.status(201).json(proposal);
+      res.status(201).json(proposal);
+    } catch (error) {
+      if (error instanceof StoragePayloadTooLargeError) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
+      throw error;
+    }
   };
 }
 
@@ -163,7 +172,8 @@ export function approveProposalHandler(service: ProposalService) {
       if (
         error instanceof ProposalNotFoundError ||
         error instanceof ProposalNotPendingError ||
-        error instanceof ProposalConcurrentApproveError
+        error instanceof ProposalConcurrentApproveError ||
+        error instanceof StoragePayloadTooLargeError
       ) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
@@ -186,7 +196,11 @@ export function rejectProposalHandler(service: ProposalService) {
       const proposal = service.reject(id, adminActor(req), reason);
       res.json(proposal);
     } catch (error) {
-      if (error instanceof ProposalNotFoundError || error instanceof ProposalNotPendingError) {
+      if (
+        error instanceof ProposalNotFoundError ||
+        error instanceof ProposalNotPendingError ||
+        error instanceof StoragePayloadTooLargeError
+      ) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }

@@ -2,11 +2,12 @@
  * Append-only JSONL audit log under `.ai-access/logs/`.
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AiAccessPaths } from './paths.js';
 import { sanitizeAuditDetails } from './safe.js';
+import { MAX_AUDIT_APPEND_BYTES, appendTrusted, encodeTrustedJson } from './trusted-write.js';
 
 export type AuditActor =
   | { kind: 'access-link'; linkId: string; label?: string }
@@ -46,13 +47,17 @@ function sanitizeActor(actor: AuditActor): AuditActor {
 
 export class AuditLog {
   private readonly filePath: string;
+  private readonly now: () => number;
+  private readonly maxAppendBytes: number;
   private seq = 0;
 
   constructor(
     private readonly paths: AiAccessPaths,
-    private readonly now: () => number = () => Date.now()
+    options: { now?: () => number; maxAppendBytes?: number } = {}
   ) {
     this.filePath = join(paths.logs, 'audit.jsonl');
+    this.now = options.now ?? (() => Date.now());
+    this.maxAppendBytes = options.maxAppendBytes ?? MAX_AUDIT_APPEND_BYTES;
   }
 
   append(action: string, actor: AuditActor, details?: Record<string, unknown>): AuditEntry {
@@ -67,10 +72,8 @@ export class AuditLog {
     if (details !== undefined) {
       entry.details = sanitizeAuditDetails(details);
     }
-    // Append-only audit trail under userDir/.ai-access/logs after field
-    // allowlisting above. Callers are auth-gated admin / access-link routes.
-    // codeql[js/file-write]
-    appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+    const payload = encodeTrustedJson(entry, this.maxAppendBytes, { kind: 'audit' });
+    appendTrusted(this.paths.root, this.filePath, payload);
     return entry;
   }
 
