@@ -584,13 +584,6 @@ jobs:
         # Deploy Swagger UI to GitHub Pages
 ```
 
-## Related ADRs
-
-- [ADR-001: MCP Transport Layer Selection](./001-mcp-transport-selection.md) -
-  API design
-- [ADR-011: SSE Implementation Completion](./011-sse-implementation-completion.md) -
-  SSE documentation needs
-
 ## References
 
 - [OpenAPI Specification 3.1](https://spec.openapis.org/oas/v3.1.0)

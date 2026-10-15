@@ -256,8 +256,6 @@ e2e/
 
 ## Related ADRs
 
-- [ADR-001: MCP Transport Layer Selection](./001-mcp-transport-selection.md) -
-  Testing multiple transport methods
 - [ADR-002: TypeScript Build System with tsup](./002-typescript-build-system.md) -
   Testing build outputs
 - [ADR-005: Security Architecture and Validation](./005-security-architecture.md) -
