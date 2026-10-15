@@ -337,6 +337,11 @@ function pageClientScriptPartAFormat(): string {
     }
     return s;
   }
+`;
+}
+
+function pageClientScriptPartAAudit(): string {
+  return `
   function auditProposalLabel(d, atIso) {
     // Never render API displayName (server TZ). Rebuild from title + entry.at.
     var title = d.title || (d.displayName ? titleFromDisplayName(d.displayName) : '');
@@ -1031,11 +1036,15 @@ function pageClientScriptPartBDiffView(): string {
         '<code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>' +
         '</div></div>';
     }
-    return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
       '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
       ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
   }
+`;
+}
 
+function pageClientScriptPartBDiffView2(): string {
+  return `
   function renderDiffSections(sections, mode, emptyMsg) {
     var parts = '';
     if (sections.added && sections.added.length) {
@@ -1237,7 +1246,11 @@ function pageClientScriptPartB2(): string {
       '>Warning: full restarts the entire runtime.</p>' +
       '</details>';
   }
+`;
+}
 
+function pageClientScriptPartB2Cards(): string {
+  return `
   function renderProposalCard(p) {
     var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
     var flowLabel = flowLabelOf(p);
@@ -1336,7 +1349,11 @@ function pageClientScriptPartB2(): string {
     bindProposalActions(list);
     focusProposalFromHash();
   }
+`;
+}
 
+function pageClientScriptPartB2Focus(): string {
+  return `
   async function loadProposals() {
     if (!aiOn) return;
     var flash = $('proposals-flash');
@@ -1401,7 +1418,11 @@ function pageClientScriptPartB2(): string {
     replaceLocationHash('#proposals');
     return true;
   }
+`;
+}
 
+function pageClientScriptPartB2Apply(): string {
+  return `
   function bindDiffModeToggle(host, diff) {
     host.querySelectorAll('[data-diff-mode]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -1597,7 +1618,11 @@ function pageClientScriptPartC(): string {
       showToast(e.message || String(e), false);
     }
   }
+`;
+}
 
+function pageClientScriptPartCLogs(): string {
+  return `
   var cachedLogs = [];
 
   function renderLogsTable(logs) {
@@ -1660,7 +1685,6 @@ function pageClientScriptPartC(): string {
       showFlash(flash, e.message || String(e), false);
     }
   }
-
 `;
 }
 
@@ -1768,7 +1792,11 @@ function pageClientScriptPartD(): string {
       });
     }
   }
+`;
+}
 
+function pageClientScriptPartDBoot(): string {
+  return `
   async function boot() {
     accessToken = readEditorToken();
     if (!accessToken) {
@@ -1871,14 +1899,21 @@ export function pageClientScript(): string {
     pageClientScriptPartA() +
     pageClientScriptPartATimeCopy() +
     pageClientScriptPartAFormat() +
+    pageClientScriptPartAAudit() +
     pageClientScriptPartATabs() +
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
     pageClientScriptPartBDiff() +
     pageClientScriptPartBDiffPresence() +
     pageClientScriptPartBDiffView() +
+    pageClientScriptPartBDiffView2() +
     pageClientScriptPartB2() +
+    pageClientScriptPartB2Cards() +
+    pageClientScriptPartB2Focus() +
+    pageClientScriptPartB2Apply() +
     pageClientScriptPartC() +
-    pageClientScriptPartD()
+    pageClientScriptPartCLogs() +
+    pageClientScriptPartD() +
+    pageClientScriptPartDBoot()
   ).trim();
 }

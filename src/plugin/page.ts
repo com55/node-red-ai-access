@@ -27,33 +27,8 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;');
 }
 
-/**
- * Boot shell: no server-side session required. Client authenticates via the
- * editor token in localStorage and loads status/actions over the REST API.
- */
-export function renderMcpPage(options: RenderMcpPageOptions): string {
-  const config = {
-    apiBase: options.apiBase,
-    mcpRpc: options.mcpRpc ?? '/mcp/rpc',
-    editorRoot: options.editorRoot,
-    authTokenKey: options.authTokenKey,
-  };
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
-  <meta http-equiv="Pragma" content="no-cache" />
-  <title>Node-RED AI Access</title>
-  <style>${pageStyles()}</style>
-</head>
-<body>
-  <main
-    id="mcp-root"
-    data-config="${escapeHtml(JSON.stringify(config))}"
-  >
+function renderMcpPageHeader(): string {
+  return `
     <header class="page-header">
       <h1>Node-RED AI Access</h1>
       <p class="lede">
@@ -82,8 +57,11 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
         Proposals <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>
       </button>
       <button type="button" data-tab="logs" aria-selected="false">Audit log</button>
-    </nav>
+    </nav>`;
+}
 
+function renderMcpPageStatusSection(): string {
+  return `
     <section class="panel active" id="section-status" aria-label="Status" hidden>
       <h2>Status</h2>
       <div id="status-flash" class="flash" hidden></div>
@@ -125,8 +103,11 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
       <div class="row" style="margin-top:1rem">
         <button type="button" class="action secondary" id="refresh-status">Refresh</button>
       </div>
-    </section>
+    </section>`;
+}
 
+function renderMcpPageLinksSection(): string {
+  return `
     <section class="panel" id="section-links" aria-label="Access links" hidden>
       <h2>Access links</h2>
       <p class="muted" id="links-intro">
@@ -136,8 +117,11 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
       <div id="links-flash" class="flash" hidden></div>
       <div id="links-manage"></div>
       <div id="links-list"></div>
-    </section>
+    </section>`;
+}
 
+function renderMcpPageProposalsSection(): string {
+  return `
     <section class="panel" id="section-proposals" aria-label="Proposals" hidden>
       <h2>Proposals</h2>
       <p id="proposals-hint" class="muted"></p>
@@ -151,8 +135,11 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
       </div>
       <div id="proposals-flash" class="flash" hidden></div>
       <div id="proposals-list"><p class="muted">Loading…</p></div>
-    </section>
+    </section>`;
+}
 
+function renderMcpPageLogsSection(): string {
+  return `
     <section class="panel" id="section-logs" aria-label="Audit log" hidden>
       <h2>Audit log</h2>
       <div id="logs-flash" class="flash" hidden></div>
@@ -168,8 +155,11 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
         </label>
       </div>
       <div id="logs-list"><p class="muted">Loading…</p></div>
-    </section>
+    </section>`;
+}
 
+function renderMcpPageDialogs(): string {
+  return `
     <dialog id="reject-dialog">
       <form method="dialog" id="reject-form">
         <h3>Reject proposal</h3>
@@ -196,7 +186,41 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
           <button type="submit" value="confirm" class="action danger" id="delete-confirm-btn" disabled>Approve &amp; deploy</button>
         </div>
       </form>
-    </dialog>
+    </dialog>`;
+}
+
+/**
+ * Boot shell: no server-side session required. Client authenticates via the
+ * editor token in localStorage and loads status/actions over the REST API.
+ */
+export function renderMcpPage(options: RenderMcpPageOptions): string {
+  const config = {
+    apiBase: options.apiBase,
+    mcpRpc: options.mcpRpc ?? '/mcp/rpc',
+    editorRoot: options.editorRoot,
+    authTokenKey: options.authTokenKey,
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>Node-RED AI Access</title>
+  <style>${pageStyles()}</style>
+</head>
+<body>
+  <main
+    id="mcp-root"
+    data-config="${escapeHtml(JSON.stringify(config))}"
+  >${renderMcpPageHeader()}
+${renderMcpPageStatusSection()}
+${renderMcpPageLinksSection()}
+${renderMcpPageProposalsSection()}
+${renderMcpPageLogsSection()}
+${renderMcpPageDialogs()}
   </main>
   <script>${pageClientScript()}</script>
 </body>

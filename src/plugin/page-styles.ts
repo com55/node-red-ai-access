@@ -69,6 +69,11 @@ h1 {
   text-decoration: none;
   text-align: center;
 }
+`;
+}
+
+function pageStylesPartA2(): string {
+  return `
 nav.tabs {
   position: sticky;
   top: 0;
@@ -785,6 +790,11 @@ function pageStylesPartG(): string {
   width: 100%;
   max-width: 28rem;
 }
+`;
+}
+
+function pageStylesPartH(): string {
+  return `
 .toast-host {
   position: fixed;
   right: 1rem;
@@ -860,11 +870,13 @@ dialog h3 { margin: 0 0 0.4rem; }
 export function pageStyles(): string {
   return (
     pageStylesPartA() +
+    pageStylesPartA2() +
     pageStylesPartB() +
     pageStylesPartC() +
     pageStylesPartD() +
     pageStylesPartE() +
     pageStylesPartF() +
-    pageStylesPartG()
+    pageStylesPartG() +
+    pageStylesPartH()
   ).trim();
 }
