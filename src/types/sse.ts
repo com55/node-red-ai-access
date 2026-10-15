@@ -2,11 +2,13 @@
  * Server-Sent Events (SSE) type definitions
  */
 
+import type { Request, Response } from 'express';
+
 import { NodeRedEvent } from './nodered.js';
 
 export interface SSEConnection {
   id: string;
-  response: any; // Express Response object
+  response: Response;
   userId?: string | undefined;
   clientInfo: {
     userAgent?: string | undefined;
@@ -118,7 +120,7 @@ export interface SSEError {
 export type SSEEvent = NodeRedEvent | SSEHeartbeat | SSESystemInfo | SSEConnectionStatus | SSEError;
 
 export interface SSEMiddlewareOptions {
-  auth?: (req: any) => Promise<boolean> | boolean;
+  auth?: (req: Request) => Promise<boolean> | boolean;
   rateLimit?: {
     windowMs: number;
     max: number;

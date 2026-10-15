@@ -46,8 +46,12 @@ describe('NodeRedWsClient', () => {
   let mockSSE: ReturnType<typeof makeSSEHandler>;
 
   beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      /* empty */
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {
+      /* empty */
+    });
     // mockReset (vitest.config) clears return values between tests; restore default.
     vi.mocked(resolveNodeRedAuthHeader).mockResolvedValue({});
     vi.mocked(resolveNodeRedAuthToken).mockResolvedValue(undefined);

@@ -52,8 +52,12 @@ function startWss(): Promise<{
 
 describe('NodeErrorChecker', () => {
   beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      /* empty */
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {
+      /* empty */
+    });
     vi.mocked(resolveNodeRedAuthHeader).mockResolvedValue({});
     vi.mocked(resolveNodeRedAuthToken).mockResolvedValue(undefined);
   });
@@ -249,7 +253,9 @@ describe('NodeErrorChecker', () => {
 
     // Server accepts the connection but never sends { auth: 'ok' } or any
     // status frame — this is the previously-silent false-negative case.
-    wss.on('connection', () => {});
+    wss.on('connection', () => {
+      /* empty */
+    });
 
     const result = await checker.check({ timeoutMs: 100 });
 

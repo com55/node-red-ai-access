@@ -112,7 +112,8 @@ export class OAuthServer {
    * requiring it.
    */
   private registerDefaultClients(): void {
-    const claudeClientId = process.env.OAUTH_CLAUDE_CLIENT_ID || 'claude-ai-client';
+    const envClientId = process.env.OAUTH_CLAUDE_CLIENT_ID;
+    const claudeClientId = envClientId && envClientId.length > 0 ? envClientId : 'claude-ai-client';
 
     this.clients.set(claudeClientId, {
       clientId: claudeClientId,
@@ -240,7 +241,7 @@ export class OAuthServer {
 
   // ── PKCE ─────────────────────────────────────────────────────────────────
 
-  verifyCodeChallenge(verifier: string, challenge: string, method: 'S256'): boolean {
+  verifyCodeChallenge(verifier: string, challenge: string, _method: 'S256'): boolean {
     // RFC 7636: verifier must be 43-128 chars, unreserved characters only
     if (verifier.length < 43 || verifier.length > 128) return false;
     if (!/^[A-Za-z0-9\-._~]*$/.test(verifier)) return false;
@@ -250,6 +251,8 @@ export class OAuthServer {
 
   // ── Express Router ────────────────────────────────────────────────────────
 
+  // Structural: OAuth routes share one router; splitting further obscures the auth surface.
+  // eslint-disable-next-line max-lines-per-function -- single OAuth router surface
   createRouter(baseUrl: string): Router {
     const router = createRouter();
 
@@ -300,7 +303,7 @@ export class OAuthServer {
       }
 
       const client = this.registerClient({
-        name: client_name || 'Unknown Client',
+        name: client_name && client_name.length > 0 ? client_name : 'Unknown Client',
         redirectUris: redirect_uris,
         scopes: scope ? scope.split(' ') : ['mcp:read', 'mcp:write'],
       });
@@ -328,6 +331,7 @@ export class OAuthServer {
         .replace(/'/g, '&#x27;');
 
     // GET /authorize — show login form for the user to enter Node-RED credentials
+    // eslint-disable-next-line max-lines-per-function, complexity -- authorize HTML form handler
     const handleAuthorizeGet = async (req: Request, res: Response): Promise<void> => {
       const {
         client_id,
@@ -469,7 +473,8 @@ export class OAuthServer {
 
       // Show the Node-RED credential form — user must submit credentials
       const defaultUrl = process.env.NODERED_URL ?? '';
-      const errorMsg = (req.query.error as string) ?? '';
+      const errorRaw = req.query.error;
+      const errorMsg = typeof errorRaw === 'string' ? errorRaw : '';
       // Allow embedding from claude.ai (removes frame restrictions)
       res.removeHeader('X-Frame-Options');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -556,7 +561,7 @@ export class OAuthServer {
       var body = new URLSearchParams({
         _json: '1',
         client_id: ${JSON.stringify(client_id)},
-        redirect_uri: ${JSON.stringify(redirect_uri ?? '')},
+        redirect_uri: ${JSON.stringify(redirect_uri)},
         response_type: 'code',
         state: ${JSON.stringify(state ?? '')},
         scope: ${JSON.stringify(scope ?? '')},

@@ -10,7 +10,6 @@ import {
   retryWithCircuitBreaker,
   retriable,
   withTimeout,
-  type RetryOptions,
 } from './retry';
 
 describe('retryWithBackoff', () => {

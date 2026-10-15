@@ -7,14 +7,16 @@ import dotenv from 'dotenv';
 
 // Load environment variables silently - suppress all dotenv output
 const originalConsoleLog = console.log;
-console.log = () => {}; // Temporarily suppress console.log
+console.log = () => {
+  /* empty */
+}; // Temporarily suppress console.log
 dotenv.config();
 console.log = originalConsoleLog; // Restore console.log
 import { ExpressApp } from './server/express-app.js';
 import { McpNodeRedServer } from './server/mcp-server.js';
 
 // Configuration from environment variables
-const transport = process.env.MCP_TRANSPORT || 'stdio';
+const transport = process.env.MCP_TRANSPORT ?? 'stdio';
 const httpEnabled = process.env.HTTP_ENABLED === 'true' || transport === 'http';
 
 // No logging function needed

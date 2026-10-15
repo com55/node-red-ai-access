@@ -21,7 +21,7 @@ export const debugFlowPrompt: PromptDefinition<typeof argsSchema> = {
   ],
   argsSchema,
   render: ({ flowId, symptom }) => {
-    const symptomLine = symptom?.trim() || 'none';
+    const symptomLine = symptom?.trim() ?? 'none';
     const text = [
       'You are debugging a Node-RED flow.',
       '',

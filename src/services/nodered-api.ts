@@ -4,7 +4,7 @@
 
 import https from 'https';
 
-import axios, { AxiosInstance, AxiosResponse, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
@@ -16,7 +16,6 @@ import {
   NodeRedRuntimeInfo,
   NodeRedFlowStatus,
   NodeRedDeploymentOptions,
-  NodeRedAPIError,
 } from '../types/nodered.js';
 import {
   resolveNodeRedAuthHeader,
@@ -33,6 +32,14 @@ export interface NodeRedAPIConfig {
   timeout: number;
   retries: number;
   headers?: Record<string, string>;
+}
+
+/** Axios request config extended with interceptor retry bookkeeping. */
+interface RetryAxiosRequestConfig extends InternalAxiosRequestConfig {
+  _retry?: boolean;
+  _retryCount?: number;
+  _authRetry?: boolean;
+  _htmlRetryCount?: number;
 }
 
 // Add new interfaces for module management
@@ -58,6 +65,36 @@ export interface ModuleInstallResult {
   module: string;
   version?: string | undefined;
   message: string;
+}
+
+/** npm registry `/-/v1/search` package hit (fields we read). */
+interface NpmSearchPackage {
+  name: string;
+  version: string;
+  description?: string;
+  date?: string;
+  keywords?: string[];
+  author?: { name?: string };
+  publisher?: { name?: string };
+  links?: { repository?: string };
+}
+
+interface NpmSearchObject {
+  package: NpmSearchPackage;
+  score?: { detail?: { popularity?: number } };
+}
+
+interface NpmSearchResponse {
+  objects: NpmSearchObject[];
+}
+
+export interface NodeRedAuthTokenResponse {
+  access_token: string;
+}
+
+export interface NodeRedHealthCheckResult {
+  healthy: boolean;
+  details: Record<string, unknown>;
 }
 
 // Single path segment: alphanumeric, dash, underscore, dot only (no '/', no '..')
@@ -153,10 +190,13 @@ export function replaceFlowTabInFlatFlows(
   if (flowData.env !== undefined) tabNode.env = flowData.env;
 
   const children: NodeRedNode[] = [];
-  for (const node of flowData.nodes ?? []) {
-    if (!node || typeof node !== 'object') {
+  // Treat as unknown[] so runtime guards stay meaningful under strict lint.
+  const nodeEntries: unknown[] = flowData.nodes ?? [];
+  for (const entry of nodeEntries) {
+    if (!entry || typeof entry !== 'object') {
       throw new Error('Every entry in flowData.nodes must be a node object');
     }
+    const node = entry as NodeRedNode;
     if (typeof node.id !== 'string' || node.id.length === 0) {
       throw new Error('Every node in flowData.nodes needs a non-empty string id');
     }
@@ -165,17 +205,19 @@ export function replaceFlowTabInFlatFlows(
     }
     children.push({ ...node, z: flowId });
   }
-  for (const config of flowData.configs ?? []) {
-    if (!config || typeof config !== 'object') {
+  const configEntries: unknown[] = flowData.configs ?? [];
+  for (const entry of configEntries) {
+    if (!entry || typeof entry !== 'object') {
       throw new Error('Every entry in flowData.configs must be a node object');
     }
+    const config = entry as NodeRedNode;
     if (typeof config.id !== 'string' || config.id.length === 0) {
       throw new Error('Every config in flowData.configs needs a non-empty string id');
     }
     if (typeof config.type !== 'string' || config.type.length === 0) {
       throw new Error(`Config '${config.id}' in flowData.configs needs a non-empty string type`);
     }
-    children.push({ ...(config as NodeRedNode), z: flowId });
+    children.push({ ...config, z: flowId });
   }
 
   const kept = flows.filter(node => node.id !== flowId && node.z !== flowId);
@@ -366,9 +408,9 @@ export class NodeRedAPIClient {
 
   constructor(config: Partial<NodeRedAPIConfig> = {}) {
     this.config = {
-      baseURL: process.env.NODERED_URL || 'http://localhost:1880',
-      timeout: parseInt(process.env.NODERED_TIMEOUT || '5000'),
-      retries: parseInt(process.env.NODERED_RETRIES || '3'),
+      baseURL: process.env.NODERED_URL ?? 'http://localhost:1880',
+      timeout: parseInt(process.env.NODERED_TIMEOUT ?? '5000'),
+      retries: parseInt(process.env.NODERED_RETRIES ?? '3'),
       ...config,
     };
     this.hasExplicitAuthOverride = Boolean(this.config.headers?.Authorization);
@@ -450,9 +492,10 @@ export class NodeRedAPIClient {
   /**
    * Validate that response contains JSON, not HTML
    */
-  private validateJsonResponse(response: any, endpoint: string): void {
-    const contentType = response.headers['content-type'] || '';
-    const data = response.data;
+  private validateJsonResponse(response: AxiosResponse, endpoint: string): void {
+    const rawContentType = response.headers['content-type'];
+    const contentType = typeof rawContentType === 'string' ? rawContentType : '';
+    const data: unknown = response.data;
 
     // Check if content-type indicates HTML
     if (contentType.includes('text/html')) {
@@ -487,6 +530,8 @@ export class NodeRedAPIClient {
         }
         return config;
       },
+      // Axios may reject with non-Error values; preserve the reason identity.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- interceptor contract
       error => Promise.reject(error)
     );
 
@@ -496,15 +541,18 @@ export class NodeRedAPIClient {
         // Skip validation for root endpoint (which returns HTML by design)
         if (!response.config.url?.endsWith('/')) {
           try {
-            this.validateJsonResponse(response, response.config.url || 'unknown');
-          } catch (validationError: any) {
+            this.validateJsonResponse(response, response.config.url ?? 'unknown');
+          } catch (validationError: unknown) {
             // Silent validation warning to avoid stdio interference
             // For HTML responses on API endpoints, we'll retry once more
-            const config = response.config as any;
-            if (config._htmlRetryCount < 1) {
-              config._htmlRetryCount = (config._htmlRetryCount || 0) + 1;
+            const config = response.config as RetryAxiosRequestConfig;
+            // undefined ?? NaN → NaN < 1 === false (same as original undefined < 1).
+            if ((config._htmlRetryCount ?? NaN) < 1) {
+              config._htmlRetryCount = (config._htmlRetryCount ?? 0) + 1;
               // Small delay before retry
-              setTimeout(() => {}, 500);
+              setTimeout(() => {
+                /* empty */
+              }, 500);
               return this.client(response.config);
             } else {
               // If we still get HTML after retry, throw the validation error
@@ -514,11 +562,21 @@ export class NodeRedAPIClient {
         }
         return response;
       },
-      async error => {
-        const config = error.config;
+      async (error: unknown) => {
+        // Tests and axios both may pass plain objects; narrow without requiring AxiosError.
+        const axiosError = error as {
+          config?: RetryAxiosRequestConfig;
+          response?: { status?: number };
+        };
+        const maybeConfig = axiosError.config;
+        if (maybeConfig == null) {
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- preserve rejection identity
+          return Promise.reject(error);
+        }
+        const config: RetryAxiosRequestConfig = maybeConfig;
 
         if (
-          error.response?.status === 401 &&
+          axiosError.response?.status === 401 &&
           !config._authRetry &&
           !this.hasExplicitAuthOverride &&
           (isNodeRedAdminAuthEnabled() || validateNodeRedAuth().type === 'bearer')
@@ -531,9 +589,10 @@ export class NodeRedAPIClient {
           return this.client(config);
         }
 
-        if (!config._retry && config._retryCount < this.config.retries) {
+        // undefined ?? NaN → NaN < n === false (same as original undefined < n).
+        if (!config._retry && (config._retryCount ?? NaN) < this.config.retries) {
           config._retry = true;
-          config._retryCount = (config._retryCount || 0) + 1;
+          config._retryCount = (config._retryCount ?? 0) + 1;
 
           // Exponential backoff
           const delay = Math.pow(2, config._retryCount) * 1000;
@@ -542,6 +601,7 @@ export class NodeRedAPIClient {
           return this.client(config);
         }
 
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- preserve rejection identity
         return Promise.reject(error);
       }
     );
@@ -623,16 +683,17 @@ export class NodeRedAPIClient {
    * Get all flows
    */ async getFlows(): Promise<NodeRedFlow[]> {
     try {
-      const response = await this.client.get('/flows');
+      const response = await this.client.get<unknown>('/flows');
+      const data = response.data;
 
       // Additional validation for the flows response
-      if (!Array.isArray(response.data)) {
-        if (typeof response.data === 'string' && response.data.includes('Node-RED')) {
-          throw unexpectedBody(response.data, 'flow data');
+      if (!Array.isArray(data)) {
+        if (typeof data === 'string' && data.includes('Node-RED')) {
+          throw unexpectedBody(data, 'flow data');
         }
       }
 
-      return response.data;
+      return data as NodeRedFlow[];
     } catch (error) {
       handleNodeRedError(error, 'getFlows');
     }
@@ -650,7 +711,7 @@ export class NodeRedAPIClient {
       const userFlows = fullFlows.filter(flow => {
         // Determine the flow type (tab, subflow, or config node type)
         const hasNodes = Array.isArray(flow.nodes);
-        const flowType = flow.type || (hasNodes ? 'tab' : 'unknown');
+        const flowType = flow.type ?? (hasNodes ? 'tab' : 'unknown');
 
         // Check if this flow type is in the requested types
         const isRequestedType = types.includes(flowType);
@@ -664,12 +725,12 @@ export class NodeRedAPIClient {
       });
 
       return userFlows.map(flow => {
-        const status = flowStatus?.flows?.find(f => f.id === flow.id);
+        const status = flowStatus?.flows.find(f => f.id === flow.id);
 
         // Build summary object with only meaningful properties
         const summary: NodeRedFlowSummary = {
           id: flow.id,
-          disabled: flow.disabled || false,
+          disabled: flow.disabled ?? false,
           status: flow.disabled ? 'inactive' : status?.state === 'stop' ? 'inactive' : 'active',
         };
 
@@ -684,7 +745,7 @@ export class NodeRedAPIClient {
         }
 
         // Only add nodeCount if it's meaningful (> 0)
-        const nodeCount = flow.nodes?.length || 0;
+        const nodeCount = flow.nodes.length || 0;
         if (nodeCount > 0) {
           summary.nodeCount = nodeCount;
         }
@@ -701,8 +762,8 @@ export class NodeRedAPIClient {
    */
   async getFlow(flowId: string): Promise<NodeRedFlow> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      const response = await this.client.get(`/flow/${flowId}`);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const response = await this.client.get<NodeRedFlow>(`/flow/${safeFlowId}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getFlow(${flowId})`);
@@ -717,14 +778,14 @@ export class NodeRedAPIClient {
       // Ensure the flow has a unique ID
       const flowToCreate = {
         ...flowData,
-        id: flowData.id || this.generateUniqueFlowId(),
-        type: flowData.type || 'tab',
+        id: flowData.id ?? this.generateUniqueFlowId(),
+        type: flowData.type ?? 'tab',
       };
 
       // Ensure all nodes have unique IDs
       const flowWithUniqueIds = this.ensureUniqueNodeIds(flowToCreate);
 
-      const response = await this.client.post('/flow', flowWithUniqueIds);
+      const response = await this.client.post<NodeRedFlow>('/flow', flowWithUniqueIds);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, 'createFlow');
@@ -736,8 +797,8 @@ export class NodeRedAPIClient {
    */
   async updateFlow(flowId: string, flowData: Partial<NodeRedFlow>): Promise<NodeRedFlow> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      const response = await this.client.put(`/flow/${flowId}`, flowData);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const response = await this.client.put<NodeRedFlow>(`/flow/${safeFlowId}`, flowData);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `updateFlow(${flowId})`);
@@ -751,19 +812,15 @@ export class NodeRedAPIClient {
    */
   async getFlowsWithRev(): Promise<{ rev: string; flows: NodeRedNode[] }> {
     try {
-      const response = await this.client.get('/flows', {
+      const response = await this.client.get<unknown>('/flows', {
         headers: { 'Node-RED-API-Version': 'v2' },
       });
       const data = response.data;
-      if (
-        !data ||
-        typeof data !== 'object' ||
-        typeof data.rev !== 'string' ||
-        !Array.isArray(data.flows)
-      ) {
+      const obj = asObject(data);
+      if (!obj || typeof obj.rev !== 'string' || !Array.isArray(obj.flows)) {
         throw unexpectedBody(data, 'v2 flow data');
       }
-      return { rev: data.rev, flows: data.flows };
+      return { rev: obj.rev, flows: obj.flows as NodeRedNode[] };
     } catch (error) {
       handleNodeRedError(error, 'getFlowsWithRev');
     }
@@ -831,7 +888,7 @@ export class NodeRedAPIClient {
     }
   ): Promise<{ rev: string }> {
     this.assertSafeSegment(flowId, 'flowId');
-    if (typeof options?.expectedRev !== 'string' || options.expectedRev.length === 0) {
+    if (typeof options.expectedRev !== 'string' || options.expectedRev.length === 0) {
       throw new Error('expectedRev is required (non-empty string from get_flows / get_flow)');
     }
     const { rev: currentRev, flows } = await this.getFlowsWithRev();
@@ -850,8 +907,8 @@ export class NodeRedAPIClient {
    */
   async deleteFlow(flowId: string): Promise<void> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      await this.client.delete(`/flow/${flowId}`);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      await this.client.delete(`/flow/${safeFlowId}`);
     } catch (error) {
       handleNodeRedError(error, `deleteFlow(${flowId})`);
     }
@@ -875,17 +932,18 @@ export class NodeRedAPIClient {
   ): Promise<{ rev: string }> {
     try {
       if (options.type === 'reload') {
-        const response = await this.client.post('/flows', undefined, {
+        const response = await this.client.post<unknown>('/flows', undefined, {
           headers: {
             'Node-RED-API-Version': 'v2',
             'Node-RED-Deployment-Type': 'reload',
           },
         });
         const data = response.data;
-        if (!data || typeof data !== 'object' || typeof data.rev !== 'string') {
+        const obj = asObject(data);
+        if (!obj || typeof obj.rev !== 'string') {
           throw unexpectedBody(data, 'v2 deploy response');
         }
-        return { rev: data.rev };
+        return { rev: obj.rev };
       }
 
       let rev = options.rev;
@@ -908,17 +966,18 @@ export class NodeRedAPIClient {
         body.credentials = options.credentials;
       }
 
-      const response = await this.client.post('/flows', body, {
+      const response = await this.client.post<unknown>('/flows', body, {
         headers: {
           'Node-RED-API-Version': 'v2',
           'Node-RED-Deployment-Type': options.type,
         },
       });
       const data = response.data;
-      if (!data || typeof data !== 'object' || typeof data.rev !== 'string') {
+      const obj = asObject(data);
+      if (!obj || typeof obj.rev !== 'string') {
         throw unexpectedBody(data, 'v2 deploy response');
       }
-      return { rev: data.rev };
+      return { rev: obj.rev };
     } catch (error) {
       handleNodeRedError(error, 'deployFlows');
     }
@@ -963,7 +1022,7 @@ export class NodeRedAPIClient {
    */
   async getNodeTypes(): Promise<NodeRedNodeType[]> {
     try {
-      const response = await this.client.get('/nodes');
+      const response = await this.client.get<NodeRedNodeType[]>('/nodes');
       return response.data;
     } catch (error) {
       handleNodeRedError(error, 'getNodeTypes');
@@ -977,8 +1036,8 @@ export class NodeRedAPIClient {
     try {
       // Node type IDs are '<module>/<name>' (e.g. 'node-red/inject') and legitimately
       // contain a '/', so this needs the library-path validator, not the single-segment one.
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      const response = await this.client.get(`/nodes/${nodeId}`);
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      const response = await this.client.get<NodeRedNodeType>(`/nodes/${safeNodeId}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getNodeType(${nodeId})`);
@@ -990,8 +1049,8 @@ export class NodeRedAPIClient {
    */
   async enableNodeType(nodeId: string): Promise<void> {
     try {
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      await this.client.put(`/nodes/${nodeId}`, { enabled: true });
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      await this.client.put(`/nodes/${safeNodeId}`, { enabled: true });
     } catch (error) {
       handleNodeRedError(error, `enableNodeType(${nodeId})`);
     }
@@ -1002,8 +1061,8 @@ export class NodeRedAPIClient {
    */
   async disableNodeType(nodeId: string): Promise<void> {
     try {
-      this.assertSafeLibraryPath(nodeId, 'nodeId');
-      await this.client.put(`/nodes/${nodeId}`, { enabled: false });
+      const safeNodeId = this.assertSafeLibraryPath(nodeId, 'nodeId');
+      await this.client.put(`/nodes/${safeNodeId}`, { enabled: false });
     } catch (error) {
       handleNodeRedError(error, `disableNodeType(${nodeId})`);
     }
@@ -1053,7 +1112,7 @@ export class NodeRedAPIClient {
    */
   async getSettings(): Promise<NodeRedSettings> {
     try {
-      const response = await this.client.get('/settings');
+      const response = await this.client.get<NodeRedSettings>('/settings');
       return response.data;
     } catch (error) {
       handleNodeRedError(error, 'getSettings');
@@ -1077,9 +1136,11 @@ export class NodeRedAPIClient {
       // wrapping it again below would collapse a real 401/403 into a flat 500.
       const [report, flowsResponse] = await Promise.all([
         this.fetchDiagnosticsReport(),
-        this.client.get('/flows'),
+        this.client.get<unknown>('/flows'),
       ]);
-      const settings = report ? undefined : (await this.client.get('/settings')).data;
+      const settings: unknown = report
+        ? undefined
+        : (await this.client.get<unknown>('/settings')).data;
       return buildRuntimeInfo(report, flowsResponse.data, settings);
     } catch (error) {
       handleNodeRedError(error, 'getRuntimeInfo');
@@ -1114,7 +1175,7 @@ export class NodeRedAPIClient {
    */
   async getFlowStatus(): Promise<NodeRedFlowStatus> {
     try {
-      const response = await this.client.get('/flows/state');
+      const response = await this.client.get<NodeRedFlowStatus>('/flows/state');
       return response.data;
     } catch (error) {
       handleNodeRedError(error, 'getFlowStatus');
@@ -1148,24 +1209,24 @@ export class NodeRedAPIClient {
   /**
    * Get global context
    */
-  async getGlobalContext(key?: string): Promise<any> {
+  async getGlobalContext(key?: string): Promise<unknown> {
     try {
-      if (key) this.assertSafeSegment(key, 'key');
-      const url = key ? `/context/global/${key}` : '/context/global';
-      const response = await this.client.get(url);
+      const safeKey = key ? this.assertSafeSegment(key, 'key') : undefined;
+      const url = safeKey ? `/context/global/${safeKey}` : '/context/global';
+      const response = await this.client.get<unknown>(url);
       return response.data;
     } catch (error) {
-      handleNodeRedError(error, `getGlobalContext(${key || 'all'})`);
+      handleNodeRedError(error, `getGlobalContext(${key ?? 'all'})`);
     }
   }
 
   /**
    * Set global context value
    */
-  async setGlobalContext(key: string, value: any): Promise<void> {
+  async setGlobalContext(key: string, value: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(key, 'key');
-      await this.client.put(`/context/global/${key}`, { value });
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.put(`/context/global/${safeKey}`, { value });
     } catch (error) {
       handleNodeRedError(error, `setGlobalContext(${key})`);
     }
@@ -1176,8 +1237,8 @@ export class NodeRedAPIClient {
    */
   async deleteGlobalContext(key: string): Promise<void> {
     try {
-      this.assertSafeSegment(key, 'key');
-      await this.client.delete(`/context/global/${key}`);
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.delete(`/context/global/${safeKey}`);
     } catch (error) {
       handleNodeRedError(error, `deleteGlobalContext(${key})`);
     }
@@ -1186,26 +1247,28 @@ export class NodeRedAPIClient {
   /**
    * Get flow context
    */
-  async getFlowContext(flowId: string, key?: string): Promise<any> {
+  async getFlowContext(flowId: string, key?: string): Promise<unknown> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      if (key) this.assertSafeSegment(key, 'key');
-      const url = key ? `/context/flow/${flowId}/${key}` : `/context/flow/${flowId}`;
-      const response = await this.client.get(url);
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const safeKey = key ? this.assertSafeSegment(key, 'key') : undefined;
+      const url = safeKey
+        ? `/context/flow/${safeFlowId}/${safeKey}`
+        : `/context/flow/${safeFlowId}`;
+      const response = await this.client.get<unknown>(url);
       return response.data;
     } catch (error) {
-      handleNodeRedError(error, `getFlowContext(${flowId}, ${key || 'all'})`);
+      handleNodeRedError(error, `getFlowContext(${flowId}, ${key ?? 'all'})`);
     }
   }
 
   /**
    * Set flow context value
    */
-  async setFlowContext(flowId: string, key: string, value: any): Promise<void> {
+  async setFlowContext(flowId: string, key: string, value: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(flowId, 'flowId');
-      this.assertSafeSegment(key, 'key');
-      await this.client.put(`/context/flow/${flowId}/${key}`, { value });
+      const safeFlowId = this.assertSafeSegment(flowId, 'flowId');
+      const safeKey = this.assertSafeSegment(key, 'key');
+      await this.client.put(`/context/flow/${safeFlowId}/${safeKey}`, { value });
     } catch (error) {
       handleNodeRedError(error, `setFlowContext(${flowId}, ${key})`);
     }
@@ -1216,10 +1279,10 @@ export class NodeRedAPIClient {
   /**
    * Get library entries
    */
-  async getLibraryEntries(type = 'flows'): Promise<any[]> {
+  async getLibraryEntries(type = 'flows'): Promise<unknown[]> {
     try {
-      this.assertSafeSegment(type, 'type');
-      const response = await this.client.get(`/library/${type}`);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const response = await this.client.get<unknown[]>(`/library/${safeType}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `getLibraryEntries(${type})`);
@@ -1229,11 +1292,11 @@ export class NodeRedAPIClient {
   /**
    * Save to library
    */
-  async saveToLibrary(type: string, path: string, data: any): Promise<void> {
+  async saveToLibrary(type: string, path: string, data: unknown): Promise<void> {
     try {
-      this.assertSafeSegment(type, 'type');
-      this.assertSafeLibraryPath(path, 'path');
-      await this.client.post(`/library/${type}/${path}`, data);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const safePath = this.assertSafeLibraryPath(path, 'path');
+      await this.client.post(`/library/${safeType}/${safePath}`, data);
     } catch (error) {
       handleNodeRedError(error, `saveToLibrary(${type}, ${path})`);
     }
@@ -1242,11 +1305,11 @@ export class NodeRedAPIClient {
   /**
    * Load from library
    */
-  async loadFromLibrary(type: string, path: string): Promise<any> {
+  async loadFromLibrary(type: string, path: string): Promise<unknown> {
     try {
-      this.assertSafeSegment(type, 'type');
-      this.assertSafeLibraryPath(path, 'path');
-      const response = await this.client.get(`/library/${type}/${path}`);
+      const safeType = this.assertSafeSegment(type, 'type');
+      const safePath = this.assertSafeLibraryPath(path, 'path');
+      const response = await this.client.get<unknown>(`/library/${safeType}/${safePath}`);
       return response.data;
     } catch (error) {
       handleNodeRedError(error, `loadFromLibrary(${type}, ${path})`);
@@ -1258,9 +1321,9 @@ export class NodeRedAPIClient {
   /**
    * Login to Node-RED (if auth is enabled)
    */
-  async login(username: string, password: string): Promise<{ access_token: string }> {
+  async login(username: string, password: string): Promise<NodeRedAuthTokenResponse> {
     try {
-      const response = await this.client.post('/auth/token', {
+      const response = await this.client.post<NodeRedAuthTokenResponse>('/auth/token', {
         client_id: 'node-red-admin',
         grant_type: 'password',
         scope: getNodeRedAuthScope(),
@@ -1276,9 +1339,9 @@ export class NodeRedAPIClient {
   /**
    * Refresh authentication token
    */
-  async refreshToken(refreshToken: string): Promise<{ access_token: string }> {
+  async refreshToken(refreshToken: string): Promise<NodeRedAuthTokenResponse> {
     try {
-      const response = await this.client.post('/auth/token', {
+      const response = await this.client.post<NodeRedAuthTokenResponse>('/auth/token', {
         client_id: 'node-red-admin',
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
@@ -1292,9 +1355,9 @@ export class NodeRedAPIClient {
   /**
    * Get current authentication status
    */
-  async getAuthStatus(): Promise<any> {
+  async getAuthStatus(): Promise<unknown> {
     try {
-      const response = await this.client.get('/auth/login');
+      const response = await this.client.get<unknown>('/auth/login');
       return response.data;
     } catch (error) {
       handleNodeRedError(error, 'getAuthStatus');
@@ -1318,33 +1381,41 @@ export class NodeRedAPIClient {
             ? `node-red-dashboard ${query}`
             : `node-red ${query}`;
 
-      const response = await axios.get(`https://registry.npmjs.org/-/v1/search`, {
-        params: {
-          text: searchQuery,
-          size: limit,
-          quality: 0.65,
-          popularity: 0.98,
-          maintenance: 0.5,
-        },
-        timeout: 10000,
-      });
+      const response = await axios.get<NpmSearchResponse>(
+        `https://registry.npmjs.org/-/v1/search`,
+        {
+          params: {
+            text: searchQuery,
+            size: limit,
+            quality: 0.65,
+            popularity: 0.98,
+            maintenance: 0.5,
+          },
+          timeout: 10000,
+        }
+      );
 
       const modules: NodeRedModule[] = response.data.objects
         .filter(
-          (pkg: any) =>
+          pkg =>
             pkg.package.name.startsWith('node-red') ||
-            pkg.package.keywords?.some((k: string) => k.includes('node-red'))
+            pkg.package.keywords?.some(k => k.includes('node-red'))
         )
-        .map((pkg: any) => ({
-          name: pkg.package.name,
-          version: pkg.package.version,
-          description: pkg.package.description,
-          author: pkg.package.author?.name || pkg.package.publisher?.name,
-          keywords: pkg.package.keywords || [],
-          repository: pkg.package.links?.repository,
-          downloads: pkg.score?.detail?.popularity,
-          updated: pkg.package.date,
-        }));
+        .map(pkg => {
+          // Empty-string author should fall through to publisher (||, not ??).
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string fallback
+          const author = pkg.package.author?.name || pkg.package.publisher?.name;
+          return definedOnly({
+            name: pkg.package.name,
+            version: pkg.package.version,
+            description: pkg.package.description,
+            author,
+            keywords: pkg.package.keywords ?? [],
+            repository: pkg.package.links?.repository,
+            downloads: pkg.score?.detail?.popularity,
+            updated: pkg.package.date,
+          }) as NodeRedModule;
+        });
 
       return {
         modules,
@@ -1363,7 +1434,7 @@ export class NodeRedAPIClient {
     try {
       const moduleToInstall = version ? `${moduleName}@${version}` : moduleName;
 
-      const response = await this.client.post('/nodes', {
+      await this.client.post('/nodes', {
         module: moduleToInstall,
       });
 
@@ -1389,19 +1460,22 @@ export class NodeRedAPIClient {
    */
   async getInstalledModules(): Promise<NodeRedModule[]> {
     try {
-      const response = await this.client.get('/nodes');
-      const nodes = response.data;
+      const response = await this.client.get<unknown>('/nodes');
+      // Same as before: iterate the body directly (non-iterables throw into handleNodeRedError).
+      const nodes = response.data as Iterable<unknown>;
 
       // Group nodes by module
       const moduleMap = new Map<string, NodeRedModule>();
 
-      for (const node of nodes) {
-        if (node.module && node.module !== 'node-red') {
-          if (!moduleMap.has(node.module)) {
-            moduleMap.set(node.module, {
-              name: node.module,
-              version: node.version || 'unknown',
-              description: `Module containing ${node.name} node type`,
+      for (const entry of nodes) {
+        const node = asObject(entry);
+        const moduleName = asString(node?.module);
+        if (moduleName && moduleName !== 'node-red') {
+          if (!moduleMap.has(moduleName)) {
+            moduleMap.set(moduleName, {
+              name: moduleName,
+              version: asString(node?.version) ?? 'unknown',
+              description: `Module containing ${asString(node?.name) ?? 'unknown'} node type`,
             });
           }
         }
@@ -1430,7 +1504,7 @@ export class NodeRedAPIClient {
   /**
    * Check if Node-RED is healthy
    */
-  async healthCheck(): Promise<{ healthy: boolean; details: any }> {
+  async healthCheck(): Promise<NodeRedHealthCheckResult> {
     try {
       // getRuntimeInfo() would fetch /flows (and /settings on its fallback
       // path) again, so fetch each endpoint once and build the info locally.

@@ -1,3 +1,5 @@
+import type { NodeRedFlow } from '../types/nodered.js';
+
 import { EmbeddingProvider, IndexedDocument, SearchResult } from './embedding-provider.js';
 import { NodeRedAPIClient } from './nodered-api.js';
 
@@ -53,7 +55,7 @@ export class SemanticFlowIndex {
     if (Date.now() - this.lastIndexedAt > this.ttlMs) await this.refresh();
   }
 
-  private buildDocuments(flows: any[]): IndexedDocument[] {
+  private buildDocuments(flows: NodeRedFlow[]): IndexedDocument[] {
     const docs: IndexedDocument[] = [];
     for (const flow of flows) {
       if (flow.type === 'tab' || flow.type === 'subflow') {
@@ -68,8 +70,10 @@ export class SemanticFlowIndex {
           },
         });
       }
-      for (const node of flow.nodes ?? []) {
-        const parts: string[] = [node.type, node.name, node.info].filter(Boolean);
+      for (const node of flow.nodes) {
+        const parts: string[] = [node.type, node.name, node.info].filter(
+          (p): p is string => typeof p === 'string' && p.length > 0
+        );
         for (const [key, val] of Object.entries(node)) {
           if (SKIP_NODE_KEYS.has(key)) continue;
           if (typeof val === 'string' && val.length > 0 && val.length <= MAX_STRING_VALUE_LEN)

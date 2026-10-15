@@ -48,7 +48,7 @@ export function parseSort<K extends string>(
   }
   return {
     sortBy: sortBy === undefined ? undefined : (sortBy as K),
-    order: order === undefined ? 'asc' : order,
+    order: order ?? 'asc',
   };
 }
 
@@ -57,12 +57,14 @@ export function isPaginated(args: Record<string, unknown> | undefined | null): b
   return args.limit !== undefined || args.offset !== undefined;
 }
 
-export function parsePagination(args: PaginationArgs | undefined | null): {
+export function parsePagination(
+  args: PaginationArgs | Record<string, unknown> | undefined | null
+): {
   limit: number;
   offset: number;
 } {
-  const limit = args?.limit;
-  const offset = args?.offset;
+  const limit = args?.limit as number | undefined;
+  const offset = args?.offset as number | undefined;
 
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT)) {
     throw new Error(`Invalid limit: must be an integer between 1 and ${MAX_LIMIT}`);
@@ -79,7 +81,7 @@ export function parsePagination(args: PaginationArgs | undefined | null): {
 
 export function applyPagination<T>(
   items: T[],
-  args: PaginationArgs | undefined | null
+  args: PaginationArgs | Record<string, unknown> | undefined | null
 ): PaginationEnvelope<T> {
   const { limit, offset } = parsePagination(args);
   const total = items.length;
@@ -111,7 +113,9 @@ export function stableSortBy<T extends { id?: string }>(
       // Primary keys differ — undefined sorts last, otherwise compare.
       if (ak === undefined) return 1;
       if (bk === undefined) return -1;
-      return (ak as any) < (bk as any) ? -mul : mul;
+      if (ak < bk) return -mul;
+      if (ak > bk) return mul;
+      return 0;
     }
     // Primary keys equal (or both undefined) — fall back to id for stability.
     const aid = a.item.id ?? '';

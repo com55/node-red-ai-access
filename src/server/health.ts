@@ -271,7 +271,7 @@ export async function healthCheckHandler(req: Request, res: Response): Promise<v
       status: overallStatus,
       timestamp: new Date().toISOString(),
       uptime: Math.round(process.uptime()),
-      version: process.env.npm_package_version || '1.0.0',
+      version: process.env.npm_package_version ?? '1.0.0',
       environment: appConfig.app.nodeEnv,
       checks,
       system: {
@@ -332,7 +332,7 @@ export async function healthCheckHandler(req: Request, res: Response): Promise<v
       timestamp: new Date().toISOString(),
       error: error instanceof Error ? error.message : 'Health check failed',
       uptime: Math.round(process.uptime()),
-      version: process.env.npm_package_version || '1.0.0',
+      version: process.env.npm_package_version ?? '1.0.0',
       environment: appConfig.app.nodeEnv,
     });
   }

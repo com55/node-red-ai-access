@@ -39,7 +39,7 @@ export async function retryWithBackoff<T>(
     onRetry,
   } = options;
 
-  let lastError: Error;
+  let lastError: Error = new Error('Retry failed');
   let delay = initialDelay;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -75,7 +75,7 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  throw lastError!;
+  throw lastError;
 }
 
 /**
@@ -100,7 +100,11 @@ export class CircuitBreaker {
       failureThreshold: options.failureThreshold ?? 5,
       successThreshold: options.successThreshold ?? 2,
       timeout: options.timeout ?? 60000,
-      onStateChange: options.onStateChange ?? (() => {}),
+      onStateChange:
+        options.onStateChange ??
+        (() => {
+          /* empty */
+        }),
     };
   }
 
@@ -209,7 +213,7 @@ export async function batchRetry<T>(
 /**
  * Create a retriable function
  */
-export function retriable<T extends any[], R>(
+export function retriable<T extends unknown[], R>(
   fn: (...args: T) => Promise<R>,
   options: RetryOptions = {}
 ): (...args: T) => Promise<R> {

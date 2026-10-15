@@ -193,7 +193,9 @@ function createMockReqRes(): {
     }) as any,
   };
 
-  const next: NextFunction = () => {};
+  const next: NextFunction = () => {
+    /* empty */
+  };
 
   return { req, res, next, statusCode: null, jsonData: null };
 }
@@ -590,7 +592,9 @@ describe('Node-RED Auth Utilities', () => {
       const result = validateNodeRedAuth();
 
       expect(result.type).toBe('bearer');
-      expect(result.credentials?.token).toBe('test-token');
+      if (result.type === 'bearer') {
+        expect(result.credentials.token).toBe('test-token');
+      }
     });
 
     it('should return basic type when username and password are set', () => {
@@ -600,8 +604,10 @@ describe('Node-RED Auth Utilities', () => {
       const result = validateNodeRedAuth();
 
       expect(result.type).toBe('basic');
-      expect(result.credentials?.username).toBe('admin');
-      expect(result.credentials?.password).toBe('password');
+      if (result.type === 'basic') {
+        expect(result.credentials.username).toBe('admin');
+        expect(result.credentials.password).toBe('password');
+      }
     });
 
     it('should return none type when no credentials are set', () => {

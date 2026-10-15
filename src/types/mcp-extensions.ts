@@ -2,7 +2,7 @@
  * Custom MCP type extensions for Node-RED integration
  */
 
-import { NodeRedFlow, NodeRedNode, NodeRedNodeType, NodeRedRuntimeInfo } from './nodered.js';
+import { NodeRedFlow, NodeRedRuntimeInfo } from './nodered.js';
 import { SSEStats, SSEEventFilter } from './sse.js';
 
 // MCP Tool definitions for Node-RED operations
@@ -11,14 +11,14 @@ export interface NodeRedFlowTool {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required?: string[];
   };
 }
 
 export interface McpToolResult {
   success: boolean;
-  data?: any;
+  data?: unknown;
   /**
    * Current Node-RED Admin API v2 flow revision when the tool read or wrote
    * flows. Added as a sibling of `data` so existing consumers of `data` keep
@@ -180,7 +180,7 @@ export interface NodeRedToolPermissions {
 }
 
 // Event handling
-export interface McpEventHandler<T = any> {
+export interface McpEventHandler<T = unknown> {
   eventType: string;
   handler: (event: T, context: McpAuthContext) => Promise<void> | void;
   filter?: (event: T) => boolean;
@@ -202,19 +202,19 @@ export interface NodeRedFlowValidation {
 }
 
 // Utility types for API responses
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: {
     code: string;
     message: string;
-    details?: any;
+    details?: unknown;
   };
   timestamp: string;
   requestId?: string | undefined;
 }
 
-export interface PaginatedResponse<T = any> extends ApiResponse<T[]> {
+export interface PaginatedResponse<T = unknown> extends ApiResponse<T[]> {
   pagination: {
     page: number;
     limit: number;
@@ -240,6 +240,6 @@ export interface LogEntry {
   message: string;
   timestamp: string;
   source: string;
-  context?: Record<string, any> | undefined;
+  context?: Record<string, unknown> | undefined;
   error?: Error | undefined;
 }

@@ -111,16 +111,22 @@ export default tseslint.config(
       import: importPlugin,
     },
     rules: {
-      // Relaxed rules for test files
+      // Relaxed type-safety rules for tests (same intent as tests/ tree)
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
       '@typescript-eslint/unbound-method': 'off',
       'no-console': 'off',
       'max-lines-per-function': 'off',
       complexity: 'off',
+      'prefer-const': 'off',
       'import/order': [
         'error',
         {
@@ -147,12 +153,16 @@ export default tseslint.config(
       import: importPlugin,
     },
     rules: {
-      // Relaxed rules for e2e files
+      // Relaxed type-safety rules for e2e files
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+      '@typescript-eslint/require-await': 'off',
       'no-console': 'off',
       'max-lines-per-function': 'off',
       complexity: 'off',

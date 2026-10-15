@@ -72,7 +72,15 @@ vi.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
 }));
 
 function parse(result: any) {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(textContent(result));
+}
+
+function textContent(result: { content: { type: string; text?: string }[] }): string {
+  const first = result.content[0];
+  if (first?.type !== 'text' || typeof first.text !== 'string') {
+    throw new Error('Expected text content in tool result');
+  }
+  return first.text;
 }
 
 describe('Pagination + filters', () => {
@@ -259,7 +267,7 @@ describe('Pagination + filters', () => {
 
     it('returns raw JSON dump when no pagination/query params (legacy)', async () => {
       const result = await mcp.callTool('get_installed_modules', {});
-      const text = result.content[0].text;
+      const text = textContent(result);
       const parsed = JSON.parse(text);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toHaveLength(4);

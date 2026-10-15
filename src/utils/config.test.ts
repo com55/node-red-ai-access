@@ -3,7 +3,7 @@
  * Tests for environment configuration management
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 
 // Note: AppConfig is a singleton, so we test the exported instance

@@ -9,6 +9,8 @@ import helmet from 'helmet';
 
 import { NodeRedEventListener } from '../services/nodered-event-listener.js';
 import type { ApiResponse } from '../types/mcp-extensions.js';
+import type { NodeRedCredentials } from '../types/oauth.js';
+import type { SSEEventFilter } from '../types/sse.js';
 import {
   authenticate,
   authenticateAPIKey,
@@ -28,6 +30,34 @@ import { McpNodeRedServer } from './mcp-server.js';
 import { OAuthServer } from './oauth-server.js';
 import { SessionManager } from './session-manager.js';
 import { SSEHandler } from './sse-handler.js';
+
+/** JSON-RPC 2.0 request body shape used by MCP endpoints. */
+interface JsonRpcRequestBody {
+  jsonrpc?: string;
+  method?: string;
+  params?: {
+    name?: string;
+    uri?: string;
+    arguments?: Record<string, unknown>;
+  };
+  id?: string | number | null;
+}
+
+interface SubscribeRequestBody {
+  connectionId?: string;
+  eventTypes?: string[];
+  eventType?: string;
+  filter?: SSEEventFilter;
+}
+
+interface TriggerDeployBody {
+  flowId?: string;
+}
+
+interface HealthDetails {
+  flowCount?: number;
+  nodeCount?: number;
+}
 
 // Mirrors package.json's "version" field. Other endpoints in this file
 // (`/.well-known/mcp.json`, `/api/info`) already hardcode their own stale
@@ -84,7 +114,9 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting {
     .map(entry => entry.trim())
     .filter(Boolean);
 
-  return entries.length > 1 ? entries : entries[0]!;
+  if (entries.length > 1) return entries;
+  const [single] = entries;
+  return single ?? value;
 }
 
 /**
@@ -140,18 +172,18 @@ export class ExpressApp {
     this.sessionManager = new SessionManager();
 
     this.config = {
-      port: parseInt(process.env.PORT || '3000'),
-      host: process.env.HOST || '0.0.0.0',
+      port: parseInt(process.env.PORT ?? '3000'),
+      host: process.env.HOST ?? '0.0.0.0',
       cors: {
-        origin: process.env.CORS_ORIGIN?.split(',') || [
+        origin: process.env.CORS_ORIGIN?.split(',') ?? [
           'https://claude.ai',
           'https://www.claude.ai',
         ],
         credentials: process.env.CORS_CREDENTIALS === 'true',
       },
       rateLimit: {
-        windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-        max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+        windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? '900000'), // 15 minutes
+        max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS ?? '100'),
       },
       helmet: process.env.DISABLE_HELMET !== 'true',
       trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
@@ -202,7 +234,7 @@ export class ExpressApp {
           userId: payload.userId,
           permissions: payload.permissions,
           isAuthenticated: true,
-          tokenExpiry: new Date(payload.exp! * 1000),
+          ...(payload.exp !== undefined ? { tokenExpiry: new Date(payload.exp * 1000) } : {}),
         };
         return next();
       }
@@ -240,7 +272,6 @@ export class ExpressApp {
     this.app.use(
       cors({
         origin: (origin, callback) => {
-          const isClaudeMode = process.env.CLAUDE_COMPATIBLE_MODE === 'true';
           const debugConnections = process.env.DEBUG_CLAUDE_CONNECTIONS === 'true';
 
           if (debugConnections) {
@@ -335,11 +366,309 @@ export class ExpressApp {
   }
 
   /**
+   * Resolve tool/prompt arguments from a JSON-RPC params object.
+   */
+  private asArgumentRecord(value: unknown): Record<string, unknown> {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
+  }
+
+  /**
+   * Dispatch a JSON-RPC MCP method to the underlying MCP server.
+   * Shared by Streamable HTTP (/mcp) and legacy JSON-RPC endpoints.
+   */
+  private async dispatchJsonRpcMethod(
+    method: string,
+    params: JsonRpcRequestBody['params'] | undefined,
+    options: {
+      nodeRedCredentials?: NodeRedCredentials | null;
+      onInitialize?: () => void;
+      allowNotificationAck?: boolean;
+      /** Legacy endpoints use "… is required"; Streamable HTTP uses "… required". */
+      verboseRequired?: boolean;
+    } = {}
+  ): Promise<{ kind: 'result'; result: unknown } | { kind: 'ack' } | { kind: 'method-not-found' }> {
+    const requiredMsg = (label: string): string =>
+      options.verboseRequired ? `${label} is required` : `${label} required`;
+
+    switch (method) {
+      case 'initialize': {
+        options.onInitialize?.();
+        return {
+          kind: 'result',
+          result: {
+            protocolVersion: '2025-03-26',
+            capabilities: { tools: {}, resources: {}, prompts: {}, logging: {} },
+            serverInfo: { name: 'nodered-mcp-server', version: '1.0.0' },
+          },
+        };
+      }
+      case 'notifications/initialized':
+        if (options.allowNotificationAck) {
+          return { kind: 'ack' };
+        }
+        throw new Error(`Unknown method: ${method}`);
+      case 'tools/list':
+        return { kind: 'result', result: await this.mcpServer.listTools() };
+      case 'tools/call': {
+        if (!params?.name) throw new Error(requiredMsg('Tool name'));
+        const result = await this.mcpServer.callToolPublic(
+          params.name,
+          this.asArgumentRecord(params.arguments),
+          options.nodeRedCredentials ?? undefined
+        );
+        return { kind: 'result', result };
+      }
+      case 'resources/list':
+        return { kind: 'result', result: await this.mcpServer.listResources() };
+      case 'resources/read': {
+        if (!params?.uri) throw new Error(requiredMsg('Resource URI'));
+        return { kind: 'result', result: await this.mcpServer.readResource(params.uri) };
+      }
+      case 'prompts/list':
+        return { kind: 'result', result: await this.mcpServer.listPrompts() };
+      case 'prompts/get': {
+        if (!params?.name) throw new Error(requiredMsg('Prompt name'));
+        const result = await this.mcpServer.getPromptPublic(
+          params.name,
+          this.asArgumentRecord(params.arguments)
+        );
+        return { kind: 'result', result };
+      }
+      default:
+        return { kind: 'method-not-found' };
+    }
+  }
+
+  private resourceMetadataUrl(): string {
+    const resourceUrl = process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
+    return resourceUrl;
+  }
+
+  /**
+   * Enforce Bearer token when Claude auth is required and the request was not
+   * already authenticated via API key / Basic. Returns true when the response
+   * was already sent (caller should stop).
+   */
+  private rejectIfClaudeBearerMissing(req: Request, res: Response): boolean {
+    const authReq = req as AuthRequest;
+    if (!(isClaudeAuthRequired() && !authReq.auth?.isAuthenticated)) {
+      return false;
+    }
+
+    const auth = req.headers.authorization;
+    const resourceUrl = this.resourceMetadataUrl();
+    if (!auth?.startsWith('Bearer ')) {
+      res.setHeader(
+        'WWW-Authenticate',
+        `Bearer resource_metadata="${resourceUrl}/.well-known/oauth-protected-resource"`
+      );
+      res.status(401).json({ error: 'unauthorized', error_description: 'Bearer token required' });
+      return true;
+    }
+
+    const tokenData = this.oauthServer.validateToken(auth.slice(7));
+    if (!tokenData) {
+      res.setHeader(
+        'WWW-Authenticate',
+        `Bearer resource_metadata="${resourceUrl}/.well-known/oauth-protected-resource", error="invalid_token"`
+      );
+      res
+        .status(401)
+        .json({ error: 'invalid_token', error_description: 'Token is invalid or expired' });
+      return true;
+    }
+
+    return false;
+  }
+
+  private credentialsFromBearer(req: Request): {
+    userId?: string;
+    nodeRedCredentials?: NodeRedCredentials | null;
+  } {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) {
+      return {};
+    }
+    const tokenData = this.oauthServer.validateToken(auth.slice(7));
+    if (!tokenData) {
+      return {};
+    }
+    return {
+      userId: tokenData.userId,
+      ...(tokenData.credentialId
+        ? {
+            nodeRedCredentials: this.oauthServer.getNodeRedCredentials(tokenData.credentialId),
+          }
+        : {}),
+    };
+  }
+
+  private resolveMcpSession(req: Request): {
+    session: { id: string };
+    isNewSession: boolean;
+    nodeRedCredentials?: NodeRedCredentials | null;
+  } {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    const authReq = req as AuthRequest;
+
+    let session = sessionId ? this.sessionManager.get(sessionId) : undefined;
+    if (session && authReq.auth?.userId && session.userId !== authReq.auth.userId) {
+      session = undefined;
+    }
+
+    if (!session) {
+      const { userId, nodeRedCredentials } = this.credentialsFromBearer(req);
+      return {
+        session: this.sessionManager.create(userId),
+        isNewSession: true,
+        ...(nodeRedCredentials !== undefined ? { nodeRedCredentials } : {}),
+      };
+    }
+
+    const { nodeRedCredentials } = this.credentialsFromBearer(req);
+    return {
+      session,
+      isNewSession: false,
+      ...(nodeRedCredentials !== undefined ? { nodeRedCredentials } : {}),
+    };
+  }
+
+  /**
+   * Handle POST /mcp (Streamable HTTP transport).
+   */
+  private async handleMcpPost(req: Request, res: Response): Promise<void> {
+    if (this.rejectIfClaudeBearerMissing(req, res)) {
+      return;
+    }
+
+    const { session, isNewSession, nodeRedCredentials } = this.resolveMcpSession(req);
+    const { method, params, id, jsonrpc } = req.body as JsonRpcRequestBody;
+
+    if (jsonrpc !== '2.0') {
+      res.status(400).json({
+        jsonrpc: '2.0',
+        id: id ?? null,
+        error: { code: -32600, message: 'Invalid Request — jsonrpc must be 2.0' },
+      });
+      return;
+    }
+
+    res.setHeader('Mcp-Session-Id', session.id);
+    if (isNewSession) {
+      res.setHeader('X-Mcp-Session-Created', 'true');
+    }
+
+    try {
+      const outcome = await this.dispatchJsonRpcMethod(method ?? '', params, {
+        ...(nodeRedCredentials !== undefined ? { nodeRedCredentials } : {}),
+        onInitialize: () => {
+          this.sessionManager.markInitialized(session.id);
+        },
+        allowNotificationAck: true,
+      });
+
+      if (outcome.kind === 'ack') {
+        res.status(202).end();
+        return;
+      }
+      if (outcome.kind === 'method-not-found') {
+        res.status(200).json({
+          jsonrpc: '2.0',
+          id: id ?? null,
+          error: { code: -32601, message: `Method not found: ${method ?? ''}` },
+        });
+        return;
+      }
+      res.json({ jsonrpc: '2.0', id: id ?? null, result: outcome.result });
+    } catch (err) {
+      res.status(200).json({
+        jsonrpc: '2.0',
+        id: id ?? null,
+        error: {
+          code: -32603,
+          message: err instanceof Error ? err.message : 'Internal error',
+        },
+      });
+    }
+  }
+
+  /**
+   * Handle legacy JSON-RPC MCP endpoints (/messages, /api/events).
+   */
+  private async handleLegacyJsonRpc(
+    req: Request,
+    res: Response,
+    options: { logErrors?: boolean } = {}
+  ): Promise<void> {
+    try {
+      const { method, params, id, jsonrpc } = req.body as JsonRpcRequestBody;
+
+      if (jsonrpc !== '2.0') {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          id: id ?? null,
+          error: {
+            code: -32600,
+            message: 'Invalid Request - jsonrpc must be 2.0',
+          },
+        });
+        return;
+      }
+
+      const outcome = await this.dispatchJsonRpcMethod(method ?? '', params, {
+        verboseRequired: true,
+      });
+
+      if (outcome.kind === 'method-not-found') {
+        throw new Error(`Unknown method: ${method ?? ''}`);
+      }
+      if (outcome.kind === 'ack') {
+        res.status(202).end();
+        return;
+      }
+
+      res.json({
+        jsonrpc: '2.0',
+        id: id ?? null,
+        result: outcome.result,
+      });
+    } catch (error) {
+      const body = req.body as JsonRpcRequestBody;
+      const errorResponse = {
+        jsonrpc: '2.0',
+        id: body.id ?? null,
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : 'Internal error',
+        },
+      };
+      if (options.logErrors) {
+        console.error('MCP JSON-RPC error:', errorResponse);
+      }
+      res.status(500).json(errorResponse);
+    }
+  }
+
+  /**
    * Setup API routes
    */
   private setupRoutes(): void {
+    this.setupOAuthAndMcpTransportRoutes();
+    this.setupPublicInfoRoutes();
+    this.setupPublicApiRoutes();
+    this.setupClaudeSseRoutes();
+    this.setupSseManagementRoutes();
+    this.setupSseAdminRoutes();
+    this.setupNodeRedProxyRoutes();
+    this.setupDebugAndFallbackRoutes();
+  }
+
+  private setupOAuthAndMcpTransportRoutes(): void {
     // ── OAuth 2.0 routes (must be before auth middleware) ─────────────────────
-    const baseUrl = process.env.PUBLIC_URL || `http://${this.config.host}:${this.config.port}`;
+    const baseUrl = process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
     this.app.use(this.oauthServer.createRouter(baseUrl));
 
     // ── Root URL rewrite — Claude.ai POSTs to the bare domain the user registered ──
@@ -370,7 +699,7 @@ export class ExpressApp {
         res.write(`data: ${JSON.stringify(info)}\n\n`);
         req.on('close', () => res.end());
       } else {
-        const baseUrl = process.env.PUBLIC_URL || `http://${this.config.host}:${this.config.port}`;
+        const baseUrl = process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
         res.json({
           name: 'nodered-mcp-server',
           version: '1.0.0',
@@ -386,167 +715,7 @@ export class ExpressApp {
       '/mcp',
       this.requireAuth,
       asyncHandler(async (req: Request, res: Response) => {
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
-        const authReq = req as AuthRequest;
-
-        // Enforce the OAuth token requirement, but only for requests that
-        // `requireAuth` let through on a non-Bearer scheme's behalf — API key and
-        // Basic clients are already authenticated and must not be rejected here.
-        if (isClaudeAuthRequired() && !authReq.auth?.isAuthenticated) {
-          const auth = req.headers.authorization;
-          if (!auth?.startsWith('Bearer ')) {
-            const resourceUrl =
-              process.env.PUBLIC_URL || `http://${this.config.host}:${this.config.port}`;
-            res.setHeader(
-              'WWW-Authenticate',
-              `Bearer resource_metadata="${resourceUrl}/.well-known/oauth-protected-resource"`
-            );
-            return res
-              .status(401)
-              .json({ error: 'unauthorized', error_description: 'Bearer token required' });
-          }
-          const token = auth.slice(7);
-          const tokenData = this.oauthServer.validateToken(token);
-          if (!tokenData) {
-            const resourceUrl =
-              process.env.PUBLIC_URL || `http://${this.config.host}:${this.config.port}`;
-            res.setHeader(
-              'WWW-Authenticate',
-              `Bearer resource_metadata="${resourceUrl}/.well-known/oauth-protected-resource", error="invalid_token"`
-            );
-            return res
-              .status(401)
-              .json({ error: 'invalid_token', error_description: 'Token is invalid or expired' });
-          }
-        }
-
-        // Resolve or create session
-
-        let session = sessionId ? this.sessionManager.get(sessionId) : undefined;
-        // Verify session ownership — don't allow one user to hijack another's session
-        if (session && authReq.auth?.userId && session.userId !== authReq.auth.userId) {
-          session = undefined; // Don't use another user's session
-        }
-        const isNewSession = !session;
-        let nodeRedCredentials = undefined;
-        if (!session) {
-          // Validate Bearer token if present
-          const auth = req.headers.authorization;
-          let userId: string | undefined;
-          if (auth?.startsWith('Bearer ')) {
-            const token = auth.slice(7);
-            const tokenData = this.oauthServer.validateToken(token);
-            if (tokenData) {
-              userId = tokenData.userId;
-              nodeRedCredentials = tokenData.credentialId
-                ? this.oauthServer.getNodeRedCredentials(tokenData.credentialId)
-                : undefined;
-            }
-          }
-          session = this.sessionManager.create(userId);
-        } else {
-          // Re-extract credentials from token even for existing sessions
-          const auth = req.headers.authorization;
-          if (auth?.startsWith('Bearer ')) {
-            const tokenData = this.oauthServer.validateToken(auth.slice(7));
-            if (tokenData) {
-              nodeRedCredentials = tokenData.credentialId
-                ? this.oauthServer.getNodeRedCredentials(tokenData.credentialId)
-                : undefined;
-            }
-          }
-        }
-
-        const { method, params, id, jsonrpc } = req.body as {
-          method: string;
-          params?: Record<string, unknown>;
-          id?: string | number;
-          jsonrpc: string;
-        };
-
-        if (jsonrpc !== '2.0') {
-          return res.status(400).json({
-            jsonrpc: '2.0',
-            id: id ?? null,
-            error: { code: -32600, message: 'Invalid Request — jsonrpc must be 2.0' },
-          });
-        }
-
-        // Always attach session ID to response
-        res.setHeader('Mcp-Session-Id', session.id);
-        if (isNewSession) {
-          res.setHeader('X-Mcp-Session-Created', 'true');
-        }
-
-        let result: unknown;
-        try {
-          switch (method) {
-            case 'initialize':
-              this.sessionManager.markInitialized(session.id);
-              result = {
-                protocolVersion: '2025-03-26',
-                capabilities: { tools: {}, resources: {}, prompts: {}, logging: {} },
-                serverInfo: { name: 'nodered-mcp-server', version: '1.0.0' },
-              };
-              break;
-
-            case 'notifications/initialized':
-              // Client acknowledgement — no response body needed
-              return res.status(202).end();
-
-            case 'tools/list':
-              result = await this.mcpServer.listTools();
-              break;
-
-            case 'tools/call':
-              if (!params?.name) throw new Error('Tool name required');
-              result = await this.mcpServer.callToolPublic(
-                params.name as string,
-                (params.arguments as Record<string, unknown>) || {},
-                nodeRedCredentials ?? undefined
-              );
-              break;
-
-            case 'resources/list':
-              result = await this.mcpServer.listResources();
-              break;
-
-            case 'resources/read':
-              if (!params?.uri) throw new Error('Resource URI required');
-              result = await this.mcpServer.readResource(params.uri as string);
-              break;
-
-            case 'prompts/list':
-              result = await this.mcpServer.listPrompts();
-              break;
-
-            case 'prompts/get':
-              if (!params?.name) throw new Error('Prompt name required');
-              result = await this.mcpServer.getPromptPublic(
-                params.name as string,
-                (params.arguments as Record<string, unknown>) || {}
-              );
-              break;
-
-            default:
-              return res.status(200).json({
-                jsonrpc: '2.0',
-                id: id ?? null,
-                error: { code: -32601, message: `Method not found: ${method}` },
-              });
-          }
-        } catch (err) {
-          return res.status(200).json({
-            jsonrpc: '2.0',
-            id: id ?? null,
-            error: {
-              code: -32603,
-              message: err instanceof Error ? err.message : 'Internal error',
-            },
-          });
-        }
-
-        return res.json({ jsonrpc: '2.0', id: id ?? null, result });
+        await this.handleMcpPost(req, res);
       })
     );
 
@@ -556,7 +725,9 @@ export class ExpressApp {
       if (sessionId) this.sessionManager.delete(sessionId);
       res.status(204).end();
     });
+  }
 
+  private setupPublicInfoRoutes(): void {
     // Health check endpoint (public — minimal info only)
     this.app.get(
       '/health',
@@ -579,8 +750,8 @@ export class ExpressApp {
     this.app.get('/version', (_req: Request, res: Response) => {
       res.json({
         version: packageVersion,
-        commitSha: process.env.GIT_SHA || 'unknown',
-        buildTime: process.env.BUILD_TIME || 'unknown',
+        commitSha: process.env.GIT_SHA ?? 'unknown',
+        buildTime: process.env.BUILD_TIME ?? 'unknown',
       });
     });
 
@@ -639,7 +810,7 @@ export class ExpressApp {
     // Required by Claude.ai to discover the authorization server
     this.app.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
       const resourceUrl =
-        process.env.PUBLIC_URL || `http://${this.config.host}:${this.config.port}`;
+        process.env.PUBLIC_URL ?? `http://${this.config.host}:${this.config.port}`;
       res.json({
         resource: resourceUrl,
         authorization_servers: [resourceUrl],
@@ -655,12 +826,16 @@ export class ExpressApp {
         server: 'Node-RED AI Access',
       });
     });
+  }
 
+  private setupPublicApiRoutes(): void {
     // MCP initialization endpoint
     this.app.post(
       '/api/mcp/initialize',
       asyncHandler(async (req: Request, res: Response) => {
-        const { jsonrpc = '2.0', id = 1 } = req.body;
+        const body = req.body as { jsonrpc?: string; id?: string | number };
+        const jsonrpc = body.jsonrpc ?? '2.0';
+        const id = body.id ?? 1;
 
         try {
           const tools = await this.mcpServer.listTools();
@@ -682,9 +857,9 @@ export class ExpressApp {
                 name: 'nodered-mcp-server',
                 version: '1.0.0',
               },
-              tools: tools.tools || [],
-              resources: resources.resources || [],
-              prompts: prompts.prompts || [],
+              tools: tools.tools,
+              resources: resources.resources,
+              prompts: prompts.prompts,
             },
           };
 
@@ -724,7 +899,9 @@ export class ExpressApp {
 
       res.json(response);
     });
+  }
 
+  private setupClaudeSseRoutes(): void {
     // CORS preflight for SSE — handled by the global cors() middleware above
 
     // Claude website expects /sse endpoint (standard MCP SSE format)
@@ -739,7 +916,7 @@ export class ExpressApp {
             console.log('Claude SSE connection established:', {
               userAgent: req.get('User-Agent'),
               origin: req.get('Origin'),
-              authenticated: req.auth?.isAuthenticated || false,
+              authenticated: req.auth?.isAuthenticated ?? false,
               userId: req.auth?.userId,
             });
           }
@@ -754,7 +931,10 @@ export class ExpressApp {
             'X-MCP-Protocol': '2025-03-26',
           });
 
-          console.log(`MCP SSE client connected (Claude ${req.auth?.userId || 'unknown'})`);
+          // Do not log userId/token subjects — CodeQL treats oauth subjects as sensitive.
+          console.log(
+            `MCP SSE client connected (authenticated=${Boolean(req.auth?.isAuthenticated)})`
+          );
 
           // Send initial MCP server capabilities immediately
           const serverInfo = {
@@ -802,7 +982,7 @@ export class ExpressApp {
             try {
               res.write(`event: heartbeat\n`);
               res.write(`data: {"timestamp": "${new Date().toISOString()}"}\n\n`);
-            } catch (error) {
+            } catch {
               clearInterval(heartbeatInterval);
             }
           }, 30000);
@@ -857,95 +1037,7 @@ export class ExpressApp {
       '/messages',
       this.requireAuth,
       asyncHandler(async (req: Request, res: Response) => {
-        try {
-          const { method, params, id, jsonrpc } = req.body;
-
-          // Validate JSON-RPC 2.0 format
-          if (jsonrpc !== '2.0') {
-            return res.status(400).json({
-              jsonrpc: '2.0',
-              id,
-              error: {
-                code: -32600,
-                message: 'Invalid Request - jsonrpc must be 2.0',
-              },
-            });
-          }
-
-          let result;
-          switch (method) {
-            case 'initialize':
-              result = {
-                protocolVersion: '2025-03-26',
-                capabilities: {
-                  tools: {},
-                  resources: {},
-                  prompts: {},
-                  logging: {},
-                },
-                serverInfo: {
-                  name: 'nodered-mcp-server',
-                  version: '1.0.0',
-                },
-              };
-              break;
-
-            case 'tools/list':
-              result = await this.mcpServer.listTools();
-              break;
-
-            case 'tools/call':
-              if (!params?.name) {
-                throw new Error('Tool name is required');
-              }
-              result = await this.mcpServer.callToolPublic(params.name, params.arguments || {});
-              break;
-
-            case 'resources/list':
-              result = await this.mcpServer.listResources();
-              break;
-
-            case 'resources/read':
-              if (!params?.uri) {
-                throw new Error('Resource URI is required');
-              }
-              result = await this.mcpServer.readResource(params.uri);
-              break;
-
-            case 'prompts/list':
-              result = await this.mcpServer.listPrompts();
-              break;
-
-            case 'prompts/get':
-              if (!params?.name) {
-                throw new Error('Prompt name is required');
-              }
-              result = await this.mcpServer.getPromptPublic(params.name, params.arguments || {});
-              break;
-
-            default:
-              throw new Error(`Unknown method: ${method}`);
-          }
-
-          const response = {
-            jsonrpc: '2.0',
-            id,
-            result,
-          };
-
-          return res.json(response);
-        } catch (error) {
-          const errorResponse = {
-            jsonrpc: '2.0',
-            id: req.body?.id || null,
-            error: {
-              code: -32603,
-              message: error instanceof Error ? error.message : 'Internal error',
-            },
-          };
-          console.error('MCP JSON-RPC error:', errorResponse);
-          return res.status(500).json(errorResponse);
-        }
+        await this.handleLegacyJsonRpc(req, res, { logErrors: true });
       })
     );
 
@@ -954,102 +1046,17 @@ export class ExpressApp {
       '/api/events',
       this.requireAuth,
       asyncHandler(async (req: Request, res: Response) => {
-        try {
-          const { method, params, id, jsonrpc } = req.body;
-
-          // Validate JSON-RPC 2.0 format
-          if (jsonrpc !== '2.0') {
-            return res.status(400).json({
-              jsonrpc: '2.0',
-              id,
-              error: {
-                code: -32600,
-                message: 'Invalid Request - jsonrpc must be 2.0',
-              },
-            });
-          }
-
-          let result;
-          switch (method) {
-            case 'initialize':
-              result = {
-                protocolVersion: '2025-03-26',
-                capabilities: {
-                  tools: {},
-                  resources: {},
-                  prompts: {},
-                  logging: {},
-                },
-                serverInfo: {
-                  name: 'nodered-mcp-server',
-                  version: '1.0.0',
-                },
-              };
-              break;
-
-            case 'tools/list':
-              result = await this.mcpServer.listTools();
-              break;
-
-            case 'tools/call':
-              if (!params?.name) {
-                throw new Error('Tool name is required');
-              }
-              result = await this.mcpServer.callToolPublic(params.name, params.arguments || {});
-              break;
-
-            case 'resources/list':
-              result = await this.mcpServer.listResources();
-              break;
-
-            case 'resources/read':
-              if (!params?.uri) {
-                throw new Error('Resource URI is required');
-              }
-              result = await this.mcpServer.readResource(params.uri);
-              break;
-
-            case 'prompts/list':
-              result = await this.mcpServer.listPrompts();
-              break;
-
-            case 'prompts/get':
-              if (!params?.name) {
-                throw new Error('Prompt name is required');
-              }
-              result = await this.mcpServer.getPromptPublic(params.name, params.arguments || {});
-              break;
-
-            default:
-              throw new Error(`Unknown method: ${method}`);
-          }
-
-          const response = {
-            jsonrpc: '2.0',
-            id,
-            result,
-          };
-
-          return res.json(response);
-        } catch (error) {
-          const errorResponse = {
-            jsonrpc: '2.0',
-            id: req.body?.id || null,
-            error: {
-              code: -32603,
-              message: error instanceof Error ? error.message : 'Internal error',
-            },
-          };
-          return res.status(500).json(errorResponse);
-        }
+        await this.handleLegacyJsonRpc(req, res);
       })
     );
+  }
 
+  private setupSseManagementRoutes(): void {
     // Authenticated SSE connection endpoint (for secure access)
     this.app.get(
       '/api/events/secure',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
+      asyncHandler((req: AuthRequest, res: Response) => {
         try {
           const connectionId = this.sseHandler.connect(req, res);
 
@@ -1074,8 +1081,8 @@ export class ExpressApp {
     this.app.post(
       '/api/events/subscribe',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
-        const { connectionId, eventTypes } = req.body;
+      asyncHandler((req: AuthRequest, res: Response) => {
+        const { connectionId, eventTypes } = req.body as SubscribeRequestBody;
 
         if (!connectionId || !Array.isArray(eventTypes)) {
           throw new ValidationError('connectionId and eventTypes array are required');
@@ -1097,8 +1104,8 @@ export class ExpressApp {
     this.app.post(
       '/api/events/subscribe/filtered',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
-        const { connectionId, eventType, filter } = req.body;
+      asyncHandler((req: AuthRequest, res: Response) => {
+        const { connectionId, eventType, filter } = req.body as SubscribeRequestBody;
 
         if (!connectionId || !eventType) {
           throw new ValidationError('connectionId and eventType are required');
@@ -1120,8 +1127,8 @@ export class ExpressApp {
     this.app.get(
       '/api/events/subscriptions/:connectionId',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
-        const connectionId = req.params.connectionId!;
+      asyncHandler((req: AuthRequest, res: Response) => {
+        const connectionId = req.params.connectionId;
 
         if (!connectionId) {
           throw new ValidationError('Connection ID is required');
@@ -1142,8 +1149,8 @@ export class ExpressApp {
     this.app.post(
       '/api/events/unsubscribe',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
-        const { connectionId, eventTypes } = req.body;
+      asyncHandler((req: AuthRequest, res: Response) => {
+        const { connectionId, eventTypes } = req.body as SubscribeRequestBody;
 
         if (!connectionId || !Array.isArray(eventTypes)) {
           throw new ValidationError('connectionId and eventTypes array are required');
@@ -1160,7 +1167,9 @@ export class ExpressApp {
         res.json(response);
       })
     );
+  }
 
+  private setupSseAdminRoutes(): void {
     // SSE statistics endpoint
     this.app.get('/api/events/stats', authenticate, (req: Request, res: Response) => {
       const stats = this.sseHandler.getStats();
@@ -1192,7 +1201,7 @@ export class ExpressApp {
       '/api/events/clients/:connectionId',
       authenticate,
       (req: Request, res: Response) => {
-        const connectionId = req.params.connectionId!;
+        const connectionId = req.params.connectionId;
         if (!connectionId) {
           const response: ApiResponse = {
             success: false,
@@ -1237,8 +1246,8 @@ export class ExpressApp {
     this.app.post(
       '/api/events/trigger/deploy',
       authenticate,
-      asyncHandler(async (req: AuthRequest, res: Response) => {
-        const { flowId } = req.body;
+      asyncHandler((req: AuthRequest, res: Response) => {
+        const { flowId } = req.body as TriggerDeployBody;
 
         this.eventListener.onFlowDeploy(flowId);
 
@@ -1251,7 +1260,9 @@ export class ExpressApp {
         res.json(response);
       })
     );
+  }
 
+  private setupNodeRedProxyRoutes(): void {
     // Node-RED proxy endpoints (optional - for direct API access)
     this.app.get(
       '/api/nodered/flows',
@@ -1300,11 +1311,13 @@ export class ExpressApp {
         res.json(response);
       })
     );
+  }
 
+  private setupDebugAndFallbackRoutes(): void {
     // MCP Server Discovery endpoint (for Claude.ai integration)
     this.app.get(
       '/.well-known/mcp-server',
-      asyncHandler(async (req: Request, res: Response) => {
+      asyncHandler((req: Request, res: Response) => {
         const isClaudeMode = process.env.CLAUDE_COMPATIBLE_MODE === 'true';
         const authRequired = isClaudeAuthRequired();
 
@@ -1347,7 +1360,7 @@ export class ExpressApp {
     // MCP Server Info endpoint (alternative discovery)
     this.app.get(
       '/api/mcp/info',
-      asyncHandler(async (req: Request, res: Response) => {
+      asyncHandler((_req: Request, res: Response) => {
         const serverInfo = {
           jsonrpc: '2.0',
           result: {
@@ -1374,7 +1387,12 @@ export class ExpressApp {
     this.app.get(
       '/debug/claude-connection',
       asyncHandler(async (req: Request, res: Response) => {
-        const debugInfo = {
+        const debugInfo: {
+          server: Record<string, unknown>;
+          request: Record<string, unknown>;
+          endpoints: Record<string, unknown>;
+          nodeRed: Record<string, unknown>;
+        } = {
           server: {
             claudeMode: process.env.CLAUDE_COMPATIBLE_MODE === 'true',
             authRequired: isClaudeAuthRequired(),
@@ -1402,12 +1420,12 @@ export class ExpressApp {
         // Test Node-RED connection
         try {
           const healthResult = await this.mcpServer.getNodeRedClient().healthCheck();
-          (debugInfo.nodeRed as any) = {
+          debugInfo.nodeRed = {
             status: 'connected',
             health: healthResult,
           };
         } catch (error) {
-          (debugInfo.nodeRed as any) = {
+          debugInfo.nodeRed = {
             status: 'failed',
             error: error instanceof Error ? error.message : String(error),
           };
@@ -1483,7 +1501,7 @@ export class ExpressApp {
           });
         });
       } catch (error) {
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -1503,10 +1521,11 @@ export class ExpressApp {
       .getNodeRedClient()
       .healthCheck()
       .then(health => {
+        const details = health.details as HealthDetails;
         this.sseHandler.sendSystemInfo({
           nodeRedStatus: health.healthy ? 'connected' : 'error',
-          activeFlows: health.details?.flowCount || 0,
-          totalNodes: health.details?.nodeCount || 0,
+          activeFlows: details.flowCount ?? 0,
+          totalNodes: details.nodeCount ?? 0,
         });
       })
       .catch(error => {
