@@ -94,11 +94,7 @@ export default tseslint.config(
 
   // Test files configuration
   {
-    files: [
-      'test/**/*.{js,mjs,cjs,ts}',
-      'tests/**/*.{js,mjs,cjs,ts}',
-      'src/**/*.{test,spec}.{js,mjs,cjs,ts}',
-    ],
+    files: ['test/**/*.{js,mjs,cjs,ts}', 'src/**/*.{test,spec}.{js,mjs,cjs,ts}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -111,7 +107,7 @@ export default tseslint.config(
       import: importPlugin,
     },
     rules: {
-      // Relaxed type-safety rules for tests (same intent as tests/ tree)
+      // Relaxed type-safety rules for tests
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
@@ -135,37 +131,6 @@ export default tseslint.config(
           alphabetize: { order: 'asc', caseInsensitive: true },
         },
       ],
-    },
-  },
-
-  // E2E files configuration
-  {
-    files: ['e2e/**/*.{js,mjs,cjs,ts}'],
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: 'module',
-      parserOptions: {
-        project: './tsconfig.e2e.json',
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-    plugins: {
-      import: importPlugin,
-    },
-    rules: {
-      // Relaxed type-safety rules for e2e files
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/no-unnecessary-condition': 'off',
-      '@typescript-eslint/require-await': 'off',
-      'no-console': 'off',
-      'max-lines-per-function': 'off',
-      complexity: 'off',
     },
   },
 

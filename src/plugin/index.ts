@@ -1,8 +1,8 @@
 /**
  * Node-RED plugin entry for @com55/node-red-ai-access.
  *
- * Registers /mcp admin page, access links, proposals, flows, and logs APIs.
- * Standalone MCP server entry (src/index.ts) is unchanged.
+ * Registers /mcp admin page, access links, proposals, flows, logs APIs,
+ * and the /mcp/rpc Streamable HTTP endpoint.
  */
 
 import type { Response } from 'express';
