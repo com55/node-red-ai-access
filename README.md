@@ -54,7 +54,7 @@ In `settings.js`:
 module.exports = {
   // adminAuth: { ... }, // required for AI features in normal setups
   aiAccess: {
-    // Master switch (default: true). Also editable in editor User Settings.
+    // Master switch (default: true). Also editable in the editor sidebar tab.
     enabled: true,
     // Local-only opt-in when adminAuth is disabled (default: false)
     allowWithoutAdminAuth: false,
@@ -72,15 +72,16 @@ module.exports = {
 
 Effective values are resolved **without restart** in this order (highest wins):
 
-1. **Disk** — `<userDir>/.ai-access/settings.json` (User Settings → **AI
-   Access** tab, or `PUT /mcp/api/v1/settings`)
+1. **Disk** — `<userDir>/.ai-access/settings.json` (editor sidebar **AI Access**
+   tab, or `PUT /mcp/api/v1/settings`)
 2. **`settings.js`** — `aiAccess` block (install / bootstrap defaults)
 3. **Built-in defaults** — as documented above
 
 Only keys present on disk override; omitted keys fall through to `settings.js`,
-then defaults. The editor tab (Users → User Settings → **AI Access**) lets `*`
-admins change enable/disable, default deploy type, and default access-link TTL;
-`read` users see the same values read-only. A button opens the `/mcp` page. When
+then defaults. The editor right-hand sidebar tab (**AI Access**, next to
+Information / Help / Debug / Configuration nodes / Context Data) lets `*` admins
+change enable/disable, default deploy type, and default access-link TTL; `read`
+users see the same values read-only. A button opens the `/mcp` page. When
 `adminAuth` is off, the tab exposes the `allowWithoutAdminAuth` opt-in with a
 clear local-only warning.
 

@@ -37,12 +37,28 @@ describe('package.json Node-RED plugin shape', () => {
     });
   });
 
-  it('ships companion ai-access.html for the User Settings editor tab', () => {
+  it('ships companion ai-access.html as an editor sidebar tab', () => {
     expect(packageJson.files).toContain('ai-access.html');
     expect(existsSync(join(root, 'ai-access.html'))).toBe(true);
     const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
-    expect(html).toMatch(/RED\.userSettings\.add/);
+    expect(html).toMatch(/RED\.sidebar\.addTab/);
+    expect(html).not.toMatch(/RED\.userSettings\.add/);
     expect(html).toMatch(/ai-access/);
     expect(html).toMatch(/\/settings/);
+    expect(html).toMatch(/red-ui-sidebar-ai-access/);
+    expect(html).toMatch(/fa fa-plug/);
+  });
+});
+
+describe('/mcp audit log page client', () => {
+  it('renders friendlier action badges instead of raw mid-word wraps', () => {
+    const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
+    expect(client).toMatch(/actionBadge/);
+    expect(client).toMatch(/Created/);
+    expect(client).toMatch(/Approved/);
+    const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
+    expect(styles).toMatch(/action-badge/);
+    expect(styles).toMatch(/col-action[\s\S]*white-space:\s*nowrap/);
+    expect(styles).toMatch(/col-actor[\s\S]*white-space:\s*nowrap/);
   });
 });

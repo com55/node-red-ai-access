@@ -132,6 +132,30 @@ function pageClientScriptPartAFormat(): string {
     if (actor.kind === 'system') return 'system';
     return esc(actor.kind || 'unknown');
   }
+  function actionBadge(action) {
+    var labels = {
+      'proposal.created': 'Created',
+      'proposal.approved': 'Approved',
+      'proposal.rejected': 'Rejected',
+      'proposal.failed': 'Failed'
+    };
+    var label = labels[action];
+    if (label) {
+      var kind = action.split('.')[1] || 'other';
+      return '<span class="action-badge action-' + esc(kind) + '" title="' + esc(action) + '">' +
+        esc(label) + '</span>';
+    }
+    return '<span class="action-badge" title="' + esc(action) + '">' + esc(action) + '</span>';
+  }
+  function actionFilterLabel(action) {
+    var labels = {
+      'proposal.created': 'Created',
+      'proposal.approved': 'Approved',
+      'proposal.rejected': 'Rejected',
+      'proposal.failed': 'Failed'
+    };
+    return labels[action] ? labels[action] + ' (' + action + ')' : action;
+  }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
@@ -485,7 +509,7 @@ function pageClientScriptPartC(): string {
         var raw = esc(JSON.stringify(e.details || {}, null, 2));
         return '<tr>' +
           '<td class="col-when" title="' + esc(e.at) + '">' + esc(fmtCompact(e.at)) + '</td>' +
-          '<td class="col-action"><code>' + esc(e.action) + '</code></td>' +
+          '<td class="col-action">' + actionBadge(e.action) + '</td>' +
           '<td class="col-actor">' + actorLabel(e.actor) + '</td>' +
           '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
           '<details class="audit-raw"><summary>raw</summary><pre>' + raw + '</pre></details></td>' +
@@ -520,7 +544,7 @@ function pageClientScriptPartC(): string {
         filter.innerHTML = '<option value="">All actions</option>' +
           actions.map(function (a) {
             return '<option value="' + esc(a) + '"' +
-              (a === current ? ' selected' : '') + '>' + esc(a) + '</option>';
+              (a === current ? ' selected' : '') + '>' + esc(actionFilterLabel(a)) + '</option>';
           }).join('');
       }
       applyLogFilter();

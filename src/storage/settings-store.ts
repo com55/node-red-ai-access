@@ -2,7 +2,7 @@
  * Persisted AI Access settings under `<userDir>/.ai-access/settings.json`.
  *
  * Precedence for effective values (highest wins):
- * 1. Disk file keys present in `.ai-access/settings.json` (User Settings UI)
+ * 1. Disk file keys present in `.ai-access/settings.json` (sidebar AI Access UI)
  * 2. `settings.js` `aiAccess` block
  * 3. Built-in defaults
  *
