@@ -23,7 +23,11 @@
   },
   "files": [
     "dist",
-    "docs/api/openapi.yaml",
+    "!dist/**/*.map",
+    "docs/errors.md",
+    "docs/mcp-tools.md",
+    "docs/mcp-clients.md",
+    "!docs/README.md",
     "ai-access.cjs",
     "ai-access.html",
     "README.md",
@@ -65,21 +69,23 @@
     "check:mcp-tools": "vitest run test/plugin/mcp-tools-doc.test.ts",
     "generate:errors": "UPDATE_ERRORS=1 vitest run test/plugin/error-registry.test.ts",
     "check:errors": "vitest run test/plugin/error-registry.test.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepublishOnly": "yarn quality && yarn test && yarn build:prod"
   },
   "keywords": [
+    "node-red",
+    "node-red-plugin",
     "mcp",
     "model-context-protocol",
-    "node-red",
-    "typescript",
-    "automation",
-    "ai-access",
-    "@com55/node-red-ai-access"
+    "ai",
+    "ai-agent",
+    "llm",
+    "automation"
   ],
   "author": "com55",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "express": "^5.3.0",
     "express-rate-limit": "^8.5.2",
     "zod": "^4.4.3"
@@ -106,7 +112,7 @@
     "vitest": "^5.0.3"
   },
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=20.0.0",
     "npm": ">=10.0.0"
   },
   "repository": {

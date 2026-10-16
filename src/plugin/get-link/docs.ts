@@ -202,7 +202,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 
 7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved, rejected, or
    withdrawn. Every token can list/read **all** proposals; each item has
-   \`mine:true|false\`. Filter with \`?mine=true\`, \`?status=\`, \`?flowId=\`;
+   \`mine:true|false\`. Filter with \`?mine=true\` (own) or \`?mine=false\` (others'),
+   \`?status=pending,superseded\` (comma-separated or repeated), \`?flowId=\`;
    paginate with \`?limit=\` (1–200) / \`?offset=\` (response includes \`total\`,
    \`offset\`, \`hasMore\`, and \`nextOffset\` when more remain). Invalid filters
    return \`400 invalid_filter\` naming the parameter. Cite \`displayName\` +

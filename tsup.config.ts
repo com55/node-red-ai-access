@@ -25,7 +25,8 @@ export default defineConfig({
   format: ['cjs'],
   dts: true,
   splitting: false,
-  sourcemap: true,
+  // Source maps for local/dev builds only; published (production) builds ship none.
+  sourcemap: process.env.NODE_ENV !== 'production',
   clean: true,
   target: 'es2022',
   minify: process.env.NODE_ENV === 'production',

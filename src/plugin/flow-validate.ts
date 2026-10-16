@@ -35,13 +35,19 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
   if (!primary) {
     return;
   }
+  // errors[] entries never carry statusCode (HTTP status lives on the response).
+  const listed = issues.map(issue => {
+    const rest: ValidationIssue = { ...issue };
+    delete rest.statusCode;
+    return rest;
+  });
   if (issues.length > 1) {
     throw new AiOpsValidationError(`${issues.length} validation errors`, 'validation_failed', {
       statusCode: 400,
-      details: { errors: issues, errorCount: issues.length },
+      details: { errors: listed, errorCount: issues.length },
     });
   }
-  const details: Record<string, unknown> = { errors: issues };
+  const details: Record<string, unknown> = { errors: listed };
   for (const [k, v] of Object.entries(primary)) {
     if (k === 'code' || k === 'error' || k === 'errors' || k === 'statusCode') {
       continue;
@@ -51,6 +57,7 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
     }
   }
   const statusCode = typeof primary.statusCode === 'number' ? primary.statusCode : 400;
+  // Top-level message is the specific issue text (e.g. which node was missing).
   throw new AiOpsValidationError(primary.error, primary.code, { statusCode, details });
 }
 
@@ -81,6 +88,60 @@ export function collectDuplicateNodeIdIssues(
         nodeId: id,
         count,
       });
+    }
+  }
+  return issues;
+}
+
+function describeLiveNode(node: FlowNode): string {
+  const label = typeof node.label === 'string' && node.label ? ` '${node.label}'` : '';
+  if (node.type === 'tab') return `tab${label || ` '${node.id}'`}`;
+  if (node.type === 'subflow') return `subflow${label || ` '${node.id}'`}`;
+  if (typeof node.z === 'string' && node.z) return `${node.type} node on '${node.z}'`;
+  return `global ${node.type} config node`;
+}
+
+/**
+ * Node ids must be unique across the WHOLE resulting flows file. Replacing tab
+ * `flowId` keeps every live entry that is not the tab itself and not on that
+ * tab (other tabs, their nodes, subflows, global configs), so a proposed node
+ * may not reuse any of those ids nor the tab id.
+ */
+export function collectCrossFlowDuplicateIssues(
+  flow: Partial<FlowTab>,
+  flowId: string,
+  liveFlows: readonly FlowNode[]
+): ValidationIssue[] {
+  const elsewhere = new Map<string, FlowNode>();
+  for (const node of liveFlows) {
+    if (!node || typeof node.id !== 'string') continue;
+    if (node.id === flowId || node.z === flowId) continue;
+    elsewhere.set(node.id, node);
+  }
+  const issues: ValidationIssue[] = [];
+  const seen = new Set<string>();
+  for (const list of [flow.nodes, flow.configs]) {
+    if (!Array.isArray(list)) continue;
+    for (const node of list) {
+      const id = node && typeof node === 'object' ? node.id : undefined;
+      if (typeof id !== 'string' || !id || seen.has(id)) continue;
+      seen.add(id);
+      if (id === flowId) {
+        issues.push({
+          code: 'duplicate_node_id',
+          error: `Node id '${id}' equals the tab id; node ids must be unique across all flows`,
+          nodeId: id,
+        });
+        continue;
+      }
+      const other = elsewhere.get(id);
+      if (other) {
+        issues.push({
+          code: 'duplicate_node_id',
+          error: `Node id '${id}' is already used by ${describeLiveNode(other)}; node ids must be unique across all flows`,
+          nodeId: id,
+        });
+      }
     }
   }
   return issues;

@@ -24,7 +24,7 @@ Derived from
 
 ## Install (Node-RED plugin)
 
-Requirements: **Node-RED 4.x or newer**, Node.js 22+, and **`adminAuth`
+Requirements: **Node-RED 4.x or newer**, Node.js 20+, and **`adminAuth`
 enabled** (recommended). Without `adminAuth`, AI features stay off unless you
 opt in (see Configuration).
 

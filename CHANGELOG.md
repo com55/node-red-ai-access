@@ -6,7 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-16
+
+First public release of **Node-RED AI Access**: an admin-gated Node-RED 4 plugin
+that lets AI agents read flows and submit reviewable change proposals over REST,
+MCP, and GET access links, with scoped, expiring tokens, a review UI, conflict
+detection, an audit log, and an error-code registry shared by all channels.
+Requires Node.js 20+.
+
+### Release
+
+- Initial independent release of **Node-RED AI Access**
+  (`@com55/node-red-ai-access`), derived from
+  [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
+- Package metadata, Docker image names, documentation, and CI retargeted to
+  `com55/node-red-ai-access`.
+- GitHub Actions CI runs on `ubuntu-latest` for all events.
+- Requires Node.js `>=20`; CI tests Node 20, 22, and 23.
+- `@modelcontextprotocol/sdk` raised to `^1.31.0`.
+- Published package is a minified production build without source maps;
+  `prepublishOnly` runs quality checks, tests, and the production build. The
+  OpenAPI spec ships once (`dist/openapi.yaml`); `docs/errors.md`,
+  `docs/mcp-tools.md`, and `docs/mcp-clients.md` are included.
+
+### Fixed (pre-release review)
+
+- `duplicate_node_id` checks the whole resulting flows file: the tab id, nodes
+  on other tabs, config nodes, and subflows.
+- A single validation error returns its specific message at the top level.
+- Hints come from the error registry on every channel (including
+  `node_already_exists` and a top-level `validation_failed` hint); `errors[]`
+  entries no longer carry `statusCode`.
+- `status` list filter accepts several values (comma-separated or repeated on
+  REST/GET; array or comma string on MCP); any invalid value is
+  `invalid_filter`. Repeating a single-value filter is `invalid_filter`.
+- `mine=false` returns only proposals created by other links.
+- GET guide lists every error code, warnings, statuses (including `superseded`),
+  and `autoClosedCount`.
 
 ### Changed
 
@@ -272,16 +308,5 @@ and this project adheres to
 - OpenAPI 3.1 spec for `/mcp/api/v1` (status, links, flows, proposals, logs,
   auth, 413 limits) served at `GET /mcp/api/v1/openapi.yaml`; README install,
   config, `/mcp` usage, and AI quickstart.
-
-## [0.1.0] - 2026-10-15
-
-### Added
-
-- Initial independent release of **Node-RED AI Access**
-  (`@com55/node-red-ai-access`), derived from
-  [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
-- Package metadata, Docker image names, documentation, and CI retargeted to
-  `com55/node-red-ai-access`.
-- GitHub Actions CI runs on `ubuntu-latest` for all events.
 
 [0.1.0]: https://github.com/com55/node-red-ai-access/releases/tag/v0.1.0

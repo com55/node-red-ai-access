@@ -809,9 +809,11 @@ paths:
       summary: List proposals
       description: |
         Admins see all proposals. Access-link clients also see **all** proposals,
-        each marked `mine: true|false`. Filter with `?mine=true` (own only),
-        `?status=` (`pending`|`approved`|`rejected`|`failed`|`withdrawn`), and/or
-        `?flowId=`. Paginate with `?limit=` (1–200) and `?offset=`; responses
+        each marked `mine: true|false`. Filter with `?mine=true` (own only) or
+        `?mine=false` (only other links' proposals), `?status=` (one or more
+        statuses, comma-separated `?status=pending,superseded` or repeated
+        `?status=pending&status=expired`; any unknown value is `invalid_filter`),
+        and/or `?flowId=`. Other filter parameters may appear at most once. Paginate with `?limit=` (1–200) and `?offset=`; responses
         always include `total` (count after filters, before pagination). Pending
         items may include `conflictingProposals` on get/submit (not on list).
       operationId: listProposals
@@ -824,13 +826,21 @@ paths:
           required: false
           schema:
             type: boolean
-          description: When true (access-link only), return only this token's proposals
+          description: >-
+            Access-link only. true (or 1) returns only this token's proposals;
+            false (or 0) returns only proposals created by other links.
         - name: status
           in: query
           required: false
+          style: form
+          explode: true
           schema:
-            $ref: '#/components/schemas/ProposalStatus'
-          description: Filter by proposal status
+            type: array
+            items:
+              $ref: '#/components/schemas/ProposalStatus'
+          description: >-
+            One or more statuses. Repeat the parameter or pass a comma-separated
+            list. Any invalid value returns 400 invalid_filter.
         - name: flowId
           in: query
           required: false

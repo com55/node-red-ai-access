@@ -15,7 +15,6 @@ import {
   ProposalConcurrentApproveError,
   ProposalNotFoundError,
   ProposalNotPendingError,
-  type ProposalStatus,
   type ProposalStore,
 } from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
@@ -32,6 +31,7 @@ import {
   getAccessibleProposal,
   listAccessibleProposals,
   listPageFields,
+  matchesStatusFilter,
   parseListProposalsQuery,
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
@@ -214,14 +214,14 @@ export function listProposalsHandler(
       return;
     }
 
-    const storeFilter: { status?: ProposalStatus; flowId?: string } = {};
-    if (listFilter.status) {
-      storeFilter.status = listFilter.status;
-    }
+    const storeFilter: { flowId?: string } = {};
     if (listFilter.flowId) {
       storeFilter.flowId = listFilter.flowId;
     }
-    const all = presentProposalsForApi(store.list(storeFilter), { ...presentOpts, include });
+    const all = presentProposalsForApi(
+      store.list(storeFilter).filter(p => matchesStatusFilter(p.status, listFilter.status)),
+      { ...presentOpts, include }
+    );
     const offset = listFilter.offset ?? 0;
     const sliced =
       listFilter.limit !== undefined

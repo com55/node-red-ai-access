@@ -25,6 +25,7 @@ import {
   type ErrorChannel,
 } from './channel-errors.js';
 import {
+  collectCrossFlowDuplicateIssues,
   collectFullFlowShapeIssues,
   throwValidationIssues,
   validateFlowTab,
@@ -91,10 +92,10 @@ function isMineProposal(proposal: Proposal, accessLink: AccessLinkAuthInfo): boo
 export const LIST_PROPOSALS_MAX_LIMIT = 200;
 
 export interface ListProposalsFilter {
-  /** When true, only proposals created by this access link. */
+  /** true → only this access link's proposals; false → only other links' proposals. */
   mine?: boolean;
-  /** Filter by proposal status. */
-  status?: ProposalStatus;
+  /** Filter by proposal status (any of these; multi-value). */
+  status?: ProposalStatus[];
   /** Filter by payload.flowId. */
   flowId?: string;
   /** Page size (1…{@link LIST_PROPOSALS_MAX_LIMIT}). Omit to return all matches. */
@@ -122,30 +123,46 @@ const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
   'superseded',
 ]);
 
+/** True when no status filter is set or `status` is one of the requested values. */
+export function matchesStatusFilter(
+  status: ProposalStatus,
+  wanted: readonly ProposalStatus[] | undefined
+): boolean {
+  return !wanted || wanted.length === 0 || wanted.includes(status);
+}
+
 export function isProposalStatus(value: unknown): value is ProposalStatus {
   return typeof value === 'string' && PROPOSAL_STATUSES.has(value);
 }
 
 /** Allowed values per list filter parameter (for `invalid_filter` bodies). */
-export const LIST_FILTER_ALLOWED: Readonly<Record<'status' | 'limit' | 'offset' | 'mine', string>> =
-  {
-    status: [...PROPOSAL_STATUSES].join(', '),
-    limit: `integer 1–${LIST_PROPOSALS_MAX_LIMIT}`,
-    offset: 'integer ≥ 0',
-    mine: 'true, false, 1, 0',
-  };
+export const LIST_FILTER_ALLOWED: Readonly<
+  Record<'status' | 'limit' | 'offset' | 'mine' | 'flowId', string>
+> = {
+  status: [...PROPOSAL_STATUSES].join(', '),
+  limit: `integer 1–${LIST_PROPOSALS_MAX_LIMIT}`,
+  offset: 'integer ≥ 0',
+  mine: 'true, false, 1, 0',
+  // status also accepts several values: comma-separated or repeated.
+  flowId: 'one flow tab id',
+};
+
+export type ListFilterParameter = keyof typeof LIST_FILTER_ALLOWED;
 
 /**
  * Build the shared `400 invalid_filter` error for one list parameter.
  * The raw input is deliberately not echoed back (only constant text).
  */
 export function invalidFilterError(
-  parameter: keyof typeof LIST_FILTER_ALLOWED,
-  _received?: unknown
+  parameter: ListFilterParameter,
+  received?: unknown
 ): AiOpsValidationError {
   const allowed = LIST_FILTER_ALLOWED[parameter];
+  const repeated = Array.isArray(received);
   return new AiOpsValidationError(
-    `Invalid ${parameter} filter. Allowed: ${allowed}`,
+    repeated
+      ? `Invalid ${parameter} filter: pass it at most once (multiple values are not supported). Allowed: ${allowed}`
+      : `Invalid ${parameter} filter. Allowed: ${allowed}`,
     'invalid_filter',
     {
       details: { parameter, allowed, hint: `Pass ${parameter} as ${allowed}, or omit it.` },
@@ -153,8 +170,16 @@ export function invalidFilterError(
   );
 }
 
-function firstQueryValue(raw: unknown): unknown {
-  return Array.isArray(raw) ? (raw as unknown[])[0] : raw;
+/**
+ * Every list filter is single-valued on every channel: a repeated query
+ * parameter (`?status=a&status=b`) is rejected with `invalid_filter`, matching
+ * MCP, whose schema only accepts one value.
+ */
+function singleQueryValue(parameter: ListFilterParameter, raw: unknown): unknown {
+  if (Array.isArray(raw)) {
+    throw invalidFilterError(parameter, raw);
+  }
+  return raw;
 }
 
 function parseIntegerFilter(raw: unknown): number | null {
@@ -180,14 +205,28 @@ function isUnset(raw: unknown): boolean {
 function parseMineFilter(raw: unknown): boolean | undefined {
   if (isUnset(raw)) return undefined;
   if (raw === 'true' || raw === '1' || raw === true) return true;
-  if (raw === 'false' || raw === '0' || raw === false) return undefined;
+  if (raw === 'false' || raw === '0' || raw === false) return false;
   throw invalidFilterError('mine', raw);
 }
 
-function parseStatusFilter(raw: unknown): ProposalStatus | undefined {
+/**
+ * `status` is multi-valued on every channel: comma-separated
+ * (`pending,superseded`), repeated (`status=a&status=b`), or an array (MCP).
+ * Any invalid value in the set → `invalid_filter`.
+ */
+export function parseStatusFilter(raw: unknown): ProposalStatus[] | undefined {
   if (isUnset(raw)) return undefined;
-  if (!isProposalStatus(raw)) throw invalidFilterError('status', raw);
-  return raw;
+  const parts = (Array.isArray(raw) ? (raw as unknown[]) : [raw]).flatMap(v =>
+    typeof v === 'string' ? v.split(',') : [v]
+  );
+  const out: ProposalStatus[] = [];
+  for (const part of parts) {
+    const value = typeof part === 'string' ? part.trim() : part;
+    if (value === '') continue;
+    if (!isProposalStatus(value)) throw invalidFilterError('status', raw);
+    if (!out.includes(value)) out.push(value);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function parseRangeFilter(
@@ -212,20 +251,21 @@ export function parseListProposalsQuery(query: {
   offset?: unknown;
 }): ListProposalsFilter {
   const filter: ListProposalsFilter = {};
-  if (parseMineFilter(firstQueryValue(query.mine))) {
-    filter.mine = true;
+  const mine = parseMineFilter(singleQueryValue('mine', query.mine));
+  if (mine !== undefined) {
+    filter.mine = mine;
   }
-  const status = parseStatusFilter(firstQueryValue(query.status));
+  const status = parseStatusFilter(query.status);
   if (status) {
     filter.status = status;
   }
-  const flowRaw = firstQueryValue(query.flowId ?? query.flow_id ?? query.flow);
+  const flowRaw = singleQueryValue('flowId', query.flowId ?? query.flow_id ?? query.flow);
   if (typeof flowRaw === 'string' && flowRaw.length > 0) {
     filter.flowId = flowRaw;
   }
   const limit = parseRangeFilter(
     'limit',
-    firstQueryValue(query.limit),
+    singleQueryValue('limit', query.limit),
     1,
     LIST_PROPOSALS_MAX_LIMIT
   );
@@ -234,7 +274,7 @@ export function parseListProposalsQuery(query: {
   }
   const offset = parseRangeFilter(
     'offset',
-    firstQueryValue(query.offset),
+    singleQueryValue('offset', query.offset),
     0,
     Number.MAX_SAFE_INTEGER
   );
@@ -286,7 +326,8 @@ function applyListPagination<T>(
 
 /**
  * List proposals visible to an access link. Every token sees **all** proposals;
- * each item is marked `mine: true|false`. Pass `filter.mine: true` to limit to own.
+ * each item is marked `mine: true|false`. `filter.mine: true` limits to own;
+ * `filter.mine: false` limits to proposals created by other links.
  * Supports `status`, `flowId`, and `limit`/`offset` pagination (`total` is pre-page).
  */
 export function listAccessibleProposals(
@@ -296,17 +337,18 @@ export function listAccessibleProposals(
   filter: ListProposalsFilter = {}
 ): ListProposalsPage {
   const linkId = filter.mine === true ? accessLink.id : undefined;
-  const storeFilter: { linkId?: string; status?: ProposalStatus; flowId?: string } = {};
+  const storeFilter: { linkId?: string; flowId?: string } = {};
   if (linkId) {
     storeFilter.linkId = linkId;
-  }
-  if (filter.status) {
-    storeFilter.status = filter.status;
   }
   if (filter.flowId) {
     storeFilter.flowId = filter.flowId;
   }
-  const presented = store.list(storeFilter).map(p => ({
+  const listed = store
+    .list(storeFilter)
+    .filter(p => filter.mine !== false || !isMineProposal(p, accessLink))
+    .filter(p => matchesStatusFilter(p.status, filter.status));
+  const presented = listed.map(p => ({
     ...presentProposal(p, presentOptions),
     mine: isMineProposal(p, accessLink),
   }));
@@ -722,6 +764,7 @@ export async function submitReplaceFlowProposal(
   if (current.rev !== safeExpectedRev) {
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
   }
+  throwValidationIssues(collectCrossFlowDuplicateIssues(safeFlow, safeFlowId, current.flows));
 
   // Snapshot the live tab at expectedRev so later diffs stay stable if the
   // live flow moves (other approvals, editor edits, …).
