@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- Channel onboarding on `/mcp`: REST copies a ready-to-paste AI prompt (base
+  URL, Bearer, OpenAPI + discovery, human-approve note, and a stop-and-ask-for-
+  GET-link line when custom headers are unavailable); MCP shows a setup panel
+  with Claude Desktop / Cursor / VS Code / Claude Code CLI / Streamable HTTP
+  tabs (each with its own copy button); GET link still copies the URL. Docs:
+  `docs/README.md`, `docs/mcp-clients.md`, `docs/errors.md`, generated
+  `docs/mcp-tools.md` (`yarn generate:mcp-tools` / CI stale check).
 - Access-link TTL UX: `/mcp` expiry dropdown (15m / 1h / 4h / 24h / 7d /
   Custom); `get_link` capped at 24h (7d hidden; switching to GET link with
   expiry above 24h — including Custom — resets to 1 hour with a short note);

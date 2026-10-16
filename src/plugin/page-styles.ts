@@ -890,6 +890,43 @@ button.id-copy:focus {
   width: 100%;
   max-width: 28rem;
 }
+.mcp-setup-panel {
+  margin: 0.75rem 0 0.25rem;
+}
+.mcp-setup-fallback {
+  margin: 0 0 0.65rem;
+}
+.mcp-setup-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.65rem;
+}
+.mcp-setup-tab {
+  appearance: none;
+  border: 1px solid var(--border, #ccd);
+  background: var(--surface, #fff);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.35rem 0.65rem;
+  font: inherit;
+  cursor: pointer;
+}
+.mcp-setup-tab.is-active {
+  border-color: var(--accent, #1a4a7a);
+  background: #e8f1fb;
+}
+.mcp-setup-snippet {
+  margin: 0 0 0.65rem;
+  padding: 0.75rem;
+  overflow: auto;
+  max-height: 16rem;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--code-bg, #f6f8fa);
+  border-radius: 4px;
+}
 `;
 }
 

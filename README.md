@@ -105,6 +105,16 @@ attached to the editor-api app that owns body-parser, not only the nested plugin
 `httpAdmin`). Unauthenticated `/mcp/api/v1` admin calls return JSON
 `{ code: "auth_required" }` rather than plain-text `Unauthorized`.
 
+## Docs
+
+- [Channel index](docs/README.md) — GET link / REST / MCP overview
+- [MCP client setup](docs/mcp-clients.md) — Claude Desktop, Cursor, VS Code, CLI
+- [MCP tools reference](docs/mcp-tools.md) — generated from live `tools/list`
+- [Error codes](docs/errors.md) — code, status, hint, channels
+- [OpenAPI 3.1](docs/api/openapi.yaml) — also `GET /mcp/api/v1/openapi.yaml`
+
+Regenerate the MCP tools doc after tool changes: `yarn generate:mcp-tools`.
+
 ## REST API
 
 OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
