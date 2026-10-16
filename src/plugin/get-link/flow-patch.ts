@@ -88,6 +88,10 @@ export function applyReplaceTextToValue(
   if (typeof replace !== 'string') {
     throw new AiOpsValidationError('replace must be a string', 'invalid_replace');
   }
+  // Missing field (undefined) → field_not_found; present non-string → field_not_string.
+  if (current === undefined) {
+    throw new AiOpsValidationError(`Field '${field}' was not found on the node`, 'field_not_found');
+  }
   if (typeof current !== 'string') {
     throw new AiOpsValidationError(
       `Field '${field}' is not a string (got ${current === null ? 'null' : typeof current})`,
@@ -170,7 +174,8 @@ function requireNodeIndex(nodes: FlowNode[], nodeId: string, flowId: string): nu
   if (idx < 0 || !nodes[idx]) {
     throw new AiOpsValidationError(
       `Node '${nodeId}' was not found in flow '${flowId}'`,
-      'node_not_found'
+      'node_not_found',
+      { statusCode: 404 }
     );
   }
   return idx;
@@ -211,11 +216,18 @@ function applyOneNodeOp(nodes: FlowNode[], flowId: string, op: FlowNodeOp): void
   if (!current) {
     throw new AiOpsValidationError(
       `Node '${op.nodeId}' was not found in flow '${flowId}'`,
-      'node_not_found'
+      'node_not_found',
+      { statusCode: 404 }
     );
   }
 
   if (op.op === 'replace_text') {
+    if (!(op.field in current)) {
+      throw new AiOpsValidationError(
+        `Field '${op.field}' was not found on the node`,
+        'field_not_found'
+      );
+    }
     const nextValue = applyReplaceTextToValue(
       current[op.field],
       op.field,

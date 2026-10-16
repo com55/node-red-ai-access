@@ -28,12 +28,19 @@ import {
   aiOpsErrorToHttp,
   getMyProposal,
   listMyProposals,
+  siblingWarningFields,
   siblingsOnSameRev,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { computeProposalDiff } from './proposal-diff.js';
-import { presentOptionsFor, presentProposal, presentProposals } from './proposal-present.js';
+import {
+  parseIncludeQuery,
+  presentOptionsFor,
+  presentProposal,
+  presentProposalForApi,
+  presentProposalsForApi,
+} from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
 import type { AuthenticatedRequest } from './types.js';
 
@@ -59,6 +66,8 @@ export function createProposalHandler(
     }
 
     try {
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
       const proposal = await submitReplaceFlowProposal(
         store,
         audit,
@@ -71,12 +80,12 @@ export function createProposalHandler(
           title?: unknown;
         },
         adapter,
-        presentOptionsFor(req, httpAdminRoot)
+        presentOpts
       );
       const siblings = siblingsOnSameRev(store, proposal);
       res.status(201).json({
-        ...proposal,
-        ...(siblings.length > 0 ? { siblingsOnSameRev: siblings } : {}),
+        ...presentProposalForApi(proposal, { ...presentOpts, include }),
+        ...siblingWarningFields(siblings),
       });
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
@@ -121,11 +130,12 @@ export function listProposalsHandler(
       ...presentOptionsFor(req, httpAdminRoot),
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
     };
+    const include = parseIncludeQuery(req.query.include);
     const list = req.accessLink
       ? listMyProposals(store, req.accessLink, presentOpts)
-      : presentProposals(store.list(), presentOpts);
+      : store.list();
 
-    const proposals = list.map(p => {
+    const proposals = presentProposalsForApi(list, { ...presentOpts, include }).map(p => {
       if (p.status !== 'pending' || liveRev === undefined) {
         return p;
       }
@@ -143,12 +153,18 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
       return;
     }
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
+    const include = parseIncludeQuery(req.query.include);
     try {
       if (req.accessLink) {
-        res.json(getMyProposal(store, req.accessLink, id, presentOpts));
+        res.json(
+          presentProposalForApi(getMyProposal(store, req.accessLink, id, presentOpts), {
+            ...presentOpts,
+            include,
+          })
+        );
         return;
       }
-      res.json(presentProposal(store.get(id), presentOpts));
+      res.json(presentProposalForApi(store.get(id), { ...presentOpts, include }));
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
         res.status(404).json({ error: error.message, code: error.code });
@@ -245,8 +261,16 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
     }
     try {
       const proposal = req.accessLink ? getMyProposal(store, req.accessLink, id) : store.get(id);
-      const format = resolveDiffFormat(req.query.format);
-      const diff = applyDiffFormat(await computeProposalDiff(proposal, adapter), format);
+      const resolved = resolveDiffFormat(req.query.format);
+      if (!resolved.ok) {
+        res.status(400).json({
+          error: 'Invalid diff format',
+          code: 'invalid_diff_format',
+          hint: 'Valid formats: summary, full (default summary).',
+        });
+        return;
+      }
+      const diff = applyDiffFormat(await computeProposalDiff(proposal, adapter), resolved.format);
       res.json(diff);
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {

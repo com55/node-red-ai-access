@@ -16,6 +16,7 @@ import { AiOpsValidationError } from '../../src/plugin/ai-ops.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import {
   DEFAULT_SEARCH_RESULT_CAP,
+  SEARCH_HIT_LINE_CAP,
   getFlowSummary,
   getNodeById,
   getNodeField,
@@ -112,8 +113,15 @@ describe('parseLineRange', () => {
 
   it('rejects invalid ranges', () => {
     expect(() => parseLineRange('0-1')).toThrow(AiOpsValidationError);
-    expect(() => parseLineRange('4-2')).toThrow(AiOpsValidationError);
     expect(() => parseLineRange('abc')).toThrow(AiOpsValidationError);
+    try {
+      parseLineRange('4-2');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(AiOpsValidationError);
+      expect((e as AiOpsValidationError).code).toBe('invalid_line_range');
+      expect((e as AiOpsValidationError).message).toMatch(/reversed/i);
+    }
   });
 });
 
@@ -155,6 +163,27 @@ describe('layered-read helpers', () => {
     expect(slice.value).toBe('line2 TODO here\nline3');
     expect(slice.lineRange).toEqual({ start: 2, end: 3 });
     expect(slice.totalLines).toBe(5);
+
+    // end past EOF is clamped when start is valid
+    const clamped = await getNodeField(createAdapter(), 'n2', 'func', {
+      flowId: 'tab-1',
+      lines: '4-99',
+    });
+    expect(clamped.lineRange).toEqual({ start: 4, end: 5 });
+    expect(clamped.value).toBe('line4 more TODO\nline5 end');
+  });
+
+  it('getNodeField rejects lines start past EOF as line_range_out_of_bounds', async () => {
+    try {
+      await getNodeField(createAdapter(), 'n2', 'func', { flowId: 'tab-1', lines: '99-100' });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(AiOpsValidationError);
+      expect((e as AiOpsValidationError).code).toBe('line_range_out_of_bounds');
+      expect((e as AiOpsValidationError).statusCode).toBe(400);
+      expect((e as AiOpsValidationError).details).toEqual({ totalLines: 5 });
+      expect((e as AiOpsValidationError).message).toMatch(/out of bounds/i);
+    }
   });
 
   it('searchFlows returns hits with lines/snippet and respects cap', async () => {
@@ -164,12 +193,50 @@ describe('layered-read helpers', () => {
     expect(result.hitCount).toBeGreaterThanOrEqual(2);
     const hit = result.hits.find(h => h.nodeId === 'n2' && h.field === 'func');
     expect(hit?.lines).toEqual(expect.arrayContaining([2, 4]));
+    expect(hit?.lineCount).toBe(2);
     expect(hit?.snippet).toMatch(/TODO/);
 
     const capped = await searchFlows(createAdapter(), 'TODO', { flowId: 'tab-1', cap: 1 });
     expect(capped.truncated).toBe(true);
     expect(capped.hitCount).toBe(1);
     expect(capped.cap).toBe(1);
+  });
+
+  it('searchFlows caps lines at SEARCH_HIT_LINE_CAP but reports full lineCount', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => `hit MARKER on line ${i + 1}`).join('\n');
+    const adapter: FlowAdapter = {
+      kind: 'red',
+      getFlows: () =>
+        Promise.resolve({ rev: 'r', flows: [{ id: 'tab-1', type: 'tab', label: 'T' }] }),
+      getFlow: () =>
+        Promise.resolve({
+          rev: 'r',
+          flow: {
+            id: 'tab-1',
+            type: 'tab',
+            nodes: [{ id: 'nX', type: 'function', z: 'tab-1', func: many, wires: [[]] }],
+          },
+        }),
+      updateFlow: () => Promise.resolve({ rev: 'r2' }),
+    };
+    const result = await searchFlows(adapter, 'MARKER', { flowId: 'tab-1' });
+    const hit = result.hits.find(h => h.nodeId === 'nX');
+    expect(hit?.lineCount).toBe(30);
+    expect(hit?.lines).toHaveLength(SEARCH_HIT_LINE_CAP);
+    expect(hit?.lines[0]).toBe(1);
+    expect(hit?.lines[SEARCH_HIT_LINE_CAP - 1]).toBe(SEARCH_HIT_LINE_CAP);
+  });
+
+  it('searchFlows finds multi-line queries that span line boundaries', async () => {
+    const result = await searchFlows(createAdapter(), 'Hello</p>\n<p>World', {
+      flowId: 'tab-1',
+    });
+    expect(result.hitCount).toBeGreaterThanOrEqual(1);
+    const hit = result.hits.find(h => h.nodeId === 'n1' && h.field === 'template');
+    expect(hit).toBeTruthy();
+    // Match starts on line 1 of the template field.
+    expect(hit?.lines).toEqual(expect.arrayContaining([1]));
+    expect(hit?.snippet).toMatch(/Hello|World/);
   });
 });
 
@@ -255,7 +322,7 @@ describe('GET link + REST layered reads', () => {
     expect(search.body.hits.some((h: { nodeId: string }) => h.nodeId === 'n1')).toBe(true);
 
     const missing = await request(app).get('/mcp/api/v1/nodes/nope').set(auth);
-    expect(missing.status).toBe(400);
+    expect(missing.status).toBe(404);
     expect(missing.body.code).toBe('node_not_found');
   });
 

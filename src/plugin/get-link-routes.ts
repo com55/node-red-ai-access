@@ -34,7 +34,12 @@ import {
   searchFlowsHandler,
 } from './layered-read-routes.js';
 import { computeProposalDiff } from './proposal-diff.js';
-import { presentOptionsFor } from './proposal-present.js';
+import {
+  parseIncludeQuery,
+  presentOptionsFor,
+  presentProposalForApi,
+  presentProposalsForApi,
+} from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { buildStatus } from './status.js';
 import type { AiAccessSettings, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -163,12 +168,13 @@ function registerGetLinkProposalRoutes(
       jsonError(res, 401, 'Access link required', 'access_link_missing');
       return;
     }
+    const presentOpts = presentOptionsFor(req, httpAdminRoot);
+    const include = parseIncludeQuery(req.query.include);
     res.json({
-      proposals: listMyProposals(
-        options.proposalStore,
-        link,
-        presentOptionsFor(req, httpAdminRoot)
-      ),
+      proposals: presentProposalsForApi(listMyProposals(options.proposalStore, link, presentOpts), {
+        ...presentOpts,
+        include,
+      }),
     });
   });
 
@@ -185,8 +191,13 @@ function registerGetLinkProposalRoutes(
       return;
     }
     try {
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
       res.json(
-        getMyProposal(options.proposalStore, link, id, presentOptionsFor(req, httpAdminRoot))
+        presentProposalForApi(getMyProposal(options.proposalStore, link, id, presentOpts), {
+          ...presentOpts,
+          include,
+        })
       );
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);
@@ -223,8 +234,20 @@ function registerGetLinkProposalRoutes(
           id,
           presentOptionsFor(req, httpAdminRoot)
         );
-        const format = resolveDiffFormat(queryString(req.query, 'format'));
-        res.json(applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter), format));
+        const resolved = resolveDiffFormat(queryString(req.query, 'format'));
+        if (!resolved.ok) {
+          jsonError(
+            res,
+            400,
+            'Invalid diff format',
+            'invalid_diff_format',
+            'Valid formats: summary, full (default summary).'
+          );
+          return;
+        }
+        res.json(
+          applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter), resolved.format)
+        );
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error);
         if (mapped) {

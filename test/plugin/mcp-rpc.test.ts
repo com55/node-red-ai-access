@@ -423,7 +423,10 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       },
     };
 
-    const rest = await request(app).post('/mcp/api/v1/proposals').set(auth).send(body);
+    const rest = await request(app)
+      .post('/mcp/api/v1/proposals?include=payload')
+      .set(auth)
+      .send(body);
     expect(rest.status).toBe(201);
 
     const mcp = await callTool(app, link.token, 'submit_proposal', body);

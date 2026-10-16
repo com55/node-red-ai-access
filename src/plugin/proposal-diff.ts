@@ -40,8 +40,16 @@ export interface ScalarPropertyChange {
 export interface TextPropertyChange {
   key: string;
   kind: 'text';
-  before: string;
-  after: string;
+  /**
+   * Full before text. Present for `format=full`; omitted from `format=summary`
+   * responses (use `lines` + `beforeBytes` instead).
+   */
+  before?: string;
+  /**
+   * Full after text. Present for `format=full`; omitted from `format=summary`
+   * responses (use `lines` + `afterBytes` instead).
+   */
+  after?: string;
   lines: LineDiffEntry[];
   /** UTF-8 byte length of before (set by diff formatter). */
   beforeBytes?: number;

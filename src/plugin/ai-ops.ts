@@ -36,25 +36,59 @@ export interface SiblingProposalRef {
   displayName: string;
 }
 
-/** Other pending proposals on the same flowId + expectedRev. */
-export function siblingsOnSameRev(store: ProposalStore, proposal: Proposal): SiblingProposalRef[] {
-  return store
-    .list()
-    .filter(
-      p =>
-        p.id !== proposal.id &&
-        p.status === 'pending' &&
-        p.expectedRev === proposal.expectedRev &&
-        p.payload.flowId === proposal.payload.flowId
-    )
-    .map(p => {
+export interface SiblingsOnSameRevResult {
+  /** Pending siblings from the **same** access link only (ids/titles safe to share). */
+  siblingsOnSameRev: SiblingProposalRef[];
+  /** Count of pending siblings from other links (ids not exposed). */
+  otherLinkSiblingCount: number;
+}
+
+/**
+ * Other pending proposals on the same flowId + expectedRev.
+ * Only same-link proposals are listed; other links increment `otherLinkSiblingCount`.
+ */
+export function siblingsOnSameRev(
+  store: ProposalStore,
+  proposal: Proposal
+): SiblingsOnSameRevResult {
+  const siblingsOnSameRev: SiblingProposalRef[] = [];
+  let otherLinkSiblingCount = 0;
+  for (const p of store.list()) {
+    if (
+      p.id === proposal.id ||
+      p.status !== 'pending' ||
+      p.expectedRev !== proposal.expectedRev ||
+      p.payload.flowId !== proposal.payload.flowId
+    ) {
+      continue;
+    }
+    if (p.createdBy.linkId === proposal.createdBy.linkId) {
       const title = resolveProposalTitle(p);
-      return {
+      siblingsOnSameRev.push({
         id: p.id,
         title,
         displayName: buildProposalDisplayName(title, p.createdAt),
-      };
-    });
+      });
+    } else {
+      otherLinkSiblingCount += 1;
+    }
+  }
+  return { siblingsOnSameRev, otherLinkSiblingCount };
+}
+
+/** Spread sibling warning fields onto a JSON response (omit empty array / zero count). */
+export function siblingWarningFields(result: SiblingsOnSameRevResult): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (result.siblingsOnSameRev.length > 0) {
+    out.siblingsOnSameRev = result.siblingsOnSameRev;
+  }
+  if (result.otherLinkSiblingCount > 0) {
+    out.otherLinkSiblingCount = result.otherLinkSiblingCount;
+  }
+  if (result.siblingsOnSameRev.length > 0 || result.otherLinkSiblingCount > 0) {
+    out.warning = 'Other pending proposals share this flow revision — approve order may conflict.';
+  }
+  return out;
 }
 
 export class AiOpsValidationError extends Error {

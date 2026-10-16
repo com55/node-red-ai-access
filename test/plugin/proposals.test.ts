@@ -467,7 +467,7 @@ describe('proposals / flows / logs HTTP API', () => {
     });
     const link = linkStore.create({ label: 'diff-agent' });
     const created = await request(app)
-      .post('/mcp/api/v1/proposals')
+      .post('/mcp/api/v1/proposals?include=payload,baseFlow')
       .set('Authorization', `Bearer ${link.token}`)
       .send({
         type: 'replace_flow',

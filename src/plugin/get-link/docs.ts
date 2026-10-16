@@ -223,7 +223,11 @@ max **${MAX_PROPOSAL_JSON_BYTES}** decoded bytes):
 - Base64url encoding adds roughly **33%**; keep each request URL under ~**8 KB**.
 - \`append\` reports \`totalBytes\` as **decoded** bytes vs \`maxBytes\`.
 
-### Field mode (edit one existing property)
+### Field mode (replace one named string field)
+
+Field-mode drafts **replace the entire named string field** (e.g. \`template\`,
+\`func\`) with the assembled bytes — they do **not** merge partial edits. Use
+when the GET URL cannot hold the whole new field value.
 
 1. \`GET ./draft/new?flow=tab1&rev=abc&node=n1&field=template\`
    → validates that \`node\`/\`field\` exist **before** upload; returns \`{ draftId }\`
@@ -233,10 +237,14 @@ max **${MAX_PROPOSAL_JSON_BYTES}** decoded bytes):
 3. \`GET ./draft/<draftId>/submit?sha256=<sha256-hex-of-assembled-bytes>\`
    → creates a pending proposal after hash verification
 
-### JSON mode (\`mode=json\`) — add / remove / multi-edit
+For **small edits** inside a large field, prefer \`replace_text\` / \`./propose\`
+(find+replace) instead of uploading the whole field via drafts.
+
+### JSON mode (\`mode=json\`) — structural / multi-node changes
 
 Omit \`node\`/\`field\` (or pass \`mode=json\`) and assemble a **JSON document**
-with the same shapes as \`patch\` above, then submit:
+with the same shapes as \`patch\` above (add / remove / set / \`replace_text\` /
+full tab), then submit:
 
 \`\`\`json
 {
@@ -249,9 +257,9 @@ with the same shapes as \`patch\` above, then submit:
 \`\`\`
 
 Or a full \`replace_flow\` document. JSON-mode drafts **may add nodes**, so
-\`draft/new\` does not require an existing \`node\`/\`field\`. Prefer
-\`replace_text\` (or a field-mode draft of only the changed region via a unique
-find/replace) when you only need a small edit inside a large field.
+\`draft/new\` does not require an existing \`node\`/\`field\`. Use JSON mode for
+structural changes; use field-mode only when you need to replace one whole
+string field that is too large for a single propose URL.
 `;
 }
 

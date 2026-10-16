@@ -7,13 +7,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   autoGenerateProposalTitle,
+  buildChangeSummary,
   buildProposalDisplayName,
   buildProposalReviewPath,
   buildProposalReviewUrl,
   buildReplaceFlowTitle,
   formatProposalSubmittedAt,
   formatUtcOffset,
+  parseIncludeQuery,
   presentProposal,
+  presentProposalForApi,
   resolveProposalTitle,
   sanitizeProposalTitle,
   shouldRefreshDisplayTitle,
@@ -355,5 +358,45 @@ describe('presentProposal', () => {
     );
     expect(presented.flowLabel).toBe('Test Flow');
     expect(presented.flowLabel).not.toBe('tab1');
+  });
+});
+
+describe('presentProposalForApi', () => {
+  it('parses include query and omits bodies by default', () => {
+    expect([...parseIncludeQuery('payload,baseFlow')].sort()).toEqual(['baseFlow', 'payload']);
+    expect(parseIncludeQuery(undefined).size).toBe(0);
+
+    const proposal = baseProposal({
+      baseFlow: {
+        id: 'tab1',
+        type: 'tab',
+        nodes: [{ id: 'n1', type: 'inject', name: 'a' }],
+      },
+      payload: {
+        flowId: 'tab1',
+        flow: {
+          id: 'tab1',
+          type: 'tab',
+          nodes: [
+            { id: 'n1', type: 'inject', name: 'a' },
+            { id: 'n2', type: 'debug', name: 'b' },
+          ],
+        },
+      },
+    });
+    expect(buildChangeSummary(proposal)).toBe('Adds 1 node');
+
+    const lean = presentProposalForApi(proposal);
+    expect(lean.payload).toBeUndefined();
+    expect(lean.baseFlow).toBeUndefined();
+    expect(lean.changeSummary).toBe('Adds 1 node');
+    expect(lean.title).toBeTruthy();
+    expect(lean.reviewPath).toBeTruthy();
+
+    const full = presentProposalForApi(proposal, {
+      include: parseIncludeQuery('payload,baseFlow'),
+    });
+    expect(full.payload?.flowId).toBe('tab1');
+    expect(full.baseFlow?.nodes).toHaveLength(1);
   });
 });

@@ -1246,8 +1246,13 @@ function pageClientScriptPartBDiffView(): string {
 
   function isLargeTextChange(ch) {
     if (ch.kind !== 'text') return false;
-    var beforeB = typeof ch.beforeBytes === 'number' ? ch.beforeBytes : String(ch.before || '').length;
-    var afterB = typeof ch.afterBytes === 'number' ? ch.afterBytes : String(ch.after || '').length;
+    // Prefer byte sizes from the API (summary omits full before/after strings).
+    var beforeB = typeof ch.beforeBytes === 'number'
+      ? ch.beforeBytes
+      : (typeof ch.before === 'string' ? ch.before.length : 0);
+    var afterB = typeof ch.afterBytes === 'number'
+      ? ch.afterBytes
+      : (typeof ch.after === 'string' ? ch.after.length : 0);
     var lines = textChangeLineCount(ch);
     return beforeB >= 20000 || afterB >= 20000 || lines >= 80;
   }

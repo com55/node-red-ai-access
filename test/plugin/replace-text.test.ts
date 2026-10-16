@@ -50,6 +50,26 @@ describe('applyReplaceTextToValue', () => {
     expect(applyReplaceTextToValue('aa-aa-aa', 'func', 'aa', 'X', 2)).toBe('aa-X-aa');
   });
 
+  it('throws field_not_found when the field value is missing', () => {
+    try {
+      applyReplaceTextToValue(undefined, 'template', 'a', 'b');
+      expect.fail('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(AiOpsValidationError);
+      expect((e as AiOpsValidationError).code).toBe('field_not_found');
+    }
+  });
+
+  it('throws field_not_string when the field exists but is not a string', () => {
+    try {
+      applyReplaceTextToValue(42, 'count', 'a', 'b');
+      expect.fail('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(AiOpsValidationError);
+      expect((e as AiOpsValidationError).code).toBe('field_not_string');
+    }
+  });
+
   it('applies multiple non-overlapping finds via findTextOccurrences', () => {
     expect(findTextOccurrences('ababab', 'ab')).toEqual([0, 2, 4]);
   });
@@ -164,10 +184,12 @@ describe('GET propose replace_text + REST nodes', () => {
     const { app, linkStore } = createApp(userDir);
     const created = linkStore.create({ label: 'rt' });
     const res = await request(app).get(
-      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=${encodeURIComponent('<p>Bye</p>')}&replace=${encodeURIComponent('<p>OK</p>')}&title=Tweak`
+      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=${encodeURIComponent('<p>Bye</p>')}&replace=${encodeURIComponent('<p>OK</p>')}&title=Tweak&include=payload`
     );
     expect(res.status).toBe(201);
     expect(res.body.proposal?.id).toBeTruthy();
+    expect(res.body.proposal?.payload).toBeTruthy();
+    expect(res.body.proposal?.changeSummary).toMatch(/edit/i);
     const diff = await request(app).get(
       `/mcp/a/${created.token}/proposals/${res.body.proposal.id}/diff`
     );
@@ -177,6 +199,28 @@ describe('GET propose replace_text + REST nodes', () => {
     );
     expect(change?.kind).toBe('text');
     expect(JSON.stringify(change)).toMatch(/Bye|OK/);
+  });
+
+  it('GET propose replace_text on unknown field returns field_not_found', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const created = linkStore.create({ label: 'rt-missing' });
+    const res = await request(app).get(
+      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=noSuchField&find=a&replace=b`
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('field_not_found');
+    expect(String(res.body.hint ?? '')).toMatch(/field/i);
+  });
+
+  it('GET propose rejects replace_text combined with set props', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const created = linkStore.create({ label: 'rt-conflict' });
+    const res = await request(app).get(
+      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi&set.name=Nope`
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('conflicting_edits');
+    expect(String(res.body.hint ?? '')).toMatch(/set/i);
   });
 
   it('GET propose returns 409 ambiguous_match with matchCount', async () => {
@@ -203,7 +247,7 @@ describe('GET propose replace_text + REST nodes', () => {
     const { app, linkStore } = createApp(userDir);
     const created = linkStore.create({ label: 'rt' });
     const res = await request(app).get(
-      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi&occurrence=2`
+      `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi&occurrence=2&include=payload`
     );
     expect(res.status).toBe(201);
     const flow = res.body.proposal?.payload?.flow;
@@ -215,7 +259,7 @@ describe('GET propose replace_text + REST nodes', () => {
     const { app, linkStore } = createApp(userDir);
     const created = linkStore.create({ label: 'rt-rest' });
     const res = await request(app)
-      .post('/mcp/api/v1/proposals')
+      .post('/mcp/api/v1/proposals?include=payload')
       .set('Authorization', `Bearer ${created.token}`)
       .send({
         type: 'replace_flow',

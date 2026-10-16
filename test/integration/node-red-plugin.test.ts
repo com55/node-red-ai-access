@@ -431,7 +431,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
       expect(append.status).toBe(200);
     }
     const submitted = await request(RED.httpAdmin).get(
-      `/mcp/a/${token}/draft/${draftId}/submit?sha256=${sha256}`
+      `/mcp/a/${token}/draft/${draftId}/submit?sha256=${sha256}&include=payload`
     );
     expect(submitted.status).toBe(201);
     expect(submitted.body.proposal.status).toBe('pending');

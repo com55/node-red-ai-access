@@ -76,7 +76,7 @@ export function sendRateLimited(
     error: 'Too many requests. Slow down and retry.',
     code: 'rate_limited',
     retryAfter,
-    hint: 'Wait for retryAfter seconds, then continue. Prefer draft chunking for large content.',
+    hint: 'Wait retryAfter seconds, then retry. Prefer summary/search reads over full field downloads.',
   });
 }
 

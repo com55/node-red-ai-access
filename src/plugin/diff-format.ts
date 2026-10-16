@@ -13,14 +13,25 @@ import type {
 
 export type DiffFormat = 'summary' | 'full';
 
+/** Valid `?format=` values for proposal diffs (empty/undefined → summary). */
+export const VALID_DIFF_FORMATS: readonly DiffFormat[] = ['summary', 'full'];
+
+export type ResolveDiffFormatResult = { ok: true; format: DiffFormat } | { ok: false };
+
 const DEFAULT_CONTEXT = 2;
 
-export function resolveDiffFormat(raw: unknown): DiffFormat {
-  if (raw === 'full') {
-    return 'full';
+/**
+ * Resolve `?format=` for proposal diffs.
+ * Empty / undefined → summary. Unknown values → `{ ok: false }` (callers return 400).
+ */
+export function resolveDiffFormat(raw: unknown): ResolveDiffFormatResult {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, format: 'summary' };
   }
-  // Default and explicit "summary" both compact large line dumps.
-  return 'summary';
+  if (raw === 'summary' || raw === 'full') {
+    return { ok: true, format: raw };
+  }
+  return { ok: false };
 }
 
 function compactLineDiff(
@@ -80,14 +91,24 @@ function compactLineDiff(
 }
 
 function formatTextChange(change: TextPropertyChange, format: DiffFormat): TextPropertyChange {
-  const beforeBytes = Buffer.byteLength(change.before, 'utf8');
-  const afterBytes = Buffer.byteLength(change.after, 'utf8');
+  const beforeText = change.before ?? '';
+  const afterText = change.after ?? '';
+  const beforeBytes = Buffer.byteLength(beforeText, 'utf8');
+  const afterBytes = Buffer.byteLength(afterText, 'utf8');
   if (format === 'full') {
-    return { ...change, beforeBytes, afterBytes };
+    return {
+      ...change,
+      before: beforeText,
+      after: afterText,
+      beforeBytes,
+      afterBytes,
+    };
   }
+  // Summary: omit full before/after strings (can be tens of KB for a tiny edit).
   const compacted = compactLineDiff(change.lines);
   const formatted: TextPropertyChange = {
-    ...change,
+    key: change.key,
+    kind: 'text',
     beforeBytes,
     afterBytes,
     lines: compacted.lines,

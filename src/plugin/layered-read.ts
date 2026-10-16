@@ -49,12 +49,17 @@ export interface GetNodeFieldResult {
   lineRange?: { start: number; end: number };
 }
 
+/** Max line numbers returned per search hit (full count is in `lineCount`). */
+export const SEARCH_HIT_LINE_CAP = 20;
+
 export interface SearchHit {
   flowId: string | null;
   nodeId: string;
   field: string;
-  /** 1-based line numbers that contain the match. */
+  /** 1-based line numbers that contain the match (capped at {@link SEARCH_HIT_LINE_CAP}). */
   lines: number[];
+  /** Total matching lines before the per-hit lines cap. */
+  lineCount: number;
   snippet: string;
 }
 
@@ -141,7 +146,9 @@ export async function findNodeInFlows(
     const configs = Array.isArray(tab.configs) ? tab.configs : [];
     const node = [...nodes, ...configs].find(n => n.id === nodeId);
     if (!node) {
-      throw new AiOpsValidationError('Node was not found in the given flow', 'node_not_found');
+      throw new AiOpsValidationError('Node was not found in the given flow', 'node_not_found', {
+        statusCode: 404,
+      });
     }
     return { rev, flowId, node };
   }
@@ -180,7 +187,7 @@ export async function findNodeInFlows(
     }
   }
   if (!found) {
-    throw new AiOpsValidationError('Node was not found', 'node_not_found');
+    throw new AiOpsValidationError('Node was not found', 'node_not_found', { statusCode: 404 });
   }
   return { rev, flowId: owner, node: found };
 }
@@ -210,9 +217,15 @@ export function parseLineRange(
   }
   const start = Number(m[1]);
   const end = m[2] !== undefined ? Number(m[2]) : start;
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1) {
     throw new AiOpsValidationError(
       'lines must be A or A-B (1-based inclusive)',
+      'invalid_line_range'
+    );
+  }
+  if (end < start) {
+    throw new AiOpsValidationError(
+      'lines range is reversed: end must be >= start (1-based inclusive)',
       'invalid_line_range'
     );
   }
@@ -251,7 +264,15 @@ export async function getNodeField(
       bytes,
     };
   }
-  const startIdx = Math.min(range.start - 1, allLines.length);
+  // start past EOF (or beyond last line) → empty slice; reject instead of clamping.
+  if (range.start > totalLines) {
+    throw new AiOpsValidationError(
+      `lines range is out of bounds (start ${range.start} > ${totalLines} total lines)`,
+      'line_range_out_of_bounds',
+      { details: { totalLines } }
+    );
+  }
+  const startIdx = range.start - 1;
   const endIdx = Math.min(range.end, allLines.length);
   const sliced = allLines.slice(startIdx, endIdx).join('\n');
   return {
@@ -286,6 +307,16 @@ function snippetAround(value: string, index: number, findLen: number): string {
   return s;
 }
 
+function lineNumberAtIndex(value: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index && i < value.length; i += 1) {
+    if (value.charCodeAt(i) === 10 /* \n */) {
+      line += 1;
+    }
+  }
+  return line;
+}
+
 function searchInNode(
   node: FlowNode,
   flowId: string | null,
@@ -296,29 +327,54 @@ function searchInNode(
   for (const { field, value } of stringFields(node)) {
     if (hits.length >= cap) return true;
     const lines: number[] = [];
+    const seenLines = new Set<number>();
     let firstIdx = -1;
-    const parts = value.split('\n');
-    for (let i = 0; i < parts.length; i += 1) {
-      const line = parts[i] ?? '';
-      const at = line.indexOf(q);
-      if (at >= 0) {
-        lines.push(i + 1);
-        if (firstIdx < 0) {
-          // Absolute index in full value for snippet.
+    const pushLine = (line: number, idx: number): void => {
+      if (!seenLines.has(line)) {
+        seenLines.add(line);
+        lines.push(line);
+      }
+      if (firstIdx < 0) {
+        firstIdx = idx;
+      }
+    };
+
+    // Per-line matches (q without embedded newlines).
+    if (!q.includes('\n')) {
+      const parts = value.split('\n');
+      for (let i = 0; i < parts.length; i += 1) {
+        const line = parts[i] ?? '';
+        const at = line.indexOf(q);
+        if (at >= 0) {
           let offset = 0;
           for (let j = 0; j < i; j += 1) {
             offset += (parts[j]?.length ?? 0) + 1;
           }
-          firstIdx = offset + at;
+          pushLine(i + 1, offset + at);
         }
       }
     }
+
+    // Multi-line / spanning matches: indexOf on the full value when q embeds
+    // newlines (a contiguous match that spans lines must include `\n` in q).
+    if (q.includes('\n')) {
+      let from = 0;
+      while (from <= value.length) {
+        const at = value.indexOf(q, from);
+        if (at < 0) break;
+        pushLine(lineNumberAtIndex(value, at), at);
+        from = at + Math.max(1, q.length);
+      }
+    }
+
     if (lines.length === 0) continue;
+    const lineCount = lines.length;
     hits.push({
       flowId,
       nodeId: node.id,
       field,
-      lines,
+      lines: lines.slice(0, SEARCH_HIT_LINE_CAP),
+      lineCount,
       snippet: snippetAround(value, Math.max(0, firstIdx), q.length),
     });
   }

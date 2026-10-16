@@ -30,10 +30,28 @@ const SAFE_ERROR_TEXT: Record<string, string> = {
   node_not_found: 'Node was not found',
   field_not_found: 'Field was not found',
   field_not_string: 'Field is not a string',
-  invalid_line_range: 'lines must be A or A-B (1-based inclusive)',
+  invalid_line_range: 'lines must be A or A-B (1-based inclusive; end >= start)',
+  line_range_out_of_bounds: 'lines range is out of bounds',
   flow_not_found: 'Flow was not found',
   upstream_error: 'Upstream error',
 };
+
+function layeredReadErrorHint(code: string, notFoundHint?: string): string | undefined {
+  switch (code) {
+    case 'node_not_found':
+    case 'flow_not_found':
+    case 'field_not_found':
+      return notFoundHint;
+    case 'invalid_line_range':
+      return 'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.';
+    case 'field_not_string':
+      return 'This endpoint only returns string fields (template, func, …). Use GET …/nodes/<id> for other property types.';
+    case 'line_range_out_of_bounds':
+      return 'start is past the end of the field — check totalLines and request a lower lines= range.';
+    default:
+      return undefined;
+  }
+}
 
 function safeErrorText(code: string): string {
   return SAFE_ERROR_TEXT[code] ?? 'Request failed';
@@ -60,17 +78,16 @@ function sendMappedError(res: Response, error: unknown, notFoundHint?: string): 
   if (typeof mapped.body.matchCount === 'number') {
     body.matchCount = mapped.body.matchCount;
   }
+  if (typeof mapped.body.totalLines === 'number') {
+    body.totalLines = mapped.body.totalLines;
+  }
   if (typeof mapped.body.expectedRev === 'string') {
     body.expectedRev = mapped.body.expectedRev;
   }
   if (typeof mapped.body.currentRev === 'string') {
     body.currentRev = mapped.body.currentRev;
   }
-  const hint =
-    notFoundHint &&
-    (code === 'node_not_found' || code === 'flow_not_found' || code === 'field_not_found')
-      ? notFoundHint
-      : undefined;
+  const hint = layeredReadErrorHint(code, notFoundHint);
   if (hint) {
     body.hint = hint;
   }

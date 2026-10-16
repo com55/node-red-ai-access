@@ -195,7 +195,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const link = linkStore.create({ label: 'propose' });
 
     const res = await request(app).get(
-      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Hello&summary=rename`
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Hello&summary=rename&include=payload`
     );
     expect(res.status).toBe(201);
     expect(res.body.ok).toBe(true);
@@ -204,6 +204,7 @@ describe('GET /mcp/a/<token> access links', () => {
       status: 'pending',
       expectedRev: 'rev-1',
       payload: { flowId: 'tab-1' },
+      changeSummary: expect.any(String),
     });
     const renamed = res.body.proposal.payload.flow.nodes.find((n: { id: string }) => n.id === 'n1');
     expect(renamed.name).toBe('Hello');
@@ -280,7 +281,7 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(again.status).toBe(200);
 
     const submitted = await request(app).get(
-      `/mcp/a/${link.token}/draft/${draftId}/submit?sha256=${sha256}`
+      `/mcp/a/${link.token}/draft/${draftId}/submit?sha256=${sha256}&include=payload`
     );
     expect(submitted.status).toBe(201);
     expect(submitted.body.ok).toBe(true);
@@ -344,14 +345,14 @@ describe('GET /mcp/a/<token> access links', () => {
     const badNode = await request(app).get(
       `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=missing&field=template`
     );
-    expect(badNode.status).toBe(400);
+    expect(badNode.status).toBe(404);
     expect(badNode.body.code).toBe('node_not_found');
     expect(String(badNode.body.hint ?? '')).not.toMatch(/rev is stale/i);
 
     const badField = await request(app).get(
       `/mcp/a/${link.token}/draft/new?flow=tab-1&rev=rev-1&node=n2&field=nope`
     );
-    expect(badField.status).toBe(400);
+    expect(badField.status).toBe(404);
     expect(badField.body.code).toBe('field_not_found');
 
     // mode=json may add nodes — skip live node/field validation
@@ -393,7 +394,7 @@ describe('GET /mcp/a/<token> access links', () => {
     };
     const encoded = Buffer.from(JSON.stringify(patch), 'utf8').toString('base64url');
     const res = await request(app).get(
-      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}`
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}&include=payload`
     );
     expect(res.status).toBe(201);
     const nodes = res.body.proposal.payload.flow.nodes as { id: string; name?: string }[];
@@ -413,7 +414,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const res = await request(app).get(
       `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=missing&set.name=X`
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     expect(res.body.code).toBe('node_not_found');
     expect(String(res.body.hint ?? '')).toMatch(/flows/i);
     expect(String(res.body.hint ?? '')).not.toMatch(/re-read flows if rev is stale/i);

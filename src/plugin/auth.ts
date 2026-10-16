@@ -254,7 +254,8 @@ function looksLikeFailedAccessLinkAttempt(token: string): boolean {
 
 function truncatedTokenHint(token: string): string | undefined {
   if (token.length < 24 || (token.startsWith('aia_') && token.length < 40)) {
-    return 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.';
+    // Bearer/REST clients: do not mention the GET-link URL shape.
+    return 'The token may be truncated — ask the user for the full access-link token.';
   }
   return undefined;
 }

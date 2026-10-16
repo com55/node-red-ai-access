@@ -129,6 +129,8 @@ describe('sendRateLimited', () => {
       retryAfter: expect.any(Number),
     });
     expect(res.body.retryAfter).toBeGreaterThanOrEqual(1);
+    expect(String(res.body.hint)).toMatch(/retryAfter|summary\/search/i);
+    expect(String(res.body.hint)).not.toMatch(/draft chunk/i);
   });
 });
 

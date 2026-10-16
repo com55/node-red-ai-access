@@ -10,8 +10,17 @@ import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
-import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
-import { presentOptionsFor } from '../proposal-present.js';
+import {
+  aiOpsErrorToHttp,
+  siblingWarningFields,
+  siblingsOnSameRev,
+  submitReplaceFlowProposal,
+} from '../ai-ops.js';
+import {
+  parseIncludeQuery,
+  presentOptionsFor,
+  presentProposalForApi,
+} from '../proposal-present.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -172,7 +181,9 @@ async function rejectInvalidFieldTargets(
   try {
     const invalid = await validateFieldDraftTargets(flowAdapter, flowId, targets);
     if (invalid) {
-      jsonError(res, 400, invalid.message, invalid.code, draftErrorHint(invalid.code));
+      const status =
+        invalid.code === 'node_not_found' || invalid.code === 'field_not_found' ? 404 : 400;
+      jsonError(res, status, invalid.message, invalid.code, draftErrorHint(invalid.code));
       return true;
     }
   } catch (error) {
@@ -500,6 +511,8 @@ export function getLinkDraftSubmitHandler(
       }
 
       const title = titleOverride ?? draft.title ?? draft.summary;
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
       const proposal = await submitReplaceFlowProposal(
         proposalStore,
         auditLog,
@@ -511,26 +524,21 @@ export function getLinkDraftSubmitHandler(
           ...(title ? { title } : {}),
         },
         flowAdapter,
-        presentOptionsFor(req, httpAdminRoot)
+        presentOpts
       );
 
       draftStore.markSubmitted(draftId, req.accessLink.id, proposal.id);
+      const presented = presentProposalForApi(proposal, { ...presentOpts, include });
       const siblings = siblingsOnSameRev(proposalStore, proposal);
 
       res.status(201).json({
         ok: true,
-        proposal,
+        proposal: presented,
         sha256: createHash('sha256').update(Buffer.from(assembled, 'utf8')).digest('hex'),
-        ...(siblings.length > 0
-          ? {
-              siblingsOnSameRev: siblings,
-              warning:
-                'Other pending proposals share this flow revision — approve order may conflict.',
-            }
-          : {}),
+        ...siblingWarningFields(siblings),
         hint:
-          `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
-          `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,
+          `Waiting for human approval. Tell the user about "${presented.displayName}" ` +
+          `(${presented.reviewUrl}). Poll GET …/proposals/<id> for status.`,
       });
     } catch (error) {
       if (error instanceof DraftAlreadySubmittedError) {
