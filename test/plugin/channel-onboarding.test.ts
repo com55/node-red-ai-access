@@ -106,6 +106,6 @@ describe('channel onboarding copy', () => {
     const errors = readFileSync(join(ROOT, 'docs/errors.md'), 'utf8');
     expect(errors).toMatch(/token_expired/);
     expect(errors).toMatch(/wrong_token_kind/);
-    expect(errors).toMatch(/\| Channels \|/);
+    expect(errors).toMatch(/\|\s*Channels\s*\|/);
   });
 });

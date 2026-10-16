@@ -51,7 +51,9 @@ export function formatMcpToolsMarkdown(tools: McpToolListItem[]): string {
       const type = Array.isArray(prop.type)
         ? prop.type.join(' | ')
         : String(prop.type ?? 'unknown');
-      const desc = String(prop.description ?? '').replace(/\|/g, '\\|');
+      const desc = String(prop.description ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\|/g, '\\|');
       lines.push(
         `| \`${key}\` | ${required.has(key) ? 'yes' : 'no'} | ${type} | ${desc.length > 0 ? desc : '—'} |`
       );
