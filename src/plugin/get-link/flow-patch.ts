@@ -203,11 +203,24 @@ function collectOpShapeIssues(ops: FlowNodeOp[]): ValidationIssue[] {
           typeof node.id === 'string' ? node.id : undefined
         );
       }
-    } else if (op.op === 'set' && op.set && typeof op.set === 'object' && 'wires' in op.set) {
+    } else if (op.op === 'set' && typeof op.set === 'object' && 'wires' in op.set) {
       assertValidWiresShape(op.set.wires, issues, op.nodeId);
     }
   }
   return issues;
+}
+
+/** Node ids this patch adds or mutates (for soft-warning scoping). */
+function touchedNodeIdsFromOps(ops: FlowNodeOp[]): Set<string> {
+  const touchedIds = new Set<string>();
+  for (const op of ops) {
+    if (op.op === 'add' && typeof op.node.id === 'string') {
+      touchedIds.add(op.node.id);
+    } else if (op.op !== 'add' && typeof op.nodeId === 'string') {
+      touchedIds.add(op.nodeId);
+    }
+  }
+  return touchedIds;
 }
 
 /**
@@ -284,7 +297,10 @@ export async function applyFlowNodeOps(
     }
   }
   previewIssues.push(...collectZMismatchIssues(preview, flowId));
-  const wirePreview = await collectWireValidation(preview, options.nodeTypes);
+  const touchedIds = touchedNodeIdsFromOps(ops);
+  const wirePreview = await collectWireValidation(preview, options.nodeTypes, {
+    softWarningNodeIds: touchedIds,
+  });
   previewIssues.push(...wirePreview.errors);
   throwValidationIssues(previewIssues);
 
@@ -293,10 +309,11 @@ export async function applyFlowNodeOps(
     applyOneNodeOp(nodes, flowId, op);
   }
 
-  // Soft warnings only — missing config / unwired / incomplete wires (scaffold OK).
+  // Soft warnings only for nodes this patch adds/changes (scaffold OK).
   const soft: ValidationIssue[] = [...wirePreview.warnings];
   if (options.nodeTypes) {
-    soft.push(...(await collectConfigWarnings(nodes, configs, options.nodeTypes)));
+    const cfg = await collectConfigWarnings(nodes, configs, options.nodeTypes);
+    soft.push(...cfg.filter(w => !w.nodeId || touchedIds.has(w.nodeId)));
   }
   return {
     expectedRev: snapshot.rev,

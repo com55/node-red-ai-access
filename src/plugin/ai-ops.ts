@@ -23,7 +23,11 @@ import {
   type ChannelErrorMapped,
   type ErrorChannel,
 } from './channel-errors.js';
-import { throwValidationIssues, validateFlowTab } from './flow-validate.js';
+import {
+  collectFullFlowShapeIssues,
+  throwValidationIssues,
+  validateFlowTab,
+} from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   conflictWarningFields,
@@ -324,6 +328,15 @@ export function resolveExpectedRev(body: SubmitReplaceFlowInput): string | undef
  * load the live flow and apply ops in order. Dynamic import avoids a cycle with
  * get-link/flow-patch (which imports AiOpsValidationError from this module).
  */
+function assertNodesArrayOrAbsent(payload: Record<string, unknown>, topLevelNodes: unknown): void {
+  if ('nodes' in payload && payload.nodes !== undefined && !Array.isArray(payload.nodes)) {
+    throw new AiOpsValidationError('payload.nodes must be an array of node ops', 'invalid_nodes');
+  }
+  if (topLevelNodes !== undefined && !Array.isArray(topLevelNodes)) {
+    throw new AiOpsValidationError('nodes must be an array of node ops', 'invalid_nodes');
+  }
+}
+
 async function materializePayloadFromNodes(
   adapter: FlowAdapter,
   expectedRev: string,
@@ -332,6 +345,7 @@ async function materializePayloadFromNodes(
   nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<{ flowId: string; flow: FlowTab }> {
   const { applyFlowNodeOps, interpretPatch } = await import('./get-link/flow-patch.js');
+  assertNodesArrayOrAbsent(payload, topLevelNodes);
   const nodes = Array.isArray(payload.nodes)
     ? payload.nodes
     : Array.isArray(topLevelNodes)
@@ -369,10 +383,12 @@ async function resolveReplaceFlowPayload(
 ): Promise<{ flowId: string; flow: object }> {
   let flowId = payloadObj.flowId;
   let flow = payloadObj.flow;
-  if (
-    (!flow || typeof flow !== 'object' || Array.isArray(flow)) &&
-    (Array.isArray(payloadObj.nodes) || Array.isArray(topLevelNodes))
-  ) {
+  const needsMaterialize = !flow || typeof flow !== 'object' || Array.isArray(flow);
+  if (needsMaterialize) {
+    // Prefer a clear invalid_nodes error over missing_flow when nodes is present but wrong type.
+    assertNodesArrayOrAbsent(payloadObj, topLevelNodes);
+  }
+  if (needsMaterialize && (Array.isArray(payloadObj.nodes) || Array.isArray(topLevelNodes))) {
     const materialized = await materializePayloadFromNodes(
       adapter,
       expectedRev,
@@ -455,6 +471,10 @@ export async function submitReplaceFlowProposal(
     );
   }
 
+  // Shape-check the raw tab before sanitize (sanitize drops non-array nodes silently).
+  const rawFlow = flow as Partial<FlowTab>;
+  throwValidationIssues(collectFullFlowShapeIssues(rawFlow, safeFlowId));
+
   const safeFlow = sanitizeFlowTab(flow) as Partial<FlowTab>;
 
   // Rev before types (stale rev fails without palette lookup).
@@ -477,6 +497,7 @@ export async function submitReplaceFlowProposal(
 
   const { errors: flowErrors, warnings: flowWarnings } = await validateFlowTab(safeFlow, {
     flowId: safeFlowId,
+    baseFlow: safeBaseFlow,
     ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
   });
   throwValidationIssues(flowErrors);
