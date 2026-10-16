@@ -126,9 +126,10 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     const listed = await request(app).get('/mcp/api/v1/links');
     expect(listed.status).toBe(200);
     expect(listed.body.links).toHaveLength(1);
-    // Raw `token` field stays create-only; active links expose `url` for re-copy.
+    // get_link: raw `token` stays create-only; list exposes `url` for re-copy.
     expect(listed.body.links[0]).not.toHaveProperty('token');
     expect(listed.body.links[0].url).toMatch(new RegExp(`/mcp/a/${created.body.token}$`));
+    expect(listed.body.links[0].kind).toBe('get_link');
 
     const revoked = await request(app).delete(`/mcp/api/v1/links/${created.body.id}`);
     expect(revoked.status).toBe(200);
@@ -268,6 +269,10 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     expect(byKind.rest.url).toBeUndefined();
     expect(byKind.mcp.url).toBeUndefined();
     expect(byKind.get_link.url).toMatch(/\/mcp\/a\//);
+    // rest/mcp list rows expose token for admin Bearer re-copy (no URL).
+    expect(byKind.rest.token).toMatch(/^aia_/);
+    expect(byKind.mcp.token).toMatch(/^aia_/);
+    expect(byKind.get_link.token).toBeUndefined();
 
     const logs = await request(app).get('/mcp/api/v1/logs?limit=50');
     const restCreated = logs.body.logs.find(
@@ -275,6 +280,37 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
         e.action === 'link.created' && e.details?.label === 'rest'
     );
     expect(restCreated?.details?.kind).toBe('rest');
+  });
+
+  it('create responses support kind-aware copy UX (url only for get_link)', async () => {
+    const { app } = createMockRed({
+      adminAuth: { type: 'credentials' },
+      authenticate: asStarUser,
+    });
+
+    const getLink = await request(app).post('/mcp/api/v1/links').send({ kind: 'get_link' });
+    expect(getLink.status).toBe(201);
+    expect(getLink.body.url).toMatch(/\/mcp\/a\//);
+    expect(getLink.body.token).toMatch(/^aia_/);
+    // UI copies the GET URL — never a REST/MCP Bearer line for get_link.
+    expect(getLink.body.url).not.toMatch(/Authorization/);
+
+    const rest = await request(app)
+      .post('/mcp/api/v1/links')
+      .send({ kind: 'rest', label: 'rest-copy' });
+    expect(rest.status).toBe(201);
+    expect(rest.body.url).toBeUndefined();
+    expect(rest.body.kind).toBe('rest');
+    expect(rest.body.token).toMatch(/^aia_/);
+    // UI builds "Authorization: Bearer <token>" / "REST Bearer token" from this.
+
+    const mcp = await request(app)
+      .post('/mcp/api/v1/links')
+      .send({ kind: 'mcp', label: 'mcp-copy' });
+    expect(mcp.status).toBe(201);
+    expect(mcp.body.url).toBeUndefined();
+    expect(mcp.body.kind).toBe('mcp');
+    expect(mcp.body.token).toMatch(/^aia_/);
   });
 
   it('rejects invalid kind with 400 invalid_link_kind', async () => {

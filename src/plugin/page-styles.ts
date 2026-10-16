@@ -204,6 +204,24 @@ function pageStylesPartB(): string {
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
+.kind-badge {
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+  background: #eef2f0;
+  color: #3a4a42;
+}
+.kind-badge.kind-get_link { background: #e8f1fb; color: #1a4a7a; }
+.kind-badge.kind-rest { background: #eef6ea; color: #2a5a28; }
+.kind-badge.kind-mcp { background: #f4efe6; color: #6a4a14; }
+.token-kind-label {
+  margin: 0 0 0.35rem;
+  font-weight: 650;
+  color: var(--ink);
+}
 button.action.copied {
   background: var(--accent-soft);
   border-color: var(--accent);

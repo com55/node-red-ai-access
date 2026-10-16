@@ -391,7 +391,12 @@ describe('node-types HTTP + MCP + docs', () => {
     const workflowIdx = md.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);
     expect(alsoIdx).toBeLessThan(workflowIdx);
-    expect(md).toMatch(/Prefer MCP or REST Bearer/i);
+    expect(md).toMatch(/Prefer MCP or REST/i);
+    expect(md).toMatch(/get_link/);
+    expect(md).toMatch(/rest.*token|rest-token/i);
+    expect(md).toMatch(/mcp.*token|mcp-token/i);
+    expect(md).toMatch(/not this path token/i);
+    expect(md).toMatch(/self-contained GET link \(get_link\)/i);
     expect(md).toMatch(/claude_desktop_config\.json/);
     expect(md).toMatch(/mcp\.json/);
     expect(md).toMatch(/https:\/\/YOUR-NODE-RED\/mcp\/rpc/);
