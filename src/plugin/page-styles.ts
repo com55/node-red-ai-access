@@ -758,10 +758,6 @@ function pageStylesPartG(): string {
 .proposal-meta-line { color: var(--muted); font-size: 0.88rem; }
 .proposal-flow { color: var(--ink); font-weight: 600; }
 .proposal-changes { margin: 0.35rem 0 0.55rem; }
-.proposals-toolbar { margin: 0 0 0.65rem; }
-.stale-warning-row { margin: 0.35rem 0 0.55rem; }
-.stale-warning-row .dismiss-stale-btn { margin-top: 0.35rem; }
-.dismiss-vs-reject { margin: 0.35rem 0 0; font-size: 0.88rem; }
 .delete-banner {
   margin: 0 0 0.55rem;
   padding: 0.55rem 0.7rem;
@@ -805,6 +801,59 @@ function pageStylesPartG(): string {
 
 function pageStylesPartH(): string {
   return `
+.stale-group {
+  margin: 1rem 0 0;
+  border: 1px solid var(--warn-border);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  padding: 0.35rem 0.75rem 0.75rem;
+}
+.stale-group > summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: #6a4a14;
+  padding: 0.45rem 0;
+  user-select: none;
+}
+.stale-group-actions { margin: 0.35rem 0 0.55rem; }
+.stale-item {
+  margin: 0.55rem 0 0;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.stale-item-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+.stale-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.stale-item-diff { margin-top: 0.45rem; }
+.stale-item-diff > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  user-select: none;
+}
+.dismiss-vs-reject { margin: 0.25rem 0 0.45rem; font-size: 0.88rem; }
+.vs-current-plain { margin: 0.45rem 0 0; }
+.large-diff-btn {
+  display: inline-block;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  list-style: none;
+}
+.large-diff-btn::-webkit-details-marker { display: none; }
+.large-diff-details { margin-top: 0.25rem; }
 .toast-host {
   position: fixed;
   right: 1rem;
@@ -860,13 +909,6 @@ dialog h3 { margin: 0 0 0.4rem; }
 .status-pill.approved { background: #e8f6ef; color: var(--ok); }
 .status-pill.rejected { background: #f4efe6; color: #6a4a14; }
 .status-pill.failed { background: #fdeceb; color: var(--danger); }
-.large-diff-summary {
-  margin: 0.25rem 0;
-  padding: 0.4rem 0.55rem;
-  background: #f4f7fa;
-  border-radius: 6px;
-  font-size: 0.88rem;
-}
 .debug-toggle {
   flex-direction: row;
   align-items: center;

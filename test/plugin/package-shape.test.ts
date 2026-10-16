@@ -121,12 +121,20 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/openDeleteConfirmDialog/);
     expect(client).toMatch(/deleteInput\.value !== 'DELETE'/);
     expect(client).toMatch(/You're an admin/);
+    expect(client).toMatch(/renderDeleteBanner/);
+    expect(client).toMatch(/Deletes .* of .* nodes/);
+    // Round-2 regression guard: banner must NOT be gated on !stale.
+    expect(client).not.toMatch(/isLargeDelete\([^)]*\) && !/);
+    expect(client).toMatch(/renderStaleGroup|stale-group/);
+    expect(client).toMatch(/Requested via link/);
+    expect(client).toMatch(/Show .*line change|large-diff-btn/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/\.node-presence/);
     expect(styles).toMatch(/\.presence-pre/);
     expect(styles).toMatch(/\.presence-preview-frame/);
     expect(styles).toMatch(/\.proposal-highlight/);
-    expect(styles).toMatch(/\.proposal-changes|\.stale-warning-row/);
+    expect(styles).toMatch(/\.proposal-changes|\.stale-group/);
+    expect(styles).toMatch(/\.delete-banner/);
   });
 });
 
@@ -137,12 +145,16 @@ describe('ai-access sidebar TTL layout', () => {
     expect(html).toMatch(/\.red-ui-settings-row\.stacked[\s\S]*flex-direction:\s*column/);
   });
 
-  it('uses Save as primary, AI tools copy, and pending plurals', () => {
+  it('auto-saves or uses standard Save, AI tools copy, and pending plurals', () => {
     const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
-    expect(html).toMatch(/ai-access-save.*primary|primary.*Save/s);
+    expect(html).toMatch(/ai-access-save/);
+    expect(html).toMatch(/scheduleAutoSave|saveSettings/);
+    expect(html).toMatch(/Default link expiry(?! \(hours\))/);
+    expect(html).not.toMatch(/Default link expiry \(hours\)/);
     expect(html).toMatch(/AI tools are disabled/);
     expect(html).not.toMatch(/MCP tools are disabled/);
     expect(html).toMatch(/pendingSidebarText|1 proposal to review|to review/);
     expect(html).toMatch(/ai-access-actions/);
+    expect(html).toMatch(/flex-wrap:\s*wrap/);
   });
 });
