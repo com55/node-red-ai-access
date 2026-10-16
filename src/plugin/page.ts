@@ -86,7 +86,7 @@ function renderMcpPageStatusSection(): string {
       </div>
       <p class="muted permissions-blurb" id="permissions-blurb"></p>
       <details class="tech-details" id="status-diagnostics">
-        <summary>Diagnostics</summary>
+        <summary>Diagnostics <span class="muted">(for troubleshooting)</span></summary>
         <dl class="status">
           <dt>Version</dt><dd id="status-version">—</dd>
           <dt>adminAuth</dt><dd id="status-adminauth">—</dd>
@@ -130,7 +130,12 @@ function renderMcpPageProposalsSection(): string {
           Pending <span id="filter-pending-count">0</span>
         </button>
         <button type="button" class="filter-chip" data-filter="decided" aria-pressed="false">
-          Decided
+          Decided <span id="filter-decided-count">0</span>
+        </button>
+      </div>
+      <div class="proposals-toolbar" id="proposals-toolbar" hidden>
+        <button type="button" class="action secondary" id="dismiss-all-stale">
+          Dismiss all out-of-date
         </button>
       </div>
       <div id="proposals-flash" class="flash" hidden></div>

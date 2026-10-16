@@ -376,6 +376,26 @@ function compareTabMeta(before: Partial<FlowTab>, after: Partial<FlowTab>): stri
 }
 
 /**
+ * True when a pending proposal would delete more than half of the before nodes.
+ * Used for the typed DELETE confirmation before Approve & deploy.
+ */
+export function isLargeDelete(
+  summary:
+    | {
+        beforeNodeCount?: number;
+        removed?: number;
+      }
+    | null
+    | undefined
+): boolean {
+  if (!summary) return false;
+  const before = Number(summary.beforeNodeCount) || 0;
+  const removed = Number(summary.removed) || 0;
+  if (before <= 0 || removed <= 0) return false;
+  return removed / before > 0.5;
+}
+
+/**
  * Pure compare of a proposed flow tab against a before (base or live) tab.
  */
 function flowLabelOf(flow: Partial<FlowTab>): string {

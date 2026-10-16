@@ -89,14 +89,31 @@ export function createProposalHandler(
   };
 }
 
-export function listProposalsHandler(store: ProposalStore, httpAdminRoot?: string) {
-  return (req: AuthenticatedRequest, res: Response): void => {
+export function listProposalsHandler(
+  store: ProposalStore,
+  adapter: FlowAdapter,
+  httpAdminRoot?: string
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
-    if (req.accessLink) {
-      res.json({ proposals: listMyProposals(store, req.accessLink, presentOpts) });
-      return;
+    const list = req.accessLink
+      ? listMyProposals(store, req.accessLink, presentOpts)
+      : presentProposals(store.list(), presentOpts);
+
+    let liveRev: string | undefined;
+    try {
+      liveRev = (await adapter.getFlows()).rev;
+    } catch {
+      // Client can still learn stale from /diff when live rev is unavailable.
     }
-    res.json({ proposals: presentProposals(store.list(), presentOpts) });
+
+    const proposals = list.map(p => {
+      if (p.status !== 'pending' || liveRev === undefined) {
+        return p;
+      }
+      return { ...p, baseRevStale: p.expectedRev !== liveRev };
+    });
+    res.json({ proposals });
   };
 }
 

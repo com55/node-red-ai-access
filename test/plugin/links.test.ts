@@ -133,6 +133,11 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
 
     const after = await request(app).get('/mcp/api/v1/links');
     expect(after.body.links).toHaveLength(0);
+
+    const logs = await request(app).get('/mcp/api/v1/logs?limit=20');
+    expect(logs.status).toBe(200);
+    expect(logs.body.logs.some((e: { action: string }) => e.action === 'link.created')).toBe(true);
+    expect(logs.body.logs.some((e: { action: string }) => e.action === 'link.revoked')).toBe(true);
   });
 
   it('returns 403 when a read user tries to manage links', async () => {

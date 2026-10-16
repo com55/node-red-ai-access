@@ -144,18 +144,35 @@
       $('#ai-access-readonly-note').toggle(readonly);
     }
 
+    function formatPendingBadge(live, stale) {
+      var parts = [];
+      if (live > 0) parts.push(live + ' to review');
+      if (stale > 0) parts.push(stale + ' out of date');
+      return parts.length ? parts.join(' · ') : '0';
+    }
+
+    function pendingSidebarText(live, stale, total) {
+      if (total === 0) return '0 proposals waiting for review';
+      if (total === 1 && stale === 0) return '1 proposal to review';
+      return formatPendingBadge(live, stale);
+    }
+
     function refreshPending() {
       api('/proposals')
         .then(function (data) {
           var proposals = (data && data.proposals) || [];
           var pending = proposals.filter(function (p) {
             return p.status === 'pending';
+          });
+          var stale = pending.filter(function (p) {
+            return !!p.baseRevStale;
           }).length;
-          $('#ai-access-pending-count').text(String(pending));
+          var live = pending.length - stale;
+          $('#ai-access-pending-line').text(pendingSidebarText(live, stale, pending.length));
           $('#ai-access-status-block').show();
         })
         .catch(function () {
-          $('#ai-access-pending-count').text('—');
+          $('#ai-access-pending-line').text('—');
         });
     }
 
@@ -195,8 +212,8 @@
       var status = $(
         '<div id="ai-access-status-block" class="ai-access-status-block" style="display:none;"></div>'
       ).appendTo(body);
-      $('<p></p>')
-        .html('<strong id="ai-access-pending-count">0</strong> proposal(s) waiting for review')
+      $('<p id="ai-access-pending-line"></p>')
+        .text('0 proposals waiting for review')
         .appendTo(status);
       $('<button type="button" id="ai-access-review" class="red-ui-button"></button>')
         .text('Review')
@@ -213,7 +230,7 @@
       $('<input id="ai-access-enabled" type="checkbox">').appendTo(row);
       $('<label for="ai-access-enabled"></label>')
         .html(
-          '<p>Enable AI Access features</p>When off, access links, proposals, and MCP tools are disabled.'
+          '<p>Enable AI Access features</p>When off, access links, proposals, and AI tools are disabled.'
         )
         .appendTo(row);
 
@@ -266,13 +283,9 @@
       });
       $('<input id="ai-access-ttl" type="hidden" value="4">').appendTo(row);
 
-      row = $(
-        '<div class="red-ui-settings-row" style="margin-top:12px;flex-wrap:wrap;"></div>'
-      ).appendTo(body);
+      row = $('<div class="red-ui-settings-row ai-access-actions"></div>').appendTo(body);
 
-      $(
-        '<button type="button" id="ai-access-save" class="red-ui-button" style="margin-right:8px;"></button>'
-      )
+      $('<button type="button" id="ai-access-save" class="red-ui-button primary"></button>')
         .text('Save')
         .appendTo(row)
         .on('click', function () {
@@ -300,9 +313,7 @@
           window.open(mcpPageUrl(), '_blank');
         });
 
-      $(
-        '<button type="button" id="ai-access-refresh" class="red-ui-button" style="margin-left:8px;"></button>'
-      )
+      $('<button type="button" id="ai-access-refresh" class="red-ui-button"></button>')
         .text('Refresh')
         .appendTo(row)
         .on('click', loadSettings);
@@ -379,6 +390,19 @@
     gap: 10px;
     align-items: flex-start;
     padding: 5px 0 2px;
+  }
+  #red-ui-sidebar-ai-access .ai-access-actions {
+    margin-top: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  #red-ui-sidebar-ai-access .ai-access-actions .red-ui-button {
+    margin: 0;
+    white-space: nowrap;
+  }
+  #red-ui-sidebar-ai-access #ai-access-save.primary {
+    font-weight: 700;
   }
   #red-ui-sidebar-ai-access .red-ui-settings-row.stacked {
     flex-direction: column;

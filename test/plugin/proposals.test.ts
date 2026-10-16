@@ -254,6 +254,70 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(createdLog?.details?.displayName).toBeTruthy();
   });
 
+  it('lists pending proposals with baseRevStale and flowLabel (never raw tab id as label)', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: {
+        kind: 'red',
+        getFlows: () =>
+          Promise.resolve({
+            rev: 'rev-live',
+            flows: [{ id: 'tab-1', type: 'tab', label: 'Test Flow' }],
+          }),
+        getFlow: () =>
+          Promise.resolve({
+            rev: 'rev-live',
+            flow: { id: 'tab-1', type: 'tab', label: 'Test Flow', nodes: [] },
+          }),
+        updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-next' }),
+      },
+    });
+    const link = linkStore.create({ label: 'agent' });
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${link.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-live',
+        payload: {
+          flowId: 'tab-1',
+          flow: { id: 'tab-1', type: 'tab', label: 'Test Flow', nodes: [] },
+        },
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.flowLabel).toBe('Test Flow');
+    expect(created.body.title).toBe('Update Test Flow');
+
+    // Bump live rev so the pending proposal becomes stale on list.
+    const staleAdapter = {
+      kind: 'red' as const,
+      getFlows: () =>
+        Promise.resolve({
+          rev: 'rev-newer',
+          flows: [{ id: 'tab-1', type: 'tab', label: 'Test Flow' }],
+        }),
+      getFlow: () =>
+        Promise.resolve({
+          rev: 'rev-newer',
+          flow: { id: 'tab-1', type: 'tab', label: 'Test Flow', nodes: [] },
+        }),
+      updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-next' }),
+    };
+    // Re-register is heavy; instead create a second app sharing the same store via userDir.
+    const { app: app2 } = createApp({
+      userDir,
+      authenticate: asUser('*', 'admin'),
+      adapter: staleAdapter,
+    });
+    const listed = await request(app2).get('/mcp/api/v1/proposals');
+    expect(listed.status).toBe(200);
+    expect(listed.body.proposals).toHaveLength(1);
+    expect(listed.body.proposals[0].baseRevStale).toBe(true);
+    expect(listed.body.proposals[0].flowLabel).toBe('Test Flow');
+    expect(listed.body.proposals[0].flowLabel).not.toBe('tab-1');
+  });
+
   it('read admin can list all proposals; access link only sees its own', async () => {
     const { app, linkStore } = createApp({
       userDir,

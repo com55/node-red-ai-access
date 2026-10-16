@@ -4,7 +4,7 @@
 
 import type { Request } from 'express';
 
-import type { FlowNode, FlowTab } from '../runtime/types.js';
+import type { FlowTab } from '../runtime/types.js';
 import type { Proposal } from '../storage/proposals.js';
 
 import { absolutizePath } from './access-path.js';
@@ -33,8 +33,17 @@ export interface PresentedProposal extends Proposal {
   /** Always set on API responses (stored or auto-generated). */
   title: string;
   /**
+   * Human flow label when known (never a raw tab id). Empty string if unknown.
+   */
+  flowLabel: string;
+  /**
+   * Pending only: true when `expectedRev` does not match the live flows rev.
+   * Omitted for decided proposals or when the live rev could not be read.
+   */
+  baseRevStale?: boolean;
+  /**
    * `title · <server local datetime with offset>`, e.g.
-   * `Edit fn1 (function) · 16 Oct 01:35 +00:00`.
+   * `Update Test Flow · 16 Oct 01:35 +00:00`.
    * The datetime is **Node-RED server local time** (not the client's TZ).
    */
   displayName: string;
@@ -46,27 +55,6 @@ export interface PresentedProposal extends Proposal {
   reviewUrl: string;
   /** Relative deep link path (`/mcp#proposal=<id>` or under httpAdminRoot). */
   reviewPath: string;
-}
-
-function nodeLabel(node: FlowNode): string {
-  if (typeof node.name === 'string' && node.name.trim()) {
-    return node.name.trim();
-  }
-  if (typeof node.label === 'string' && node.label.trim()) {
-    return node.label.trim();
-  }
-  return '';
-}
-
-function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
-  const map = new Map<string, FlowNode>();
-  for (const node of flow.nodes ?? []) {
-    map.set(node.id, node);
-  }
-  for (const node of flow.configs ?? []) {
-    map.set(node.id, node);
-  }
-  return map;
 }
 
 /**
@@ -130,100 +118,11 @@ export function formatProposalSubmittedAt(iso: string, at: Date = new Date(iso))
   return `${day} ${month} ${hh}:${mm} ${offset}`;
 }
 
-function quoteName(name: string): string {
-  return `"${name.replace(/"/g, "'")}"`;
-}
-
-function describeOneNode(kind: 'Add' | 'Remove' | 'Edit', node: FlowNode): string {
-  const name = nodeLabel(node);
-  const type = node.type || 'node';
-  if (kind === 'Edit') {
-    return name ? `Edit ${name} (${type})` : `Edit ${type}`;
-  }
-  if (name) {
-    return `${kind} ${type} ${quoteName(name)}`;
-  }
-  return `${kind} ${type}`;
-}
-
-function nodeContentChanged(prev: FlowNode, next: FlowNode): boolean {
-  const ignore = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
-  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
-  for (const key of keys) {
-    if (ignore.has(key)) continue;
-    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function classifyFlowChanges(
-  before: Map<string, FlowNode>,
-  after: Map<string, FlowNode>
-): { added: FlowNode[]; removed: FlowNode[]; modified: FlowNode[] } {
-  const added: FlowNode[] = [];
-  const removed: FlowNode[] = [];
-  const modified: FlowNode[] = [];
-  for (const [id, node] of after) {
-    if (!before.has(id)) {
-      added.push(node);
-    }
-  }
-  for (const [id, node] of before) {
-    if (!after.has(id)) {
-      removed.push(node);
-    }
-  }
-  for (const [id, node] of after) {
-    const prev = before.get(id);
-    if (prev && nodeContentChanged(prev, node)) {
-      modified.push(node);
-    }
-  }
-  return { added, removed, modified };
-}
-
-function titleFromSingleChange(changes: {
-  added: FlowNode[];
-  removed: FlowNode[];
-  modified: FlowNode[];
-}): string | undefined {
-  const { added, removed, modified } = changes;
-  const total = added.length + removed.length + modified.length;
-  if (total !== 1) {
-    return undefined;
-  }
-  if (added[0]) return describeOneNode('Add', added[0]);
-  if (removed[0]) return describeOneNode('Remove', removed[0]);
-  if (modified[0]) return describeOneNode('Edit', modified[0]);
-  return undefined;
-}
-
-function titleFromMultiChange(changes: {
-  added: FlowNode[];
-  removed: FlowNode[];
-  modified: FlowNode[];
-}): string {
-  const { added, removed, modified } = changes;
-  const total = added.length + removed.length + modified.length;
-  if (modified.length === total && modified.length > 1) {
-    return `Edit ${modified.length} nodes`;
-  }
-  if (added.length === total && added.length > 1) {
-    return `Add ${added.length} nodes`;
-  }
-  if (removed.length === total && removed.length > 1) {
-    return `Remove ${removed.length} nodes`;
-  }
-  return `Change ${total} nodes`;
-}
-
 function flowLabelHint(
-  afterFlow: Partial<FlowTab>,
+  afterFlow: Partial<FlowTab> | undefined,
   baseFlow: Partial<FlowTab> | undefined
 ): string {
-  if (typeof afterFlow.label === 'string' && afterFlow.label.trim()) {
+  if (typeof afterFlow?.label === 'string' && afterFlow.label.trim()) {
     return afterFlow.label.trim();
   }
   if (typeof baseFlow?.label === 'string' && baseFlow.label.trim()) {
@@ -233,20 +132,30 @@ function flowLabelHint(
 }
 
 /**
- * Auto-generate a short title from base vs proposed flow changes.
- * Examples: `Edit fn1 (function)`, `Add template "demo-html"`, `Edit 3 nodes`.
+ * Human flow name for UI / audit — never a raw tab id like `tab1`.
+ */
+export function resolveFlowLabel(proposal: {
+  payload?: { flow?: Partial<FlowTab> };
+  baseFlow?: Partial<FlowTab>;
+  flowLabel?: string;
+}): string {
+  if (typeof proposal.flowLabel === 'string' && proposal.flowLabel.trim()) {
+    return proposal.flowLabel.trim();
+  }
+  return flowLabelHint(proposal.payload?.flow, proposal.baseFlow);
+}
+
+/**
+ * Auto-generate a plain title from the flow label.
+ * Examples: `Update Test Flow`, `Update flow` (when no label).
+ * Node/tool names are intentionally omitted — owners see those in the diff.
  */
 export function autoGenerateProposalTitle(
   baseFlow: Partial<FlowTab> | undefined,
   afterFlow: Partial<FlowTab>
 ): string {
-  const changes = classifyFlowChanges(collectNodes(baseFlow ?? {}), collectNodes(afterFlow));
-  const total = changes.added.length + changes.removed.length + changes.modified.length;
-  if (total === 0) {
-    const label = flowLabelHint(afterFlow, baseFlow);
-    return label ? `Update flow ${quoteName(label)}` : 'Update flow';
-  }
-  return titleFromSingleChange(changes) ?? titleFromMultiChange(changes);
+  const label = flowLabelHint(afterFlow, baseFlow);
+  return label ? `Update ${label}` : 'Update flow';
 }
 
 export function buildProposalDisplayName(title: string, createdAtIso: string): string {
@@ -286,7 +195,7 @@ export function resolveProposalTitle(proposal: Proposal): string {
   return autoGenerateProposalTitle(proposal.baseFlow, proposal.payload.flow);
 }
 
-/** Attach title, displayName, reviewUrl, and reviewPath for API / MCP responses. */
+/** Attach title, flowLabel, displayName, reviewUrl, and reviewPath for API / MCP responses. */
 export function presentProposal(
   proposal: Proposal,
   options: PresentProposalOptions = {}
@@ -297,6 +206,7 @@ export function presentProposal(
   return {
     ...proposal,
     title,
+    flowLabel: resolveFlowLabel(proposal),
     displayName: buildProposalDisplayName(title, proposal.createdAt),
     reviewUrl,
     reviewPath,

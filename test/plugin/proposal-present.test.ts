@@ -67,43 +67,39 @@ describe('formatUtcOffset / formatProposalSubmittedAt', () => {
 });
 
 describe('autoGenerateProposalTitle', () => {
-  it('describes a single edited node', () => {
+  it('uses a plain Update {flow label} title', () => {
     expect(
       autoGenerateProposalTitle(
-        { nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'a' }] },
-        { nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'b' }] }
+        {
+          id: 'tab1',
+          label: 'Test Flow',
+          nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'a' }],
+        },
+        {
+          id: 'tab1',
+          label: 'Test Flow',
+          nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'b' }],
+        }
       )
-    ).toBe('Edit fn1 (function)');
+    ).toBe('Update Test Flow');
   });
 
-  it('describes a single added template', () => {
+  it('falls back to Update flow when no label', () => {
     expect(
       autoGenerateProposalTitle(
         { nodes: [] },
         { nodes: [{ id: 'n2', type: 'template', name: 'demo-html' }] }
       )
-    ).toBe('Add template "demo-html"');
+    ).toBe('Update flow');
   });
 
-  it('describes multiple edits', () => {
+  it('prefers the after-flow label over the base label', () => {
     expect(
       autoGenerateProposalTitle(
-        {
-          nodes: [
-            { id: 'a', type: 'inject', name: 'A', topic: '1' },
-            { id: 'b', type: 'inject', name: 'B', topic: '1' },
-            { id: 'c', type: 'inject', name: 'C', topic: '1' },
-          ],
-        },
-        {
-          nodes: [
-            { id: 'a', type: 'inject', name: 'A', topic: '2' },
-            { id: 'b', type: 'inject', name: 'B', topic: '2' },
-            { id: 'c', type: 'inject', name: 'C', topic: '2' },
-          ],
-        }
+        { label: 'Old Name', nodes: [{ id: 'a', type: 'inject', name: 'A' }] },
+        { label: 'New Name', nodes: [{ id: 'a', type: 'inject', name: 'A', topic: 'x' }] }
       )
-    ).toBe('Edit 3 nodes');
+    ).toBe('Update New Name');
   });
 });
 
@@ -162,19 +158,41 @@ describe('presentProposal', () => {
     expect(presented.reviewUrl).toBe('https://flows.example.com/mcp#proposal=prop-abcdef012345');
   });
 
-  it('auto-generates title for legacy proposals without title', () => {
+  it('auto-generates a plain title for legacy proposals without title', () => {
     const presented = presentProposal(
       baseProposal({
         title: undefined,
-        baseFlow: { nodes: [{ id: 'n1', type: 'inject', name: 'tick' }] },
+        baseFlow: {
+          id: 'tab1',
+          label: 'Main',
+          nodes: [{ id: 'n1', type: 'inject', name: 'tick' }],
+        },
         payload: {
           flowId: 'tab1',
-          flow: { nodes: [{ id: 'n1', type: 'inject', name: 'tick', topic: 'x' }] },
+          flow: {
+            id: 'tab1',
+            label: 'Main',
+            nodes: [{ id: 'n1', type: 'inject', name: 'tick', topic: 'x' }],
+          },
         },
       })
     );
-    expect(presented.title).toBe('Edit tick (inject)');
-    expect(presented.displayName.startsWith('Edit tick (inject) · ')).toBe(true);
+    expect(presented.title).toBe('Update Main');
+    expect(presented.flowLabel).toBe('Main');
+    expect(presented.displayName.startsWith('Update Main · ')).toBe(true);
     expect(presented.reviewPath).toBeTruthy();
+  });
+
+  it('resolves flowLabel and never exposes a raw tab id as the label', () => {
+    const presented = presentProposal(
+      baseProposal({
+        payload: {
+          flowId: 'tab1',
+          flow: { id: 'tab1', type: 'tab', label: 'Test Flow', nodes: [] },
+        },
+      })
+    );
+    expect(presented.flowLabel).toBe('Test Flow');
+    expect(presented.flowLabel).not.toBe('tab1');
   });
 });

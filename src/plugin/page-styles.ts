@@ -110,14 +110,18 @@ nav.tabs button[aria-selected="true"] {
   display: inline-block;
   margin-left: 0.25rem;
   min-width: 1.15rem;
-  padding: 0.05rem 0.35rem;
+  max-width: 14rem;
+  padding: 0.05rem 0.45rem;
   border-radius: 999px;
   background: #fff;
   color: var(--accent);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.25;
   vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 nav.tabs button[aria-selected="true"] .tab-badge {
   background: rgba(255, 255, 255, 0.92);
@@ -751,7 +755,13 @@ function pageStylesPartG(): string {
 }
 .proposal-card-compact:hover { border-color: var(--accent); }
 .proposal-plain-summary { margin: 0.15rem 0 0.35rem; color: var(--ink); font-size: 0.95rem; }
-.proposal-ai-summary { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.9rem; }
+.proposal-meta-line { color: var(--muted); font-size: 0.88rem; }
+.proposal-flow { color: var(--ink); font-weight: 600; }
+.proposal-changes { margin: 0.35rem 0 0.55rem; }
+.proposals-toolbar { margin: 0 0 0.65rem; }
+.stale-warning-row { margin: 0.35rem 0 0.55rem; }
+.stale-warning-row .dismiss-stale-btn { margin-top: 0.35rem; }
+.dismiss-vs-reject { margin: 0.35rem 0 0; font-size: 0.88rem; }
 .delete-banner {
   margin: 0 0 0.55rem;
   padding: 0.55rem 0.7rem;

@@ -12,7 +12,7 @@ import {
   type ProposalStore,
 } from '../storage/proposals.js';
 
-import { presentProposal } from './proposal-present.js';
+import { presentProposal, resolveFlowLabel } from './proposal-present.js';
 
 const REV_CONFLICT_RESUBMIT =
   'Flow revision conflict: the expectedRev is stale. Ask the AI to re-read flows and resubmit a new proposal.';
@@ -25,8 +25,7 @@ function auditProposalMeta(proposal: Proposal): {
   flowLabel?: string;
 } {
   const presented = presentProposal(proposal);
-  const rawLabel = proposal.payload.flow.label;
-  const flowLabel = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : undefined;
+  const flowLabel = resolveFlowLabel(proposal) || undefined;
   return {
     proposalId: proposal.id,
     title: presented.title,
