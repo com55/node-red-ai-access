@@ -126,7 +126,7 @@ describe('AI flow surface (access-link Bearer)', () => {
     expect(one.body.flow).toMatchObject({ id: 'tab-1', type: 'tab' });
 
     const created = await request(app)
-      .post('/mcp/api/v1/proposals')
+      .post('/mcp/api/v1/proposals?include=payload')
       .set(auth)
       .send({
         type: 'replace_flow',
@@ -147,6 +147,7 @@ describe('AI flow surface (access-link Bearer)', () => {
       status: 'pending',
       expectedRev: 'rev-1',
       payload: { flowId: 'tab-1' },
+      changeSummary: expect.any(String),
       createdBy: { kind: 'access-link', linkId: link.id },
     });
 

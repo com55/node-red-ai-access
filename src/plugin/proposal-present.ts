@@ -28,6 +28,49 @@ export interface PresentProposalOptions {
   liveFlowLabels?: Map<string, string>;
 }
 
+/** Options for lean API presentation (`?include=payload,baseFlow`). */
+export interface PresentProposalApiOptions extends PresentProposalOptions {
+  /** Comma-parsed include set — currently `payload` and/or `baseFlow`. */
+  include?: Set<string>;
+}
+
+/** Lean proposal shape returned by default from create/get/list/propose. */
+export interface PresentedProposalApi {
+  id: string;
+  status: Proposal['status'];
+  type: Proposal['type'];
+  title: string;
+  displayName: string;
+  flowLabel: string;
+  reviewUrl: string;
+  reviewPath: string;
+  createdAt: string;
+  updatedAt: string;
+  expectedRev: string;
+  createdBy: Proposal['createdBy'];
+  /** Short classify-counts summary, e.g. `Adds 1 node`. */
+  changeSummary: string;
+  payload?: Proposal['payload'];
+  baseFlow?: Proposal['baseFlow'];
+  baseRevStale?: boolean;
+  decidedBy?: Proposal['decidedBy'];
+  reason?: string;
+  resultRev?: string;
+}
+
+/** Parse `?include=payload,baseFlow` (comma-separated, case-sensitive keys). */
+export function parseIncludeQuery(raw: unknown): Set<string> {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  );
+}
+
 /** Build present options without assigning `undefined` under exactOptionalPropertyTypes. */
 export function presentOptionsFor(req: Request, httpAdminRoot?: string): PresentProposalOptions {
   const opts: PresentProposalOptions = { req };
@@ -517,9 +560,105 @@ export function presentProposal(
   };
 }
 
+/**
+ * Short change summary from classify counts (not the full auto title).
+ * Examples: `Adds 1 node`, `Edits 2 nodes`, `Deletes 1 node, adds 1 node`.
+ */
+export function buildChangeSummary(proposal: Proposal): string {
+  const changes = classifyFlowChanges(
+    collectNodes(proposal.baseFlow ?? {}),
+    collectNodes(proposal.payload.flow)
+  );
+  const parts: string[] = [];
+  if (changes.added.length > 0) {
+    parts.push(changes.added.length === 1 ? 'Adds 1 node' : `Adds ${changes.added.length} nodes`);
+  }
+  if (changes.removed.length > 0) {
+    parts.push(
+      changes.removed.length === 1 ? 'Deletes 1 node' : `Deletes ${changes.removed.length} nodes`
+    );
+  }
+  if (changes.modified.length > 0) {
+    parts.push(
+      changes.modified.length === 1 ? 'Edits 1 node' : `Edits ${changes.modified.length} nodes`
+    );
+  }
+  if (parts.length === 0) {
+    return 'No node changes';
+  }
+  // Capitalize only the first clause; join the rest in lowercase style of titles.
+  return parts.map((p, i) => (i === 0 ? p : p.charAt(0).toLowerCase() + p.slice(1))).join(', ');
+}
+
+/** Redact createdBy for API when only kind/label are needed (omit empty label). */
+function presentCreatedByForApi(createdBy: Proposal['createdBy']): Proposal['createdBy'] {
+  const out: Proposal['createdBy'] = {
+    kind: createdBy.kind,
+    linkId: createdBy.linkId,
+  };
+  if (typeof createdBy.label === 'string' && createdBy.label.length > 0) {
+    out.label = createdBy.label;
+  }
+  return out;
+}
+
+/**
+ * Lean API presentation: omits full `payload` / `baseFlow` unless
+ * `options.include` contains those keys. Prefer for create/get/list/propose.
+ * Use {@link presentProposal} when the full bodies are needed internally.
+ */
+export function presentProposalForApi(
+  proposal: Proposal,
+  options: PresentProposalApiOptions = {}
+): PresentedProposalApi {
+  const full = presentProposal(proposal, options);
+  const include = options.include ?? new Set<string>();
+  const lean: PresentedProposalApi = {
+    id: full.id,
+    status: full.status,
+    type: full.type,
+    title: full.title,
+    displayName: full.displayName,
+    flowLabel: full.flowLabel,
+    reviewUrl: full.reviewUrl,
+    reviewPath: full.reviewPath,
+    createdAt: full.createdAt,
+    updatedAt: full.updatedAt,
+    expectedRev: full.expectedRev,
+    createdBy: presentCreatedByForApi(full.createdBy),
+    changeSummary: buildChangeSummary(proposal),
+  };
+  if (include.has('payload')) {
+    lean.payload = full.payload;
+  }
+  if (include.has('baseFlow') && full.baseFlow !== undefined) {
+    lean.baseFlow = full.baseFlow;
+  }
+  if (full.baseRevStale !== undefined) {
+    lean.baseRevStale = full.baseRevStale;
+  }
+  if (full.decidedBy !== undefined) {
+    lean.decidedBy = full.decidedBy;
+  }
+  if (full.reason !== undefined) {
+    lean.reason = full.reason;
+  }
+  if (full.resultRev !== undefined) {
+    lean.resultRev = full.resultRev;
+  }
+  return lean;
+}
+
 export function presentProposals(
   proposals: Proposal[],
   options: PresentProposalOptions = {}
 ): PresentedProposal[] {
   return proposals.map(p => presentProposal(p, options));
+}
+
+export function presentProposalsForApi(
+  proposals: Proposal[],
+  options: PresentProposalApiOptions = {}
+): PresentedProposalApi[] {
+  return proposals.map(p => presentProposalForApi(p, options));
 }

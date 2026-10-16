@@ -7,8 +7,17 @@ import type { Response } from 'express';
 import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
-import { aiOpsErrorToHttp, siblingsOnSameRev, submitReplaceFlowProposal } from '../ai-ops.js';
-import { presentOptionsFor } from '../proposal-present.js';
+import {
+  aiOpsErrorToHttp,
+  siblingWarningFields,
+  siblingsOnSameRev,
+  submitReplaceFlowProposal,
+} from '../ai-ops.js';
+import {
+  parseIncludeQuery,
+  presentOptionsFor,
+  presentProposalForApi,
+} from '../proposal-present.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -58,6 +67,12 @@ function proposeErrorHint(code: string): string | undefined {
       return 'occurrence must be a 1-based index within the match count.';
     case 'field_not_string':
       return 'replace_text only works on string fields (template, func, …).';
+    case 'field_not_found':
+      return 'Re-read the node; field must be an existing string property (template, func, …).';
+    case 'invalid_replace':
+      return 'Pass replace= as a string (URL-encoded; empty string is allowed to delete the find text).';
+    case 'conflicting_edits':
+      return 'Use either find/replace/field or set.<prop>=, not both in one propose URL.';
     default:
       return undefined;
   }
@@ -235,6 +250,14 @@ async function buildProposeFromQuery(
     q.findText !== undefined || q.replaceText !== undefined || q.fieldName !== undefined;
 
   if (wantsReplaceText) {
+    if (Object.keys(q.setProps).length > 0) {
+      jsonProposeError(
+        res,
+        'conflicting_edits',
+        'Cannot combine replace_text (find/replace/field) with set.<prop> in one request'
+      );
+      return null;
+    }
     if (!q.flowId) {
       jsonProposeError(res, 'missing_flow_id', 'flow query parameter is required');
       return null;
@@ -325,6 +348,8 @@ export function getLinkProposeHandler(
         return;
       }
 
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
       const proposal = await submitReplaceFlowProposal(
         proposalStore,
         auditLog,
@@ -336,23 +361,18 @@ export function getLinkProposeHandler(
           ...(titleParam ? { title: titleParam } : {}),
         },
         flowAdapter,
-        presentOptionsFor(req, httpAdminRoot)
+        presentOpts
       );
+      const presented = presentProposalForApi(proposal, { ...presentOpts, include });
       const siblings = siblingsOnSameRev(proposalStore, proposal);
       res.status(201).json({
         ok: true,
-        proposal,
+        proposal: presented,
         ...(summary ? { summary } : {}),
-        ...(siblings.length > 0
-          ? {
-              siblingsOnSameRev: siblings,
-              warning:
-                'Other pending proposals share this flow revision — approve order may conflict.',
-            }
-          : {}),
+        ...siblingWarningFields(siblings),
         hint:
-          `Waiting for human approval. Tell the user about "${proposal.displayName}" ` +
-          `(${proposal.reviewUrl}). Poll GET …/proposals/<id> for status.`,
+          `Waiting for human approval. Tell the user about "${presented.displayName}" ` +
+          `(${presented.reviewUrl}). Poll GET …/proposals/<id> for status.`,
       });
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);

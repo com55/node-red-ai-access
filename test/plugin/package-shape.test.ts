@@ -89,7 +89,8 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/copy-link|Copy link/);
     expect(client).toMatch(/markCopied|Copied/);
     expect(client).toMatch(/fmtRelative|timeCell/);
-    expect(client).toMatch(/window\.confirm/);
+    expect(client).toMatch(/openConfirmDialog|confirm-dialog/);
+    expect(client).not.toMatch(/window\.confirm|window\.alert|window\.prompt/);
   });
 
   it('renders added/removed nodes as single presence blocks', () => {
@@ -170,5 +171,19 @@ describe('ai-access sidebar TTL layout', () => {
     expect(sidebar).toMatch(/red-ui-settings-row stacked/);
     expect(sidebar).toMatch(/flex-direction:\s*column/);
     expect(sidebar).toMatch(/showSavedToast|#ai-access-flash\.is-visible|position:\s*absolute/);
+  });
+});
+
+describe('in-page dialogs (no native browser prompts)', () => {
+  it('keeps page-client and editor-sidebar free of confirm/alert/prompt', () => {
+    const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
+    const sidebar = readFileSync(join(root, 'src/plugin/editor-sidebar.ts'), 'utf8');
+    const nativeDialog =
+      /window\.confirm|window\.alert|window\.prompt|\bconfirm\s*\(|\balert\s*\(|\bprompt\s*\(/;
+    expect(client).not.toMatch(nativeDialog);
+    expect(sidebar).not.toMatch(nativeDialog);
+    expect(client).toMatch(/openConfirmDialog/);
+    expect(client).toMatch(/trapDialogFocus/);
+    expect(client).toMatch(/showInPageDialog/);
   });
 });

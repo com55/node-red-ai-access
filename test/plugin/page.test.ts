@@ -157,6 +157,15 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/filter-decided-count/);
     expect(res.text).toMatch(/for troubleshooting/);
     expect(res.text).toMatch(/You're an admin/);
+    // Diagnostics "Your role" row — never a "full access" chip (sounds like AI scope).
+    expect(res.text).not.toMatch(/full access|full-access/i);
+    expect(res.text).not.toMatch(/id="status-badge"/);
+    expect(res.text).toMatch(/id="status-role"/);
+    expect(res.text).toMatch(/Your role/);
+    expect(res.text).toMatch(/Admin \(can approve & manage links\)/);
+    expect(res.text).toMatch(/'Read-only'/);
+    expect(res.text).toMatch(/This is your Node-RED permission/);
+    expect(res.text).toMatch(/AI access links can only read/);
     expect(res.text).toMatch(/renderHumanDiff|proposal-changes/);
     expect(res.text).toMatch(/dismiss-vs-reject/);
     expect(res.text).toMatch(/Out of date \(/);
@@ -165,6 +174,13 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Dismiss closes/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/The flow also changed in/);
+    // Proposal id chip (last 6) + search + deep-link still clears to #proposals.
+    expect(res.text).toMatch(/id="proposals-search"/);
+    expect(res.text).toMatch(/proposalIdChip|shortIdTail|data-copy-id/);
+    expect(res.text).toMatch(/proposalMatchesSearch/);
+    expect(res.text).toMatch(/Copied proposal id/);
+    expect(res.text).toMatch(/focusProposalFromHash/);
+    expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
     // Live destructive proposals: typed DELETE confirm before deploy.
     expect(res.text).toMatch(/delete-confirm-dialog/);
     expect(res.text).toMatch(/isLargeDelete/);
@@ -172,6 +188,13 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
     expect(res.text).toMatch(/diff\.baseRevStale/);
     expect(res.text).toMatch(/Type DELETE to confirm/);
+    // In-page confirm modal (revoke / dismiss) — no native window.confirm fallback.
+    expect(res.text).toMatch(/id="confirm-dialog"/);
+    expect(res.text).toMatch(/openConfirmDialog/);
+    expect(res.text).toMatch(/trapDialogFocus|showInPageDialog/);
+    expect(res.text).toMatch(/Revoke access link/);
+    expect(res.text).toMatch(/Dismiss out-of-date proposals/);
+    expect(res.text).not.toMatch(/window\.confirm|window\.alert|window\.prompt/);
     // Regression: Deletes X of Y banner must show for large deletes even when stale.
     expect(res.text).toMatch(/renderDeleteBanner|Deletes .* of .* nodes/);
     expect(res.text).not.toMatch(/isLargeDelete\([^)]+\) && !/);

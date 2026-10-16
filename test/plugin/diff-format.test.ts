@@ -40,13 +40,15 @@ function sampleDiff(linesEqualCount: number): ProposalDiffResult {
 }
 
 describe('diff-format', () => {
-  it('defaults to summary', () => {
-    expect(resolveDiffFormat(undefined)).toBe('summary');
-    expect(resolveDiffFormat('bogus')).toBe('summary');
-    expect(resolveDiffFormat('full')).toBe('full');
+  it('defaults to summary and rejects unknown formats', () => {
+    expect(resolveDiffFormat(undefined)).toEqual({ ok: true, format: 'summary' });
+    expect(resolveDiffFormat('')).toEqual({ ok: true, format: 'summary' });
+    expect(resolveDiffFormat('summary')).toEqual({ ok: true, format: 'summary' });
+    expect(resolveDiffFormat('full')).toEqual({ ok: true, format: 'full' });
+    expect(resolveDiffFormat('bogus')).toEqual({ ok: false });
   });
 
-  it('summary collapses equal context and sets byte sizes', () => {
+  it('summary collapses equal context, sets byte sizes, and omits before/after', () => {
     const formatted = applyDiffFormat(sampleDiff(20), 'summary');
     expect(formatted.format).toBe('summary');
     const change = formatted.modified[0]?.changes[0];
@@ -54,19 +56,25 @@ describe('diff-format', () => {
     if (change?.kind === 'text') {
       expect(change.beforeBytes).toBe(100);
       expect(change.afterBytes).toBe(120);
+      expect(change.before).toBeUndefined();
+      expect(change.after).toBeUndefined();
       expect(change.truncated).toBe(true);
       expect(change.lines.some(l => l.text.includes('unchanged line'))).toBe(true);
       expect(change.lines.length).toBeLessThan(43);
+      // Summary must not embed the full strings (regression: ~42KB for a tiny edit).
+      expect(JSON.stringify(change).length).toBeLessThan(2_000);
     }
   });
 
-  it('full keeps all lines', () => {
+  it('full keeps all lines and before/after strings', () => {
     const formatted = applyDiffFormat(sampleDiff(20), 'full');
     const change = formatted.modified[0]?.changes[0];
     if (change?.kind === 'text') {
       expect(change.truncated).toBeUndefined();
       expect(change.lines).toHaveLength(42);
       expect(change.beforeBytes).toBe(100);
+      expect(change.before).toBe('a'.repeat(100));
+      expect(change.after).toBe('b'.repeat(120));
     }
   });
 });

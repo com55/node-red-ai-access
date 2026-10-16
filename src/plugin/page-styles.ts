@@ -166,6 +166,7 @@ dd {
   margin-top: 0.9rem;
   padding: 0.22rem 0.55rem;
   border-radius: 6px;
+  cursor: help;
   background: var`;
 }
 
@@ -725,6 +726,44 @@ function pageStylesPartG(): string {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin: 0 0 0.75rem;
+  align-items: center;
+}
+.proposals-search {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+  max-width: 22rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.28rem 0.65rem;
+  font: inherit;
+  font-size: 0.88rem;
+  background: #fff;
+  color: var(--ink);
+}
+.proposals-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button.id-copy {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+button.id-copy:hover .id-short,
+button.id-copy:focus .id-short {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.id-copy:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 .filter-chip {
   border: 1px solid var(--line);

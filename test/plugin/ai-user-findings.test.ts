@@ -224,7 +224,7 @@ describe('AI-user findings', () => {
       };
       const encoded = Buffer.from(JSON.stringify(patch), 'utf8').toString('base64url');
       const res = await request(app).get(
-        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}`
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}&include=payload`
       );
       expect(res.status).toBe(201);
       const n1 = res.body.proposal.payload.flow.nodes.find((n: { id: string }) => n.id === 'n1');
@@ -259,7 +259,7 @@ describe('AI-user findings', () => {
       };
       const encoded = Buffer.from(JSON.stringify(patch), 'utf8').toString('base64url');
       const res = await request(app).get(
-        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}`
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${encoded}&include=payload`
       );
       expect(res.status).toBe(201);
       const n1 = res.body.proposal.payload.flow.nodes.find((n: { id: string }) => n.id === 'n1');
@@ -354,9 +354,9 @@ describe('AI-user findings', () => {
 
   describe('7. diff format=summary default compact', () => {
     it('resolveDiffFormat defaults to summary', () => {
-      expect(resolveDiffFormat(undefined)).toBe('summary');
-      expect(resolveDiffFormat('summary')).toBe('summary');
-      expect(resolveDiffFormat('full')).toBe('full');
+      expect(resolveDiffFormat(undefined)).toEqual({ ok: true, format: 'summary' });
+      expect(resolveDiffFormat('summary')).toEqual({ ok: true, format: 'summary' });
+      expect(resolveDiffFormat('full')).toEqual({ ok: true, format: 'full' });
     });
 
     it('summary truncates large equal runs and adds byte sizes', () => {
@@ -383,6 +383,8 @@ describe('AI-user findings', () => {
       if (change?.kind === 'text') {
         expect(change.beforeBytes).toBe(Buffer.byteLength(before, 'utf8'));
         expect(change.afterBytes).toBe(Buffer.byteLength(after, 'utf8'));
+        expect(change.before).toBeUndefined();
+        expect(change.after).toBeUndefined();
         expect(change.truncated).toBe(true);
         expect(change.lines.length).toBeLessThan(
           raw.modified[0]!.changes[0]!.kind === 'text'
@@ -390,12 +392,15 @@ describe('AI-user findings', () => {
             : 999
         );
         expect(change.lines.some(l => l.text.includes('unchanged line'))).toBe(true);
+        expect(JSON.stringify(change).length).toBeLessThan(before.length);
       }
 
       const full = applyDiffFormat(raw, 'full');
       const fullChange = full.modified[0]?.changes[0];
       if (fullChange?.kind === 'text') {
         expect(fullChange.truncated).toBeUndefined();
+        expect(fullChange.before).toBe(before);
+        expect(fullChange.after).toBe(after);
         expect(fullChange.lines.length).toBeGreaterThan(
           change!.kind === 'text' ? change!.lines.length : 0
         );
@@ -447,10 +452,61 @@ describe('AI-user findings', () => {
       expect(textChange).toBeTruthy();
       expect(typeof textChange.beforeBytes).toBe('number');
       expect(typeof textChange.afterBytes).toBe('number');
+      expect(textChange.before).toBeUndefined();
+      expect(textChange.after).toBeUndefined();
 
       const full = await request(app).get(`/mcp/a/${link.token}/proposals/${id}/diff?format=full`);
       expect(full.status).toBe(200);
       expect(full.body.format).toBe('full');
+      const fullText = (full.body.modified ?? [])
+        .flatMap((m: { changes?: { kind?: string; before?: string }[] }) => m.changes ?? [])
+        .find((c: { kind?: string }) => c.kind === 'text');
+      expect(typeof fullText?.before).toBe('string');
+    });
+  });
+
+  describe('lean propose / GET proposals (include=payload,baseFlow)', () => {
+    it('omits payload/baseFlow by default and returns changeSummary', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'lean' });
+      const created = await request(app).get(
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Lean&title=lean-title`
+      );
+      expect(created.status).toBe(201);
+      expect(created.body.proposal.payload).toBeUndefined();
+      expect(created.body.proposal.baseFlow).toBeUndefined();
+      expect(created.body.proposal.changeSummary).toMatch(/edit/i);
+      expect(created.body.proposal.id).toBeTruthy();
+      expect(created.body.proposal.reviewUrl).toBeTruthy();
+
+      const id = created.body.proposal.id as string;
+      const got = await request(app).get(`/mcp/a/${link.token}/proposals/${id}`);
+      expect(got.status).toBe(200);
+      expect(got.body.payload).toBeUndefined();
+      expect(got.body.baseFlow).toBeUndefined();
+      expect(got.body.changeSummary).toBeTruthy();
+
+      const full = await request(app).get(
+        `/mcp/a/${link.token}/proposals/${id}?include=payload,baseFlow`
+      );
+      expect(full.status).toBe(200);
+      expect(full.body.payload?.flowId).toBe('tab-1');
+      expect(full.body.baseFlow?.nodes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'n1' })])
+      );
+    });
+  });
+
+  describe('conflicting_edits on propose', () => {
+    it('returns 400 when replace_text is combined with set props', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'conflict' });
+      const res = await request(app).get(
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n2&field=template&find=hi&replace=yo&set.name=X`
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('conflicting_edits');
+      expect(res.body.hint).toBeTruthy();
     });
   });
 
@@ -509,11 +565,14 @@ describe('AI-user findings', () => {
       expect(rest.status).toBe(401);
       expect(rest.body.code).toBe(ACCESS_LINK_INVALID_CODE);
       expect(String(rest.body.hint)).toMatch(/truncated/i);
+      // REST must not point at the GET-link URL shape.
+      expect(String(rest.body.hint)).not.toMatch(/\/mcp\/a\//);
 
       const getLink = await request(app).get('/mcp/a/aia_short/status');
       expect(getLink.status).toBe(401);
       expect(getLink.body.code).toBe(ACCESS_LINK_INVALID_CODE);
       expect(String(getLink.body.hint)).toMatch(/truncated/i);
+      expect(String(getLink.body.hint)).toMatch(/\/mcp\/a\//);
     });
   });
 
@@ -534,10 +593,176 @@ describe('AI-user findings', () => {
       expect(second.body.siblingsOnSameRev).toEqual(
         expect.arrayContaining([expect.objectContaining({ id: first.body.proposal.id })])
       );
+      expect(second.body.otherLinkSiblingCount).toBeUndefined();
       expect(String(second.body.warning)).toMatch(/approve order|same flow revision/i);
 
       const docs = await request(app).get(`/mcp/a/${link.token}`);
       expect(docs.text).toMatch(/siblingsOnSameRev/);
+    });
+
+    it('counts other-link siblings without exposing their ids', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const linkA = linkStore.create({ label: 'f11a' });
+      const linkB = linkStore.create({ label: 'f11b' });
+
+      const fromA = await request(app).get(
+        `/mcp/a/${linkA.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=A&title=from-a`
+      );
+      expect(fromA.status).toBe(201);
+
+      const fromB = await request(app).get(
+        `/mcp/a/${linkB.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=B&title=from-b`
+      );
+      expect(fromB.status).toBe(201);
+      expect(fromB.body.siblingsOnSameRev).toBeUndefined();
+      expect(fromB.body.otherLinkSiblingCount).toBe(1);
+      expect(String(fromB.body.warning)).toMatch(/approve order|same flow revision/i);
+      expect(JSON.stringify(fromB.body)).not.toContain(fromA.body.proposal.id);
+    });
+  });
+
+  describe('finding 7: line_range_out_of_bounds', () => {
+    it('returns 400 with totalLines when lines start is past EOF', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f7-oob' });
+      const res = await request(app).get(
+        `/mcp/a/${link.token}/nodes/n2/field/template?lines=99-100`
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('line_range_out_of_bounds');
+      expect(res.body.totalLines).toBe(1);
+      expect(String(res.body.error)).toMatch(/out of bounds/i);
+      expect(String(res.body.hint)).toMatch(/totalLines/i);
+    });
+  });
+
+  describe('finding 8: 429 hint prefers summary/search', () => {
+    it('rate_limited hint mentions summary/search not draft chunking', async () => {
+      const { sendRateLimited } = await import('../../src/plugin/rate-limit.js');
+      const express = await import('express');
+      const app = express.default();
+      app.get('/rl', (req, res) => {
+        sendRateLimited(req, res, 60_000);
+      });
+      const res = await request(app).get('/rl');
+      expect(res.status).toBe(429);
+      expect(String(res.body.hint)).toMatch(/summary\/search/i);
+      expect(String(res.body.hint)).toMatch(/retryAfter/i);
+      expect(String(res.body.hint)).not.toMatch(/draft chunk/i);
+    });
+  });
+
+  describe('finding 9: node_not_found 404 + error hints', () => {
+    it('node_not_found is 404 on layered read and propose', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f9-404' });
+      const node = await request(app).get(`/mcp/a/${link.token}/nodes/missing`);
+      expect(node.status).toBe(404);
+      expect(node.body.code).toBe('node_not_found');
+      expect(String(node.body.hint)).toBeTruthy();
+
+      const propose = await request(app).get(
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=missing&set.name=X`
+      );
+      expect(propose.status).toBe(404);
+      expect(propose.body.code).toBe('node_not_found');
+    });
+
+    it('invalid_line_range hint calls out reversed ranges', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f9-rev' });
+      const res = await request(app).get(`/mcp/a/${link.token}/nodes/n2/field/template?lines=5-1`);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('invalid_line_range');
+      expect(String(res.body.hint ?? res.body.error)).toMatch(/reversed|end.*start/i);
+    });
+
+    it('field_not_string includes a hint on layered read', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f9-fns' });
+      // n1 inject has numeric x — not a string field
+      const res = await request(app).get(`/mcp/a/${link.token}/nodes/n1/field/x`);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('field_not_string');
+      expect(String(res.body.hint)).toMatch(/string/i);
+    });
+
+    it('propose invalid_replace includes a hint', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f9-ir' });
+      // omit replace= → invalid_replace
+      const res = await request(app).get(
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n2&field=template&find=hi`
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('invalid_replace');
+      expect(String(res.body.hint)).toMatch(/replace/i);
+    });
+  });
+
+  describe('finding 10: search lineCount + lines cap', () => {
+    it('search hits include lineCount', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f10' });
+      const res = await request(app).get(`/mcp/a/${link.token}/search?q=hi&flow=tab-1`);
+      expect(res.status).toBe(200);
+      expect(res.body.hits.length).toBeGreaterThanOrEqual(1);
+      for (const hit of res.body.hits as { lines: number[]; lineCount: number }[]) {
+        expect(typeof hit.lineCount).toBe('number');
+        expect(hit.lineCount).toBeGreaterThanOrEqual(hit.lines.length);
+        expect(hit.lines.length).toBeLessThanOrEqual(20);
+      }
+    });
+  });
+
+  describe('finding 11: unknown diff format → 400', () => {
+    it('resolveDiffFormat rejects unknown values', () => {
+      expect(resolveDiffFormat('bogus')).toEqual({ ok: false });
+      expect(resolveDiffFormat('summary')).toEqual({ ok: true, format: 'summary' });
+    });
+
+    it('GET diff returns invalid_diff_format for unknown format', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f11-fmt' });
+      const created = await request(app).get(
+        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Fmt&title=fmt`
+      );
+      expect(created.status).toBe(201);
+      const id = created.body.proposal.id as string;
+
+      const bad = await request(app).get(`/mcp/a/${link.token}/proposals/${id}/diff?format=bogus`);
+      expect(bad.status).toBe(400);
+      expect(bad.body.code).toBe('invalid_diff_format');
+      expect(String(bad.body.hint ?? bad.body.error)).toMatch(/summary|full/i);
+
+      const rest = await request(app)
+        .get(`/mcp/api/v1/proposals/${id}/diff?format=nope`)
+        .set('Authorization', `Bearer ${link.token}`);
+      expect(rest.status).toBe(400);
+      expect(rest.body.code).toBe('invalid_diff_format');
+    });
+  });
+
+  describe('finding 12: docs field-mode + REST truncated token hint', () => {
+    it('docs clarify field-mode replaces the whole named string field', async () => {
+      const { app, linkStore } = createApp({ userDir });
+      const link = linkStore.create({ label: 'f12-docs' });
+      const docs = await request(app).get(`/mcp/a/${link.token}`);
+      expect(docs.status).toBe(200);
+      expect(docs.text).toMatch(/replace the entire named string field/i);
+      expect(docs.text).toMatch(/replace_text/i);
+      expect(docs.text).toMatch(/structural/i);
+    });
+
+    it('REST truncated hint does not mention GET /mcp/a/<token>', async () => {
+      const { app } = createApp({ userDir, passportStyle401: true });
+      const rest = await request(app)
+        .get('/mcp/api/v1/flows')
+        .set('Authorization', 'Bearer aia_truncated');
+      expect(rest.status).toBe(401);
+      expect(String(rest.body.hint)).toMatch(/truncated/i);
+      expect(String(rest.body.hint)).toMatch(/token/i);
+      expect(String(rest.body.hint)).not.toMatch(/\/mcp\/a\//);
     });
   });
 });

@@ -195,7 +195,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
     const link = linkStore.create({ label: 'ai' });
 
     const res = await request(app)
-      .post('/mcp/api/v1/proposals')
+      .post('/mcp/api/v1/proposals?include=payload')
       .set('Authorization', `Bearer ${link.token}`)
       .send({
         type: 'replace_flow',
