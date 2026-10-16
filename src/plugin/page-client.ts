@@ -18,6 +18,11 @@ function pageClientScriptPartA(): string {
   var defaultTtl = 14400; // 4h default access-link TTL
   var defaultDeploy = 'nodes';
   var accessToken = null;
+  var proposalsFilter = 'pending';
+  var cachedProposals = [];
+  var proposalDiffCache = {};
+  var pendingRejectId = null;
+  var pendingApproveCtx = null;
 
   function $(id) { return document.getElementById(id); }
   function showFlash(el, message, ok) {
@@ -48,14 +53,64 @@ function pageClientScriptPartA(): string {
     }
   }
 
-  function redirectToEditorLogin() {
+  function editorLoginUrl() {
     var target = editorRoot;
     if (!target || target === '') target = '/';
-    window.location.replace(target);
+    return target;
+  }
+
+  function showAuthGate() {
+    var gate = $('auth-gate');
+    var nav = $('main-nav');
+    if (nav) nav.hidden = true;
+    ['section-status', 'section-links', 'section-proposals', 'section-logs'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.hidden = true;
+    });
+    if (gate) {
+      gate.hidden = false;
+      var ed = $('auth-gate-editor');
+      if (ed) ed.setAttribute('href', editorLoginUrl());
+      var ret = $('auth-gate-return');
+      if (ret) {
+        ret.setAttribute('href', (typeof location !== 'undefined' ? location.pathname : '/mcp') +
+          (typeof location !== 'undefined' ? location.search : '') +
+          (typeof location !== 'undefined' ? location.hash : ''));
+      }
+    }
+    showFlash($('boot-flash'), 'Please sign in to Node-RED first.', false);
   }
 
   function isStatusPath(path) {
     return path === '/status' || path.indexOf('/status?') === 0;
+  }
+
+  function showToast(message, ok) {
+    var host = $('toast-host');
+    if (!host || !message) return;
+    var el = document.createElement('div');
+    el.className = 'toast ' + (ok ? 'ok' : 'error');
+    el.textContent = message;
+    host.appendChild(el);
+    setTimeout(function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 3200);
+  }
+
+  function hoursLabel(seconds) {
+    var s = Number(seconds);
+    if (!Number.isFinite(s) || s <= 0) return '—';
+    var h = Math.round(s / 3600);
+    if (h < 1) {
+      var m = Math.max(1, Math.round(s / 60));
+      return m + ' min';
+    }
+    return h === 1 ? '1 hour' : h + ' hours';
+  }
+
+  function fieldLabel(key) {
+    if (key === 'wires') return 'Connects to';
+    return key;
   }
 
   async function api(path, options) {
@@ -75,11 +130,9 @@ function pageClientScriptPartA(): string {
     if (text) {
       try { body = JSON.parse(text); } catch (e) { body = { error: text }; }
     }
-    // Only the auth bootstrap (/status) redirects on 401. Other endpoints
-    // (e.g. /proposals) show an inline error so a single failing route cannot
-    // bounce the admin back to the editor.
+    // Auth bootstrap: show a sign-in gate instead of silently bouncing.
     if (res.status === 401 && isStatusPath(path)) {
-      redirectToEditorLogin();
+      showAuthGate();
       throw new Error((body && body.error) || 'Authentication required');
     }
     if (!res.ok) {
@@ -160,8 +213,10 @@ function pageClientScriptPartATimeCopy(): string {
     }
   }
   function timeCell(iso) {
-    return '<time datetime="' + esc(iso) + '" title="' + esc(fmtCompact(iso)) + '">' +
-      esc(fmtRelative(iso)) + '</time>';
+    if (!iso) return '—';
+    // Exact local time on hover; relative text for scanability.
+    return '<time class="time-relative" datetime="' + esc(iso) + '" title="' +
+      esc(fmt(iso)) + '">' + esc(fmtRelative(iso)) + '</time>';
   }
   function copyTextToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -219,12 +274,15 @@ function pageClientScriptPartAFormat(): string {
     actor = actor || {};
     if (actor.kind === 'access-link') {
       if (actor.label) {
-        return 'AI link "' + String(actor.label) + '"';
+        return 'AI link "' + String(actor.label) + '"' +
+          (actor.linkId ? ' (' + String(actor.linkId) + ')' : '');
       }
       return 'AI link ' + String(actor.linkId || '');
     }
     if (actor.kind === 'admin') {
-      return actor.username ? 'user ' + String(actor.username) : 'user';
+      return actor.username
+        ? 'You (admin) — ' + String(actor.username)
+        : 'You (admin)';
     }
     if (actor.kind === 'system') return 'system';
     return String(actor.kind || 'unknown');
@@ -238,7 +296,7 @@ function pageClientScriptPartAFormat(): string {
       return 'AI link ' + tipId(actor.linkId || '', 8);
     }
     if (actor.kind === 'admin') {
-      return actor.username ? 'user ' + esc(actor.username) : 'user';
+      return 'You (admin)';
     }
     if (actor.kind === 'system') return 'system';
     return esc(actor.kind || 'unknown');
@@ -248,11 +306,13 @@ function pageClientScriptPartAFormat(): string {
       'proposal.created': 'Created',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
-      'proposal.failed': 'Failed'
+      'proposal.failed': 'Failed',
+      'link.created': 'Link created',
+      'link.revoked': 'Link revoked'
     };
     var label = labels[action];
     if (label) {
-      var kind = action.split('.')[1] || 'other';
+      var kind = (action.split('.')[1] || 'other');
       return '<span class="action-badge action-' + esc(kind) + '" title="' + esc(action) + '">' +
         esc(label) + '</span>';
     }
@@ -263,46 +323,87 @@ function pageClientScriptPartAFormat(): string {
       'proposal.created': 'Created',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
-      'proposal.failed': 'Failed'
+      'proposal.failed': 'Failed',
+      'link.created': 'Link created',
+      'link.revoked': 'Link revoked'
     };
-    return labels[action] ? labels[action] + ' (' + action + ')' : action;
+    return labels[action] || action;
   }
+  function friendlyReason(reason) {
+    var s = String(reason == null ? '' : reason);
+    if (!s) return '';
+    if (/forEach/i.test(s) || /Cannot read properties/i.test(s)) {
+      return 'Deploy failed — Node-RED received an unexpected flow shape. Ask the AI to resubmit.';
+    }
+    return s;
+  }
+`;
+}
+
+function pageClientScriptPartAAudit(): string {
+  return `
   function auditProposalLabel(d, atIso) {
     // Never render API displayName (server TZ). Rebuild from title + entry.at.
     var title = d.title || (d.displayName ? titleFromDisplayName(d.displayName) : '');
-    if (title && atIso) {
-      return '<strong class="audit-display-name">' + esc(String(title)) +
-        ' · ' + esc(fmtLocalShort(atIso)) + '</strong>';
+    var linked = '';
+    if (title && d.proposalId) {
+      linked = '<a class="audit-proposal-link" href="#proposal=' +
+        encodeURIComponent(String(d.proposalId)) + '">' + esc(String(title)) + '</a>';
+    } else if (title) {
+      linked = '<strong class="audit-display-name">' + esc(String(title)) + '</strong>';
+    } else if (d.proposalId) {
+      linked = '<a class="audit-proposal-link" href="#proposal=' +
+        encodeURIComponent(String(d.proposalId)) + '">' + tipId(d.proposalId, 12) + '</a>';
     }
-    if (title) {
-      return '<strong class="audit-display-name">' + esc(String(title)) + '</strong>';
+    if (linked && atIso) {
+      return linked + ' · ' + esc(fmtLocalShort(atIso));
     }
+    if (linked) return linked;
     if (atIso) {
       return '<strong class="audit-display-name">' + esc(fmtLocalShort(atIso)) + '</strong>';
     }
-    return d.proposalId ? tipId(d.proposalId, 12) : '';
+    return '';
+  }
+  function flowNameFromDetails(d) {
+    if (d.flowLabel) return String(d.flowLabel);
+    if (d.flowName) return String(d.flowName);
+    if (d.flowId != null) return String(d.flowId);
+    return '';
   }
   function auditSummary(entry) {
     var d = entry.details || {};
     var action = entry.action || '';
     var prop = auditProposalLabel(d, entry.at);
-    var flow = d.flowId != null ? esc(String(d.flowId)) : '';
+    var flowName = flowNameFromDetails(d);
+    var flow = flowName ? esc(flowName) : '';
     if (action === 'proposal.created') {
       return (prop || 'Proposal') + ' created' + (flow ? ' for flow "' + flow + '"' : '');
     }
     if (action === 'proposal.approved') {
       var rev = d.resultRev ? tipId(d.resultRev, 8) : '';
       return 'Approved' + (prop ? ' ' + prop : '') +
-        (d.flowId ? ' for flow "' + flow + '"' : '') +
+        (flow ? ' for flow "' + flow + '"' : '') +
         (rev ? ', deployed (rev ' + rev + ')' : '');
     }
     if (action === 'proposal.rejected') {
+      var rejectReason = friendlyReason(d.reason);
       return 'Rejected' + (prop ? ' ' + prop : '') +
-        (d.reason ? ': ' + esc(String(d.reason)) : '');
+        (rejectReason ? ': ' + esc(rejectReason) : '');
     }
     if (action === 'proposal.failed') {
+      var failReason = friendlyReason(d.reason);
       return 'Failed' + (prop ? ' ' + prop : '') +
-        (d.reason ? ': ' + esc(String(d.reason)) : '');
+        (failReason ? ': ' + esc(failReason) : '');
+    }
+    if (action === 'link.created') {
+      return 'Access link created' +
+        (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
+        (d.expiresAt ? ' · expires ' + timeCell(d.expiresAt) : '');
+    }
+    if (action === 'link.revoked') {
+      return 'Access link revoked' +
+        (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
+        (d.linkId ? ' · ' + tipId(d.linkId, 8) : '');
     }
     var keys = Object.keys(d);
     if (!keys.length) return '<span class="muted">—</span>';
@@ -401,6 +502,13 @@ function pageClientScriptPartATabs(): string {
     });
   });
 
+  function selectedTtlSeconds() {
+    var pressed = document.querySelector('#link-ttl-presets button[aria-pressed="true"]');
+    var hours = pressed ? Number(pressed.getAttribute('data-hours')) : Math.max(1, Math.round(defaultTtl / 3600));
+    if (!Number.isFinite(hours) || hours <= 0) hours = 4;
+    return Math.floor(hours * 3600);
+  }
+
   function renderLinksManage() {
     var host = $('links-manage');
     if (!host) return;
@@ -412,18 +520,38 @@ function pageClientScriptPartATabs(): string {
       host.innerHTML = '<p class="readonly-note">Link management requires full admin permission (*).</p>';
       return;
     }
-    var ttlHoursDefault = Math.max(1, Math.round(defaultTtl / 3600));
+    var defaultHours = Math.max(1, Math.round(defaultTtl / 3600));
+    if ([1, 4, 24].indexOf(defaultHours) < 0) defaultHours = 4;
     host.innerHTML =
-      '<form id="create-link-form" class="row">' +
-      '<label>TTL (hours)<input id="link-ttl" type="number" min="1" step="1" value="' + ttlHoursDefault + '" /></label>' +
+      '<form id="create-link-form">' +
+      '<div class="row" style="align-items:flex-end">' +
+      '<div><span class="muted">Link expires after</span>' +
+      '<div class="ttl-presets" id="link-ttl-presets" role="group" aria-label="Link expires after">' +
+      '<button type="button" data-hours="1"' + (defaultHours === 1 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>1 hour</button>' +
+      '<button type="button" data-hours="4"' + (defaultHours === 4 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>4 hours</button>' +
+      '<button type="button" data-hours="24"' + (defaultHours === 24 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>24 hours</button>' +
+      '</div></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
-      '<button type="submit" class="action">Create access link</button></form>' +
+      '<button type="submit" class="action">Create access link</button></div></form>' +
       '<div id="token-once" class="token-once" hidden>' +
-      '<strong>Token (shown once)</strong><code id="token-value"></code>' +
-      '<pre id="token-copy-block" class="token-copy-block" hidden></pre>' +
-      '<button type="button" class="action" id="token-copy-btn">Copy link for AI</button>' +
-      '<p class="muted" id="token-docs-hint"></p>' +
-      '</div>';
+      '<p id="token-docs-hint" class="muted"></p>' +
+      '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy link for your AI assistant</button>' +
+      '<details class="advanced-block" id="token-dev-details">' +
+      '<summary>For developers</summary>' +
+      '<p class="muted">Bearer token and API endpoints (reusable while this link is active — also available via Copy link in the table).</p>' +
+      '<code id="token-value"></code>' +
+      '<pre id="token-copy-block" class="token-copy-block"></pre>' +
+      '</details></div>';
+    var presets = $('link-ttl-presets');
+    if (presets) {
+      presets.querySelectorAll('button').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          presets.querySelectorAll('button').forEach(function (b) {
+            b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+          });
+        });
+      });
+    }
     var createForm = $('create-link-form');
     if (createForm) {
       createForm.addEventListener('submit', onCreateLink);
@@ -436,23 +564,32 @@ function pageClientScriptPartATabs(): string {
 function pageClientScriptPartA2(): string {
   return `
   async function loadLinks() {
-    if (!aiOn || !canManage) return;
+    if (!aiOn || !canManage) {
+      var dashLinksOff = $('dash-links');
+      if (dashLinksOff && !aiOn) dashLinksOff.textContent = '—';
+      return;
+    }
     var list = $('links-list');
     var flash = $('links-flash');
     showFlash(flash, '', true);
     try {
       var data = await api('/links');
       var links = (data && data.links) || [];
+      var dashLinks = $('dash-links');
+      if (dashLinks) dashLinks.textContent = String(links.length);
       if (!links.length) {
         list.innerHTML = '<div class="empty-state"><p class="empty-title">No active access links</p>' +
-          '<p class="muted">Create a link above to give an AI temporary GET/REST access.</p></div>';
+          '<p class="muted">Create a link above to give an AI temporary access to read flows and submit proposals.</p></div>';
         return;
       }
-      list.innerHTML = '<table class="links-table"><thead><tr><th>Id</th><th>Label</th><th>Expires</th><th></th></tr></thead><tbody>' +
+      list.innerHTML = '<table class="links-table"><thead><tr>' +
+        '<th>Created</th><th>Last used</th><th>Label</th><th>Expires</th><th></th>' +
+        '</tr></thead><tbody>' +
         links.map(function (l) {
           var copyDisabled = l.url ? '' : ' disabled title="URL unavailable"';
           return '<tr data-id="' + esc(l.id) + '">' +
-            '<td><code title="' + esc(l.id) + '">' + tipId(l.id, 10) + '</code></td>' +
+            '<td>' + timeCell(l.createdAt) + '</td>' +
+            '<td>' + timeCell(l.lastUsedAt) + '</td>' +
             '<td>' + esc(l.label || '—') + '</td>' +
             '<td>' + timeCell(l.expiresAt) + '</td>' +
             '<td class="row-actions">' +
@@ -470,6 +607,7 @@ function pageClientScriptPartA2(): string {
           }
           copyTextToClipboard(url).then(function () {
             markCopied(btn, flash, 'Link copied.');
+            showToast('Link copied.', true);
           }).catch(function () {
             showFlash(flash, 'Clipboard unavailable — select the URL from a new create.', false);
           });
@@ -491,11 +629,14 @@ function pageClientScriptPartA2(): string {
     try {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
+      showToast('Link revoked.', true);
       var once = $('token-once');
       if (once) once.hidden = true;
       loadLinks();
+      loadLogs();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+      showToast(e.message || String(e), false);
     }
   }
 `;
@@ -527,49 +668,58 @@ function pageClientScriptPartB(): string {
   async function onCreateLink(ev) {
     ev.preventDefault();
     var flash = $('links-flash');
-    var ttlInput = $('link-ttl');
     var labelInput = $('link-label');
-    var ttlHours = Number(ttlInput && ttlInput.value);
-    var ttlSeconds = Math.max(1, Math.floor((Number.isFinite(ttlHours) ? ttlHours : 24) * 3600));
+    var ttlSeconds = selectedTtlSeconds();
     var payload = { ttlSeconds: ttlSeconds };
     if (labelInput && labelInput.value.trim()) payload.label = labelInput.value.trim();
     try {
       var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
       var box = $('token-once');
       box.hidden = false;
-      $('token-value').textContent = created.url || created.token;
+      var tokenEl = $('token-value');
+      if (tokenEl) tokenEl.textContent = created.token || created.url || '';
       var copyBlock = $('token-copy-block');
       var copyText = accessLinkCopyText(created.token, created.url);
+      var getLinkOnly = created.url || '';
       if (copyBlock) {
-        copyBlock.hidden = false;
         copyBlock.textContent = copyText;
       }
       var hint = $('token-docs-hint');
       if (hint) {
-        hint.textContent = 'Copy the self-contained GET link for chat AIs (docs + scoped routes). Token TTL default is 4 hours.';
+        hint.textContent = 'Paste this link in your AI chat. It can read flows and submit proposals — it cannot deploy until you approve. While the link is active you can copy it again from the table below.';
       }
       var copyBtn = $('token-copy-btn');
       if (copyBtn) {
-        copyBtn.textContent = 'Copy link for AI';
+        copyBtn.textContent = 'Copy link for your AI assistant';
         copyBtn.classList.remove('copied');
         copyBtn.disabled = false;
         copyBtn.onclick = function () {
-          copyTextToClipboard(copyText).then(function () {
-            markCopied(copyBtn, flash, 'Copied link for AI.');
+          var toCopy = getLinkOnly || copyText;
+          copyTextToClipboard(toCopy).then(function () {
+            markCopied(copyBtn, flash, 'Copied link for your AI assistant.');
+            showToast('Link copied for your AI assistant.', true);
           }).catch(function () {
-            if (copyBlock) copyBlock.hidden = false;
-            showFlash(flash, 'Clipboard unavailable — select the text below manually.', false);
+            showFlash(flash, 'Clipboard unavailable — expand For developers and copy manually.', false);
           });
         };
       }
-      showFlash(flash, 'Link created. Use Copy link for AI — the raw token stays available while active.', true);
+      if (labelInput) labelInput.value = '';
+      showFlash(flash, 'Link created.', true);
+      showToast('Access link created.', true);
       loadLinks();
+      loadLogs();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+      showToast(e.message || String(e), false);
     }
   }
 
-  function proposalSummary(p) {
+  function flowLabelOf(p) {
+    var flow = (p && p.payload && p.payload.flow) || {};
+    return flow.label || (p.payload && p.payload.flowId) || '';
+  }
+
+  function proposalTechSummary(p) {
     var flow = (p.payload && p.payload.flow) || {};
     var nodes = Array.isArray(flow.nodes) ? flow.nodes.length : 0;
     var configs = Array.isArray(flow.configs) ? flow.configs.length : 0;
@@ -577,6 +727,29 @@ function pageClientScriptPartB(): string {
       ' · label ' + (flow.label || '—') +
       ' · nodes ' + nodes +
       ' · configs ' + configs;
+  }
+
+  function plainDiffSentence(diff, flowLabel) {
+    if (!diff || !diff.summary) return '';
+    var sum = diff.summary;
+    var parts = [];
+    if (sum.added) parts.push('Adds ' + sum.added + (sum.added === 1 ? ' node' : ' nodes'));
+    if (sum.removed) parts.push((parts.length ? 'removes ' : 'Removes ') + sum.removed +
+      (sum.removed === 1 ? ' node' : ' nodes'));
+    if (sum.modified) parts.push((parts.length ? 'changes ' : 'Changes ') + sum.modified +
+      (sum.modified === 1 ? ' node' : ' nodes'));
+    if (!parts.length) parts.push('No node changes');
+    var sentence = parts.join(', ');
+    if (flowLabel) sentence += ' in ' + flowLabel;
+    return sentence;
+  }
+
+  function isLargeDelete(diff) {
+    if (!diff || !diff.summary) return false;
+    var before = Number(diff.summary.beforeNodeCount) || 0;
+    var removed = Number(diff.summary.removed) || 0;
+    if (before <= 0 || removed <= 0) return false;
+    return removed / before > 0.5;
   }
 `;
 }
@@ -721,6 +894,7 @@ function pageClientScriptPartBDiffPresence(): string {
   }
 
   function renderPresenceProperty(p) {
+    var label = fieldLabel(p.key);
     if (p.kind === 'text') {
       var text = String(p.value == null ? '' : p.value);
       var previewToggle = '';
@@ -732,22 +906,22 @@ function pageClientScriptPartBDiffPresence(): string {
         previewBlock = renderHtmlPreviewBlock(text);
       }
       if (isCollapsiblePresenceText(text)) {
-        return '<details class="presence-text"><summary><strong>' + esc(p.key) + '</strong>' +
+        return '<details class="presence-text"><summary><strong>' + esc(label) + '</strong>' +
           ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
           '<div class="presence-text-toolbar">' + previewToggle + '</div>' +
           previewBlock +
           '<pre class="presence-pre">' + esc(text) + '</pre></details>';
       }
       // Short single-line fields (format, syntax, …) stay inline expanded.
-      return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
         '<code class="presence-inline">' + esc(text) + '</code></div>';
     }
     // Wires (and other readable strings) stay as plain text, not JSON-quoted.
     if (typeof p.value === 'string') {
-      return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
         '<code class="presence-inline">' + esc(p.value) + '</code></div>';
     }
-    return '<div class="prop-change"><strong>' + esc(p.key) + '</strong>: ' +
+    return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
       '<code class="presence-inline">' + esc(JSON.stringify(p.value)) + '</code></div>';
   }
 
@@ -768,8 +942,8 @@ function pageClientScriptPartBDiffPresence(): string {
       (allProps || '<p class="muted">No properties.</p>') +
       '</div></details>';
     return '<details class="node-presence node-' + kind + '"' + open + '>' +
-      '<summary><span class="presence-summary-text">' + summaryText + '</span> · ' +
-      '<code class="id-short muted" title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</code>' +
+      '<summary><span class="presence-summary-text">' + summaryText + '</span> ' +
+      '<span class="muted tip-id" title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</span>' +
       '</summary>' +
       '<div class="presence-body">' + body + '</div></details>';
   }
@@ -805,20 +979,55 @@ function pageClientScriptPartBDiffPresence(): string {
 
 function pageClientScriptPartBDiffView(): string {
   return `
+  function textChangeLineCount(ch) {
+    return (ch.lines || []).length;
+  }
+
+  function isLargeTextChange(ch) {
+    if (ch.kind !== 'text') return false;
+    var beforeB = typeof ch.beforeBytes === 'number' ? ch.beforeBytes : String(ch.before || '').length;
+    var afterB = typeof ch.afterBytes === 'number' ? ch.afterBytes : String(ch.after || '').length;
+    var lines = textChangeLineCount(ch);
+    return beforeB >= 20000 || afterB >= 20000 || lines >= 80;
+  }
+
+  function diffHasTextChanges(sections) {
+    var modified = (sections && sections.modified) || [];
+    for (var i = 0; i < modified.length; i += 1) {
+      var changes = modified[i].changes || [];
+      for (var j = 0; j < changes.length; j += 1) {
+        if (changes[j].kind === 'text') return true;
+      }
+    }
+    return false;
+  }
+
   function renderPropertyChange(ch, mode) {
+    var label = fieldLabel(ch.key);
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
       var sizeHint = '';
+      var lineCount = textChangeLineCount(ch);
       if (typeof ch.beforeBytes === 'number' && typeof ch.afterBytes === 'number') {
-        sizeHint = ' <span class="muted">(' + ch.beforeBytes + ' → ' + ch.afterBytes + ' bytes)</span>';
+        sizeHint = ' <span class="muted">(' + ch.beforeBytes + ' → ' + ch.afterBytes + ' bytes';
+        if (lineCount) sizeHint += ', ' + lineCount + ' lines';
+        sizeHint += ')</span>';
+      } else if (lineCount) {
+        sizeHint = ' <span class="muted">(' + lineCount + ' lines)</span>';
       }
       if (ch.truncated) {
-        sizeHint += ' <span class="muted">(summary; ?format=full for complete text)</span>';
+        sizeHint += ' <span class="muted">(compact summary)</span>';
       }
-      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' + sizeHint + body + '</div>';
+      if (isLargeTextChange(ch)) {
+        return '<details class="prop-change large-text-diff"><summary><strong>' + esc(label) +
+          '</strong>' + sizeHint +
+          '<div class="large-diff-summary">Large text change — expand to review the full diff.</div></summary>' +
+          body + '</details>';
+      }
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>' + sizeHint + body + '</div>';
     }
     if (mode === 'split') {
-      return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>' +
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>' +
         '<div class="prop-change-scalar split">' +
         '<div class="scalar-side"><span class="side-label">Before</span>' +
         '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code></div>' +
@@ -827,11 +1036,15 @@ function pageClientScriptPartBDiffView(): string {
         '<code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>' +
         '</div></div>';
     }
-    return '<div class="prop-change"><strong>' + esc(ch.key) + '</strong>: ' +
+      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
       '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
       ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
   }
+`;
+}
 
+function pageClientScriptPartBDiffView2(): string {
+  return `
   function renderDiffSections(sections, mode, emptyMsg) {
     var parts = '';
     if (sections.added && sections.added.length) {
@@ -847,9 +1060,12 @@ function pageClientScriptPartBDiffView(): string {
     if (sections.modified && sections.modified.length) {
       parts += '<div class="diff-section"><h4>Modified nodes</h4>' +
         sections.modified.map(function (m) {
+          var heading = m.summary
+            ? esc(m.summary)
+            : ((m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?'));
           return '<div class="modified-node">' +
-            '<div><code title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</code> ' +
-            (m.name ? esc(m.name) + ' · ' : '') + esc(m.type || '?') + '</div>' +
+            '<div class="modified-heading">' + heading +
+            ' <span class="muted tip-id" title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</span></div>' +
             (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
             '</div>';
         }).join('') + '</div>';
@@ -864,13 +1080,15 @@ function pageClientScriptPartBDiffView(): string {
     if (!diff) return '<p class="muted">Diff unavailable.</p>';
     mode = mode || getDiffMode();
     var stale = diff.baseRevStale
-      ? '<p class="stale-banner" role="status">Base revision is stale — approve would fail. Ask the AI to re-read flows and resubmit. Primary diff below is still vs the stored base snapshot (what the AI changed).</p>'
+      ? '<p class="stale-banner" role="status">This proposal is out of date — the flow changed since the AI submitted it. Approve is disabled; ask the AI to resubmit, or dismiss below. The diff still shows what the AI originally changed.</p>'
       : '';
     var missing = diff.baseSnapshotMissing
-      ? '<p class="muted">This legacy proposal has no stored base snapshot; comparing against the live flow.</p>'
+      ? '<p class="muted">This older proposal has no saved starting snapshot, so the comparison uses the live flow instead.</p>'
       : '';
     var sum = diff.summary || {};
-    var against = diff.compareAgainst === 'base' ? 'base snapshot' : 'current flow';
+    var against = diff.compareAgainst === 'base'
+      ? 'what the AI started from'
+      : 'the live flow';
     var counts = '<p class="diff-summary"><strong>+' + (sum.added || 0) +
       '</strong> added · <strong>-' + (sum.removed || 0) +
       '</strong> removed · <strong>~' + (sum.modified || 0) +
@@ -879,29 +1097,37 @@ function pageClientScriptPartBDiffView(): string {
         ? ' · tab: ' + esc(sum.tabChanges.join(', '))
         : '') +
       ' <span class="muted">(vs ' + against + ')</span></p>';
-    var meta = '<p class="muted">expectedRev ' + tipId(diff.expectedRev, 8) +
-      ' · currentRev ' + tipId(diff.currentRev, 8) + '</p>';
-    var toolbar =
-      '<div class="diff-toolbar">' + counts +
-      '<div class="diff-mode-toggle" role="group" aria-label="Diff layout">' +
-      '<button type="button" data-diff-mode="split" aria-pressed="' + (mode === 'split' ? 'true' : 'false') + '">Side by side</button>' +
-      '<button type="button" data-diff-mode="unified" aria-pressed="' + (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
-      '</div></div>';
+    var meta = '<p class="muted">expected rev ' + tipId(diff.expectedRev, 8) +
+      ' · current rev ' + tipId(diff.currentRev, 8) + '</p>';
+    var showModeToggle = diffHasTextChanges(diff) ||
+      (diff.vsCurrent && diffHasTextChanges(diff.vsCurrent));
+    var toolbar = '<div class="diff-toolbar">' + counts;
+    if (showModeToggle) {
+      toolbar +=
+        '<div class="diff-mode-toggle" role="group" aria-label="Diff layout" ' +
+        'title="Switch how multi-line text changes are shown">' +
+        '<button type="button" data-diff-mode="split" title="Show before and after side by side" aria-pressed="' +
+        (mode === 'split' ? 'true' : 'false') + '">Side by side</button>' +
+        '<button type="button" data-diff-mode="unified" title="Show a single combined line diff" aria-pressed="' +
+        (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
+        '</div>';
+    }
+    toolbar += '</div>';
     var sections = renderDiffSections(
       diff,
       mode,
       diff.compareAgainst === 'base'
-        ? 'No node changes vs the base snapshot.'
-        : 'No node changes vs the current flow.'
+        ? 'No node changes compared with what the AI started from.'
+        : 'No node changes compared with the live flow.'
     );
     var vsCurrent = '';
     if (diff.vsCurrent) {
       var vc = diff.vsCurrent.summary || {};
       vsCurrent =
         '<details class="vs-current">' +
-        '<summary>Also show changes vs current flow (+' + (vc.added || 0) +
+        '<summary>Also compare with the live flow (+' + (vc.added || 0) +
         ' / -' + (vc.removed || 0) + ' / ~' + (vc.modified || 0) + ')</summary>' +
-        renderDiffSections(diff.vsCurrent, mode, 'No node changes vs the current flow.') +
+        renderDiffSections(diff.vsCurrent, mode, 'No node changes compared with the live flow.') +
         '</details>';
     }
     return stale + missing + toolbar + meta + sections + vsCurrent;
@@ -911,66 +1137,231 @@ function pageClientScriptPartBDiffView(): string {
 
 function pageClientScriptPartB2(): string {
   return `
+  function updatePendingBadges(pendingCount) {
+    var badge = $('proposals-pending-badge');
+    if (badge) {
+      badge.textContent = String(pendingCount);
+      badge.hidden = pendingCount <= 0;
+    }
+    var filterCount = $('filter-pending-count');
+    if (filterCount) filterCount.textContent = String(pendingCount);
+    var dashPending = $('dash-pending');
+    if (dashPending) dashPending.textContent = String(pendingCount);
+  }
+
+  function setProposalsFilter(next) {
+    proposalsFilter = next === 'decided' ? 'decided' : 'pending';
+    var filters = $('proposals-filters');
+    if (filters) {
+      filters.querySelectorAll('.filter-chip').forEach(function (chip) {
+        var f = chip.getAttribute('data-filter');
+        chip.setAttribute('aria-pressed', f === proposalsFilter ? 'true' : 'false');
+      });
+    }
+    renderProposalsList();
+  }
+
+  function bindOnce(el, event, handler) {
+    if (!el || el.getAttribute('data-bound') === '1') return;
+    el.setAttribute('data-bound', '1');
+    el.addEventListener(event, handler);
+  }
+
+  function bindProposalActions(list) {
+    list.querySelectorAll('.approve-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', function () {
+        if (btn.disabled) return;
+        approveProposal(btn.getAttribute('data-id'));
+      });
+    });
+    list.querySelectorAll('.reject-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', function () {
+        openRejectDialog(btn.getAttribute('data-id'));
+      });
+    });
+    list.querySelectorAll('.dismiss-stale-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', function () {
+        rejectProposal(btn.getAttribute('data-id'), 'Dismissed — ask the AI to resubmit');
+      });
+    });
+    list.querySelectorAll('.deploy-type').forEach(function (sel) {
+      bindOnce(sel, 'change', function () {
+        var warn = list.querySelector('.full-deploy-warn[data-id="' + sel.getAttribute('data-id') + '"]');
+        if (warn) warn.hidden = sel.value !== 'full';
+      });
+    });
+    list.querySelectorAll('.proposal-card-compact').forEach(function (card) {
+      bindOnce(card, 'click', function () {
+        var id = card.getAttribute('data-id');
+        var full = list.querySelector('.proposal-detail[data-id="' + id + '"]');
+        if (!full) return;
+        var open = full.hasAttribute('hidden');
+        if (open) {
+          var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
+          if (p) {
+            var wrap = document.createElement('div');
+            wrap.innerHTML = renderProposalCard(p);
+            var next = wrap.firstChild;
+            full.parentNode.replaceChild(next, full);
+            full = next;
+            bindProposalActions(list);
+          }
+          full.hidden = false;
+          card.setAttribute('aria-expanded', 'true');
+          loadProposalDiff(id);
+        } else {
+          full.hidden = true;
+          card.setAttribute('aria-expanded', 'false');
+        }
+      });
+    });
+  }
+
+  function renderPendingActions(p, stale) {
+    if (!canApprove || p.status !== 'pending') return '';
+    var disabled = stale ? ' disabled' : '';
+    var staleHint = stale
+      ? '<p class="stale-hint muted">Out of date — ask the AI to resubmit, or dismiss.</p>' +
+        '<button type="button" class="action secondary dismiss-stale-btn" data-id="' + esc(p.id) +
+        '">Dismiss stale proposal</button>'
+      : '';
+    return staleHint +
+      '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
+      '<div class="row">' +
+      '<button type="button" class="action approve-btn" data-id="' + esc(p.id) + '"' + disabled +
+      '>Approve &amp; deploy</button>' +
+      '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) +
+      '">Reject</button>' +
+      '</div>' +
+      '<details class="advanced-block">' +
+      '<summary>Advanced</summary>' +
+      '<label>Deploy type<select class="deploy-type" data-id="' + esc(p.id) + '">' +
+      '<option value="nodes"' + (defaultDeploy === 'nodes' ? ' selected' : '') + '>nodes</option>' +
+      '<option value="flows"' + (defaultDeploy === 'flows' ? ' selected' : '') + '>flows</option>' +
+      '<option value="full"' + (defaultDeploy === 'full' ? ' selected' : '') + '>full</option>' +
+      '</select></label>' +
+      '<p class="muted">nodes = only changed nodes restart, recommended</p>' +
+      '<p class="full-deploy-warn" data-id="' + esc(p.id) + '"' +
+      (defaultDeploy === 'full' ? '' : ' hidden') +
+      '>Warning: full restarts the entire runtime.</p>' +
+      '</details>';
+  }
+`;
+}
+
+function pageClientScriptPartB2Cards(): string {
+  return `
+  function renderProposalCard(p) {
+    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
+    var flowLabel = flowLabelOf(p);
+    var createdBy = '';
+    if (p.createdBy) {
+      if (p.createdBy.label) {
+        createdBy = '<span class="muted">From AI link "' + esc(p.createdBy.label) + '"</span>';
+      } else if (p.createdBy.linkId) {
+        createdBy = '<span class="muted">From AI link ' + tipId(p.createdBy.linkId, 8) + '</span>';
+      }
+    }
+    var reason = p.reason
+      ? '<p class="muted">Reason: ' + esc(friendlyReason(p.reason)) + '</p>'
+      : '';
+    var aiLine = '<p class="proposal-ai-summary">' + esc(title) +
+      (flowLabel ? ' · ' + esc(flowLabel) : '') + '</p>';
+    var cached = proposalDiffCache[p.id];
+    var plain = cached ? plainDiffSentence(cached, flowLabel) : '';
+    var deleteBanner = '';
+    if (cached && isLargeDelete(cached)) {
+      var beforeN = cached.summary.beforeNodeCount || 0;
+      var removedN = cached.summary.removed || 0;
+      deleteBanner = '<div class="delete-banner" role="status">Deletes ' + removedN +
+        ' of ' + beforeN + ' nodes</div>';
+    }
+    var stale = !!(cached && cached.baseRevStale);
+    var actions = renderPendingActions(p, stale);
+    var tech =
+      '<details class="tech-details">' +
+      '<summary>Technical details</summary>' +
+      '<p class="muted">' + esc(proposalTechSummary(p)) + '</p>' +
+      '<p class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
+      ' · id ' + tipId(p.id, 12) + '</p>' +
+      '<div class="proposal-diff" data-diff-for="' + esc(p.id) + '">' +
+      (cached ? renderDiffView(cached) : '<p class="muted">Loading diff…</p>') +
+      '</div>' +
+      '<details><summary>Raw payload</summary><pre>' +
+      esc(JSON.stringify(p.payload, null, 2)) + '</pre></details>' +
+      '</details>';
+    return '<article class="proposal-detail" id="proposal-' + esc(p.id) +
+      '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
+      '<header class="proposal-card-head">' +
+      '<h3 class="proposal-heading">' + esc(title) + '</h3>' +
+      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span> ' +
+      timeCell(p.createdAt) +
+      '</header>' +
+      aiLine +
+      (createdBy ? createdBy + '<br/>' : '') +
+      '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
+      (plain ? esc(plain) : '<span class="muted">Loading summary…</span>') + '</p>' +
+      deleteBanner +
+      reason +
+      tech +
+      actions +
+      '</article>';
+  }
+
+  function renderCompactProposal(p) {
+    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
+    return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
+      '" role="button" tabindex="0" aria-expanded="false">' +
+      '<strong>' + esc(title) + '</strong>' +
+      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' +
+      timeCell(p.createdAt) +
+      '</div>' +
+      '<div class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) +
+      '" data-status="' + esc(p.status) + '" hidden></div>';
+  }
+
+  function renderProposalsList() {
+    var list = $('proposals-list');
+    if (!list) return;
+    var filters = $('proposals-filters');
+    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
+    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    updatePendingBadges(pending.length);
+    if (filters) filters.hidden = cachedProposals.length === 0;
+    var shown = proposalsFilter === 'pending' ? pending : decided;
+    if (!cachedProposals.length) {
+      list.innerHTML = '<div class="empty-state"><p class="empty-title">No proposals yet</p>' +
+        '<p class="muted">When an AI submits a change it will appear here for review.</p></div>';
+      return;
+    }
+    if (!shown.length) {
+      list.innerHTML = '<div class="empty-state"><p class="empty-title">No ' +
+        esc(proposalsFilter) + ' proposals</p>' +
+        '<p class="muted">Switch the filter above to see other proposals.</p></div>';
+      return;
+    }
+    if (proposalsFilter === 'pending') {
+      list.innerHTML = shown.map(renderProposalCard).join('');
+      shown.forEach(function (p) { loadProposalDiff(p.id); });
+    } else {
+      list.innerHTML = shown.map(renderCompactProposal).join('');
+    }
+    bindProposalActions(list);
+    focusProposalFromHash();
+  }
+`;
+}
+
+function pageClientScriptPartB2Focus(): string {
+  return `
   async function loadProposals() {
     if (!aiOn) return;
-    var list = $('proposals-list');
     var flash = $('proposals-flash');
     showFlash(flash, '', true);
     try {
       var data = await api('/proposals');
-      var proposals = (data && data.proposals) || [];
-      if (!proposals.length) {
-        list.innerHTML = '<div class="empty-state"><p class="empty-title">No proposals yet</p>' +
-          '<p class="muted">When an AI submits a change it will appear here for review.</p></div>';
-        return;
-      }
-      list.innerHTML = proposals.map(function (p) {
-        var actions = '';
-        if (canApprove && p.status === 'pending') {
-          actions =
-            '<div class="row">' +
-            '<label>Deploy type<select class="deploy-type" data-id="' + esc(p.id) + '">' +
-            '<option value="nodes"' + (defaultDeploy === 'nodes' ? ' selected' : '') + '>nodes</option>' +
-            '<option value="flows"' + (defaultDeploy === 'flows' ? ' selected' : '') + '>flows</option>' +
-            '<option value="full"' + (defaultDeploy === 'full' ? ' selected' : '') + '>full</option>' +
-            '</select></label>' +
-            '<button type="button" class="action approve-btn" data-id="' + esc(p.id) + '">Approve</button>' +
-            '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) + '">Reject</button>' +
-            '</div>' +
-            '<label>Reject reason<input class="reject-reason" data-id="' + esc(p.id) + '" placeholder="Optional reason" /></label>';
-        }
-        var reason = p.reason ? '<p class="muted">Reason: ' + esc(p.reason) + '</p>' : '';
-        var createdBy = '';
-        if (p.createdBy) {
-          if (p.createdBy.label) {
-            createdBy = ' · AI link "' + esc(p.createdBy.label) + '"';
-          } else if (p.createdBy.linkId) {
-            createdBy = ' · AI link ' + tipId(p.createdBy.linkId, 8);
-          }
-        }
-        return '<article class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) + '">' +
-          '<h3 class="proposal-heading">' + proposalHeading(p) +
-          ' · <code>' + esc(p.status) + '</code></h3>' +
-          '<p class="proposal-id muted"><code title="' + esc(p.id) + '">' + tipId(p.id, 12) + '</code></p>' +
-          '<span class="muted">' + esc(proposalSummary(p)) + '</span><br/>' +
-          '<span class="muted">expectedRev ' + tipId(p.expectedRev, 8) +
-          ' · created ' + timeCell(p.createdAt) +
-          createdBy +
-          '</span>' +
-          reason +
-          '<div class="proposal-diff" data-diff-for="' + esc(p.id) + '"><p class="muted">Loading diff…</p></div>' +
-          '<details><summary>Raw payload</summary><pre>' + esc(JSON.stringify(p.payload, null, 2)) + '</pre></details>' +
-          actions +
-          '</article>';
-      }).join('');
-      list.querySelectorAll('.approve-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () { approveProposal(btn.getAttribute('data-id')); });
-      });
-      list.querySelectorAll('.reject-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () { rejectProposal(btn.getAttribute('data-id')); });
-      });
-      proposals.forEach(function (p) { loadProposalDiff(p.id); });
-      focusProposalFromHash();
+      cachedProposals = (data && data.proposals) || [];
+      renderProposalsList();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
     }
@@ -988,9 +1379,34 @@ function pageClientScriptPartB2(): string {
     var id = readProposalHashId();
     if (!id) return false;
     selectTab('proposals', { skipHash: true });
+    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
+    if (p && p.status !== 'pending' && proposalsFilter === 'pending') {
+      proposalsFilter = 'decided';
+      var filtersEl = $('proposals-filters');
+      if (filtersEl) {
+        filtersEl.querySelectorAll('.filter-chip').forEach(function (chip) {
+          var f = chip.getAttribute('data-filter');
+          chip.setAttribute('aria-pressed', f === 'decided' ? 'true' : 'false');
+        });
+      }
+      renderProposalsList();
+    }
     var el = document.getElementById('proposal-' + id) ||
       document.querySelector('.proposal-detail[data-id="' + id + '"]');
     if (!el) return false;
+    if (el.hasAttribute('hidden') || !el.querySelector('.proposal-heading')) {
+      if (p) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = renderProposalCard(p);
+        var next = wrap.firstChild;
+        el.parentNode.replaceChild(next, el);
+        el = next;
+        var compact = document.querySelector('.proposal-card-compact[data-id="' + id + '"]');
+        if (compact) compact.setAttribute('aria-expanded', 'true');
+        bindProposalActions($('proposals-list'));
+        loadProposalDiff(id);
+      }
+    }
     clearProposalHighlight();
     el.classList.add('proposal-highlight');
     try {
@@ -1002,7 +1418,11 @@ function pageClientScriptPartB2(): string {
     replaceLocationHash('#proposals');
     return true;
   }
+`;
+}
 
+function pageClientScriptPartB2Apply(): string {
+  return `
   function bindDiffModeToggle(host, diff) {
     host.querySelectorAll('[data-diff-mode]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -1016,11 +1436,77 @@ function pageClientScriptPartB2(): string {
     });
   }
 
+  function applyDiffToProposalCard(id, diff) {
+    proposalDiffCache[id] = diff;
+    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
+    var flowLabel = p ? flowLabelOf(p) : '';
+    var plainEl = document.querySelector('.proposal-plain-summary[data-plain-for="' + id + '"]');
+    if (plainEl) {
+      var sentence = plainDiffSentence(diff, flowLabel);
+      plainEl.textContent = sentence || 'No node changes';
+    }
+    var article = document.querySelector('.proposal-detail[data-id="' + id + '"]');
+    if (!article) return;
+    var existingBanner = article.querySelector('.delete-banner');
+    if (isLargeDelete(diff)) {
+      var beforeN = diff.summary.beforeNodeCount || 0;
+      var removedN = diff.summary.removed || 0;
+      var html = 'Deletes ' + removedN + ' of ' + beforeN + ' nodes';
+      if (existingBanner) {
+        existingBanner.textContent = html;
+      } else {
+        var plain = article.querySelector('.proposal-plain-summary');
+        var banner = document.createElement('div');
+        banner.className = 'delete-banner';
+        banner.setAttribute('role', 'status');
+        banner.textContent = html;
+        if (plain && plain.parentNode) {
+          plain.parentNode.insertBefore(banner, plain.nextSibling);
+        }
+      }
+    } else if (existingBanner) {
+      existingBanner.parentNode.removeChild(existingBanner);
+    }
+    if (p && p.status === 'pending' && canApprove) {
+      var actionsHost = article;
+      var oldApprove = actionsHost.querySelector('.approve-btn');
+      var oldRow = oldApprove && oldApprove.closest('.row');
+      // Re-render action block when stale state becomes known.
+      var advanced = actionsHost.querySelector('.advanced-block');
+      var help = actionsHost.querySelector('.approve-help');
+      var dismiss = actionsHost.querySelector('.dismiss-stale-btn');
+      var staleHint = actionsHost.querySelector('.stale-hint');
+      if (diff.baseRevStale) {
+        if (oldApprove) oldApprove.disabled = true;
+        if (!staleHint) {
+          var hint = document.createElement('p');
+          hint.className = 'stale-hint muted';
+          hint.textContent = 'Out of date — ask the AI to resubmit, or dismiss.';
+          if (help && help.parentNode) help.parentNode.insertBefore(hint, help);
+        }
+        if (!dismiss) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'action secondary dismiss-stale-btn';
+          btn.setAttribute('data-id', id);
+          btn.textContent = 'Dismiss stale proposal';
+          btn.addEventListener('click', function () {
+            rejectProposal(id, 'Dismissed — ask the AI to resubmit');
+          });
+          if (help && help.parentNode) help.parentNode.insertBefore(btn, help);
+        }
+      }
+      void oldRow;
+      void advanced;
+    }
+  }
+
   async function loadProposalDiff(id) {
     var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
     if (!host) return;
     try {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
+      applyDiffToProposalCard(id, diff);
       host.innerHTML = renderDiffView(diff);
       bindDiffModeToggle(host, diff);
       bindPresencePreviewToggles(host);
@@ -1033,56 +1519,115 @@ function pageClientScriptPartB2(): string {
 function pageClientScriptPartC(): string {
   return `
 
-  async function approveProposal(id) {
-    var flash = $('proposals-flash');
-    var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
-    var deploymentType = select ? select.value : defaultDeploy;
-    if (!window.confirm('Approve and deploy this proposal (' + deploymentType + ')?')) {
-      return;
+  function openRejectDialog(id) {
+    pendingRejectId = id;
+    var dialog = $('reject-dialog');
+    var input = $('reject-reason-input');
+    if (input) input.value = '';
+    if (dialog && typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    } else {
+      var reason = window.prompt('Reject reason (optional; the AI will see it):', '') || '';
+      rejectProposal(id, reason.trim() || 'Rejected by admin');
     }
+  }
+
+  function openDeleteConfirmDialog(id, deploymentType, diff) {
+    pendingApproveCtx = { id: id, deploymentType: deploymentType };
+    var dialog = $('delete-confirm-dialog');
+    var msg = $('delete-confirm-msg');
+    var input = $('delete-confirm-input');
+    var btn = $('delete-confirm-btn');
+    var beforeN = (diff && diff.summary && diff.summary.beforeNodeCount) || 0;
+    var removedN = (diff && diff.summary && diff.summary.removed) || 0;
+    if (msg) {
+      msg.textContent = 'This proposal deletes ' + removedN + ' of ' + beforeN +
+        ' nodes. Type DELETE to confirm approve & deploy.';
+    }
+    if (input) input.value = '';
+    if (btn) btn.disabled = true;
+    if (dialog && typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    } else if (window.confirm('Delete ' + removedN + ' of ' + beforeN + ' nodes? Continue?')) {
+      doApproveProposal(id, deploymentType);
+    }
+  }
+
+  async function doApproveProposal(id, deploymentType) {
+    var flash = $('proposals-flash');
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
         body: JSON.stringify({ deploymentType: deploymentType })
       });
       if (result.status === 'rejected') {
-        showFlash(flash, result.reason || 'Proposal rejected (revision conflict).', false);
+        var rejectMsg = friendlyReason(result.reason) || 'Proposal rejected (revision conflict).';
+        showFlash(flash, rejectMsg, false);
+        showToast(rejectMsg, false);
       } else if (result.status === 'failed') {
-        showFlash(flash, result.reason || 'Proposal failed.', false);
+        var failMsg = friendlyReason(result.reason) || 'Proposal failed.';
+        showFlash(flash, failMsg, false);
+        showToast(failMsg, false);
       } else {
-        showFlash(flash, 'Proposal approved (' + (result.resultRev || '') + ').', true);
+        showFlash(flash, 'Proposal approved & deployed' +
+          (result.resultRev ? ' (' + result.resultRev + ')' : '') + '.', true);
+        showToast('Proposal approved & deployed.', true);
       }
+      delete proposalDiffCache[id];
       loadProposals();
       loadLogs();
     } catch (e) {
-      showFlash(flash, e.message || String(e), false);
+      var errMsg = friendlyReason(e.message) || String(e);
+      showFlash(flash, errMsg, false);
+      showToast(errMsg, false);
     }
   }
 
-  async function rejectProposal(id) {
-    var flash = $('proposals-flash');
-    var input = document.querySelector('input.reject-reason[data-id="' + id + '"]');
-    var reason = input && input.value.trim() ? input.value.trim() : 'Rejected by admin';
-    if (!window.confirm('Reject this proposal?')) {
+  async function approveProposal(id) {
+    var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
+    var deploymentType = select ? select.value : defaultDeploy;
+    var diff = proposalDiffCache[id];
+    if (diff && diff.baseRevStale) {
+      showToast('This proposal is out of date. Ask the AI to resubmit.', false);
       return;
     }
+    if (isLargeDelete(diff)) {
+      openDeleteConfirmDialog(id, deploymentType, diff);
+      return;
+    }
+    doApproveProposal(id, deploymentType);
+  }
+
+  async function rejectProposal(id, reasonOverride) {
+    var flash = $('proposals-flash');
+    var reason = reasonOverride && String(reasonOverride).trim()
+      ? String(reasonOverride).trim()
+      : 'Rejected by admin';
     try {
       await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
         body: JSON.stringify({ reason: reason })
       });
       showFlash(flash, 'Proposal rejected.', true);
+      showToast('Proposal rejected.', true);
+      delete proposalDiffCache[id];
       loadProposals();
       loadLogs();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
+      showToast(e.message || String(e), false);
     }
   }
+`;
+}
 
+function pageClientScriptPartCLogs(): string {
+  return `
   var cachedLogs = [];
 
   function renderLogsTable(logs) {
     var list = $('logs-list');
+    var showRaw = !!( $('logs-debug') && $('logs-debug').checked );
     if (!logs.length) {
       list.innerHTML = '<div class="empty-state"><p class="empty-title">No matching audit entries</p>' +
         '<p class="muted">Try another filter, or wait for proposal activity.</p></div>';
@@ -1098,8 +1643,10 @@ function pageClientScriptPartC(): string {
           '<td class="col-action">' + actionBadge(e.action) + '</td>' +
           '<td class="col-actor" title="' + esc(actorPlain(e.actor)) + '">' + actorLabel(e.actor) + '</td>' +
           '<td class="col-details"><div class="audit-summary">' + auditSummary(e) + '</div>' +
-          '<details class="audit-raw"><summary>raw</summary><pre>' + raw + '</pre></details></td>' +
-          '</tr>';
+          (showRaw
+            ? '<details class="audit-raw"><summary>raw</summary><pre>' + raw + '</pre></details>'
+            : '') +
+          '</td></tr>';
       }).join('') + '</tbody></table>';
   }
 
@@ -1127,7 +1674,7 @@ function pageClientScriptPartC(): string {
         });
         actions.sort();
         var current = filter.value || '';
-        filter.innerHTML = '<option value="">All actions</option>' +
+        filter.innerHTML = '<option value="">All activity</option>' +
           actions.map(function (a) {
             return '<option value="' + esc(a) + '"' +
               (a === current ? ' selected' : '') + '>' + esc(actionFilterLabel(a)) + '</option>';
@@ -1138,7 +1685,6 @@ function pageClientScriptPartC(): string {
       showFlash(flash, e.message || String(e), false);
     }
   }
-
 `;
 }
 
@@ -1151,6 +1697,11 @@ function pageClientScriptPartD(): string {
     defaultTtl = s.defaultLinkTtlSeconds || 14400;
     defaultDeploy = s.defaultDeploymentType || 'nodes';
 
+    var dashAi = $('dash-ai');
+    if (dashAi) dashAi.textContent = s.aiFeaturesEnabled ? 'On' : 'Off';
+    var dashTtl = $('dash-ttl');
+    if (dashTtl) dashTtl.textContent = hoursLabel(s.defaultLinkTtlSeconds || defaultTtl);
+
     $('status-version').textContent = s.version;
     $('status-adminauth').textContent = s.adminAuthEnabled ? 'enabled' : 'disabled';
     $('status-aifeatures').textContent = s.aiFeaturesEnabled ? 'enabled' : 'disabled';
@@ -1159,11 +1710,24 @@ function pageClientScriptPartD(): string {
       ? (s.caller.kind + (s.caller.linkId ? ':' + s.caller.linkId : '') + (s.caller.permission ? ':' + s.caller.permission : ''))
       : '—';
     $('status-storage').textContent = s.storageDir;
-    $('status-ttl').textContent = String(s.defaultLinkTtlSeconds) + 's';
+    $('status-ttl').textContent = hoursLabel(s.defaultLinkTtlSeconds || defaultTtl);
     $('status-maxlinks').textContent = String(s.maxActiveLinks);
     $('status-deploy').textContent = s.defaultDeploymentType;
     var modeLabel = s.permission === '*' ? 'full access' : s.permission === 'read' ? 'read-only' : 'limited';
     $('status-badge').textContent = modeLabel;
+
+    var blurb = $('permissions-blurb');
+    if (blurb) {
+      if (!s.aiFeaturesEnabled) {
+        blurb.textContent = 'AI Access is turned off. Enable it in the editor sidebar to create links and review proposals.';
+      } else if (canManage && canApprove) {
+        blurb.textContent = 'You can create access links and approve or reject proposals.';
+      } else if (canManage) {
+        blurb.textContent = 'You can manage access links. Approving proposals needs full admin permission.';
+      } else {
+        blurb.textContent = 'Read-only view. Full admin permission (*) is required to manage links or approve proposals.';
+      }
+    }
 
     var warning = $('status-warning');
     if (!s.adminAuthEnabled && !s.aiFeaturesEnabled) {
@@ -1178,17 +1742,65 @@ function pageClientScriptPartD(): string {
     }
 
     $('proposals-hint').textContent = canApprove
-      ? 'Approve deploys via FlowAdapter. Revision conflicts are shown as rejected proposals.'
+      ? 'Review changes from your AI assistant. Approve & deploy makes them live; reject leaves the flow unchanged.'
       : 'Approve and reject require full admin permission (*). You can still review proposals.';
 
     renderLinksManage();
   }
 
+  function setupStickyNav() {
+    var nav = $('main-nav');
+    if (!nav) return;
+    function updateStuck() {
+      var top = nav.getBoundingClientRect().top;
+      nav.classList.toggle('is-stuck', top <= 0);
+    }
+    window.addEventListener('scroll', updateStuck, { passive: true });
+    updateStuck();
+  }
+
+  function setupDialogs() {
+    var rejectForm = $('reject-form');
+    if (rejectForm) {
+      rejectForm.addEventListener('submit', function (ev) {
+        var submitter = ev.submitter || document.activeElement;
+        var value = submitter && submitter.value ? submitter.value : '';
+        if (value === 'reject' && pendingRejectId) {
+          var input = $('reject-reason-input');
+          var reason = input && input.value.trim() ? input.value.trim() : 'Rejected by admin';
+          rejectProposal(pendingRejectId, reason);
+        }
+        pendingRejectId = null;
+      });
+    }
+    var deleteForm = $('delete-confirm-form');
+    var deleteInput = $('delete-confirm-input');
+    var deleteBtn = $('delete-confirm-btn');
+    if (deleteInput && deleteBtn) {
+      deleteInput.addEventListener('input', function () {
+        deleteBtn.disabled = deleteInput.value !== 'DELETE';
+      });
+    }
+    if (deleteForm) {
+      deleteForm.addEventListener('submit', function (ev) {
+        var submitter = ev.submitter || document.activeElement;
+        var value = submitter && submitter.value ? submitter.value : '';
+        if (value === 'confirm' && pendingApproveCtx && deleteInput && deleteInput.value === 'DELETE') {
+          doApproveProposal(pendingApproveCtx.id, pendingApproveCtx.deploymentType);
+        }
+        pendingApproveCtx = null;
+      });
+    }
+  }
+`;
+}
+
+function pageClientScriptPartDBoot(): string {
+  return `
   async function boot() {
     accessToken = readEditorToken();
     if (!accessToken) {
-      showFlash($('boot-flash'), 'Not signed in to the Node-RED editor. Redirecting to login…', false);
-      redirectToEditorLogin();
+      showAuthGate();
       return;
     }
     try {
@@ -1199,6 +1811,7 @@ function pageClientScriptPartD(): string {
       $('section-links').hidden = false;
       $('section-proposals').hidden = false;
       $('section-logs').hidden = false;
+      setupStickyNav();
       // Restore tab from hash (or default #status); keep #proposal=<id> until focus consumes it.
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId() });
@@ -1218,6 +1831,10 @@ function pageClientScriptPartD(): string {
       try {
         var s = await api('/status');
         applyStatus(s);
+        if (aiOn) {
+          if (canManage) loadLinks();
+          loadProposals();
+        }
       } catch (e) {
         showFlash($('status-flash'), e.message || String(e), false);
       }
@@ -1228,6 +1845,37 @@ function pageClientScriptPartD(): string {
   if (logsFilter) {
     logsFilter.addEventListener('change', applyLogFilter);
   }
+  var logsDebug = $('logs-debug');
+  if (logsDebug) {
+    logsDebug.addEventListener('change', applyLogFilter);
+  }
+
+  var filters = $('proposals-filters');
+  if (filters) {
+    filters.querySelectorAll('.filter-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        setProposalsFilter(chip.getAttribute('data-filter'));
+      });
+    });
+  }
+
+  var dashPendingCard = $('dash-pending-card');
+  if (dashPendingCard) {
+    function goPending() {
+      setProposalsFilter('pending');
+      selectTab('proposals');
+      loadTabData('proposals');
+    }
+    dashPendingCard.addEventListener('click', goPending);
+    dashPendingCard.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        goPending();
+      }
+    });
+  }
+
+  setupDialogs();
 
   window.addEventListener('hashchange', function () {
     var proposalId = readProposalHashId();
@@ -1251,14 +1899,21 @@ export function pageClientScript(): string {
     pageClientScriptPartA() +
     pageClientScriptPartATimeCopy() +
     pageClientScriptPartAFormat() +
+    pageClientScriptPartAAudit() +
     pageClientScriptPartATabs() +
     pageClientScriptPartA2() +
     pageClientScriptPartB() +
     pageClientScriptPartBDiff() +
     pageClientScriptPartBDiffPresence() +
     pageClientScriptPartBDiffView() +
+    pageClientScriptPartBDiffView2() +
     pageClientScriptPartB2() +
+    pageClientScriptPartB2Cards() +
+    pageClientScriptPartB2Focus() +
+    pageClientScriptPartB2Apply() +
     pageClientScriptPartC() +
-    pageClientScriptPartD()
+    pageClientScriptPartCLogs() +
+    pageClientScriptPartD() +
+    pageClientScriptPartDBoot()
   ).trim();
 }

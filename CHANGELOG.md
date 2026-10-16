@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `/mcp` human-UX pass: status dashboard (AI on, active links, pending count,
+  expiry in hours), Pending/Decided proposal filters with tab badge, compact
+  decided cards, plain one-line diff summaries, stale dismiss + large-delete
+  typed confirm, Approve & deploy with deploy-type Advanced help, reject dialog,
+  access-link TTL presets (1h/4h/24h), Created/Last used link table, audit
+  labels without event codes, sticky tab nav, sign-in gate (no silent bounce),
+  and sidebar TTL hours + Review deep link to `/mcp#proposals`.
+
 ### Added
 
 - Targeted `replace_text` op for string fields (`template`, `func`, …): unique

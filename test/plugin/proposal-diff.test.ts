@@ -59,6 +59,8 @@ describe('buildProposalDiff', () => {
       removed: 1,
       modified: 1,
       tabChanges: ['label'],
+      beforeNodeCount: 2,
+      afterNodeCount: 2,
     });
     expect(diff.compareAgainst).toBe('base');
     expect(diff.baseRevStale).toBe(false);
@@ -75,6 +77,7 @@ describe('buildProposalDiff', () => {
     expect(removedFunc).toEqual({ key: 'func', kind: 'text', value: 'return msg;' });
     expect(diff.modified).toHaveLength(1);
     expect(diff.modified[0]?.id).toBe('n1');
+    expect(diff.modified[0]?.summary).toMatch(/Changes inject node/);
     expect(diff.modified[0]?.changes).toEqual([
       { key: 'topic', kind: 'scalar', before: 'old', after: 'changed' },
     ]);
@@ -107,6 +110,8 @@ describe('buildProposalDiff', () => {
       removed: 0,
       modified: 1,
       tabChanges: [],
+      beforeNodeCount: 1,
+      afterNodeCount: 1,
     });
     expect(vsBase.removed).toEqual([]);
 

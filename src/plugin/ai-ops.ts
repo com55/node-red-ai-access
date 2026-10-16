@@ -166,6 +166,54 @@ async function materializePayloadFromNodes(
   return { flowId: interpreted.flowId, flow: patched.flow };
 }
 
+/** Resolve flowId + flow from a replace_flow payload (full tab or node ops). */
+async function resolveReplaceFlowPayload(
+  adapter: FlowAdapter,
+  expectedRev: string,
+  payloadObj: Record<string, unknown>,
+  topLevelNodes: unknown
+): Promise<{ flowId: string; flow: object }> {
+  let flowId = payloadObj.flowId;
+  let flow = payloadObj.flow;
+  if (
+    (!flow || typeof flow !== 'object' || Array.isArray(flow)) &&
+    (Array.isArray(payloadObj.nodes) || Array.isArray(topLevelNodes))
+  ) {
+    const materialized = await materializePayloadFromNodes(
+      adapter,
+      expectedRev,
+      payloadObj,
+      topLevelNodes
+    );
+    flowId = materialized.flowId;
+    flow = materialized.flow;
+  }
+  if (typeof flowId !== 'string' || flowId.length === 0) {
+    throw new AiOpsValidationError('payload.flowId is required', 'missing_flow_id');
+  }
+  if (!flow || typeof flow !== 'object' || Array.isArray(flow)) {
+    throw new AiOpsValidationError('payload.flow is required', 'missing_flow');
+  }
+  return { flowId, flow };
+}
+
+function assertSafeRevAndFlowId(
+  expectedRev: string,
+  flowId: string
+): { safeExpectedRev: string; safeFlowId: string } {
+  try {
+    return {
+      safeExpectedRev: assertSafeSegment(expectedRev.slice(0, 200), 'expectedRev'),
+      safeFlowId: assertSafeSegment(flowId.slice(0, 200), 'flowId'),
+    };
+  } catch {
+    throw new AiOpsValidationError(
+      'expectedRev and payload.flowId must be safe path segments',
+      'invalid_path_segment'
+    );
+  }
+}
+
 export async function submitReplaceFlowProposal(
   store: ProposalStore,
   audit: AuditLog,
@@ -188,39 +236,9 @@ export async function submitReplaceFlowProposal(
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
   }
   const payloadObj = payload as Record<string, unknown>;
-  let flowId = payloadObj.flowId;
-  let flow = payloadObj.flow;
-  if (
-    (!flow || typeof flow !== 'object' || Array.isArray(flow)) &&
-    (Array.isArray(payloadObj.nodes) || Array.isArray(body.nodes))
-  ) {
-    const materialized = await materializePayloadFromNodes(
-      adapter,
-      expectedRev,
-      payloadObj,
-      body.nodes
-    );
-    flowId = materialized.flowId;
-    flow = materialized.flow;
-  }
-  if (typeof flowId !== 'string' || flowId.length === 0) {
-    throw new AiOpsValidationError('payload.flowId is required', 'missing_flow_id');
-  }
-  if (!flow || typeof flow !== 'object' || Array.isArray(flow)) {
-    throw new AiOpsValidationError('payload.flow is required', 'missing_flow');
-  }
-
-  let safeExpectedRev: string;
-  let safeFlowId: string;
-  try {
-    safeExpectedRev = assertSafeSegment(expectedRev.slice(0, 200), 'expectedRev');
-    safeFlowId = assertSafeSegment(flowId.slice(0, 200), 'flowId');
-  } catch {
-    throw new AiOpsValidationError(
-      'expectedRev and payload.flowId must be safe path segments',
-      'invalid_path_segment'
-    );
-  }
+  const resolved = await resolveReplaceFlowPayload(adapter, expectedRev, payloadObj, body.nodes);
+  const { safeExpectedRev, safeFlowId } = assertSafeRevAndFlowId(expectedRev, resolved.flowId);
+  const flow = resolved.flow;
 
   // Reject oversized raw payloads before sanitization (never truncate/drop).
   const rawPayloadBytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
@@ -276,12 +294,15 @@ export async function submitReplaceFlowProposal(
 
   const presented = presentProposal(proposal, presentOptions);
 
+  const flowLabel =
+    typeof safeFlow.label === 'string' && safeFlow.label.trim() ? safeFlow.label.trim() : undefined;
   audit.append('proposal.created', createdBy, {
     proposalId: proposal.id,
     flowId: safeFlowId,
     expectedRev: safeExpectedRev,
     title: presented.title,
     displayName: presented.displayName,
+    ...(flowLabel ? { flowLabel } : {}),
   });
 
   return presented;

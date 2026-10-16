@@ -16,6 +16,8 @@ export interface AccessLinkPublic {
   label?: string;
   createdAt: string;
   expiresAt: string;
+  /** ISO time of last successful token validation; omitted until first use. */
+  lastUsedAt?: string;
   createdBy?: string;
 }
 
@@ -32,6 +34,7 @@ export interface AccessLinkRecord {
   label?: string;
   createdAtMs: number;
   expiresAtMs: number;
+  lastUsedAtMs?: number;
   createdBy?: string;
   revokedAtMs?: number;
 }
@@ -75,6 +78,9 @@ function toPublic(record: AccessLinkRecord): AccessLinkPublic {
   };
   if (record.label !== undefined) {
     publicLink.label = record.label;
+  }
+  if (record.lastUsedAtMs !== undefined) {
+    publicLink.lastUsedAt = new Date(record.lastUsedAtMs).toISOString();
   }
   if (record.createdBy !== undefined) {
     publicLink.createdBy = record.createdBy;
@@ -223,6 +229,7 @@ export class AccessLinkStore {
       if (!this.isActive(record, atMs)) {
         return null;
       }
+      record.lastUsedAtMs = atMs;
       return toPublic(record);
     }
 

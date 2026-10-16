@@ -171,12 +171,12 @@ export function registerRoutes(
   RED.httpAdmin.post(
     '/mcp/api/v1/links',
     ...linkGuards,
-    createLinkHandler(RED, services.linkStore)
+    createLinkHandler(RED, services.linkStore, services.auditLog)
   );
   RED.httpAdmin.delete(
     '/mcp/api/v1/links/:id',
     ...linkGuards,
-    revokeLinkHandler(RED, services.linkStore)
+    revokeLinkHandler(RED, services.linkStore, services.auditLog)
   );
 
   const sharedRead = [

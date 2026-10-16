@@ -194,26 +194,30 @@ describe('/mcp admin page', () => {
     });
   });
 
-  it('embeds client script that redirects when editor token is missing', async () => {
+  it('embeds client script that shows auth gate when editor token is missing', async () => {
     const { app } = createApp({
       userDir,
       adminAuth: { type: 'credentials' },
     });
     const res = await request(app).get('/mcp');
     expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
-    expect(res.text).toMatch(/location\.replace/);
+    expect(res.text).toMatch(/showAuthGate|auth-gate/);
+    expect(res.text).toMatch(/Please sign in to Node-RED first/);
+    // Must not silently bounce to the editor.
+    expect(res.text).not.toMatch(/redirectToEditorLogin/);
   });
 
-  it('client only redirects on /status 401, not on other API 401s', async () => {
+  it('client only opens auth gate on /status 401, not on other API 401s', async () => {
     const { app } = createApp({
       userDir,
       adminAuth: { type: 'credentials' },
     });
     const res = await request(app).get('/mcp');
     expect(res.text).toMatch(/isStatusPath/);
-    expect(res.text).toMatch(/Only the auth bootstrap/);
+    expect(res.text).toMatch(/Auth bootstrap: show a sign-in gate/);
     // Must not redirect on every 401 (that caused an /mcp ↔ editor loop).
     expect(res.text).not.toMatch(/if \(res\.status === 401\) \{\s*redirectToEditorLogin/);
+    expect(res.text).toMatch(/filter-pending-count|dash-pending|Approve/);
   });
 
   it('admin session Bearer works on every /mcp/api/v1 route the page uses', async () => {

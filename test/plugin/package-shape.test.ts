@@ -109,8 +109,10 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/hashForTab|tabFromHash|initialTabFromHash/);
     expect(client).toMatch(/tab === 'logs'\) return 'audit'/);
     expect(client).toMatch(/replaceLocationHash\('#proposals'\)/);
-    expect(client).toMatch(/vsCurrent|vs current flow/i);
-    expect(client).toMatch(/base snapshot/);
+    expect(client).toMatch(/vsCurrent|live flow/i);
+    expect(client).toMatch(/what the AI started from|base snapshot|live flow/);
+    expect(client).toMatch(/showAuthGate|Approve &amp; deploy|fieldLabel|Connects to/);
+    expect(client).toMatch(/You \(admin\)/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/\.node-presence/);
     expect(styles).toMatch(/\.presence-pre/);

@@ -21,12 +21,18 @@ function auditProposalMeta(proposal: Proposal): {
   proposalId: string;
   title: string;
   displayName: string;
+  flowId: string;
+  flowLabel?: string;
 } {
   const presented = presentProposal(proposal);
+  const rawLabel = proposal.payload.flow.label;
+  const flowLabel = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : undefined;
   return {
     proposalId: proposal.id,
     title: presented.title,
     displayName: presented.displayName,
+    flowId: proposal.payload.flowId,
+    ...(flowLabel ? { flowLabel } : {}),
   };
 }
 
