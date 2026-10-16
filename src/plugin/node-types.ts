@@ -556,19 +556,101 @@ export async function listNodeTypes(
 }
 
 /**
+ * Extract the inner HTML of `<script data-help-name="type">…</script>` without
+ * a fragile `</script>` regex (CodeQL: Bad HTML filtering regexp).
+ */
+function extractHelpScriptBody(html: string, type: string): string | null {
+  const needle = `data-help-name="${type}"`;
+  const needleSq = `data-help-name='${type}'`;
+  const lower = html.toLowerCase();
+  let searchFrom = 0;
+  while (searchFrom < html.length) {
+    const dq = html.indexOf(needle, searchFrom);
+    const sq = html.indexOf(needleSq, searchFrom);
+    let attrAt = -1;
+    if (dq >= 0 && (sq < 0 || dq < sq)) {
+      attrAt = dq;
+    } else if (sq >= 0) {
+      attrAt = sq;
+    }
+    if (attrAt < 0) {
+      return null;
+    }
+    const scriptOpen = lower.lastIndexOf('<script', attrAt);
+    if (scriptOpen < 0 || scriptOpen < searchFrom) {
+      searchFrom = attrAt + 1;
+      continue;
+    }
+    const openEnd = html.indexOf('>', attrAt);
+    if (openEnd < 0) {
+      return null;
+    }
+    const closeStart = lower.indexOf('</script', openEnd + 1);
+    if (closeStart < 0) {
+      return null;
+    }
+    let j = closeStart + '</script'.length;
+    while (j < html.length && /\s/.test(html.charAt(j))) {
+      j += 1;
+    }
+    if (html.charAt(j) !== '>') {
+      searchFrom = closeStart + 1;
+      continue;
+    }
+    return html.slice(openEnd + 1, closeStart);
+  }
+  return null;
+}
+
+/**
+ * Remove paired HTML blocks (`script` / `style`) without fragile end-tag regexes.
+ * Accepts optional whitespace before `>` on the closing tag (e.g. `</script >`).
+ */
+function removeHtmlBlocks(html: string, tag: string): string {
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  let out = '';
+  let i = 0;
+  const lower = html.toLowerCase();
+  while (i < html.length) {
+    const start = lower.indexOf(open, i);
+    if (start < 0) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, start);
+    const openEnd = html.indexOf('>', start);
+    if (openEnd < 0) {
+      break;
+    }
+    const closeStart = lower.indexOf(close, openEnd + 1);
+    if (closeStart < 0) {
+      break;
+    }
+    let j = closeStart + close.length;
+    while (j < html.length && /\s/.test(html.charAt(j))) {
+      j += 1;
+    }
+    if (html.charAt(j) === '>') {
+      i = j + 1;
+      out += ' ';
+    } else {
+      i = closeStart + close.length;
+    }
+  }
+  return out;
+}
+
+/**
  * Lightly strip HTML tags and collapse whitespace for help text.
+ * Does not HTML-unescape entities (avoids double-unescape of `&amp;…`).
  */
 export function stripHelpText(raw: string, maxLen = 2000): string {
-  let text = raw
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+  let text = removeHtmlBlocks(raw, 'script');
+  text = removeHtmlBlocks(text, 'style');
+  text = text
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
     .replace(/[#*_`]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -659,12 +741,9 @@ function parseRegisterTypeAt(
   }
 
   let help: string | undefined;
-  const helpMd = new RegExp(
-    `<script[^>]*data-help-name=["']${escapeRegExp(type)}["'][^>]*>([\\s\\S]*?)</script>`,
-    'i'
-  ).exec(html);
-  if (helpMd?.[1]) {
-    help = stripHelpText(helpMd[1]);
+  const helpBody = extractHelpScriptBody(html, type);
+  if (helpBody) {
+    help = stripHelpText(helpBody);
   }
 
   const result: NonNullable<ReturnType<typeof parseRegisterTypeFromHtml>> = { type };
@@ -691,10 +770,6 @@ function parseRegisterTypeAt(
     result.help = help;
   }
   return result;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function extractBalancedObject(text: string): string | null {
