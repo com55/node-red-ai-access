@@ -19,6 +19,7 @@ import {
   presentOptionsFor,
   presentProposalForApi,
 } from '../proposal-present.js';
+import { sendCaughtRouteError } from '../route-errors.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -76,6 +77,10 @@ function proposeErrorHint(code: string): string | undefined {
       return 'Use either find/replace/field or set.<prop>=, not both in one propose URL.';
     case 'unknown_node_type':
       return 'Call GET …/node-types?q= or …/palette/search?q=. Ask the user to install via Manage palette, then recheck. This API never installs.';
+    case 'missing_node_type':
+      return 'Each add op needs node.type as a non-empty string (e.g. "inject").';
+    case 'invalid_node_type':
+      return 'node.type must be a string (not a number or object). Use the palette type name exactly.';
     default:
       return undefined;
   }
@@ -393,7 +398,7 @@ export function getLinkProposeHandler(
         });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
     }
   };
 }

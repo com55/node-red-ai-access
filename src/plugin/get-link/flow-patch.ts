@@ -4,7 +4,7 @@
 
 import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import { AiOpsValidationError } from '../ai-ops.js';
-import { assertKnownNodeType, type NodeTypesAdapter } from '../node-types.js';
+import { assertKnownNodeType, requireNodeTypeName, type NodeTypesAdapter } from '../node-types.js';
 
 export interface NodePropertyEdit {
   nodeId: string;
@@ -166,8 +166,12 @@ export async function applyFlowNodeOps(
   };
 
   for (const op of ops) {
-    if (op.op === 'add' && options.nodeTypes) {
-      await assertKnownNodeType(options.nodeTypes, op.node.type);
+    if (op.op === 'add') {
+      // Validate before nearest-match / registry lookup (non-string types crash otherwise).
+      requireNodeTypeName(op.node.type, 'node.type');
+      if (options.nodeTypes) {
+        await assertKnownNodeType(options.nodeTypes, op.node.type);
+      }
     }
     applyOneNodeOp(nodes, flowId, op);
   }
@@ -197,9 +201,7 @@ function applyOneNodeOp(nodes: FlowNode[], flowId: string, op: FlowNodeOp): void
     if (!node.id || typeof node.id !== 'string') {
       throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
     }
-    if (!node.type || typeof node.type !== 'string') {
-      throw new AiOpsValidationError('add op needs node.type', 'missing_node_type');
-    }
+    requireNodeTypeName(node.type, 'node.type');
     if (nodes.some(n => n.id === node.id)) {
       throw new AiOpsValidationError(
         `Node '${node.id}' already exists in flow '${flowId}'`,

@@ -22,6 +22,7 @@ import {
   presentOptionsFor,
   presentProposalForApi,
 } from '../proposal-present.js';
+import { sendCaughtRouteError } from '../route-errors.js';
 import type { AuthenticatedRequest } from '../types.js';
 
 import {
@@ -199,7 +200,8 @@ async function rejectInvalidFieldTargets(
       );
       return true;
     }
-    throw error;
+    sendCaughtRouteError(res, error);
+    return true;
   }
   return false;
 }
@@ -260,7 +262,8 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
         );
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
 
     const plan = planDraftMode(nodeId, field, modeParam, targetsEncoded);
@@ -367,7 +370,8 @@ export function getLinkDraftAppendHandler(draftStore: DraftStore) {
         );
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -568,7 +572,8 @@ export function getLinkDraftSubmitHandler(
         });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }

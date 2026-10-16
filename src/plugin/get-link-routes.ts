@@ -48,6 +48,7 @@ import {
   presentProposalsForApi,
 } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
+import { asyncRoute, sendCaughtRouteError } from './route-errors.js';
 import { buildStatus } from './status.js';
 import type { AiAccessSettings, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -79,82 +80,127 @@ export function registerGetLinkRoutes(
   // IP first (always), then token auth, then per-token bucket.
   const gate = [dual.ip, requireGetLinkToken(RED, options.linkStore), dual.token];
 
-  app.get(base, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    // Do not reflect the path token into the body (CodeQL XSS / sniffing).
-    // Docs use relative ./status, ./flows, … scoped to this URL.
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    const restBase = mcpApiBase(RED.settings.httpAdminRoot);
-    const accessLink = req.accessLink;
-    if (!accessLink) {
-      jsonError(res, 401, 'Access link required', 'access_link_missing');
-      return;
-    }
-    const md = renderGetLinkDocs({
-      link: accessLink,
-      openapiPath: `${restBase}/openapi.yaml`,
-      restApiBase: restBase,
-      mcpRpcPath: mcpRpcPath(RED.settings.httpAdminRoot),
-    });
-    res.status(200).type('text/markdown; charset=utf-8').send(md);
-  });
-
-  app.get(`${base}/status`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    res.json(buildStatus(RED, req));
-  });
-
-  app.get(`${base}/flows`, ...gate, async (_req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    try {
-      res.json(await listFlows(options.flowAdapter));
-    } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
-      if (mapped) {
-        res.status(mapped.statusCode).json({
-          ...mapped.body,
-          hint: 'Retry after the owner fixes the plugin runtime.',
-        });
+  app.get(
+    base,
+    ...gate,
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      // Do not reflect the path token into the body (CodeQL XSS / sniffing).
+      // Docs use relative ./status, ./flows, … scoped to this URL.
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const restBase = mcpApiBase(RED.settings.httpAdminRoot);
+      const accessLink = req.accessLink;
+      if (!accessLink) {
+        jsonError(res, 401, 'Access link required', 'access_link_missing');
         return;
       }
-      jsonError(res, 502, error instanceof Error ? error.message : String(error), 'upstream_error');
-    }
-  });
+      const md = renderGetLinkDocs({
+        link: accessLink,
+        openapiPath: `${restBase}/openapi.yaml`,
+        restApiBase: restBase,
+        mcpRpcPath: mcpRpcPath(RED.settings.httpAdminRoot),
+      });
+      res.status(200).type('text/markdown; charset=utf-8').send(md);
+    })
+  );
 
-  app.get(`${base}/flows/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void getFlowOrSummaryHandler(options.flowAdapter)(req, res);
-  });
-  app.get(`${base}/nodes/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void getNodeHandler(options.flowAdapter)(req, res);
-  });
-  app.get(`${base}/nodes/:id/field/:name`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void getNodeFieldHandler(options.flowAdapter)(req, res);
-  });
-  app.get(`${base}/search`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void searchFlowsHandler(options.flowAdapter)(req, res);
-  });
+  app.get(
+    `${base}/status`,
+    ...gate,
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      res.json(buildStatus(RED, req));
+    })
+  );
+
+  app.get(
+    `${base}/flows`,
+    ...gate,
+    asyncRoute(async (_req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      try {
+        res.json(await listFlows(options.flowAdapter));
+      } catch (error) {
+        const mapped = aiOpsErrorToHttp(error);
+        if (mapped) {
+          res.status(mapped.statusCode).json({
+            ...mapped.body,
+            hint: 'Retry after the owner fixes the plugin runtime.',
+          });
+          return;
+        }
+        jsonError(
+          res,
+          502,
+          error instanceof Error ? error.message : String(error),
+          'upstream_error'
+        );
+      }
+    })
+  );
+
+  app.get(
+    `${base}/flows/:id`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await getFlowOrSummaryHandler(options.flowAdapter)(req, res);
+    })
+  );
+  app.get(
+    `${base}/nodes/:id`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await getNodeHandler(options.flowAdapter)(req, res);
+    })
+  );
+  app.get(
+    `${base}/nodes/:id/field/:name`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await getNodeFieldHandler(options.flowAdapter)(req, res);
+    })
+  );
+  app.get(
+    `${base}/search`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await searchFlowsHandler(options.flowAdapter)(req, res);
+    })
+  );
 
   const nodeTypeOpts = {
     nodeTypes: options.nodeTypesAdapter,
     ...(options.catalogueFetcher ? { catalogueFetcher: options.catalogueFetcher } : {}),
     ...(options.catalogueUrl ? { catalogueUrl: options.catalogueUrl } : {}),
   };
-  app.get(`${base}/node-types`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void listNodeTypesHandler(nodeTypeOpts)(req, res);
-  });
-  app.get(`${base}/node-types/:type`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void getNodeTypeHandler(nodeTypeOpts)(req, res);
-  });
-  app.get(`${base}/palette/search`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    void searchPaletteHandler(nodeTypeOpts)(req, res);
-  });
+  app.get(
+    `${base}/node-types`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await listNodeTypesHandler(nodeTypeOpts)(req, res);
+    })
+  );
+  app.get(
+    `${base}/node-types/:type`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await getNodeTypeHandler(nodeTypeOpts)(req, res);
+    })
+  );
+  app.get(
+    `${base}/palette/search`,
+    ...gate,
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      await searchPaletteHandler(nodeTypeOpts)(req, res);
+    })
+  );
 
   const httpAdminRoot = RED.settings.httpAdminRoot;
   registerGetLinkProposalRoutes(app, base, gate, options, httpAdminRoot);
@@ -162,12 +208,14 @@ export function registerGetLinkRoutes(
   app.get(
     `${base}/propose`,
     ...gate,
-    getLinkProposeHandler(
-      options.proposalStore,
-      options.auditLog,
-      options.flowAdapter,
-      httpAdminRoot,
-      options.nodeTypesAdapter
+    asyncRoute(
+      getLinkProposeHandler(
+        options.proposalStore,
+        options.auditLog,
+        options.flowAdapter,
+        httpAdminRoot,
+        options.nodeTypesAdapter
+      )
     )
   );
 
@@ -196,61 +244,73 @@ function registerGetLinkProposalRoutes(
   options: RegisterGetLinkRoutesOptions,
   httpAdminRoot?: string
 ): void {
-  app.get(`${base}/proposals`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    const link = req.accessLink;
-    if (!link) {
-      jsonError(res, 401, 'Access link required', 'access_link_missing');
-      return;
-    }
-    const presentOpts = presentOptionsFor(req, httpAdminRoot);
-    const include = parseIncludeQuery(req.query.include);
-    res.json({
-      proposals: presentProposalsForApi(listMyProposals(options.proposalStore, link, presentOpts), {
-        ...presentOpts,
-        include,
-      }),
-    });
-  });
-
-  app.get(`${base}/proposals/:id`, ...gate, (req: AuthenticatedRequest, res: Response) => {
-    setNoStore(res);
-    const id = req.params.id;
-    const link = req.accessLink;
-    if (typeof id !== 'string' || !id) {
-      jsonError(res, 400, 'Missing proposal id', 'missing_proposal_id');
-      return;
-    }
-    if (!link) {
-      jsonError(res, 401, 'Access link required', 'access_link_missing');
-      return;
-    }
-    try {
-      const presentOpts = presentOptionsFor(req, httpAdminRoot);
-      const include = parseIncludeQuery(req.query.include);
-      res.json(
-        presentProposalForApi(getMyProposal(options.proposalStore, link, id, presentOpts), {
-          ...presentOpts,
-          include,
-        })
-      );
-    } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
-      if (mapped) {
-        res.status(mapped.statusCode).json({
-          ...mapped.body,
-          hint: 'List proposals with GET …/proposals.',
-        });
+  app.get(
+    `${base}/proposals`,
+    ...gate,
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      const link = req.accessLink;
+      if (!link) {
+        jsonError(res, 401, 'Access link required', 'access_link_missing');
         return;
       }
-      throw error;
-    }
-  });
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
+      res.json({
+        proposals: presentProposalsForApi(
+          listMyProposals(options.proposalStore, link, presentOpts),
+          {
+            ...presentOpts,
+            include,
+          }
+        ),
+      });
+    })
+  );
+
+  app.get(
+    `${base}/proposals/:id`,
+    ...gate,
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      const id = req.params.id;
+      const link = req.accessLink;
+      if (typeof id !== 'string' || !id) {
+        jsonError(res, 400, 'Missing proposal id', 'missing_proposal_id');
+        return;
+      }
+      if (!link) {
+        jsonError(res, 401, 'Access link required', 'access_link_missing');
+        return;
+      }
+      try {
+        const presentOpts = presentOptionsFor(req, httpAdminRoot);
+        const include = parseIncludeQuery(req.query.include);
+        res.json(
+          presentProposalForApi(getMyProposal(options.proposalStore, link, id, presentOpts), {
+            ...presentOpts,
+            include,
+          })
+        );
+      } catch (error) {
+        const mapped = aiOpsErrorToHttp(error);
+        if (mapped) {
+          res.status(mapped.statusCode).json({
+            ...mapped.body,
+            hint: 'List proposals with GET …/proposals.',
+          });
+          return;
+        }
+        sendCaughtRouteError(res, error);
+        return;
+      }
+    })
+  );
 
   app.get(
     `${base}/proposals/:id/diff`,
     ...gate,
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
       const id = req.params.id;
       const link = req.accessLink;
@@ -289,9 +349,10 @@ function registerGetLinkProposalRoutes(
           res.status(mapped.statusCode).json(mapped.body);
           return;
         }
-        throw error;
+        sendCaughtRouteError(res, error);
+        return;
       }
-    }
+    })
   );
 }
 
@@ -303,18 +364,28 @@ function registerGetLinkDraftRoutes(
   options: RegisterGetLinkRoutesOptions,
   httpAdminRoot?: string
 ): void {
-  app.get(`${base}/draft/new`, ...gate, getLinkDraftNewHandler(draftStore, options.flowAdapter));
-  app.get(`${base}/draft/:draftId/append`, ...gate, getLinkDraftAppendHandler(draftStore));
+  app.get(
+    `${base}/draft/new`,
+    ...gate,
+    asyncRoute(getLinkDraftNewHandler(draftStore, options.flowAdapter))
+  );
+  app.get(
+    `${base}/draft/:draftId/append`,
+    ...gate,
+    asyncRoute(getLinkDraftAppendHandler(draftStore))
+  );
   app.get(
     `${base}/draft/:draftId/submit`,
     ...gate,
-    getLinkDraftSubmitHandler(
-      draftStore,
-      options.proposalStore,
-      options.auditLog,
-      options.flowAdapter,
-      httpAdminRoot,
-      options.nodeTypesAdapter
+    asyncRoute(
+      getLinkDraftSubmitHandler(
+        draftStore,
+        options.proposalStore,
+        options.auditLog,
+        options.flowAdapter,
+        httpAdminRoot,
+        options.nodeTypesAdapter
+      )
     )
   );
 }

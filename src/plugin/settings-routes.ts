@@ -9,6 +9,7 @@ import type { PersistedAiAccessSettings, SettingsStore } from '../storage/settin
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { mcpApiBase, normalizeHttpAdminRoot, resolvePermission } from './auth.js';
+import { sendCaughtRouteError } from './route-errors.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -133,7 +134,8 @@ export function putSettingsHandler(
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
