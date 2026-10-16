@@ -160,6 +160,21 @@ describe('GET propose add without type does not crash', () => {
     expect(res.body.code).toBe('invalid_node_type');
   });
 
+  it('returns 400 invalid_node when add.node is a string (not missing_node_type)', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const link = linkStore.create({ kind: 'get_link', label: 'bot' });
+    const patch = encodePatch({
+      nodes: [{ op: 'add', node: 'notanobject' }],
+    });
+    const res = await request(app).get(
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${patch}`
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_node');
+    expect(res.body.code).not.toBe('missing_node_type');
+    expect(res.body.error).toMatch(/object/i);
+  });
+
   it('sendCaughtRouteError maps unexpected errors to internal_error without throwing', () => {
     const res = {
       headersSent: false,

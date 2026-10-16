@@ -20,6 +20,7 @@ import {
   getNodeTypeDetail,
   listNodeTypes,
   nearestNodeTypes,
+  paletteMatchScore,
   parseRegisterTypeFromHtml,
   resetCatalogueCache,
   searchPalette,
@@ -103,7 +104,8 @@ function mockCatalogueFetcher(): CatalogueFetcher {
           updated_at: '2024-03-01',
           keywords: ['modbus', 'serial'],
           url: 'https://flows.nodered.org/node/node-red-contrib-modbus',
-          downloads: 9000,
+          // Lower downloads than stacked-keyword decoys — exact suffix must still win.
+          downloads: 100,
         },
         {
           id: 'node-red-contrib-something-else',
@@ -114,6 +116,14 @@ function mockCatalogueFetcher(): CatalogueFetcher {
           url: 'https://flows.nodered.org/node/node-red-contrib-something-else',
           downloads: 1,
         },
+        // Decoys: keyword stacking + huge downloads must not beat exact package suffix.
+        ...Array.from({ length: 12 }, (_, i) => ({
+          id: `node-red-contrib-industrial-modbus-kit-${i}`,
+          description: `Industrial modbus toolkit number ${i} with modbus helpers`,
+          version: '9.0.0',
+          keywords: ['modbus', 'modbus-tcp', 'modbus-serial', 'modbus-rtu', 'plc'],
+          downloads: 50_000 + i,
+        })),
         {
           id: 'node-red-contrib-bar',
           description: 'Unrelated bar module',
@@ -295,6 +305,12 @@ describe('node-types helpers', () => {
     expect(nearestNodeTypes('zzzzzz', ['inject', 'debug', 'template'], 5)).toEqual([]);
   });
 
+  it('nearestNodeTypes prefers junction over function for junktion', () => {
+    const nearest = nearestNodeTypes('junktion', ['function', 'junction', 'inject', 'debug'], 5);
+    expect(nearest[0]).toBe('junction');
+    expect(nearest).toContain('function');
+  });
+
   it('assertKnownNodeTypes throws unknown_node_type with nearest', async () => {
     const adapter = createStaticNodeTypesAdapter(['inject', 'debug', 'template']);
     try {
@@ -311,6 +327,54 @@ describe('node-types helpers', () => {
       expect(err.details?.type).toBe('injct');
       expect(err.details?.nearest).toEqual(expect.arrayContaining(['inject']));
     }
+  });
+
+  it('assertKnownNodeTypes rejects non-string node.type (object/number)', async () => {
+    const adapter = createStaticNodeTypesAdapter(['inject', 'debug']);
+    await expect(
+      assertKnownNodeTypes(adapter, {
+        id: 'tab-1',
+        type: 'tab',
+        nodes: [{ id: 'n1', type: { x: 1 }, z: 'tab-1' }],
+      })
+    ).rejects.toMatchObject({ code: 'invalid_node_type' });
+    await expect(
+      assertKnownNodeTypes(adapter, {
+        id: 'tab-1',
+        type: 'tab',
+        nodes: [{ id: 'n2', type: 42, z: 'tab-1' }],
+      })
+    ).rejects.toMatchObject({ code: 'invalid_node_type' });
+    await expect(
+      assertKnownNodeTypes(adapter, {
+        id: 'tab-1',
+        type: 'tab',
+        nodes: [{ id: 'n3', z: 'tab-1' }],
+      })
+    ).rejects.toMatchObject({ code: 'missing_node_type' });
+  });
+
+  it('assertKnownNodeTypes allows nested get_flow tabs that omit type', async () => {
+    const adapter = createStaticNodeTypesAdapter(['inject', 'debug']);
+    await expect(
+      assertKnownNodeTypes(adapter, {
+        id: 'tab-1',
+        label: 'Main',
+        nodes: [{ id: 'n1', type: 'inject', z: 'tab-1' }],
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('paletteMatchScore ranks exact contrib/node suffix above keyword stacks', () => {
+    const exact = paletteMatchScore('modbus', 'node-red-contrib-modbus', ['modbus'], 'modbus');
+    const stacked = paletteMatchScore(
+      'modbus',
+      'node-red-contrib-industrial-modbus-kit-0',
+      ['modbus', 'modbus-tcp', 'modbus-serial', 'modbus-rtu', 'plc'],
+      'industrial modbus toolkit with modbus helpers'
+    );
+    expect(exact).toBe(10_000);
+    expect(exact).toBeGreaterThan(stacked);
   });
 
   it('palette search marks installed and never installs', async () => {
@@ -334,6 +398,8 @@ describe('node-types helpers', () => {
     expect(modbus.modules[0]?.module).toBe('node-red-contrib-modbus');
     expect(modbus.modules.map(m => m.module)).toContain('node-red-contrib-something-else');
     expect(modbus.modules[0]?.module).not.toBe('node-red-contrib-something-else');
+    // Exact package suffix stays #1 even when decoys have far higher downloads.
+    expect(modbus.modules.findIndex(m => m.module === 'node-red-contrib-modbus')).toBe(0);
   });
 });
 
@@ -416,6 +482,57 @@ describe('node-types HTTP + MCP + docs', () => {
     expect(res.body.code).toBe('unknown_node_type');
     expect(res.body.type).toBe('totally-fake-node');
     expect(Array.isArray(res.body.nearest)).toBe(true);
+  });
+
+  it('replace_flow rejects object node.type on REST, MCP, and GET', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const badFlow = {
+      id: 'tab-1',
+      type: 'tab',
+      nodes: [{ id: 'n9', type: { x: 1 }, z: 'tab-1', wires: [[]] }],
+    };
+
+    const restLink = linkStore.create({ kind: 'rest', label: 'obj-rest' });
+    const rest = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${restLink.token}`)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: { flowId: 'tab-1', flow: badFlow },
+      });
+    expect(rest.status).toBe(400);
+    expect(rest.body.code).toBe('invalid_node_type');
+
+    const mcpLink = linkStore.create({ kind: 'mcp', label: 'obj-mcp' });
+    const mcp = await mcpCallTool(app, mcpLink.token, 'submit_proposal', {
+      type: 'replace_flow',
+      expectedRev: 'rev-1',
+      payload: { flowId: 'tab-1', flow: badFlow },
+    });
+    expect(mcp.status).toBe(200);
+    expect(mcp.body.result).toMatchObject({ isError: true });
+    const mcpText =
+      (
+        (mcp.body.result as { content?: { type: string; text: string }[] } | undefined)?.content ??
+        []
+      ).find(c => c.type === 'text')?.text ?? '';
+    expect(mcpText).toMatch(/invalid_node_type|must be a string|node\.type/i);
+
+    const getLink = linkStore.create({ kind: 'get_link', label: 'obj-get' });
+    const patch = Buffer.from(
+      JSON.stringify({ type: 'replace_flow', flowId: 'tab-1', flow: badFlow }),
+      'utf8'
+    )
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+    const getRes = await request(app).get(
+      `/mcp/a/${getLink.token}/propose?flow=tab-1&rev=rev-1&patch=${patch}`
+    );
+    expect(getRes.status).toBe(400);
+    expect(getRes.body.code).toBe('invalid_node_type');
   });
 
   it('MCP tools list_node_types / get_node_type / search_palette are listed and callable', async () => {
