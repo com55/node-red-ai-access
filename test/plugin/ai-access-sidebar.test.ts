@@ -99,8 +99,34 @@ function createFakeJQuery() {
       toggle() {
         return api;
       },
-      toggleClass() {
+      toggleClass(name: string, on?: boolean) {
+        for (const el of els) {
+          const parts = new Set(
+            String(el.className ?? '')
+              .split(/\s+/)
+              .filter(Boolean)
+          );
+          const enable = on === undefined ? !parts.has(name) : !!on;
+          if (enable) parts.add(name);
+          else parts.delete(name);
+          el.className = [...parts].join(' ');
+          el.attrs.class = el.className;
+        }
         return api;
+      },
+      addClass(name: string) {
+        return api.toggleClass(name, true);
+      },
+      removeClass(name: string) {
+        for (const n of String(name).split(/\s+/)) {
+          if (n) api.toggleClass(n, false);
+        }
+        return api;
+      },
+      hasClass(name: string) {
+        return String(els[0]?.className ?? '')
+          .split(/\s+/)
+          .includes(name);
       },
       is() {
         return false;
@@ -278,6 +304,10 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(js).toMatch(/2000/);
     expect(js).toMatch(/is-visible/);
     expect(js).toMatch(/opacity:\s*0/);
-    expect(js).toMatch(/position:\s*absolute/);
+    // Saved toast sits in the header (not an absolute overlay over the intro).
+    expect(js).toMatch(/red-ui-sidebar-header[\s\S]*ai-access-flash/);
+    expect(js).toMatch(/#ai-access-flash:not\(\.is-visible\)/);
+    expect(js).toMatch(/removeClass\('ok error'\)/);
+    expect(js).not.toMatch(/#ai-access-flash \{[^}]*position:\s*absolute/);
   });
 });

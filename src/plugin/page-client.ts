@@ -1058,13 +1058,16 @@ function pageClientScriptPartB(): string {
   }
 
   /**
-   * When two cards share a base title, append · HH:mm; if times collide, #1/#2.
+   * When two cards share a base title (live or stale), append · HH:mm from
+   * createdAt — never the relative "12h ago" label. If clock times collide, #1/#2.
+   * Keep in sync with buildDisambiguatedTitleMap in title-disambiguate.ts.
    */
   function buildDisambiguatedTitles(proposals) {
     var map = {};
     var groups = {};
     (proposals || []).forEach(function (p) {
       if (!p || !p.id) return;
+      // Prefer diff-derived titles so stale + live with the same summary collide.
       var base = displayTitleForProposal(p, proposalDiffCache[p.id]);
       map[p.id] = base;
       if (!groups[base]) groups[base] = [];
@@ -1105,6 +1108,13 @@ function pageClientScriptPartB(): string {
       return disambiguatedTitleCache[p.id];
     }
     return displayTitleForProposal(p, proposalDiffCache[p && p.id]);
+  }
+
+  /** True when this card's heading was clock-disambiguated (not relative time). */
+  function titleWasDisambiguated(p) {
+    if (!p || !p.id || !disambiguatedTitleCache[p.id]) return false;
+    var base = displayTitleForProposal(p, proposalDiffCache[p.id]);
+    return disambiguatedTitleCache[p.id] !== base;
   }
 
   function displayTitleForProposal(p, diff) {
@@ -1763,9 +1773,21 @@ function pageClientScriptPartB2Cards(): string {
 
   function renderProposalMetaLine(p) {
     var flowLabel = flowLabelOf(p);
+    // Colliding titles already carry · HH:mm in the heading; meta still shows
+    // an exact local clock (not only "12h ago") so stale peers stay distinct.
+    var timeHtml;
+    if (titleWasDisambiguated(p) && p.createdAt) {
+      var hm = fmtClockHm(p.createdAt);
+      timeHtml = hm
+        ? '<time class="time-exact" datetime="' + esc(p.createdAt) + '" title="' +
+          esc(fmt(p.createdAt)) + '">' + esc(hm) + '</time>'
+        : timeCell(p.createdAt);
+    } else {
+      timeHtml = timeCell(p.createdAt);
+    }
     return '<span class="proposal-meta-line">' +
       (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
-      timeCell(p.createdAt) +
+      timeHtml +
       ' · <span class="proposal-id-meta">id ' + proposalIdChip(p.id) + '</span>' +
       '</span>';
   }
@@ -2116,12 +2138,21 @@ function pageClientScriptPartB2Apply(): string {
       existingBanner.parentNode.removeChild(existingBanner);
     }
 
-    // Refresh headings from the live diff; rebuild disambiguation across peers.
+    // Refresh headings from the live diff; rebuild disambiguation across peers
+    // (includes stale cards — relative "12h ago" alone must not be the only cue).
     var pendingPeers = cachedProposals.filter(function (x) { return x.status === 'pending'; });
     disambiguatedTitleCache = buildDisambiguatedTitles(pendingPeers);
     pendingPeers.forEach(function (peer) {
       var el = document.querySelector('[data-title-for="' + peer.id + '"]');
       if (el) el.textContent = titleForProposalCard(peer);
+      var article = document.querySelector('.proposal-detail[data-id="' + peer.id + '"]');
+      if (article) {
+        var meta = article.querySelector('.proposal-meta-line');
+        if (meta) {
+          meta.outerHTML = renderProposalMetaLine(peer);
+          bindProposalActions(article);
+        }
+      }
     });
     updatePendingBadges();
   }
