@@ -182,7 +182,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose replace_text creates a proposal with a short field diff', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=${encodeURIComponent('<p>Bye</p>')}&replace=${encodeURIComponent('<p>OK</p>')}&title=Tweak&include=payload`
     );
@@ -203,7 +203,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose replace_text on unknown field returns field_not_found', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt-missing' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt-missing' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=noSuchField&find=a&replace=b`
     );
@@ -214,7 +214,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose rejects replace_text combined with set props', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt-conflict' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt-conflict' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi&set.name=Nope`
     );
@@ -225,7 +225,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose returns 409 ambiguous_match with matchCount', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi`
     );
@@ -235,7 +235,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose returns 400 text_not_found', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Nope&replace=X`
     );
@@ -245,7 +245,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('GET propose occurrence picks the second match', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt' });
+    const created = linkStore.create({ kind: 'get_link', label: 'rt' });
     const res = await request(app).get(
       `/mcp/a/${created.token}/propose?flow=tab-1&rev=rev-1&node=n1&field=template&find=Hello&replace=Hi&occurrence=2&include=payload`
     );
@@ -257,7 +257,7 @@ describe('GET propose replace_text + REST nodes', () => {
 
   it('REST submit_proposal accepts payload.nodes replace_text ops in order', async () => {
     const { app, linkStore } = createApp(userDir);
-    const created = linkStore.create({ label: 'rt-rest' });
+    const created = linkStore.create({ kind: 'rest', label: 'rt-rest' });
     const res = await request(app)
       .post('/mcp/api/v1/proposals?include=payload')
       .set('Authorization', `Bearer ${created.token}`)

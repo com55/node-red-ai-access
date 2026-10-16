@@ -265,7 +265,7 @@ export function registerRoutes(
     '/mcp/api/v1/proposals',
     limiter,
     tokenLimiter,
-    requireAccessLink(RED, services.linkStore),
+    requireAccessLink(RED, services.linkStore, 'rest'),
     createProposalHandler(
       services.proposalStore,
       services.auditLog,
@@ -285,7 +285,7 @@ export function registerRoutes(
     rejectProposalHandler(services.proposalService, httpAdminRoot)
   );
 
-  const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore)];
+  const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore, 'mcp')];
   RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);

@@ -181,7 +181,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(bad.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
     expect(bad.body.code).toBe(ACCESS_LINK_INVALID_CODE);
 
-    const created = linkStore.create({ label: 'tmp' });
+    const created = linkStore.create({ kind: 'mcp', label: 'tmp' });
     linkStore.revoke(created.id);
     const revoked = await mcpRpc(app, created.token, {
       jsonrpc: '2.0',
@@ -199,7 +199,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       aiAccess: { allowWithoutAdminAuth: false },
     });
     // Link store still works in-memory; middleware checks AI features first.
-    const link = linkStore.create({ label: 'x' });
+    const link = linkStore.create({ kind: 'mcp', label: 'x' });
     const res = await mcpRpc(app, link.token, {
       jsonrpc: '2.0',
       id: 1,
@@ -241,7 +241,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         updateFlow: () => Promise.resolve({ rev: 'r2' }),
       },
     });
-    const link = linkStore.create({ label: 'local' });
+    const link = linkStore.create({ kind: 'mcp', label: 'local' });
     const res = await mcpRpc(app, link.token, {
       jsonrpc: '2.0',
       id: 1,
@@ -271,7 +271,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
 
   it('lists only AI tools (no approve/reject/link)', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'claude' });
+    const link = linkStore.create({ kind: 'mcp', label: 'claude' });
     const res = await mcpRpc(app, link.token, {
       jsonrpc: '2.0',
       id: 1,
@@ -333,7 +333,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
 
   it('get_status / list_flows / get_flow / submit / list / get_proposal work', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'bot' });
+    const link = linkStore.create({ kind: 'mcp', label: 'bot' });
 
     const status = await callTool(app, link.token, 'get_status');
     expect(status.status).toBe(200);
@@ -413,8 +413,9 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
 
   it('parity: MCP submit_proposal matches REST POST /proposals', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'parity' });
-    const auth = { Authorization: `Bearer ${link.token}` };
+    const restLink = linkStore.create({ kind: 'rest', label: 'parity-rest' });
+    const mcpLink = linkStore.create({ kind: 'mcp', label: 'parity-mcp' });
+    const restAuth = { Authorization: `Bearer ${restLink.token}` };
     const body = {
       type: 'replace_flow' as const,
       expectedRev: 'rev-1',
@@ -431,11 +432,11 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
 
     const rest = await request(app)
       .post('/mcp/api/v1/proposals?include=payload')
-      .set(auth)
+      .set(restAuth)
       .send(body);
     expect(rest.status).toBe(201);
 
-    const mcp = await callTool(app, link.token, 'submit_proposal', body);
+    const mcp = await callTool(app, mcpLink.token, 'submit_proposal', body);
     expect(mcp.status).toBe(200);
     expect(mcp.result?.isError).toBeFalsy();
     const mcpProposal = parseToolJson(mcp.result) as {
@@ -451,22 +452,25 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       status: rest.body.status,
       expectedRev: rest.body.expectedRev,
       payload: { flowId: rest.body.payload.flowId },
-      createdBy: { kind: 'access-link', linkId: link.id },
+      createdBy: { kind: 'access-link', linkId: mcpLink.id },
     });
+    expect(rest.body.createdBy).toMatchObject({ kind: 'access-link', linkId: restLink.id });
 
-    const restList = await request(app).get('/mcp/api/v1/proposals').set(auth);
-    const mcpList = await callTool(app, link.token, 'list_my_proposals');
+    const restList = await request(app).get('/mcp/api/v1/proposals').set(restAuth);
+    const mcpList = await callTool(app, mcpLink.token, 'list_my_proposals');
     const mcpListJson = parseToolJson(mcpList.result) as { proposals: unknown[] };
-    expect(mcpListJson.proposals).toHaveLength(restList.body.proposals.length);
+    // Each surface lists only its own link's proposals (one each).
+    expect(restList.body.proposals).toHaveLength(1);
+    expect(mcpListJson.proposals).toHaveLength(1);
 
-    const restFlows = await request(app).get('/mcp/api/v1/flows').set(auth);
-    const mcpFlows = await callTool(app, link.token, 'list_flows');
+    const restFlows = await request(app).get('/mcp/api/v1/flows').set(restAuth);
+    const mcpFlows = await callTool(app, mcpLink.token, 'list_flows');
     expect(parseToolJson(mcpFlows.result)).toEqual(restFlows.body);
   });
 
   it('returns 405 for GET /mcp/rpc', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'g' });
+    const link = linkStore.create({ kind: 'mcp', label: 'g' });
     const res = await request(app)
       .get('/mcp/rpc')
       .set('Authorization', `Bearer ${link.token}`)

@@ -4,12 +4,15 @@
 
 import type { NextFunction, Response } from 'express';
 
+import type { AccessLinkKind } from '../access/link-store.js';
+
 import {
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
   ACCESS_LINK_MISSING_MESSAGE,
   ACCESS_LINK_WWW_AUTHENTICATE,
+  sendWrongTokenKind,
 } from './access-link-auth.js';
 import { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type {
@@ -333,8 +336,9 @@ function continueAsAdminSessionOrAccessLinkMissing(
 function tryAccessLinkBearer(
   req: AuthenticatedRequest,
   res: Response,
-  validateAccessLink: AccessLinkValidator
-): 'ok' | 'invalid' | 'continue' {
+  validateAccessLink: AccessLinkValidator,
+  expectedKind: AccessLinkKind
+): 'ok' | 'invalid' | 'wrong_kind' | 'continue' {
   const authHeader = req.headers.authorization;
   if (typeof authHeader !== 'string' || !/^Bearer\s+\S+/i.test(authHeader.trim())) {
     return 'continue';
@@ -346,6 +350,10 @@ function tryAccessLinkBearer(
   }
   const link = validateAccessLink(token);
   if (link) {
+    if (link.kind !== expectedKind) {
+      sendWrongTokenKind(res, expectedKind, link.kind);
+      return 'wrong_kind';
+    }
     req.accessLink = link;
     return 'ok';
   }
@@ -377,7 +385,9 @@ function tryAccessLinkBearer(
  */
 export function requireAdminReadOrAccessLink(
   RED: NodeRedPluginAPI,
-  validateAccessLink: AccessLinkValidator
+  validateAccessLink: AccessLinkValidator,
+  /** When the caller is an access link, require this kind (REST surfaces → `rest`). */
+  expectedAccessLinkKind: AccessLinkKind = 'rest'
 ) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!areAiFeaturesEnabled(RED.settings)) {
@@ -389,12 +399,12 @@ export function requireAdminReadOrAccessLink(
       return;
     }
 
-    const access = tryAccessLinkBearer(req, res, validateAccessLink);
+    const access = tryAccessLinkBearer(req, res, validateAccessLink, expectedAccessLinkKind);
     if (access === 'ok') {
       next();
       return;
     }
-    if (access === 'invalid') {
+    if (access === 'invalid' || access === 'wrong_kind') {
       return;
     }
 
@@ -408,18 +418,20 @@ export function requireAdminReadOrAccessLink(
  * Admin session (page bootstrap) or a valid access-link Bearer.
  * Missing/invalid non-link tokens keep `auth_required` for the /mcp UI.
  * Unknown `aia_` tokens return `access_link_invalid`.
+ * Access-link Bearers must be `rest` (default) for this admin/API dual gate.
  */
 export function requireAdminSessionOrAccessLink(
   RED: NodeRedPluginAPI,
-  validateAccessLink: AccessLinkValidator
+  validateAccessLink: AccessLinkValidator,
+  expectedAccessLinkKind: AccessLinkKind = 'rest'
 ) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-    const access = tryAccessLinkBearer(req, res, validateAccessLink);
+    const access = tryAccessLinkBearer(req, res, validateAccessLink, expectedAccessLinkKind);
     if (access === 'ok') {
       next();
       return;
     }
-    if (access === 'invalid') {
+    if (access === 'invalid' || access === 'wrong_kind') {
       return;
     }
     continueAsAdminSession(RED, req, res, next);

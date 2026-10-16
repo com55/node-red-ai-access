@@ -2,6 +2,8 @@
  * Unit tests for the in-memory AccessLinkStore.
  */
 
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { AccessLinkLimitError, AccessLinkStore } from '../../src/access/index.js';
@@ -18,6 +20,7 @@ describe('AccessLinkStore', () => {
     const created = store.create({ label: 'demo' });
     expect(created).toMatchObject({
       id: 'link-1',
+      kind: 'get_link',
       token: 'aia_test-token',
       label: 'demo',
       createdAt: new Date(now).toISOString(),
@@ -28,6 +31,32 @@ describe('AccessLinkStore', () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]).not.toHaveProperty('token');
     expect(listed[0]).not.toHaveProperty('tokenHash');
+    expect(listed[0]!.kind).toBe('get_link');
+  });
+
+  it('persists kind on create and defaults omitted kind to get_link', () => {
+    const store = new AccessLinkStore();
+    expect(store.create().kind).toBe('get_link');
+    expect(store.create({ kind: 'rest' }).kind).toBe('rest');
+    expect(store.create({ kind: 'mcp' }).kind).toBe('mcp');
+    expect(store.validate(store.create({ kind: 'rest' }).token)?.kind).toBe('rest');
+  });
+
+  it('treats legacy records without kind as get_link in list/validate', () => {
+    const now = 1_700_000_000_000;
+    const store = new AccessLinkStore({ now: () => now });
+    store.upsertRecordForTest({
+      id: 'legacy-1',
+      tokenHash: createHash('sha256').update('aia_legacy-token', 'utf8').digest('hex'),
+      token: 'aia_legacy-token',
+      // no kind — pre-migration shape
+      createdAtMs: now,
+      expiresAtMs: now + 3_600_000,
+    });
+
+    expect(store.list()[0]!.kind).toBe('get_link');
+    expect(store.validate('aia_legacy-token')?.kind).toBe('get_link');
+    expect(store.getById('legacy-1')?.kind).toBe('get_link');
   });
 
   it('honors creator-supplied ttlSeconds', () => {

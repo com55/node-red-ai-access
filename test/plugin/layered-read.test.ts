@@ -301,7 +301,7 @@ describe('GET link + REST layered reads', () => {
 
   it('REST Bearer uses the same layered read routes', async () => {
     const { app, linkStore } = createApp(userDir);
-    const link = linkStore.create({ label: 'rest-lr' });
+    const link = linkStore.create({ kind: 'rest', label: 'rest-lr' });
     const auth = { Authorization: `Bearer ${link.token}` };
 
     const summary = await request(app).get('/mcp/api/v1/flows/tab-1?summary=1').set(auth);

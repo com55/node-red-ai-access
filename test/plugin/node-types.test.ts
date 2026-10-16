@@ -273,7 +273,7 @@ describe('node-types HTTP + MCP + docs', () => {
       userDir,
       catalogueFetcher: mockCatalogueFetcher(),
     });
-    const link = linkStore.create({ label: 'nt' });
+    const link = linkStore.create({ kind: 'rest', label: 'nt' });
     const auth = { Authorization: `Bearer ${link.token}` };
 
     const list = await request(app).get('/mcp/api/v1/node-types?q=inj').set(auth);
@@ -314,7 +314,7 @@ describe('node-types HTTP + MCP + docs', () => {
 
   it('submit_proposal rejects unknown_node_type with nearest', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'bad' });
+    const link = linkStore.create({ kind: 'rest', label: 'bad' });
     const res = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -341,7 +341,7 @@ describe('node-types HTTP + MCP + docs', () => {
       userDir,
       catalogueFetcher: mockCatalogueFetcher(),
     });
-    const link = linkStore.create({ label: 'mcp' });
+    const link = linkStore.create({ kind: 'mcp', label: 'mcp' });
 
     const listed = await request(app)
       .post('/mcp/rpc')

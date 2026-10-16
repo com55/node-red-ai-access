@@ -33,6 +33,7 @@ const AUDIT_DETAIL_KEYS = [
   'expiresAt',
   'createdAt',
   'ttlSeconds',
+  'kind',
 ] as const;
 
 /** Numeric audit detail fields (not coerced through sanitizeString). */

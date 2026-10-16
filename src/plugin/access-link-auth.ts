@@ -4,7 +4,7 @@
 
 import type { NextFunction, Response } from 'express';
 
-import type { AccessLinkStore } from '../access/link-store.js';
+import type { AccessLinkKind, AccessLinkStore } from '../access/link-store.js';
 
 import { areAiFeaturesEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -23,6 +23,7 @@ export const ACCESS_LINK_WWW_AUTHENTICATE = 'Bearer realm="node-red-ai-access", 
 export const ACCESS_LINK_MISSING_CODE = 'access_link_missing' as const;
 export const ACCESS_LINK_INVALID_CODE = 'access_link_invalid' as const;
 export const ACCESS_LINK_BEARER_REQUIRED_CODE = 'bearer_scheme_required' as const;
+export const WRONG_TOKEN_KIND_CODE = 'wrong_token_kind' as const;
 
 type AccessLinkAuthCode =
   | typeof ACCESS_LINK_MISSING_CODE
@@ -64,11 +65,46 @@ function truncatedBearerHint(token: string): string | undefined {
   return undefined;
 }
 
+export function wrongTokenKindHint(
+  expectedKind: AccessLinkKind,
+  actualKind: AccessLinkKind
+): string {
+  if (expectedKind === 'get_link') {
+    return `This URL requires a get_link token. This token is kind=${actualKind} — ask the user for a get_link access URL (/mcp/a/<token>/…).`;
+  }
+  if (expectedKind === 'rest') {
+    return `This REST endpoint requires a rest token. This token is kind=${actualKind} — ask the user for a REST Bearer token (kind=rest).`;
+  }
+  return `This MCP endpoint requires an mcp token. This token is kind=${actualKind} — ask the user for an MCP Bearer token (kind=mcp).`;
+}
+
 /**
- * Authenticate AI clients with an access-link Bearer token.
+ * Reject a valid token that was minted for a different surface.
+ * Uses 403 (authenticated, wrong kind for this route).
+ */
+export function sendWrongTokenKind(
+  res: Response,
+  expectedKind: AccessLinkKind,
+  actualKind: AccessLinkKind
+): void {
+  res.status(403).json({
+    error: `Access link kind mismatch: expected ${expectedKind}, got ${actualKind}`,
+    code: WRONG_TOKEN_KIND_CODE,
+    expectedKind,
+    actualKind,
+    hint: wrongTokenKindHint(expectedKind, actualKind),
+  });
+}
+
+/**
+ * Authenticate AI clients with an access-link Bearer token of the expected kind.
  * Always rejects when AI features are disabled.
  */
-export function requireAccessLink(RED: NodeRedPluginAPI, store: AccessLinkStore) {
+export function requireAccessLink(
+  RED: NodeRedPluginAPI,
+  store: AccessLinkStore,
+  expectedKind: AccessLinkKind
+) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!areAiFeaturesEnabled(RED.settings)) {
       res.status(403).json({
@@ -97,6 +133,11 @@ export function requireAccessLink(RED: NodeRedPluginAPI, store: AccessLinkStore)
         ACCESS_LINK_INVALID_CODE,
         truncatedBearerHint(parsed.token)
       );
+      return;
+    }
+
+    if (link.kind !== expectedKind) {
+      sendWrongTokenKind(res, expectedKind, link.kind);
       return;
     }
 

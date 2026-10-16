@@ -11,8 +11,23 @@ import {
   AccessLinkValidationError,
 } from './errors.js';
 
+/** Surface a token is minted for. Missing/undefined on legacy records → get_link. */
+export type AccessLinkKind = 'get_link' | 'rest' | 'mcp';
+
+export const ACCESS_LINK_KINDS: readonly AccessLinkKind[] = ['get_link', 'rest', 'mcp'] as const;
+
+export function isAccessLinkKind(value: unknown): value is AccessLinkKind {
+  return value === 'get_link' || value === 'rest' || value === 'mcp';
+}
+
+/** Normalize persisted/legacy records: missing kind → get_link. */
+export function resolveAccessLinkKind(kind: AccessLinkKind | undefined | null): AccessLinkKind {
+  return kind ?? 'get_link';
+}
+
 export interface AccessLinkPublic {
   id: string;
+  kind: AccessLinkKind;
   label?: string;
   createdAt: string;
   expiresAt: string;
@@ -31,6 +46,11 @@ export interface AccessLinkRecord {
   tokenHash: string;
   /** Raw token kept in memory so admins can re-copy the GET URL. */
   token: string;
+  /**
+   * Token surface. Optional for in-memory migration of pre-kind records
+   * (treated as `get_link` by {@link resolveAccessLinkKind}).
+   */
+  kind?: AccessLinkKind;
   label?: string;
   createdAtMs: number;
   expiresAtMs: number;
@@ -43,6 +63,8 @@ export interface CreateAccessLinkInput {
   ttlSeconds?: number;
   label?: string;
   createdBy?: string;
+  /** Defaults to `get_link` when omitted. */
+  kind?: AccessLinkKind;
 }
 
 export interface AccessLinkStoreOptions {
@@ -73,6 +95,7 @@ function hashesEqual(a: string, b: string): boolean {
 function toPublic(record: AccessLinkRecord): AccessLinkPublic {
   const publicLink: AccessLinkPublic = {
     id: record.id,
+    kind: resolveAccessLinkKind(record.kind),
     createdAt: new Date(record.createdAtMs).toISOString(),
     expiresAt: new Date(record.expiresAtMs).toISOString(),
   };
@@ -165,12 +188,15 @@ export class AccessLinkStore {
         ? input.label.trim()
         : undefined;
 
+    const kind = resolveAccessLinkKind(input.kind);
+
     const id = this.randomId();
     const token = this.randomToken();
     const record: AccessLinkRecord = {
       id,
       tokenHash: hashToken(token),
       token,
+      kind,
       createdAtMs: atMs,
       expiresAtMs: atMs + ttlSeconds * 1000,
     };
@@ -259,5 +285,13 @@ export class AccessLinkStore {
   /** Test helper: wipe everything (simulates a process restart). */
   clear(): void {
     this.links.clear();
+  }
+
+  /**
+   * Test helper: insert or mutate a raw record (e.g. legacy without `kind`).
+   * Not for production use.
+   */
+  upsertRecordForTest(record: AccessLinkRecord): void {
+    this.links.set(record.id, record);
   }
 }

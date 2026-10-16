@@ -1393,12 +1393,21 @@ components:
       enum: [nodes, flows, full]
       default: nodes
 
+    AccessLinkKind:
+      type: string
+      enum: [get_link, rest, mcp]
+      description: >
+        Surface this token is minted for. get_link → `/mcp/a/<token>/…`;
+        rest → REST Bearer; mcp → `/mcp/rpc` Bearer. Default on create: get_link.
+
     AccessLinkPublic:
       type: object
-      required: [id, createdAt, expiresAt]
+      required: [id, kind, createdAt, expiresAt]
       properties:
         id:
           type: string
+        kind:
+          $ref: '#/components/schemas/AccessLinkKind'
         label:
           type: string
         createdAt:
@@ -1414,16 +1423,17 @@ components:
       allOf:
         - $ref: '#/components/schemas/AccessLinkPublic'
         - type: object
-          required: [token, url]
+          required: [token]
           properties:
             token:
               type: string
               description: Raw bearer token (returned only at creation)
             url:
               type: string
+              nullable: true
               description: >
                 Self-contained GET link (`http(s)://{host}{httpAdminRoot}/mcp/a/{token}`).
-                Preferred for chat AIs that can only HTTP GET.
+                Present for kind=get_link; omitted for rest/mcp.
 
     CreateLinkRequest:
       type: object
@@ -1434,6 +1444,9 @@ components:
           description: Lifetime in seconds (default 14400 = 4h)
         label:
           type: string
+        kind:
+          $ref: '#/components/schemas/AccessLinkKind'
+          description: Token surface (default get_link)
 
     FlowsSnapshot:
       type: object

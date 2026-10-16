@@ -286,7 +286,7 @@ describe('/mcp admin page', () => {
     });
 
     // Seed a proposal via access link so GET /proposals has something to list.
-    const link = linkStore.create({ label: 'seed' });
+    const link = linkStore.create({ kind: 'rest', label: 'seed' });
     const seeded = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
