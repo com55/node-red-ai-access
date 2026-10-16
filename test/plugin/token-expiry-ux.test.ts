@@ -245,6 +245,22 @@ describe('token expiry UX', () => {
     expect(secondsRemainingUntil('2025-12-31T23:00:00.000Z', now)).toBe(0);
   });
 
+  it('/mcp custom TTL row is hidden unless Custom… is selected (CSS cannot override [hidden])', async () => {
+    const { app } = createApp(userDir);
+    const page = await request(app).get('/mcp');
+    expect(page.status).toBe(200);
+    const html = page.text;
+    // Global rule so `.ttl-custom-row { display: flex }` does not beat the hidden attribute.
+    expect(html).toMatch(/\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/);
+    // Row starts hidden and the toggle runs on preset change, channel change, and initial render.
+    expect(html).toMatch(/id="link-ttl-custom-row" class="ttl-custom-row" hidden/);
+    expect(html).toMatch(/customRow\.hidden = !\(sel && sel\.value === 'custom'\)/);
+    expect(html).toMatch(
+      /sel\.addEventListener\('change', function \(\) \{ updateTtlUiState\(\); \}\)/
+    );
+    expect(html).toMatch(/kindSelect\.addEventListener\('change'/);
+  });
+
   it('/mcp page client resets expiry to 1h when switching to get_link above 24h', async () => {
     const { app } = createApp(userDir);
     const page = await request(app).get('/mcp');

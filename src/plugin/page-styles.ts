@@ -19,6 +19,8 @@ function pageStylesPartA(): string {
   --ok: #1b6b4a;
 }
 * { box-sizing: border-box; }
+/* Author display rules (e.g. .ttl-custom-row { display:flex }) must not defeat [hidden]. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: "Source Sans 3", "Segoe UI", sans-serif;
