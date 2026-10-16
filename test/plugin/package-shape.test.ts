@@ -131,8 +131,13 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);
+    expect(client).toMatch(/needsApproveConfirm/);
     expect(client).toMatch(/openDeleteConfirmDialog/);
     expect(client).toMatch(/deleteInput\.value !== 'DELETE'/);
+    expect(client).toMatch(/idCompact|proposalMatchesSearch/);
+    expect(client).toMatch(/cross-tab-hint|settleSearchAfterAction/);
+    expect(client).toMatch(/notifySidebarPendingRefresh|BroadcastChannel/);
+    expect(client).toMatch(/reject-dialog-title|delete-confirm-summary/);
     expect(client).toMatch(/You're an admin/);
     expect(client).toMatch(/renderDeleteBanner/);
     expect(client).toMatch(/Deletes .* of .* nodes/);
@@ -149,6 +154,8 @@ describe('/mcp audit log page client', () => {
     expect(styles).toMatch(/\.proposal-changes|\.stale-group/);
     expect(styles).toMatch(/\.delete-banner/);
     expect(styles).toMatch(/\.stale-reason/);
+    expect(styles).toMatch(/\.toast-title|\.toast-link/);
+    expect(styles).toMatch(/\.cross-tab-hint|\.dialog-proposal-title/);
   });
 });
 
@@ -162,6 +169,7 @@ describe('ai-access sidebar TTL layout', () => {
     expect(sidebar).not.toMatch(/Default link expiry \(hours\)/);
     expect(sidebar).toMatch(/AI tools are disabled/);
     expect(sidebar).not.toMatch(/MCP tools are disabled/);
+    expect(sidebar).toMatch(/BroadcastChannel|ai-access-pending|refresh-pending/);
     expect(sidebar).toMatch(/pendingSidebarText|1 proposal to review|to review/);
     expect(sidebar).toMatch(/ai-access-actions/);
     expect(sidebar).toMatch(/Only changed nodes \(recommended\)/);

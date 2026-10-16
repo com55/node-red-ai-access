@@ -347,6 +347,20 @@ function editorSidebarScriptPartA(): string {
         });
     }
 
+    // /mcp page posts here after approve so the sidebar badge updates immediately.
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        var pendingChannel = new BroadcastChannel('ai-access-pending');
+        pendingChannel.onmessage = function (ev) {
+          if (ev && ev.data && ev.data.type === 'refresh-pending') {
+            refreshPending();
+          }
+        };
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
     function loadSettings() {
       setFlash($('#ai-access-flash'), '', true);
       api('/settings')

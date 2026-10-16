@@ -169,6 +169,7 @@ function renderMcpPageDialogs(): string {
     <dialog id="reject-dialog">
       <form method="dialog" id="reject-form">
         <h3>Reject proposal</h3>
+        <p id="reject-dialog-title" class="dialog-proposal-title"></p>
         <p class="muted">The AI assistant that submitted this proposal will see your reason.</p>
         <label>Reason (optional)
           <textarea id="reject-reason-input" rows="3" maxlength="500" placeholder="Optional note for the AI"></textarea>
@@ -182,9 +183,11 @@ function renderMcpPageDialogs(): string {
 
     <dialog id="delete-confirm-dialog">
       <form method="dialog" id="delete-confirm-form">
-        <h3>Confirm large deletion</h3>
+        <h3 id="delete-confirm-heading">Confirm approve &amp; deploy</h3>
+        <p id="delete-confirm-proposal-title" class="dialog-proposal-title"></p>
         <p id="delete-confirm-msg" class="danger-text"></p>
-        <label>Type <strong id="delete-confirm-phrase">DELETE</strong> to confirm
+        <p id="delete-confirm-summary" class="muted"></p>
+        <label id="delete-confirm-type-label">Type <strong id="delete-confirm-phrase">DELETE</strong> to confirm
           <input id="delete-confirm-input" type="text" autocomplete="off" />
         </label>
         <div class="row dialog-actions">
