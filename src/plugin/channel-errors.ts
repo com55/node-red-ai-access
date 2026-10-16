@@ -20,6 +20,7 @@ import {
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { AiOpsValidationError } from './ai-ops.js';
+import { registryHint } from './error-registry.js';
 
 export type ErrorChannel = 'get' | 'rest' | 'mcp';
 
@@ -289,7 +290,9 @@ export function mapErrorForChannel(
   }
 
   const code = mapped.body.code;
-  if (canonicalize) {
+  // Validation issues (errors[]) keep their specific message, e.g. which node
+  // was missing, instead of the generic canonical text.
+  if (canonicalize && !Array.isArray(mapped.body.errors)) {
     const canonical = CANONICAL_ERROR_TEXT[code];
     if (canonical) {
       mapped.body.error = canonical;
@@ -298,7 +301,7 @@ export function mapErrorForChannel(
 
   // Prefer an explicit hint already on the error (e.g. nearest type matches).
   if (typeof mapped.body.hint !== 'string' || !mapped.body.hint) {
-    const hint = hintFor(code, channel, { cause: mapped.body.cause });
+    const hint = hintFor(code, channel, { cause: mapped.body.cause }) ?? registryHint(code);
     if (hint) {
       mapped.body.hint = hint;
     }
@@ -315,7 +318,7 @@ export function buildChannelError(
 ): ChannelErrorMapped {
   const error = options.error ?? CANONICAL_ERROR_TEXT[code] ?? 'Request failed';
   const body: ChannelErrorBody = { error, code, ...(options.details ?? {}) };
-  const hint = hintFor(code, channel, { cause: body.cause });
+  const hint = hintFor(code, channel, { cause: body.cause }) ?? registryHint(code);
   if (hint) {
     body.hint = hint;
   }

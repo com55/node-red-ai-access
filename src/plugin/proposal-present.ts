@@ -16,6 +16,42 @@ export const PROPOSAL_TITLE_MAX = 80;
 /** Above this many node ops, titles become "N changes in {flow}". */
 const MULTI_CHANGE_TITLE_THRESHOLD = 1;
 
+/** Node type as display text; non-string types (bad legacy data) fall back to `node`. */
+export function nodeTypeText(type: unknown, fallback = 'node'): string {
+  return typeof type === 'string' && type.trim() ? type.trim() : fallback;
+}
+
+const LIVE_FLOW_LABELS = Symbol.for('ai-access.liveFlowLabels');
+
+/** Live tab id → label map from a flows snapshot. */
+export function liveFlowLabelsFromFlows(
+  flows: readonly { id?: unknown; type?: unknown; label?: unknown }[]
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const node of flows) {
+    if (
+      node.type === 'tab' &&
+      typeof node.id === 'string' &&
+      typeof node.label === 'string' &&
+      node.label.trim()
+    ) {
+      map.set(node.id, node.label.trim());
+    }
+  }
+  return map;
+}
+
+/** Attach live flow labels to a request so every presenter resolves flowLabel the same way. */
+export function setRequestFlowLabels(req: Request, labels: Map<string, string>): void {
+  (req as unknown as Record<symbol, unknown>)[LIVE_FLOW_LABELS] = labels;
+}
+
+export function getRequestFlowLabels(req: Request | undefined): Map<string, string> | undefined {
+  if (!req) return undefined;
+  const v = (req as unknown as Record<symbol, unknown>)[LIVE_FLOW_LABELS];
+  return v instanceof Map ? (v as Map<string, string>) : undefined;
+}
+
 export interface PresentProposalOptions {
   /** Incoming HTTP request — used to absolutize `reviewUrl`. */
   req?: Request;
@@ -40,6 +76,8 @@ export interface PresentedProposalApi {
   status: Proposal['status'];
   type: Proposal['type'];
   title: string;
+  /** Title exactly as stored at submit (no ` in <flow>` suffix). */
+  storedTitle: string;
   displayName: string;
   flowLabel: string;
   reviewUrl: string;
@@ -108,12 +146,18 @@ export function presentOptionsFor(req: Request, httpAdminRoot?: string): Present
   if (httpAdminRoot !== undefined) {
     opts.httpAdminRoot = httpAdminRoot;
   }
+  const labels = getRequestFlowLabels(req);
+  if (labels) {
+    opts.liveFlowLabels = labels;
+  }
   return opts;
 }
 
 export interface PresentedProposal extends Proposal {
   /** Always set on API responses (stored or auto-generated). */
   title: string;
+  /** Title exactly as stored (before any ` in <flow>` suffix). */
+  storedTitle: string;
   /**
    * Human flow label when known (never a raw tab id). Empty string if unknown.
    */
@@ -231,7 +275,7 @@ function pluralNodes(n: number): string {
 /** "adds 1 comment" / "adds 2 nodes" */
 function describeAddedClause(added: FlowNode[]): string {
   if (added.length === 1 && added[0]) {
-    const type = added[0].type || 'node';
+    const type = nodeTypeText(added[0].type);
     return `adds 1 ${type}`;
   }
   return `adds ${added.length} ${pluralNodes(added.length)}`;
@@ -289,19 +333,19 @@ function describeOneChange(changes: {
   }
   if (added[0]) {
     const node = added[0];
-    const type = node.type || 'node';
+    const type = nodeTypeText(node.type);
     const name = nodeLabel(node);
     return name ? `Add ${type} node ${quoteName(name)}` : `Add ${type} node`;
   }
   if (removed[0]) {
     const node = removed[0];
-    const type = node.type || 'node';
+    const type = nodeTypeText(node.type);
     const name = nodeLabel(node);
     return name ? `Remove ${type} node ${quoteName(name)}` : `Remove ${type} node`;
   }
   const pair = modified[0];
   if (!pair) return undefined;
-  const type = pair.after.type || pair.before.type || 'node';
+  const type = nodeTypeText(pair.after.type, nodeTypeText(pair.before.type));
   const beforeName = nodeLabel(pair.before);
   const afterName = nodeLabel(pair.after);
   if (isRenameOnly(pair.before, pair.after) && beforeName && afterName) {
@@ -406,6 +450,8 @@ export function shouldRefreshDisplayTitle(
 ): boolean {
   const t = (storedTitle ?? '').trim();
   if (!t) return true;
+  // Legacy titles built from a non-string node type.
+  if (t.includes('[object Object]')) return true;
   if (/^Update(\s|$)/i.test(t)) return true;
   if (removedCount > 0 && !/^Replace\b/i.test(t)) return true;
   return false;
@@ -432,13 +478,17 @@ export function titleFromDiffSummary(
   const added = Number(summary.added) || 0;
   const modified = Number(summary.modified) || 0;
   const stored = options.storedTitle?.trim() ?? '';
+  const firstAddedType =
+    typeof options.firstAddedType === 'string' && options.firstAddedType.trim()
+      ? options.firstAddedType.trim()
+      : undefined;
   if (!shouldRefreshDisplayTitle(stored, removed)) {
     return stored;
   }
   const label = options.flowLabel?.trim() ?? '';
   if (removed > 0) {
     const addedNodes: FlowNode[] =
-      added === 1 && options.firstAddedType ? [{ id: '_', type: options.firstAddedType }] : [];
+      added === 1 && firstAddedType ? [{ id: '_', type: firstAddedType }] : [];
     return buildReplaceFlowTitle({
       ...(label ? { flowLabel: label } : {}),
       removed,
@@ -451,8 +501,8 @@ export function titleFromDiffSummary(
   if (total === 0) {
     return label ? `Update ${label}` : 'Update flow';
   }
-  if (total === 1 && added === 1 && options.firstAddedType) {
-    return ensureTitleIncludesFlowName(`Add ${options.firstAddedType} node`, label);
+  if (total === 1 && added === 1 && firstAddedType) {
+    return ensureTitleIncludesFlowName(`Add ${firstAddedType} node`, label);
   }
   if (total === 1 && modified === 1) {
     return label ? `Edit node in ${label}` : 'Edit node';
@@ -572,6 +622,17 @@ export function resolveProposalTitle(
   return ensureTitleIncludesFlowName(raw, flowLabel);
 }
 
+/**
+ * The stored title. An already-presented object keeps its original
+ * `storedTitle` (its `title` may carry the ` in <flow>` suffix).
+ */
+function storedTitleOf(proposal: Proposal & { storedTitle?: unknown }): string | undefined {
+  if (typeof proposal.storedTitle === 'string' && proposal.storedTitle) {
+    return proposal.storedTitle;
+  }
+  return sanitizeProposalTitle(proposal.title);
+}
+
 /** Attach title, flowLabel, displayName, reviewUrl, and reviewPath for API / MCP responses. */
 export function presentProposal(
   proposal: Proposal,
@@ -579,11 +640,13 @@ export function presentProposal(
 ): PresentedProposal {
   const title = resolveProposalTitle(proposal, options);
   const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
+  const storedTitle = storedTitleOf(proposal) ?? title;
   const reviewPath = buildProposalReviewPath(proposal.id, options.httpAdminRoot);
   const reviewUrl = options.req ? absolutizePath(options.req, reviewPath) : reviewPath;
   return {
     ...proposal,
     title,
+    storedTitle,
     flowLabel,
     displayName: buildProposalDisplayName(title, proposal.createdAt),
     reviewUrl,
@@ -649,6 +712,7 @@ export function presentProposalForApi(
     status: full.status,
     type: full.type,
     title: full.title,
+    storedTitle: full.storedTitle,
     displayName: full.displayName,
     flowLabel: full.flowLabel,
     reviewUrl: full.reviewUrl,

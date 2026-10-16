@@ -24,7 +24,7 @@ import {
   getAccessibleProposal,
   getFlow,
   invalidFilterError,
-  isProposalStatus,
+  parseStatusFilter,
   listAccessibleProposals,
   listPageFields,
   LIST_PROPOSALS_MAX_LIMIT,
@@ -32,6 +32,7 @@ import {
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  type ListFilterParameter,
   type ListProposalsFilter,
 } from './ai-ops.js';
 import { mapErrorForChannel } from './channel-errors.js';
@@ -113,7 +114,7 @@ function jsonError(
 
 /** MCP tools whose filter arguments map to `invalid_filter` (same as GET/REST). */
 const LIST_FILTER_TOOLS = new Set(['list_proposals', 'list_my_proposals']);
-const LIST_FILTER_PARAMS = new Set(['status', 'limit', 'offset', 'mine']);
+const LIST_FILTER_PARAMS = new Set(['status', 'limit', 'offset', 'mine', 'flowId']);
 
 interface ZodLikeIssue {
   path?: readonly PropertyKey[];
@@ -150,10 +151,7 @@ export function mcpArgumentError(
   const first = issues[0];
   const parameter = first?.path && first.path.length > 0 ? String(first.path[0]) : '(arguments)';
   if (LIST_FILTER_TOOLS.has(toolName) && LIST_FILTER_PARAMS.has(parameter)) {
-    return invalidFilterError(
-      parameter as 'status' | 'limit' | 'offset' | 'mine',
-      argObj[parameter]
-    );
+    return invalidFilterError(parameter as ListFilterParameter, argObj[parameter]);
   }
   const listed = issues.map(issue => ({
     parameter:
@@ -439,7 +437,9 @@ function registerProposalTools(
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
         'search_palette and ask the user to install via Manage palette (never auto-install). ' +
-        'Returns a lean proposal (id, status, title, displayName, reviewUrl, changeSummary, …) by default. ' +
+        'Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; ' +
+        'title may gain " in <flow>"; storedTitle is the title as saved (your title without that suffix, ' +
+        'or the auto-generated title, which may already name the flow). ' +
         'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
         'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
@@ -559,11 +559,20 @@ function registerListProposalsTools(
   presentOpts: ReturnType<typeof presentOptionsFor>
 ): void {
   const listProposalsInputSchema = {
-    mine: z.boolean().optional().describe('When true, only proposals created by this access link'),
-    status: z
-      .enum(['pending', 'approved', 'rejected', 'failed', 'withdrawn', 'expired', 'superseded'])
+    mine: z
+      .boolean()
       .optional()
-      .describe('Filter by proposal status'),
+      .describe(
+        'true: only proposals created by this access link; false: only other links’ proposals'
+      ),
+    status: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .describe(
+        'Filter by proposal status: one value, an array, or a comma-separated string ' +
+          '(pending, approved, rejected, failed, withdrawn, expired, superseded). ' +
+          'An empty array or empty string means no status filter.'
+      ),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
     limit: z
       .number()
@@ -586,15 +595,7 @@ function registerListProposalsTools(
 
   const listProposalsHandler = async (args: {
     mine?: boolean | undefined;
-    status?:
-      | 'pending'
-      | 'approved'
-      | 'rejected'
-      | 'failed'
-      | 'withdrawn'
-      | 'expired'
-      | 'superseded'
-      | undefined;
+    status?: string | string[] | undefined;
     flowId?: string | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
@@ -607,11 +608,12 @@ function registerListProposalsTools(
         ? expireStalePendingProposals(services.proposalStore, liveRev)
         : 0;
       const filter: ListProposalsFilter = {};
-      if (args.mine === true) {
-        filter.mine = true;
+      if (typeof args.mine === 'boolean') {
+        filter.mine = args.mine;
       }
-      if (args.status !== undefined && isProposalStatus(args.status)) {
-        filter.status = args.status;
+      const status = parseStatusFilter(args.status);
+      if (status) {
+        filter.status = status;
       }
       if (typeof args.flowId === 'string' && args.flowId.length > 0) {
         filter.flowId = args.flowId;

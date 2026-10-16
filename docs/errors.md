@@ -42,7 +42,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `proposal_not_found` | 404 | Unknown proposal id | List proposals and use an existing id | GET, REST, MCP |
 | `proposal_not_pending` | 409 | Action needs a pending proposal | Only pending can withdraw / decide | GET, REST, MCP |
 | `proposal_not_owned` | 403 | Withdraw of another token’s proposal | Only the creating token can withdraw | GET, REST, MCP |
-| `validation_failed` | 400 | Several validation errors at once (message `N validation errors`) | Fix every entry in `errors[]` and resubmit | GET, REST, MCP |
+| `validation_failed` | 400 | Several validation errors at once (message `N validation errors`) | Fix every entry in errors[] and resubmit. | GET, REST, MCP |
 | `duplicate_node_id` | 400 | The same node id appears more than once in a full tab or batch | Give every node a unique id | GET, REST, MCP |
 | `missing_node_id` | 400 | Node / op without an id | Include a non-empty string id | GET, REST, MCP |
 | `missing_node_type` | 400 | Node without a `type` | Set `type` to an installed palette type name | GET, REST, MCP |

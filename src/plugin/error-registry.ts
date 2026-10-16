@@ -186,7 +186,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'validation_failed',
     400,
     'Several validation errors at once (message `N validation errors`)',
-    'Fix every entry in `errors[]` and resubmit'
+    'Fix every entry in errors[] and resubmit.'
   ),
   e(
     'duplicate_node_id',
@@ -371,13 +371,38 @@ ${table(statuses, 'HTTP')}
 `;
 }
 
-/** Rows for the GET-link guide (`/mcp/a/<token>/docs`). */
+/**
+ * Error, warning, and proposal-status tables for the GET-link guide
+ * (`/mcp/a/<token>/docs`). Lists every registered code with its channels so
+ * the guide matches docs/errors.md.
+ */
 export function renderGetLinkErrorTable(): string {
-  const specs = ERROR_REGISTRY.filter(s => s.kind === 'error' && s.channels.includes('GET'));
+  const row = (s: ErrorCodeSpec): string =>
+    `| \`${s.code}\` | ${s.status} | ${cell(s.meaning)} | ${cell(s.hint)} | ${s.channels.join(', ')} |`;
+  const header = [
+    '| Code | HTTP | Meaning | Next step | Channels |',
+    '| --- | --- | --- | --- | --- |',
+  ];
+  const errors = ERROR_REGISTRY.filter(s => s.kind === 'error');
+  const warnings = ERROR_REGISTRY.filter(s => s.kind === 'warning');
+  const statuses = ERROR_REGISTRY.filter(s => s.kind === 'status');
   return [
-    '| Code | HTTP | Meaning | Next step |',
-    '| --- | --- | --- | --- |',
-    ...specs.map(s => `| \`${s.code}\` | ${s.status} | ${cell(s.meaning)} | ${cell(s.hint)} |`),
+    ...header,
+    ...errors.map(row),
+    '',
+    '**Warnings** (in `warnings[]` on a successful propose; never blocking):',
+    '',
+    ...header,
+    ...warnings.map(row),
+    '',
+    '**Auto-closed proposal statuses.** Pending proposals are closed automatically: ' +
+      '`expired` when the live flow rev moves past their `expectedRev`, ' +
+      '`superseded` when another proposal on the same flow is approved. ' +
+      'Submit, get, and list responses include `autoClosedCount` when that request ' +
+      'auto-closed proposals (omitted when zero).',
+    '',
+    ...header,
+    ...statuses.map(row),
   ].join('\n');
 }
 

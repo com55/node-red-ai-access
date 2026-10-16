@@ -96,7 +96,7 @@ info:
 
     Missing tokens return **401** `access_link_missing`; invalid/expired/revoked
     tokens return **401** `access_link_invalid`. Both tell you to ask the user
-    for a new link. OpenAPI: `GET /openapi.yaml`. MCP (optional):
+    for a new link. OpenAPI: `GET /openapi.yaml` (or `GET /openapi.json`). MCP (optional):
     `POST {httpAdminRoot}/mcp/rpc` with the same Bearer token.
 
     ## MCP JSON-RPC
@@ -196,6 +196,11 @@ info:
     - **Rate limits are per token (and per IP).** Each access-link token has its
       own token bucket. Several tokens can each use the full per-token limit at
       the same time; the shared IP bucket still applies across them.
+    - **`RateLimit-*` headers describe the per-token bucket** on requests that
+      carry a Bearer or path token (`RateLimit-Policy: 300;w=60` by default):
+      that is the bucket being consumed and normally the stricter one. Requests
+      without a token report the per-IP bucket (`600;w=60`). Both buckets are
+      enforced; either can return `429 rate_limited`.
 
   contact:
     name: com55
@@ -277,6 +282,8 @@ paths:
                             type: string
                   openapi:
                     type: string
+                  openapiJson:
+                    type: string
                   mcp:
                     type: string
                   apiBase:
@@ -322,6 +329,21 @@ paths:
             application/yaml:
               schema:
                 type: string
+
+  /openapi.json:
+    get:
+      tags: [Spec]
+      summary: OpenAPI document (JSON)
+      description: The same specification as `/openapi.yaml`, converted to JSON.
+      operationId: getOpenApiJson
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.1 JSON for this API
+          content:
+            application/json:
+              schema:
+                type: object
 
   /status:
     get:
@@ -809,9 +831,11 @@ paths:
       summary: List proposals
       description: |
         Admins see all proposals. Access-link clients also see **all** proposals,
-        each marked `mine: true|false`. Filter with `?mine=true` (own only),
-        `?status=` (`pending`|`approved`|`rejected`|`failed`|`withdrawn`), and/or
-        `?flowId=`. Paginate with `?limit=` (1–200) and `?offset=`; responses
+        each marked `mine: true|false`. Filter with `?mine=true` (own only) or
+        `?mine=false` (only other links' proposals), `?status=` (one or more
+        statuses, comma-separated `?status=pending,superseded` or repeated
+        `?status=pending&status=expired`; any unknown value is `invalid_filter`),
+        and/or `?flowId=`. Other filter parameters may appear at most once. Paginate with `?limit=` (1–200) and `?offset=`; responses
         always include `total` (count after filters, before pagination). Pending
         items may include `conflictingProposals` on get/submit (not on list).
       operationId: listProposals
@@ -824,13 +848,21 @@ paths:
           required: false
           schema:
             type: boolean
-          description: When true (access-link only), return only this token's proposals
+          description: >-
+            Access-link only. true (or 1) returns only this token's proposals;
+            false (or 0) returns only proposals created by other links.
         - name: status
           in: query
           required: false
+          style: form
+          explode: true
           schema:
-            $ref: '#/components/schemas/ProposalStatus'
-          description: Filter by proposal status
+            type: array
+            items:
+              $ref: '#/components/schemas/ProposalStatus'
+          description: >-
+            One or more statuses. Repeat the parameter or pass a comma-separated
+            list. Any invalid value returns 400 invalid_filter.
         - name: flowId
           in: query
           required: false
@@ -2131,8 +2163,24 @@ components:
           type: string
           maxLength: 80
           description: |
-            Short human title. Set at submit (AI-supplied or auto-generated).
-            Always present on API responses (resolved for legacy rows).
+            Short human display title. Set at submit (AI-supplied or
+            auto-generated); ` in <flowLabel>` is appended when the title does
+            not already name the flow. Always present on API responses
+            (resolved for legacy rows).
+        storedTitle:
+          type: string
+          maxLength: 80
+          description: |
+            The title as saved. With an AI-supplied title this is that title
+            (sanitized) without the ` in <flowLabel>` suffix that `title` may
+            add. When no title was given it is the auto-generated title, which
+            may already contain the flow name. Present on every proposal
+            response, including submit.
+        flowLabel:
+          type: string
+          description: |
+            Human label of the target flow tab (stored snapshot, else the live
+            flows). Empty string when unknown.
         displayName:
           type: string
           description: |

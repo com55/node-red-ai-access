@@ -40,6 +40,12 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
     },
     {
       method: 'GET',
+      path: '/openapi.json',
+      auth: 'none',
+      summary: 'OpenAPI 3.1 specification (JSON)',
+    },
+    {
+      method: 'GET',
       path: '/status',
       auth: 'admin-or-access-link',
       summary: 'Plugin status and caller info',
@@ -139,6 +145,7 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       },
     },
     openapi: `${api}/openapi.yaml`,
+    openapiJson: `${api}/openapi.json`,
     mcp: rpc,
     apiBase: api,
     getLink: {

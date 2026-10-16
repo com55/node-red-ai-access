@@ -14,6 +14,7 @@ import {
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
 import { channelErrorHint } from '../channel-errors.js';
+import { registryHint } from '../error-registry.js';
 import type { NodeTypesAdapter } from '../node-types.js';
 import { autoClosedFields, expireStalePendingProposals } from '../proposal-conflicts.js';
 import {
@@ -58,11 +59,12 @@ const GET_ONLY_ERROR_HINTS: Record<string, string> = {
     'node.type must be a string (not a number or object). Use the palette type name exactly.',
   invalid_node: 'add op needs node as a JSON object: { id, type, … } — not a string or array.',
   z_mismatch: 'Each node.z must match the flow id (tab id) you are editing.',
-  validation_failed: 'Fix every entry in errors[] and retry the propose/submit.',
 };
 
 function proposeErrorHint(code: string, cause?: unknown): string | undefined {
-  return channelErrorHint(code, 'get', { cause }) ?? GET_ONLY_ERROR_HINTS[code];
+  return (
+    channelErrorHint(code, 'get', { cause }) ?? GET_ONLY_ERROR_HINTS[code] ?? registryHint(code)
+  );
 }
 
 function sendVersionMismatch(res: Response, expectedRev: string, currentRev: string): void {

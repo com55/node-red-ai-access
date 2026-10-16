@@ -24,7 +24,7 @@ Derived from
 
 ## Install (Node-RED plugin)
 
-Requirements: **Node-RED 4.x or newer**, Node.js 22+, and **`adminAuth`
+Requirements: **Node-RED 4.x or newer**, Node.js 20+, and **`adminAuth`
 enabled** (recommended). Without `adminAuth`, AI features stay off unless you
 opt in (see Configuration).
 
@@ -112,12 +112,14 @@ attached to the editor-api app that owns body-parser, not only the nested plugin
 - [MCP tools reference](docs/mcp-tools.md) — generated from live `tools/list`
 - [Error codes](docs/errors.md) — code, status, hint, channels
 - [OpenAPI 3.1](docs/api/openapi.yaml) — also `GET /mcp/api/v1/openapi.yaml`
+  (JSON: `GET /mcp/api/v1/openapi.json`)
 
 Regenerate the MCP tools doc after tool changes: `yarn generate:mcp-tools`.
 
 ## REST API
 
-OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
+OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** or
+**`GET /mcp/api/v1/openapi.json`** (also in
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml)).
 
 | Path                                     | Purpose                                          |
@@ -128,6 +130,7 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** (also in
 | `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
 | `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint) |
 | `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
+| `GET /mcp/api/v1/openapi.json`           | OpenAPI 3.1 specification (JSON)                 |
 | `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)        |
 | `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)      |
 | `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)     |

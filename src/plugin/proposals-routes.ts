@@ -15,7 +15,6 @@ import {
   ProposalConcurrentApproveError,
   ProposalNotFoundError,
   ProposalNotPendingError,
-  type ProposalStatus,
   type ProposalStore,
 } from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
@@ -32,6 +31,7 @@ import {
   getAccessibleProposal,
   listAccessibleProposals,
   listPageFields,
+  matchesStatusFilter,
   parseListProposalsQuery,
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
@@ -43,6 +43,7 @@ import type { NodeTypesAdapter } from './node-types.js';
 import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
+  liveFlowLabelsFromFlows,
   resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposal,
@@ -142,18 +143,6 @@ export function createProposalHandler(
   };
 }
 
-function liveFlowLabelsFromSnapshot(
-  flows: { id: string; type?: string; label?: unknown }[]
-): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const node of flows) {
-    if (node.type === 'tab' && typeof node.label === 'string' && node.label.trim()) {
-      map.set(node.id, node.label.trim());
-    }
-  }
-  return map;
-}
-
 export function listProposalsHandler(
   store: ProposalStore,
   adapter: FlowAdapter,
@@ -165,7 +154,7 @@ export function listProposalsHandler(
     try {
       const snapshot = await adapter.getFlows();
       liveRev = snapshot.rev;
-      liveFlowLabels = liveFlowLabelsFromSnapshot(snapshot.flows);
+      liveFlowLabels = liveFlowLabelsFromFlows(snapshot.flows);
     } catch {
       // Client can still learn stale from /diff when live rev is unavailable.
     }
@@ -179,11 +168,6 @@ export function listProposalsHandler(
     try {
       listFilter = parseListProposalsQuery(req.query);
     } catch (error) {
-      const mapped = aiOpsErrorToHttp(error, 'rest');
-      if (mapped) {
-        res.status(mapped.statusCode).json(mapped.body);
-        return;
-      }
       sendCaughtRouteError(res, error);
       return;
     }
@@ -214,14 +198,14 @@ export function listProposalsHandler(
       return;
     }
 
-    const storeFilter: { status?: ProposalStatus; flowId?: string } = {};
-    if (listFilter.status) {
-      storeFilter.status = listFilter.status;
-    }
+    const storeFilter: { flowId?: string } = {};
     if (listFilter.flowId) {
       storeFilter.flowId = listFilter.flowId;
     }
-    const all = presentProposalsForApi(store.list(storeFilter), { ...presentOpts, include });
+    const all = presentProposalsForApi(
+      store.list(storeFilter).filter(p => matchesStatusFilter(p.status, listFilter.status)),
+      { ...presentOpts, include }
+    );
     const offset = listFilter.offset ?? 0;
     const sliced =
       listFilter.limit !== undefined

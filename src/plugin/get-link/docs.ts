@@ -45,7 +45,7 @@ from the Access links page (\`/mcp\` → Access links → create \`kind=rest\` o
 
 - REST: \`${rest}\` with \`Authorization: Bearer <rest-token>\` (**rest** kind —
   not this path token)
-- OpenAPI: \`${openapi}\`
+- OpenAPI: \`${openapi}\` (JSON: \`${openapi.replace(/\.yaml$/, '.json')}\`)
 - MCP Streamable HTTP: \`POST ${rpc}\` with \`Authorization: Bearer <mcp-token>\`
   (**mcp** kind — not this path token)
 
@@ -144,7 +144,10 @@ these docs).
 - Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
-Submit responses include \`title\`, \`displayName\` (\`title ·\` **server-local**
+Submit responses include \`title\` (display title; \` in <flow>\` is appended
+when it does not name the flow), \`storedTitle\` (the title as saved: your title without the
+\` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
+\`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
 Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
@@ -202,7 +205,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 
 7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved, rejected, or
    withdrawn. Every token can list/read **all** proposals; each item has
-   \`mine:true|false\`. Filter with \`?mine=true\`, \`?status=\`, \`?flowId=\`;
+   \`mine:true|false\`. Filter with \`?mine=true\` (own) or \`?mine=false\` (others'),
+   \`?status=pending,superseded\` (comma-separated or repeated), \`?flowId=\`;
    paginate with \`?limit=\` (1–200) / \`?offset=\` (response includes \`total\`,
    \`offset\`, \`hasMore\`, and \`nextOffset\` when more remain). Invalid filters
    return \`400 invalid_filter\` naming the parameter. Cite \`displayName\` +
@@ -486,6 +490,9 @@ function docsKnownIssues(): string {
 - **Rate limits are per token (and per IP).** Each access-link token has its own
   token bucket. Several tokens can each use the full per-token limit at the same
   time; the shared IP bucket still applies across them.
+- **\`RateLimit-*\` headers describe the per-token bucket** (default
+  \`RateLimit-Policy: 300;w=60\`) on token requests; requests without a token
+  report the per-IP bucket (\`600;w=60\`). Both are enforced.
 `;
 }
 

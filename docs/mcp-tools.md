@@ -58,7 +58,7 @@ Diff any proposal against its stored baseFlow snapshot (what changed). Optional 
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
-| `format` | no | string | Diff payload format (default summary) |
+| `format` | no | "summary" \| "full" | Diff payload format (default summary) |
 | `id` | yes | string | Proposal id (prop-…) |
 
 ## `get_status`
@@ -82,9 +82,9 @@ Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this 
 | `flowId` | no | string | Filter by flow tab id (payload.flowId) |
 | `include_payload` | no | boolean | When true, include payload and baseFlow on each proposal |
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
-| `mine` | no | boolean | When true, only proposals created by this access link |
+| `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string | Filter by proposal status |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `list_node_types`
 
@@ -103,9 +103,9 @@ List proposals visible to this access link (all proposals by default). Each item
 | `flowId` | no | string | Filter by flow tab id (payload.flowId) |
 | `include_payload` | no | boolean | When true, include payload and baseFlow on each proposal |
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
-| `mine` | no | boolean | When true, only proposals created by this access link |
+| `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string | Filter by proposal status |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `search_flows`
 
@@ -126,17 +126,17 @@ Search the public Node-RED catalogue for modules to recommend. Returns module id
 
 ## `submit_proposal`
 
-Submit a replace_flow proposal for owner approval (does not deploy). Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", node, field, find, replace, occurrence? }] } — find must be unique unless occurrence (1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). Inputs (all top-level, next to each other): type="replace_flow", expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. Do not nest expectedRev inside payload. Payload size limit is 1500000 bytes (413 if exceeded). expectedRev is checked against the live rev at submit time (409 if stale). replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / search_palette and ask the user to install via Manage palette (never auto-install). Returns a lean proposal (id, status, title, displayName, reviewUrl, changeSummary, …) by default. Pass include_payload=true to include payload and baseFlow. When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. Humans approve on the /mcp page (reviewUrl opens/scrolls to it).
+Submit a replace_flow proposal for owner approval (does not deploy). Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", node, field, find, replace, occurrence? }] } — find must be unique unless occurrence (1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). Inputs (all top-level, next to each other): type="replace_flow", expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. Do not nest expectedRev inside payload. Payload size limit is 1500000 bytes (413 if exceeded). expectedRev is checked against the live rev at submit time (409 if stale). replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / search_palette and ask the user to install via Manage palette (never auto-install). Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; title may gain " in <flow>"; storedTitle is the title as saved (your title without that suffix, or the auto-generated title, which may already name the flow). Pass include_payload=true to include payload and baseFlow. When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. Humans approve on the /mcp page (reviewUrl opens/scrolls to it).
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
 | `expectedRev` | no | string | Top-level current flow revision from get_flow/list_flows (required at submit; sit next to type and payload, not inside payload) |
 | `expected_rev` | no | string | Alias for expectedRev (snake_case); prefer expectedRev |
 | `include_payload` | no | boolean | When true, include payload and baseFlow in the response (default lean) |
-| `nodes` | no | array | Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted. |
+| `nodes` | no | object[] | Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted. |
 | `payload` | yes | object | Replacement flow payload and/or node ops |
 | `title` | no | string | Optional short human title (≤80 chars). Auto-generated from changes when omitted. |
-| `type` | yes | string | Must be 'replace_flow' |
+| `type` | yes | "replace_flow" | Must be 'replace_flow' |
 
 ## `withdraw_proposal`
 

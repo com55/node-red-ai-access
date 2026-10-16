@@ -14,6 +14,7 @@ import {
   ERROR_REGISTRY,
   errorSpec,
   renderErrorsMarkdown,
+  registryHint,
   renderGetLinkErrorTable,
 } from '../../src/plugin/error-registry.js';
 
@@ -76,11 +77,26 @@ describe('error registry', () => {
     expect(errorSpec('invalid_ttl')?.hint).toMatch(/get_link.*24h.*rest and mcp.*30 days/);
   });
 
-  it('GET guide table lists GET-channel errors only', () => {
+  it('GET guide tables cover every code, warnings, statuses, and autoClosedCount', () => {
     const table = renderGetLinkErrorTable();
-    expect(table).toMatch(/`token_expired`/);
-    expect(table).toMatch(/`confirm_required`/);
-    expect(table).not.toMatch(/`bearer_scheme_required`/);
-    expect(table).not.toMatch(/`missing_config_node`/);
+    for (const code of [
+      'token_expired',
+      'confirm_required',
+      'invalid_ttl',
+      'unsupported_media_type',
+      'missing_config_node',
+      'superseded',
+      'expired',
+      'duplicate_node_id',
+    ]) {
+      expect(table).toContain(`\`${code}\``);
+    }
+    expect(table).toMatch(/autoClosedCount/);
+    expect(table).toMatch(/\| Channels \|/);
+  });
+
+  it('every registered code has a hint used as the cross-channel fallback', () => {
+    expect(registryHint('node_already_exists')).toBeTruthy();
+    expect(registryHint('validation_failed')).toMatch(/errors\[\]/);
   });
 });
