@@ -52,6 +52,8 @@ export interface PresentedProposalApi {
   changeSummary: string;
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
+  /** Soft validation notes (missing config, unwired, …) — not blocking. */
+  warnings?: Proposal['warnings'];
   baseRevStale?: boolean;
   decidedBy?: Proposal['decidedBy'];
   reason?: string;
@@ -633,6 +635,9 @@ export function presentProposalForApi(
   }
   if (include.has('baseFlow') && full.baseFlow !== undefined) {
     lean.baseFlow = full.baseFlow;
+  }
+  if (full.warnings && full.warnings.length > 0) {
+    lean.warnings = full.warnings;
   }
   if (full.baseRevStale !== undefined) {
     lean.baseRevStale = full.baseRevStale;

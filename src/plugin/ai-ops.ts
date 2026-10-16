@@ -16,7 +16,7 @@ import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../sto
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
-import { throwValidationIssues, validateFlowTab, type ValidationIssue } from './flow-validate.js';
+import { throwValidationIssues, validateFlowTab } from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   autoGenerateProposalTitle,
@@ -264,7 +264,7 @@ export async function submitReplaceFlowProposal(
   adapter: FlowAdapter,
   presentOptions: PresentProposalOptions = {},
   nodeTypesAdapter?: NodeTypesAdapter
-): Promise<PresentedProposal & { warnings?: ValidationIssue[] }> {
+): Promise<PresentedProposal> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
   const payload = body.payload;
@@ -353,6 +353,7 @@ export async function submitReplaceFlowProposal(
     baseFlow: safeBaseFlow,
     title,
     createdBy,
+    ...(flowWarnings.length > 0 ? { warnings: flowWarnings } : {}),
   });
 
   const presented = presentProposal(proposal, presentOptions);
@@ -365,11 +366,9 @@ export async function submitReplaceFlowProposal(
     title: presented.title,
     displayName: presented.displayName,
     ...(flowLabel ? { flowLabel } : {}),
+    ...(flowWarnings.length > 0 ? { warningCount: flowWarnings.length } : {}),
   });
 
-  if (flowWarnings.length > 0) {
-    return { ...presented, warnings: flowWarnings };
-  }
   return presented;
 }
 

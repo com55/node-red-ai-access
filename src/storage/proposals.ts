@@ -37,6 +37,17 @@ export interface ReplaceFlowPayload {
   flow: Partial<FlowTab>;
 }
 
+/** Soft validation notes stored with a proposal (scaffold gaps, not hard errors). */
+export interface ProposalWarning {
+  code: string;
+  error: string;
+  nodeId?: string;
+  type?: string;
+  property?: string;
+  configType?: string;
+  candidates?: string[];
+}
+
 export interface Proposal {
   id: string;
   type: ProposalType;
@@ -49,6 +60,11 @@ export interface Proposal {
    * Optional on legacy proposals created before this field existed.
    */
   baseFlow?: Partial<FlowTab>;
+  /**
+   * Soft validation notes from submit (missing config, unwired nodes, …).
+   * Never blocks approve — AI may scaffold first; humans configure later.
+   */
+  warnings?: ProposalWarning[];
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -71,6 +87,8 @@ export interface CreateProposalInput {
   createdBy: ProposalCreator;
   /** Sanitized short title (≤80 chars). */
   title: string;
+  /** Soft validation notes to persist with the proposal. */
+  warnings?: ProposalWarning[];
 }
 
 export class ProposalNotFoundError extends Error {
@@ -102,6 +120,49 @@ export class ProposalConcurrentApproveError extends Error {
 
 function isProposalStatus(value: unknown): value is ProposalStatus {
   return value === 'pending' || value === 'approved' || value === 'rejected' || value === 'failed';
+}
+
+const MAX_STORED_WARNINGS = 50;
+
+/** Keep only safe string fields from a soft-validation warning for disk. */
+function sanitizeProposalWarnings(raw: unknown): ProposalWarning[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return undefined;
+  }
+  const out: ProposalWarning[] = [];
+  for (const entry of raw.slice(0, MAX_STORED_WARNINGS)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      continue;
+    }
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.code !== 'string' || !obj.code || typeof obj.error !== 'string' || !obj.error) {
+      continue;
+    }
+    const warning: ProposalWarning = {
+      code: obj.code.replace(/\0/g, '').slice(0, 80),
+      error: obj.error.replace(/\0/g, '').slice(0, 500),
+    };
+    if (typeof obj.nodeId === 'string' && obj.nodeId) {
+      warning.nodeId = obj.nodeId.replace(/\0/g, '').slice(0, 200);
+    }
+    if (typeof obj.type === 'string' && obj.type) {
+      warning.type = obj.type.replace(/\0/g, '').slice(0, 200);
+    }
+    if (typeof obj.property === 'string' && obj.property) {
+      warning.property = obj.property.replace(/\0/g, '').slice(0, 200);
+    }
+    if (typeof obj.configType === 'string' && obj.configType) {
+      warning.configType = obj.configType.replace(/\0/g, '').slice(0, 200);
+    }
+    if (Array.isArray(obj.candidates)) {
+      warning.candidates = obj.candidates
+        .filter((c): c is string => typeof c === 'string' && c.length > 0)
+        .slice(0, 20)
+        .map(c => c.replace(/\0/g, '').slice(0, 200));
+    }
+    out.push(warning);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 export class ProposalStore {
@@ -174,6 +235,10 @@ export class ProposalStore {
         delete record.title;
       }
     }
+    const warnings = sanitizeProposalWarnings(proposal.warnings);
+    if (warnings) {
+      record.warnings = warnings;
+    }
 
     if (proposal.decidedBy) {
       const decidedBy: ProposalDecisionBy = { kind: 'admin' };
@@ -219,6 +284,10 @@ export class ProposalStore {
       createdAt: at,
       updatedAt: at,
     };
+    const warnings = sanitizeProposalWarnings(input.warnings);
+    if (warnings) {
+      proposal.warnings = warnings;
+    }
     this.writeAtomic(id, proposal);
     return this.get(id);
   }

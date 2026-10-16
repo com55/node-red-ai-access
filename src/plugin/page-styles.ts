@@ -825,6 +825,36 @@ button.id-copy:focus {
   font-weight: 650;
   font-size: 0.92rem;
 }
+.proposal-warnings {
+  margin: 0 0 0.55rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff8e8;
+  border: 1px solid #e0c070;
+  border-radius: 6px;
+  color: #6a4a14;
+  font-size: 0.9rem;
+}
+.proposal-warnings-title {
+  margin: 0 0 0.35rem;
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+.proposal-warnings ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+.proposal-warnings li {
+  margin: 0.15rem 0;
+  line-height: 1.4;
+}
+.proposal-warnings .warn-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82em;
+  opacity: 0.85;
+}
+.diff-warnings {
+  margin: 0.45rem 0 0.65rem;
+}
 .danger-text { color: var(--danger); }
 .ttl-presets {
   display: flex;

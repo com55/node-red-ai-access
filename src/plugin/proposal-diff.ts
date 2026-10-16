@@ -529,6 +529,9 @@ export function buildProposalDiff(
     compareAgainst: options.compareAgainst ?? 'current',
     ...sections,
   };
+  if (proposal.warnings && proposal.warnings.length > 0) {
+    result.warnings = proposal.warnings.map(w => ({ ...w }));
+  }
   if (options.baseSnapshotMissing) {
     result.baseSnapshotMissing = true;
   }

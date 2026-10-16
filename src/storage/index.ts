@@ -19,6 +19,7 @@ export type {
   ProposalDecisionBy,
   ProposalStatus,
   ProposalType,
+  ProposalWarning,
   ReplaceFlowPayload,
 } from './proposals.js';
 export {
