@@ -287,6 +287,7 @@ describe('proposals / flows / logs HTTP API', () => {
       });
     expect(created.status).toBe(201);
     expect(created.body.flowLabel).toBe('Test Flow');
+    // Empty node list → plain Update {label}; AI-supplied titles still win when present.
     expect(created.body.title).toBe('Update Test Flow');
 
     // Bump live rev so the pending proposal becomes stale on list.

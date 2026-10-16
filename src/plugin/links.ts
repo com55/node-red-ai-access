@@ -78,10 +78,18 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
       const created = storeForRequest(RED, store).create(input);
       const url = buildAccessLinkUrl(req, RED.settings.httpAdminRoot, created.token);
       if (audit) {
+        const createdAtMs = Date.parse(created.createdAt);
+        const expiresAtMs = Date.parse(created.expiresAt);
+        const ttlSeconds =
+          Number.isFinite(createdAtMs) && Number.isFinite(expiresAtMs) && expiresAtMs > createdAtMs
+            ? Math.round((expiresAtMs - createdAtMs) / 1000)
+            : undefined;
         audit.append('link.created', adminActor(req), {
           linkId: created.id,
           label: created.label,
           expiresAt: created.expiresAt,
+          createdAt: created.createdAt,
+          ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
         });
       }
       res.status(201).json({ ...created, url });
@@ -110,9 +118,18 @@ export function revokeLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
     try {
       const revoked = storeForRequest(RED, store).revoke(linkId);
       if (audit) {
+        const createdAtMs = Date.parse(revoked.createdAt);
+        const expiresAtMs = Date.parse(revoked.expiresAt);
+        const ttlSeconds =
+          Number.isFinite(createdAtMs) && Number.isFinite(expiresAtMs) && expiresAtMs > createdAtMs
+            ? Math.round((expiresAtMs - createdAtMs) / 1000)
+            : undefined;
         audit.append('link.revoked', adminActor(req), {
           linkId: revoked.id,
           label: revoked.label,
+          expiresAt: revoked.expiresAt,
+          createdAt: revoked.createdAt,
+          ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
         });
       }
       res.json({ revoked: true, link: revoked });

@@ -159,6 +159,12 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/You're an admin/);
     expect(res.text).toMatch(/renderHumanDiff|proposal-changes/);
     expect(res.text).toMatch(/dismiss-vs-reject/);
+    expect(res.text).toMatch(/Out of date \(/);
+    expect(res.text).toMatch(/renderStaleGroup|stale-group/);
+    expect(res.text).toMatch(/Requested via link/);
+    expect(res.text).toMatch(/Dismiss closes/);
+    expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
+    expect(res.text).toMatch(/The flow also changed in/);
     // Live destructive proposals: typed DELETE confirm before deploy.
     expect(res.text).toMatch(/delete-confirm-dialog/);
     expect(res.text).toMatch(/isLargeDelete/);
@@ -166,6 +172,9 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
     expect(res.text).toMatch(/diff\.baseRevStale/);
     expect(res.text).toMatch(/Type DELETE to confirm/);
+    // Regression: Deletes X of Y banner must show for large deletes even when stale.
+    expect(res.text).toMatch(/renderDeleteBanner|Deletes .* of .* nodes/);
+    expect(res.text).not.toMatch(/isLargeDelete\([^)]+\) && !/);
   });
 
   it('keeps /mcp/api/v1/status behind admin auth', async () => {

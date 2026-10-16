@@ -188,6 +188,42 @@
         });
     }
 
+    var saveTimer = null;
+    var saving = false;
+
+    function saveSettings(opts) {
+      var silent = !!(opts && opts.silent);
+      if (!CAN_EDIT || saving) return;
+      var payload = {
+        enabled: $('#ai-access-enabled').is(':checked'),
+        allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
+        defaultLinkTtlSeconds: Math.max(1, Math.floor(selectedTtlHours() * 3600)),
+        defaultDeploymentType: $('#ai-access-deploy').val(),
+      };
+      saving = true;
+      api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
+        .then(function (data) {
+          applyForm(data);
+          if (!silent) setFlash($('#ai-access-flash'), 'Settings saved.', true);
+          refreshPending();
+        })
+        .catch(function (err) {
+          setFlash($('#ai-access-flash'), err.message || String(err), false);
+        })
+        .then(function () {
+          saving = false;
+        });
+    }
+
+    function scheduleAutoSave() {
+      if (!CAN_EDIT) return;
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        saveTimer = null;
+        saveSettings({ silent: true });
+      }, 400);
+    }
+
     function buildContent() {
       var content = $('<div></div>', { id: CONTENT_ID, class: 'red-ui-sidebar-ai-access' });
 
@@ -267,7 +303,7 @@
       });
 
       row = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
-      $('<label for="ai-access-ttl"></label>').text('Default link expiry (hours)').appendTo(row);
+      $('<label for="ai-access-ttl"></label>').text('Default link expiry').appendTo(row);
       var presets = $(
         '<div class="ai-access-ttl-presets" role="group" aria-label="Link expiry"></div>'
       ).appendTo(row);
@@ -279,31 +315,28 @@
           .appendTo(presets)
           .on('click', function () {
             setTtlHours(h);
+            scheduleAutoSave();
           });
       });
       $('<input id="ai-access-ttl" type="hidden" value="4">').appendTo(row);
 
+      $('#ai-access-enabled, #ai-access-allow-without, #ai-access-deploy').on(
+        'change',
+        scheduleAutoSave
+      );
+
       row = $('<div class="red-ui-settings-row ai-access-actions"></div>').appendTo(body);
 
-      $('<button type="button" id="ai-access-save" class="red-ui-button primary"></button>')
+      // Node-RED standard primary button (default red-ui-button styling — not custom red).
+      $('<button type="button" id="ai-access-save" class="red-ui-button"></button>')
         .text('Save')
         .appendTo(row)
         .on('click', function () {
-          var payload = {
-            enabled: $('#ai-access-enabled').is(':checked'),
-            allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
-            defaultLinkTtlSeconds: Math.max(1, Math.floor(selectedTtlHours() * 3600)),
-            defaultDeploymentType: $('#ai-access-deploy').val(),
-          };
-          api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
-            .then(function (data) {
-              applyForm(data);
-              setFlash(flash, 'Settings saved.', true);
-              refreshPending();
-            })
-            .catch(function (err) {
-              setFlash(flash, err.message || String(err), false);
-            });
+          if (saveTimer) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+          }
+          saveSettings();
         });
 
       $('<button type="button" id="ai-access-open-mcp" class="red-ui-button"></button>')
@@ -393,16 +426,14 @@
   }
   #red-ui-sidebar-ai-access .ai-access-actions {
     margin-top: 12px;
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
   }
   #red-ui-sidebar-ai-access .ai-access-actions .red-ui-button {
     margin: 0;
-    white-space: nowrap;
-  }
-  #red-ui-sidebar-ai-access #ai-access-save.primary {
-    font-weight: 700;
+    flex: 0 0 auto;
   }
   #red-ui-sidebar-ai-access .red-ui-settings-row.stacked {
     flex-direction: column;

@@ -133,11 +133,6 @@ function renderMcpPageProposalsSection(): string {
           Decided <span id="filter-decided-count">0</span>
         </button>
       </div>
-      <div class="proposals-toolbar" id="proposals-toolbar" hidden>
-        <button type="button" class="action secondary" id="dismiss-all-stale">
-          Dismiss all out-of-date
-        </button>
-      </div>
       <div id="proposals-flash" class="flash" hidden></div>
       <div id="proposals-list"><p class="muted">Loading…</p></div>
     </section>`;

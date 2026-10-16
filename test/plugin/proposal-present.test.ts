@@ -67,44 +67,75 @@ describe('formatUtcOffset / formatProposalSubmittedAt', () => {
 });
 
 describe('autoGenerateProposalTitle', () => {
-  it('uses a plain Update {flow label} title', () => {
+  it('describes a rename', () => {
     expect(
       autoGenerateProposalTitle(
         {
-          id: 'tab1',
           label: 'Test Flow',
-          nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'a' }],
+          nodes: [{ id: 'n1', type: 'debug', name: 'out', complete: 'payload' }],
         },
         {
-          id: 'tab1',
           label: 'Test Flow',
-          nodes: [{ id: 'n1', type: 'function', name: 'fn1', func: 'b' }],
+          nodes: [{ id: 'n1', type: 'debug', name: 'out (patched)', complete: 'payload' }],
         }
       )
-    ).toBe('Update Test Flow');
+    ).toBe('Rename debug node "out" → "out (patched)"');
   });
 
-  it('falls back to Update flow when no label', () => {
+  it('describes a single added inject', () => {
     expect(
       autoGenerateProposalTitle(
-        { nodes: [] },
-        { nodes: [{ id: 'n2', type: 'template', name: 'demo-html' }] }
+        { label: 'Test Flow', nodes: [] },
+        { label: 'Test Flow', nodes: [{ id: 'n2', type: 'inject', name: 'tick2' }] }
       )
-    ).toBe('Update flow');
+    ).toBe('Add inject node "tick2"');
   });
 
-  it('prefers the after-flow label over the base label', () => {
+  it('describes a single edited template', () => {
     expect(
       autoGenerateProposalTitle(
-        { label: 'Old Name', nodes: [{ id: 'a', type: 'inject', name: 'A' }] },
-        { label: 'New Name', nodes: [{ id: 'a', type: 'inject', name: 'A', topic: 'x' }] }
+        {
+          label: 'Test Flow',
+          nodes: [{ id: 't1', type: 'template', name: 'html20k', template: 'a' }],
+        },
+        {
+          label: 'Test Flow',
+          nodes: [{ id: 't1', type: 'template', name: 'html20k', template: 'b' }],
+        }
       )
-    ).toBe('Update New Name');
+    ).toBe('Edit template "html20k"');
+  });
+
+  it('summarizes many changes with the flow label', () => {
+    expect(
+      autoGenerateProposalTitle(
+        {
+          label: 'Test Flow',
+          nodes: [
+            { id: 'a', type: 'inject', name: 'A', topic: '1' },
+            { id: 'b', type: 'inject', name: 'B', topic: '1' },
+            { id: 'c', type: 'inject', name: 'C', topic: '1' },
+          ],
+        },
+        {
+          label: 'Test Flow',
+          nodes: [
+            { id: 'a', type: 'inject', name: 'A', topic: '2' },
+            { id: 'b', type: 'inject', name: 'B', topic: '2' },
+            { id: 'c', type: 'inject', name: 'C', topic: '2' },
+          ],
+        }
+      )
+    ).toBe('3 changes in Test Flow');
+  });
+
+  it('falls back to Update flow when nothing changed and no label', () => {
+    expect(autoGenerateProposalTitle({ nodes: [] }, { nodes: [] })).toBe('Update flow');
   });
 });
 
 describe('presentProposal', () => {
-  it('uses stored title and builds displayName + reviewPath/Url', () => {
+  it('uses stored AI title and builds displayName + reviewPath/Url', () => {
     const presented = presentProposal(baseProposal({ title: 'Rename inject' }));
     expect(presented.title).toBe('Rename inject');
     expect(presented.displayName).toBe(
@@ -158,7 +189,7 @@ describe('presentProposal', () => {
     expect(presented.reviewUrl).toBe('https://flows.example.com/mcp#proposal=prop-abcdef012345');
   });
 
-  it('auto-generates a plain title for legacy proposals without title', () => {
+  it('auto-generates a change-based title for legacy proposals without title', () => {
     const presented = presentProposal(
       baseProposal({
         title: undefined,
@@ -177,9 +208,9 @@ describe('presentProposal', () => {
         },
       })
     );
-    expect(presented.title).toBe('Update Main');
+    expect(presented.title).toBe('Edit inject "tick"');
     expect(presented.flowLabel).toBe('Main');
-    expect(presented.displayName.startsWith('Update Main · ')).toBe(true);
+    expect(presented.displayName.startsWith('Edit inject "tick" · ')).toBe(true);
     expect(presented.reviewPath).toBeTruthy();
   });
 
