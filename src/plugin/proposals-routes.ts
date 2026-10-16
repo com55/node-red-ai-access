@@ -43,6 +43,7 @@ import type { NodeTypesAdapter } from './node-types.js';
 import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
+  liveFlowLabelsFromFlows,
   resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposal,
@@ -142,18 +143,6 @@ export function createProposalHandler(
   };
 }
 
-function liveFlowLabelsFromSnapshot(
-  flows: { id: string; type?: string; label?: unknown }[]
-): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const node of flows) {
-    if (node.type === 'tab' && typeof node.label === 'string' && node.label.trim()) {
-      map.set(node.id, node.label.trim());
-    }
-  }
-  return map;
-}
-
 export function listProposalsHandler(
   store: ProposalStore,
   adapter: FlowAdapter,
@@ -165,7 +154,7 @@ export function listProposalsHandler(
     try {
       const snapshot = await adapter.getFlows();
       liveRev = snapshot.rev;
-      liveFlowLabels = liveFlowLabelsFromSnapshot(snapshot.flows);
+      liveFlowLabels = liveFlowLabelsFromFlows(snapshot.flows);
     } catch {
       // Client can still learn stale from /diff when live rev is unavailable.
     }

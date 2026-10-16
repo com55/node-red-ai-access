@@ -3,7 +3,7 @@
  * duplicate_node_id, validation_failed, autoClosedCount, MCP argument mapping.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import { installMcpArgumentErrorMapping } from '../../src/plugin/mcp-rpc.js';
+import { schemaTypeText } from '../../src/plugin/mcp-tools-doc.js';
+import { renderMcpPage } from '../../src/plugin/page.js';
+import {
+  autoGenerateProposalTitle,
+  buildReplaceFlowTitle,
+  shouldRefreshDisplayTitle,
+  titleFromDiffSummary,
+} from '../../src/plugin/proposal-present.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 
@@ -751,5 +759,141 @@ describe('status filter messages and packaging follow-ups', () => {
     expect(resolveOpenApiYamlPath()?.replace(/\\/g, '/')).toMatch(/docs\/api\/openapi\.yaml$/);
     const tsup = readFileSync(join(__dirname, '../../tsup.config.ts'), 'utf8');
     expect(tsup).not.toMatch(/copyFileSync/);
+  });
+});
+
+describe('proposal presentation is consistent across channels', () => {
+  let userDir: string;
+  beforeEach(() => {
+    userDir = mkdtempSync(join(tmpdir(), 'ai-access-present-'));
+    // Legacy proposal: no flow label stored anywhere, no baseFlow.
+    const dir = join(userDir, '.ai-access', 'proposals');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'prop-legacy0000000000000001.json'),
+      JSON.stringify({
+        id: 'prop-legacy0000000000000001',
+        type: 'replace_flow',
+        status: 'expired',
+        expectedRev: 'x',
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', nodes: [] } },
+        createdBy: { kind: 'access-link', linkId: 'old', label: 'old' },
+        createdAt: '2026-10-15T14:59:41.370Z',
+        updatedAt: '2026-10-15T14:59:41.370Z',
+        baseFlow: null,
+      })
+    );
+  });
+  afterEach(() => {
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  it('list and single reads on REST, GET link, MCP, and admin agree on flowLabel/title', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const getLink = linkStore.create({ kind: 'get_link' });
+    const mcp = linkStore.create({ kind: 'mcp' });
+    const id = 'prop-legacy0000000000000001';
+    const auth = { Authorization: `Bearer ${rest.token}` };
+    const results: { flowLabel: unknown; title: unknown }[] = [];
+    const pick = (p: Record<string, unknown>) => ({ flowLabel: p.flowLabel, title: p.title });
+    const restList = await request(app).get('/mcp/api/v1/proposals').set(auth);
+    results.push(pick(restList.body.proposals[0]));
+    results.push(pick((await request(app).get(`/mcp/api/v1/proposals/${id}`).set(auth)).body));
+    results.push(pick((await request(app).get('/mcp/api/v1/proposals')).body.proposals[0]));
+    results.push(pick((await request(app).get(`/mcp/api/v1/proposals/${id}`)).body));
+    const gl = await request(app).get(`/mcp/a/${getLink.token}/proposals`);
+    results.push(pick(gl.body.proposals[0]));
+    results.push(pick((await request(app).get(`/mcp/a/${getLink.token}/proposals/${id}`)).body));
+    const ml = await callTool(app, mcp.token, 'list_proposals', {});
+    results.push(pick((ml.json.proposals as Record<string, unknown>[])[0]!));
+    const mg = await callTool(app, mcp.token, 'get_proposal', { id });
+    results.push(pick(mg.json));
+    for (const r of results) {
+      expect(r).toEqual({ flowLabel: 'Main', title: 'Update Main' });
+    }
+  });
+});
+
+describe('titles never render a non-string node type', () => {
+  it('buildReplaceFlowTitle / autoGenerateProposalTitle fall back to "node"', () => {
+    const t = buildReplaceFlowTitle({
+      flowLabel: 'Test Flow',
+      removed: 4,
+      added: [{ id: 'q', type: { x: 1 } as unknown as string }],
+    });
+    expect(t).toBe('Replace Test Flow: deletes 4 nodes, adds 1 node');
+    const auto = autoGenerateProposalTitle({ id: 't', type: 'tab', label: 'L', nodes: [] }, {
+      id: 't',
+      type: 'tab',
+      label: 'L',
+      nodes: [{ id: 'q', type: { x: 1 } }],
+    } as never);
+    expect(auto).not.toMatch(/object Object/);
+  });
+
+  it('titleFromDiffSummary ignores a non-string firstAddedType', () => {
+    const t = titleFromDiffSummary(
+      { removed: 1, added: 1 },
+      { flowLabel: 'F', firstAddedType: { x: 1 } as unknown as string }
+    );
+    expect(t).toBe('Replace F: deletes 1 node, adds 1 node');
+  });
+
+  it('stored legacy "[object Object]" titles are regenerated on read', () => {
+    expect(shouldRefreshDisplayTitle('Replace F: deletes 4 nodes, adds 1 [object Object]', 4)).toBe(
+      true
+    );
+  });
+
+  it('page client guards the same cases', () => {
+    const html = renderMcpPage({ apiBase: '/mcp/api/v1' } as never);
+    expect(html).toContain("t.indexOf('[object Object]') !== -1");
+    expect(html).toContain("typeof diff.added[0].type === 'string'");
+  });
+});
+
+describe('/mcp page UI follow-ups', () => {
+  const html = renderMcpPage({ apiBase: '/mcp/api/v1' } as never);
+
+  it('Decided list pages with Load more and searches beyond the first page', () => {
+    expect(html).toContain('DECIDED_PAGE_SIZE = 50');
+    expect(html).toContain("'&limit=' + DECIDED_PAGE_SIZE + '&offset=' + decidedLoaded");
+    expect(html).toContain('id="decided-load-more"');
+    expect(html).toContain('Load more');
+    expect(html).toContain('loadAllDecidedForSearch()');
+    expect(html).toContain("api('/proposals?status=pending')");
+  });
+
+  it('copy short-id buttons have an accessible name', () => {
+    expect(html).toContain('aria-label="Copy proposal id \' + esc(s) + \'"');
+  });
+
+  it('Custom TTL option is labelled "Custom…" and the row has no offset margin', () => {
+    expect(html).toContain('<option value="custom">Custom…</option>');
+    expect(html).toMatch(/\.ttl-custom-row \{[^}]*margin: 0;[^}]*align-self: flex-end;/);
+  });
+
+  it('toast sits bottom-left, clear of right-aligned table actions', () => {
+    expect(html).toMatch(/\.toast-host \{[^}]*left: 1rem;/);
+    expect(html).not.toMatch(/\.toast-host \{[^}]*right: 1rem;/);
+  });
+
+  it('"For developers" is collapsed on each new token', () => {
+    expect(html).toContain("var devDetails = $('token-dev-details');");
+    expect(html).toContain('devDetails.open = false;');
+  });
+});
+
+describe('mcp-tools.md type rendering', () => {
+  it('renders unions, enums, and arrays instead of "unknown"', () => {
+    expect(
+      schemaTypeText({ anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] })
+    ).toBe('string | string[]');
+    expect(schemaTypeText({ type: 'string', enum: ['a', 'b'] })).toBe('"a" | "b"');
+    expect(schemaTypeText({ type: 'array', items: { enum: ['x', 'y'] } })).toBe('("x" | "y")[]');
+    expect(schemaTypeText({})).toBe('any');
+    const doc = readFileSync(join(__dirname, '../../docs/mcp-tools.md'), 'utf8');
+    expect(doc).not.toMatch(/\| unknown \|/);
   });
 });

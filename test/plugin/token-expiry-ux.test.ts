@@ -269,7 +269,7 @@ describe('token expiry UX', () => {
     // Dropdown includes 7d + Custom; 7d is hidden for get_link.
     expect(html).toMatch(/id="link-ttl-preset"/);
     expect(html).toMatch(/>7 days</);
-    expect(html).toMatch(/value="custom">Custom</);
+    expect(html).toMatch(/value="custom">Custom…</);
     expect(html).toMatch(/sevenDay\.hidden = kind === 'get_link'/);
     // Switching channel to get_link with 7d selected → reset to 1 hour + note.
     expect(html).toMatch(/kind === 'get_link' && sel && sel\.value === String\(TTL_PRESET_7D\)/);

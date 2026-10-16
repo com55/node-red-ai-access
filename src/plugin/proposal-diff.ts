@@ -11,6 +11,7 @@ import type { FlowAdapter, FlowNode, FlowTab } from '../runtime/types.js';
 import type { Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
+import { nodeTypeText } from './proposal-present.js';
 
 /** Node property keys treated as multi-line text for line diffs. */
 const TEXT_PROPERTY_KEYS = new Set([
@@ -301,7 +302,7 @@ function buildKeyFields(node: FlowNode, allNodes: Map<string, FlowNode>): Presen
 }
 
 function buildModifiedSummary(node: FlowNode, flowLabel: string, changeCount: number): string {
-  const type = node.type || 'node';
+  const type = nodeTypeText(node.type);
   const name = nodeName(node);
   const named = name ? ` "${name}"` : '';
   const where = flowLabel ? ` in "${flowLabel}"` : '';
@@ -314,7 +315,7 @@ function buildPresenceSummary(
   kind: 'added' | 'removed',
   flowLabel: string
 ): string {
-  const type = node.type || 'node';
+  const type = nodeTypeText(node.type);
   const name = nodeName(node);
   const verb = kind === 'added' ? 'Adds' : 'Removes';
   const prep = kind === 'added' ? 'to' : 'from';

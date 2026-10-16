@@ -863,8 +863,11 @@ button.id-copy:focus {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: flex-end;
-  margin: 0.25rem 0 0.35rem;
+  /* No extra margin: sit on the same baseline as sibling fields in .row. */
+  margin: 0;
+  align-self: flex-end;
 }
+.ttl-custom-row label { margin: 0; }
 .ttl-long-warn {
   margin: 0.5rem 0 0;
   color: #b42318;
@@ -992,8 +995,9 @@ function pageStylesPartH(): string {
 .large-diff-btn::-webkit-details-marker { display: none; }
 .large-diff-details { margin-top: 0.25rem; }
 .toast-host {
+  /* Bottom-left: keeps clear of right-aligned table actions (e.g. Revoke). */
   position: fixed;
-  right: 1rem;
+  left: 1rem;
   bottom: 1rem;
   z-index: 80;
   display: flex;
@@ -1020,6 +1024,7 @@ function pageStylesPartH(): string {
   margin-left: 0.35rem;
 }
 .toast.ok { background: var(--ok); }
+.decided-more { margin: 0.75rem 0 0; display: flex; gap: 0.6rem; align-items: center; }
 .toast.error { background: var(--danger); }
 .dialog-proposal-title {
   margin: 0 0 0.55rem;

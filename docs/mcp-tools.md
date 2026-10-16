@@ -58,7 +58,7 @@ Diff any proposal against its stored baseFlow snapshot (what changed). Optional 
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
-| `format` | no | string | Diff payload format (default summary) |
+| `format` | no | "summary" \| "full" | Diff payload format (default summary) |
 | `id` | yes | string | Proposal id (prop-…) |
 
 ## `get_status`
@@ -84,7 +84,7 @@ Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this 
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `list_node_types`
 
@@ -105,7 +105,7 @@ List proposals visible to this access link (all proposals by default). Each item
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `search_flows`
 
@@ -133,10 +133,10 @@ Submit a replace_flow proposal for owner approval (does not deploy). Preferred f
 | `expectedRev` | no | string | Top-level current flow revision from get_flow/list_flows (required at submit; sit next to type and payload, not inside payload) |
 | `expected_rev` | no | string | Alias for expectedRev (snake_case); prefer expectedRev |
 | `include_payload` | no | boolean | When true, include payload and baseFlow in the response (default lean) |
-| `nodes` | no | array | Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted. |
+| `nodes` | no | object[] | Optional node ops (set/add/remove/replace_text). Same as payload.nodes when flow is omitted. |
 | `payload` | yes | object | Replacement flow payload and/or node ops |
 | `title` | no | string | Optional short human title (≤80 chars). Auto-generated from changes when omitted. |
-| `type` | yes | string | Must be 'replace_flow' |
+| `type` | yes | "replace_flow" | Must be 'replace_flow' |
 
 ## `withdraw_proposal`
 

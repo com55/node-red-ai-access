@@ -5,7 +5,7 @@
  * and the /mcp/rpc Streamable HTTP endpoint.
  */
 
-import type { Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 
 import { requireAccessLink } from './access-link-auth.js';
 import { editorAuthTokenKey } from './auth-token-key.js';
@@ -46,6 +46,7 @@ import {
 } from './node-types-routes.js';
 import { openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
+import { liveFlowLabelsFromFlows, setRequestFlowLabels } from './proposal-present.js';
 import {
   approveProposalHandler,
   createProposalHandler,
@@ -139,6 +140,9 @@ function registerMcpShellAndDiscovery(
   );
 }
 
+const PROPOSAL_PRESENT_PATH =
+  /^\/mcp\/(?:api\/v1\/proposals|rpc$|a\/[^/]+\/(?:proposals|propose|draft))/;
+
 export function registerRoutes(
   RED: NodeRedPluginAPI,
   serviceOptions: CreatePluginServicesOptions = {}
@@ -150,6 +154,21 @@ export function registerRoutes(
   const services = createPluginServices(RED, {
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
+  });
+
+  // Resolve live flow labels once per proposal-related request so every channel
+  // (REST, GET link, MCP) and endpoint (list, get, submit, …) presents the same
+  // flowLabel/title for proposals whose stored snapshot lacks a tab label.
+  RED.httpAdmin.use((req: Request, _res: Response, next: NextFunction) => {
+    if (!PROPOSAL_PRESENT_PATH.test(req.path)) {
+      next();
+      return;
+    }
+    services.flowAdapter
+      .getFlows()
+      .then(snapshot => setRequestFlowLabels(req, liveFlowLabelsFromFlows(snapshot.flows)))
+      .catch(() => undefined)
+      .finally(() => next());
   });
 
   // Self-contained GET access links for headerless HTTP clients (`/mcp/a/<token>/…`).

@@ -21,6 +21,34 @@ export interface McpToolListItem {
   };
 }
 
+/**
+ * Human type for a JSON Schema property: handles `type` arrays, `anyOf`/`oneOf`
+ * unions, `enum`s, and arrays (`string[]`). Falls back to `any`.
+ */
+export function schemaTypeText(schema: unknown): string {
+  if (!schema || typeof schema !== 'object') return 'any';
+  const s = schema as Record<string, unknown>;
+  const union = (Array.isArray(s.anyOf) ? s.anyOf : Array.isArray(s.oneOf) ? s.oneOf : null) as
+    unknown[] | null;
+  if (union) {
+    return [...new Set(union.map(schemaTypeText))].join(' | ');
+  }
+  if (Array.isArray(s.enum)) {
+    return s.enum.map(v => JSON.stringify(v)).join(' | ');
+  }
+  if (s.const !== undefined) return JSON.stringify(s.const);
+  if (Array.isArray(s.type)) {
+    return s.type
+      .map(t => (t === 'array' ? `${schemaTypeText(s.items)}[]` : String(t)))
+      .join(' | ');
+  }
+  if (s.type === 'array') {
+    const item = schemaTypeText(s.items);
+    return item.includes(' | ') ? `(${item})[]` : `${item}[]`;
+  }
+  return typeof s.type === 'string' ? s.type : 'any';
+}
+
 export function formatMcpToolsMarkdown(tools: McpToolListItem[]): string {
   const sorted = [...tools].sort((a, b) => a.name.localeCompare(b.name));
   const lines: string[] = [
@@ -48,9 +76,7 @@ export function formatMcpToolsMarkdown(tools: McpToolListItem[]): string {
     lines.push('| --- | --- | --- | --- |');
     for (const key of keys) {
       const prop = props[key] ?? {};
-      const type = Array.isArray(prop.type)
-        ? prop.type.join(' | ')
-        : String(prop.type ?? 'unknown');
+      const type = schemaTypeText(prop).replace(/\|/g, '\\|');
       const desc = String(prop.description ?? '')
         .replace(/\\/g, '\\\\')
         .replace(/\|/g, '\\|');

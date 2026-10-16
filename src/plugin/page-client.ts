@@ -21,6 +21,13 @@ function pageClientScriptPartA(): string {
   var proposalsFilter = 'pending';
   var proposalsSearchQuery = '';
   var cachedProposals = [];
+  // Decided proposals load in pages (Load more); pending always load in full.
+  var DECIDED_PAGE_SIZE = 50;
+  var DECIDED_STATUSES = 'approved,rejected,failed,withdrawn,expired,superseded';
+  var decidedLoaded = 0;
+  var decidedTotal = 0;
+  var decidedHasMore = false;
+  var decidedLoadingAll = false;
   var proposalDiffCache = {};
   var cachedLinksById = {};
   var cachedFlowLabels = {};
@@ -363,7 +370,7 @@ function pageClientScriptPartAFormat(): string {
     var s = String(id == null ? '' : id);
     if (!s) return '';
     return '<button type="button" class="id-copy" data-copy-id="' + esc(s) +
-      '" title="' + esc(s) + ' — click to copy">' +
+      '" title="' + esc(s) + ' — click to copy" aria-label="Copy proposal id ' + esc(s) + '">' +
       '<code class="id-short">' + esc(proposalShortId(s, 8)) + '</code></button>';
   }
   function actorPlain(actor) {
@@ -836,10 +843,10 @@ function pageClientScriptPartATabs(): string {
       '<option value="' + TTL_PRESET_4H + '">4 hours</option>' +
       '<option value="' + TTL_PRESET_24H + '">24 hours</option>' +
       '<option value="' + TTL_PRESET_7D + '">7 days</option>' +
-      '<option value="custom">Custom</option>' +
+      '<option value="custom">Custom…</option>' +
       '</select></label>' +
       '<div id="link-ttl-custom-row" class="ttl-custom-row" hidden>' +
-      '<label>Custom<input id="link-ttl-custom-amount" type="number" min="1" step="1" value="1" aria-label="Custom duration amount" /></label>' +
+      '<label>Amount<input id="link-ttl-custom-amount" type="number" min="1" step="1" value="1" aria-label="Custom duration amount" /></label>' +
       '<label><span class="visually-hidden">Unit</span><select id="link-ttl-custom-unit" aria-label="Custom duration unit">' +
       '<option value="minutes">minutes</option>' +
       '<option value="hours" selected>hours</option>' +
@@ -1177,6 +1184,9 @@ function pageClientScriptPartB(): string {
       var material = linkCopyMaterial(createdKind, created.token || '', created.url || '');
       var box = $('token-once');
       box.hidden = false;
+      // Each new token starts with "For developers" collapsed.
+      var devDetails = $('token-dev-details');
+      if (devDetails) devDetails.open = false;
       var kindLabel = $('token-kind-label');
       if (kindLabel) {
         kindLabel.hidden = false;
@@ -1426,6 +1436,7 @@ function pageClientScriptPartB(): string {
   function shouldRefreshDisplayTitle(storedTitle, removedCount) {
     var t = String(storedTitle || '').trim();
     if (!t) return true;
+    if (t.indexOf('[object Object]') !== -1) return true;
     if (/^Update(\\s|$)/i.test(t)) return true;
     if (removedCount > 0 && !/^Replace\\b/i.test(t)) return true;
     return false;
@@ -1526,8 +1537,8 @@ function pageClientScriptPartB(): string {
       return ensureTitleIncludesFlowName(stored, flowLabel);
     }
     var firstType = '';
-    if (diff.added && diff.added[0] && diff.added[0].type) {
-      firstType = String(diff.added[0].type);
+    if (diff.added && diff.added[0] && typeof diff.added[0].type === 'string') {
+      firstType = diff.added[0].type.trim();
     }
     if (removed > 0) {
       var parts = ['deletes ' + removed + ' ' + pluralNodes(removed)];
@@ -1557,7 +1568,7 @@ function pageClientScriptPartB(): string {
       pending: pending.length,
       live: pending.length - stale,
       stale: stale,
-      decided: cachedProposals.filter(function (p) { return p.status !== 'pending'; }).length
+      decided: Math.max(decidedTotal, cachedProposals.filter(function (p) { return p.status !== 'pending'; }).length)
     };
   }
 `;
@@ -2396,7 +2407,10 @@ function pageClientScriptPartB2CardsList(): string {
       live.concat(stale).forEach(function (p) { loadProposalDiff(p.id); });
     } else {
       var matchedDecided = decided.filter(proposalMatchesSearch);
-      if (!matchedDecided.length) {
+      if (proposalsSearchQuery.trim() && decidedHasMore) {
+        loadAllDecidedForSearch();
+      }
+      if (!matchedDecided.length && !decidedHasMore) {
         var pendingMatches = countSearchMatchesInFilter('pending');
         list.innerHTML = renderEmptyProposalsState(
           proposalsSearchQuery.trim() ? 'No matching proposals' : 'No decided proposals',
@@ -2409,7 +2423,8 @@ function pageClientScriptPartB2CardsList(): string {
         return;
       }
       disambiguatedTitleCache = buildDisambiguatedTitles(matchedDecided);
-      list.innerHTML = matchedDecided.map(renderCompactProposal).join('');
+      list.innerHTML = matchedDecided.map(renderCompactProposal).join('') + renderDecidedLoadMore();
+      bindDecidedLoadMore(list);
     }
     bindProposalActions(list);
     focusProposalFromHash();
@@ -2442,8 +2457,16 @@ function pageClientScriptPartB2Focus(): string {
     }
     try {
       await refreshFlowLabels();
-      var data = await api('/proposals');
-      cachedProposals = (data && data.proposals) || [];
+      var pendingData = await api('/proposals?status=pending');
+      // Refresh keeps however many decided cards were already loaded.
+      var decidedLimit = Math.min(200, Math.max(DECIDED_PAGE_SIZE, decidedLoaded));
+      var decidedData = await api('/proposals?status=' + DECIDED_STATUSES +
+        '&limit=' + decidedLimit + '&offset=0');
+      var decidedList = (decidedData && decidedData.proposals) || [];
+      decidedLoaded = decidedList.length;
+      decidedTotal = Number(decidedData && decidedData.total) || decidedList.length;
+      decidedHasMore = !!(decidedData && decidedData.hasMore);
+      cachedProposals = ((pendingData && pendingData.proposals) || []).concat(decidedList);
       cachedProposals.forEach(function (p) {
         var id = p && p.payload && p.payload.flowId;
         var label = p && p.flowLabel;
@@ -2457,6 +2480,60 @@ function pageClientScriptPartB2Focus(): string {
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
     }
+  }
+
+  /** Append the next page of decided proposals (offset/hasMore). */
+  async function loadMoreDecided() {
+    if (!decidedHasMore) return;
+    var data = await api('/proposals?status=' + DECIDED_STATUSES +
+      '&limit=' + DECIDED_PAGE_SIZE + '&offset=' + decidedLoaded);
+    var more = (data && data.proposals) || [];
+    var seen = {};
+    cachedProposals.forEach(function (p) { seen[p.id] = true; });
+    more.forEach(function (p) { if (!seen[p.id]) cachedProposals.push(p); });
+    decidedLoaded += more.length;
+    decidedTotal = Number(data && data.total) || decidedTotal;
+    decidedHasMore = !!(data && data.hasMore) && more.length > 0;
+  }
+
+  /** Search must cover every decided proposal, not just the loaded pages. */
+  async function loadAllDecidedForSearch() {
+    if (decidedLoadingAll || !decidedHasMore) return;
+    decidedLoadingAll = true;
+    try {
+      while (decidedHasMore) {
+        await loadMoreDecided();
+      }
+    } catch (e) {
+      showFlash($('proposals-flash'), e.message || String(e), false);
+    } finally {
+      decidedLoadingAll = false;
+    }
+    renderProposalsList();
+  }
+
+  function renderDecidedLoadMore() {
+    if (!decidedHasMore) return '';
+    if (proposalsSearchQuery.trim()) {
+      return '<p class="muted decided-more" role="status">Searching all decided proposals…</p>';
+    }
+    return '<div class="decided-more"><button type="button" class="action" id="decided-load-more">' +
+      'Load more</button> <span class="muted">' + esc(String(decidedLoaded)) + ' of ' +
+      esc(String(decidedTotal)) + ' shown</span></div>';
+  }
+
+  function bindDecidedLoadMore(list) {
+    var btn = list && list.querySelector('#decided-load-more');
+    if (!btn) return;
+    bindOnce(btn, 'click', async function () {
+      btn.disabled = true;
+      try {
+        await loadMoreDecided();
+      } catch (e) {
+        showFlash($('proposals-flash'), e.message || String(e), false);
+      }
+      renderProposalsList();
+    });
   }
 
   function readProposalHashId() {
