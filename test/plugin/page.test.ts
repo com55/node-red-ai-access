@@ -151,6 +151,21 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/diff-split|diff-line/);
     expect(res.text).toMatch(/Node added|Node removed/);
     expect(res.text).toMatch(/base snapshot|vsCurrent/);
+    expect(res.text).toMatch(/to review|out of date/);
+    expect(res.text).toMatch(/Dismiss all out-of-date/);
+    expect(res.text).toMatch(/Deploy options/);
+    expect(res.text).toMatch(/filter-decided-count/);
+    expect(res.text).toMatch(/for troubleshooting/);
+    expect(res.text).toMatch(/You're an admin/);
+    expect(res.text).toMatch(/renderHumanDiff|proposal-changes/);
+    expect(res.text).toMatch(/dismiss-vs-reject/);
+    // Live destructive proposals: typed DELETE confirm before deploy.
+    expect(res.text).toMatch(/delete-confirm-dialog/);
+    expect(res.text).toMatch(/isLargeDelete/);
+    expect(res.text).toMatch(/openDeleteConfirmDialog/);
+    expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
+    expect(res.text).toMatch(/diff\.baseRevStale/);
+    expect(res.text).toMatch(/Type DELETE to confirm/);
   });
 
   it('keeps /mcp/api/v1/status behind admin auth', async () => {

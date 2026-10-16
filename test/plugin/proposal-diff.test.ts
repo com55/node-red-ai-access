@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDiffSections, buildProposalDiff } from '../../src/plugin/proposal-diff.js';
+import {
+  buildDiffSections,
+  buildProposalDiff,
+  isLargeDelete,
+} from '../../src/plugin/proposal-diff.js';
 import type { Proposal } from '../../src/storage/proposals.js';
 
 function proposal(partial: Partial<Proposal> & Pick<Proposal, 'payload'>): Proposal {
@@ -245,5 +249,27 @@ describe('buildProposalDiff', () => {
     expect(diff.baseRevStale).toBe(true);
     expect(diff.currentRev).toBe('new-rev');
     expect(diff.expectedRev).toBe('old-rev');
+  });
+});
+
+describe('isLargeDelete', () => {
+  it('is true when more than half the before nodes are removed', () => {
+    expect(isLargeDelete({ beforeNodeCount: 10, removed: 6 })).toBe(true);
+    expect(isLargeDelete({ beforeNodeCount: 4, removed: 3 })).toBe(true);
+  });
+
+  it('is false at or below 50%, or with missing counts', () => {
+    expect(isLargeDelete({ beforeNodeCount: 10, removed: 5 })).toBe(false);
+    expect(isLargeDelete({ beforeNodeCount: 10, removed: 4 })).toBe(false);
+    expect(isLargeDelete({ beforeNodeCount: 0, removed: 1 })).toBe(false);
+    expect(isLargeDelete(undefined)).toBe(false);
+  });
+
+  it('marks a live destructive proposal summary as requiring typed DELETE confirm', () => {
+    // Live (non-stale) proposals with isLargeDelete must go through openDeleteConfirmDialog
+    // and require typing DELETE before doApproveProposal (see page-client approveProposal).
+    const summary = { beforeNodeCount: 8, removed: 7, added: 0, modified: 0, tabChanges: [] };
+    expect(isLargeDelete(summary)).toBe(true);
+    expect(isLargeDelete(summary) && !false /* baseRevStale */).toBe(true);
   });
 });

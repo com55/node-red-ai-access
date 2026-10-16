@@ -113,11 +113,20 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/what the AI started from|base snapshot|live flow/);
     expect(client).toMatch(/showAuthGate|Approve &amp; deploy|fieldLabel|Connects to/);
     expect(client).toMatch(/You \(admin\)/);
+    expect(client).toMatch(/Deploy options/);
+    expect(client).toMatch(/to review.*out of date|formatPendingBadgeText/);
+    expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
+    expect(client).toMatch(/renderHumanDiff/);
+    expect(client).toMatch(/isLargeDelete/);
+    expect(client).toMatch(/openDeleteConfirmDialog/);
+    expect(client).toMatch(/deleteInput\.value !== 'DELETE'/);
+    expect(client).toMatch(/You're an admin/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/\.node-presence/);
     expect(styles).toMatch(/\.presence-pre/);
     expect(styles).toMatch(/\.presence-preview-frame/);
     expect(styles).toMatch(/\.proposal-highlight/);
+    expect(styles).toMatch(/\.proposal-changes|\.stale-warning-row/);
   });
 });
 
@@ -126,5 +135,14 @@ describe('ai-access sidebar TTL layout', () => {
     const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
     expect(html).toMatch(/red-ui-settings-row stacked/);
     expect(html).toMatch(/\.red-ui-settings-row\.stacked[\s\S]*flex-direction:\s*column/);
+  });
+
+  it('uses Save as primary, AI tools copy, and pending plurals', () => {
+    const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
+    expect(html).toMatch(/ai-access-save.*primary|primary.*Save/s);
+    expect(html).toMatch(/AI tools are disabled/);
+    expect(html).not.toMatch(/MCP tools are disabled/);
+    expect(html).toMatch(/pendingSidebarText|1 proposal to review|to review/);
+    expect(html).toMatch(/ai-access-actions/);
   });
 });

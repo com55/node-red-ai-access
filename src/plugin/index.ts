@@ -199,7 +199,7 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals',
     ...sharedRead,
-    listProposalsHandler(services.proposalStore, httpAdminRoot)
+    listProposalsHandler(services.proposalStore, services.flowAdapter, httpAdminRoot)
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id',

@@ -294,8 +294,7 @@ export async function submitReplaceFlowProposal(
 
   const presented = presentProposal(proposal, presentOptions);
 
-  const flowLabel =
-    typeof safeFlow.label === 'string' && safeFlow.label.trim() ? safeFlow.label.trim() : undefined;
+  const flowLabel = presented.flowLabel || undefined;
   audit.append('proposal.created', createdBy, {
     proposalId: proposal.id,
     flowId: safeFlowId,
