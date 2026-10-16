@@ -20,8 +20,8 @@ import {
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import {
-  ACCESS_LINK_INVALID_CODE,
-  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
+  ACCESS_LINK_MISSING_MESSAGE,
   ACCESS_LINK_WWW_AUTHENTICATE,
 } from './access-link-auth.js';
 import {
@@ -64,7 +64,10 @@ export function createProposalHandler(
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.accessLink) {
       res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-      res.status(401).json({ error: ACCESS_LINK_INVALID_MESSAGE, code: ACCESS_LINK_INVALID_CODE });
+      res.status(401).json({
+        error: ACCESS_LINK_MISSING_MESSAGE,
+        code: ACCESS_LINK_MISSING_CODE,
+      });
       return;
     }
 
@@ -94,7 +97,7 @@ export function createProposalHandler(
         ...(warnings && warnings.length > 0 ? { warnings } : {}),
       });
     } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
+      const mapped = aiOpsErrorToHttp(error, 'rest');
       if (mapped) {
         res.status(mapped.statusCode).json(mapped.body);
         return;

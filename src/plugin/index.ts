@@ -19,6 +19,7 @@ import {
   requireAiFeatures,
   requireStarPermission,
 } from './auth.js';
+import { requireJsonContentType } from './content-type.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
 import { EDITOR_SIDEBAR_ASSET_VERSION, renderEditorSidebarJs } from './editor-sidebar.js';
 import { listFlowsHandler } from './flows-routes.js';
@@ -278,6 +279,7 @@ export function registerRoutes(
     '/mcp/api/v1/proposals',
     limiter,
     tokenLimiter,
+    requireJsonContentType('rest'),
     requireAccessLink(RED, services.linkStore, 'rest'),
     asyncRoute(
       createProposalHandler(
@@ -292,16 +294,23 @@ export function registerRoutes(
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/approve',
     ...linkGuards,
+    requireJsonContentType('rest'),
     asyncRoute(approveProposalHandler(services.proposalService, httpAdminRoot))
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/reject',
     ...linkGuards,
+    requireJsonContentType('rest'),
     asyncRoute(rejectProposalHandler(services.proposalService, httpAdminRoot))
   );
 
   const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore, 'mcp')];
-  RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, asyncRoute(mcpRpcPostHandler(RED, services)));
+  RED.httpAdmin.post(
+    '/mcp/rpc',
+    ...mcpRpcGuards,
+    requireJsonContentType('mcp'),
+    asyncRoute(mcpRpcPostHandler(RED, services))
+  );
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
 

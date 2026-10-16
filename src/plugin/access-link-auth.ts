@@ -117,6 +117,9 @@ export function sendWrongTokenKind(
   expectedKind: AccessLinkKind,
   actualKind: AccessLinkKind
 ): void {
+  // Authenticated but wrong surface — still advertise Bearer so clients retry
+  // with a token of the expected kind.
+  res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
   res.status(403).json({
     error: `Access link kind mismatch: expected ${expectedKind}, got ${actualKind}`,
     code: WRONG_TOKEN_KIND_CODE,

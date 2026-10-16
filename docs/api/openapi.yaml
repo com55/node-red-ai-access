@@ -100,8 +100,9 @@ info:
     operations (`get_status`, `list_flows`, `get_flow` with optional `summary`,
     `get_node`, `get_node_field`, `search_flows`, `list_node_types`,
     `get_node_type`, `search_palette`, `submit_proposal`, `list_my_proposals`,
-    `get_proposal`). Approve/reject/link management stay on this REST API and
-    the `/mcp` admin page. This OpenAPI document covers the REST surface only.
+    `get_proposal`, `get_proposal_diff`). Approve/reject/link management stay on
+    this REST API and the `/mcp` admin page. This OpenAPI document covers the
+    REST surface only.
 
     ## Authentication
 
@@ -1837,12 +1838,22 @@ components:
 
     ReplaceFlowPayload:
       type: object
-      required: [flowId, flow]
+      required: [flowId]
+      description: |
+        Either `flow` (full tab) and/or `nodes` ops (`set` / `add` / `remove` /
+        `replace_text`). When `nodes` is present without `flow`, the server
+        loads the live tab at `expectedRev` and applies the ops in order.
       properties:
         flowId:
           type: string
         flow:
           $ref: '#/components/schemas/FlowTab'
+        nodes:
+          type: array
+          description: Node-level ops applied to the live tab when `flow` is omitted
+          items:
+            type: object
+            additionalProperties: true
 
     ProposalCreator:
       type: object
@@ -1868,14 +1879,14 @@ components:
 
     CreateProposalRequest:
       type: object
-      required: [type, payload]
+      required: [type, expectedRev, payload]
       properties:
         type:
           type: string
           const: replace_flow
         expectedRev:
           type: string
-          description: Preferred field name for the current flow revision
+          description: Preferred field name for the current flow revision (required)
         expected_rev:
           type: string
           description: Alias for expectedRev
@@ -1887,22 +1898,24 @@ components:
             from the change set when omitted.
         payload:
           $ref: '#/components/schemas/ReplaceFlowPayload'
+        nodes:
+          type: array
+          description: Optional top-level alias for payload.nodes
+          items:
+            type: object
+            additionalProperties: true
       example:
         type: replace_flow
         expectedRev: 'abc123rev'
         title: Rename inject to Hello
         payload:
           flowId: tab1
-          flow:
-            id: tab1
-            type: tab
-            label: Flow 1
-            nodes:
-              - id: n1
-                type: inject
-                z: tab1
-                wires:
-                  - []
+          nodes:
+            - op: replace_text
+              node: n1
+              field: template
+              find: Hello
+              replace: Hi
 
     ApproveProposalRequest:
       type: object

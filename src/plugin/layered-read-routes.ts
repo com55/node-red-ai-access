@@ -11,6 +11,7 @@ import type { Response } from 'express';
 import type { FlowAdapter } from '../runtime/types.js';
 
 import { aiOpsErrorToHttp, getFlow } from './ai-ops.js';
+import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { queryString } from './get-link/query.js';
 import {
   getFlowSummary,
@@ -21,40 +22,19 @@ import {
 } from './layered-read.js';
 import type { AuthenticatedRequest } from './types.js';
 
-/** Fixed messages — never reflect request path/query text into JSON bodies. */
-const SAFE_ERROR_TEXT: Record<string, string> = {
-  missing_flow_id: 'Missing flow id',
-  missing_node_id: 'Missing node id',
-  missing_field: 'Missing field name',
-  missing_query: 'q query parameter is required',
-  node_not_found: 'Node was not found',
-  field_not_found: 'Field was not found',
-  field_not_string: 'Field is not a string',
-  invalid_line_range: 'lines must be A or A-B (1-based inclusive; end >= start)',
-  line_range_out_of_bounds: 'lines range is out of bounds',
-  flow_not_found: 'Flow was not found',
-  upstream_error: 'Upstream error',
-};
-
 function layeredReadErrorHint(code: string, notFoundHint?: string): string | undefined {
   switch (code) {
     case 'node_not_found':
     case 'flow_not_found':
     case 'field_not_found':
-      return notFoundHint;
-    case 'invalid_line_range':
-      return 'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.';
-    case 'field_not_string':
-      return 'This endpoint only returns string fields (template, func, …). Use GET …/nodes/<id> for other property types.';
-    case 'line_range_out_of_bounds':
-      return 'start is past the end of the field — check totalLines and request a lower lines= range.';
+      return notFoundHint ?? channelErrorHint(code, 'rest');
     default:
-      return undefined;
+      return channelErrorHint(code, 'rest');
   }
 }
 
 function safeErrorText(code: string): string {
-  return SAFE_ERROR_TEXT[code] ?? 'Request failed';
+  return CANONICAL_ERROR_TEXT[code] ?? 'Request failed';
 }
 
 /** JSON response with nosniff — never treat as HTML. */

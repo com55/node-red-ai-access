@@ -286,6 +286,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'get_node_field',
         'get_node_type',
         'get_proposal',
+        'get_proposal_diff',
         'get_status',
         'list_flows',
         'list_my_proposals',
@@ -321,9 +322,12 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(submit?.description).toMatch(/nodes\[\]/);
     expect(submit?.description).toMatch(/413/);
     expect(submit?.description).toMatch(/get_flow|list_flows/);
-    // type + payload required; expectedRev validated in-handler with a clear field name.
-    expect(submit.inputSchema?.required).toEqual(expect.arrayContaining(['type', 'payload']));
+    // type + expectedRev + payload required in the tool schema.
+    expect(submit.inputSchema?.required).toEqual(
+      expect.arrayContaining(['type', 'expectedRev', 'payload'])
+    );
     expect(submit.inputSchema?.properties?.expectedRev).toBeTruthy();
+    expect(submit?.description).not.toMatch(/Prefer MCP\/REST/i);
     // flow.nodes is optional (replace_text / nodes ops can omit a full tab).
     expect(submit.inputSchema?.properties?.payload?.properties?.flow?.properties?.nodes?.type).toBe(
       'array'
@@ -413,7 +417,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(gotJson.id).toBe(proposal.id);
   });
 
-  it('submit_proposal names expectedRev when it is missing', async () => {
+  it('submit_proposal schema requires expectedRev (Zod rejects when missing)', async () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ kind: 'mcp', label: 'bot' });
     const submitted = await callTool(app, link.token, 'submit_proposal', {
@@ -433,7 +437,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     const content = submitted.result?.content as { type: string; text: string }[] | undefined;
     const text = content?.[0]?.text ?? '';
     expect(text).toMatch(/expectedRev/);
-    expect(text).toMatch(/required/i);
+    expect(text).toMatch(/Invalid arguments|expected string|validation/i);
   });
 
   it('parity: MCP submit_proposal matches REST POST /proposals', async () => {
@@ -461,15 +465,21 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       .send(body);
     expect(rest.status).toBe(201);
 
-    const mcp = await callTool(app, mcpLink.token, 'submit_proposal', body);
+    // Default MCP response is lean (no payload); request include_payload for parity with REST ?include=payload.
+    const mcp = await callTool(app, mcpLink.token, 'submit_proposal', {
+      ...body,
+      include_payload: true,
+    });
     expect(mcp.status).toBe(200);
     expect(mcp.result?.isError).toBeFalsy();
     const mcpProposal = parseToolJson(mcp.result) as {
+      id: string;
       type: string;
       status: string;
       expectedRev: string;
       payload: { flowId: string };
       createdBy: { kind: string; linkId: string };
+      changeSummary?: string;
     };
 
     expect(mcpProposal).toMatchObject({
@@ -479,7 +489,19 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       payload: { flowId: rest.body.payload.flowId },
       createdBy: { kind: 'access-link', linkId: mcpLink.id },
     });
+    expect(typeof mcpProposal.changeSummary).toBe('string');
     expect(rest.body.createdBy).toMatchObject({ kind: 'access-link', linkId: restLink.id });
+
+    const mcpLean = await callTool(app, mcpLink.token, 'get_proposal', { id: mcpProposal.id });
+    const lean = parseToolJson(mcpLean.result) as { payload?: unknown; changeSummary?: string };
+    expect(lean.payload).toBeUndefined();
+    expect(typeof lean.changeSummary).toBe('string');
+
+    const diff = await callTool(app, mcpLink.token, 'get_proposal_diff', { id: mcpProposal.id });
+    expect(diff.result?.isError).toBeFalsy();
+    const diffJson = parseToolJson(diff.result) as { proposalId: string; summary: unknown };
+    expect(diffJson.proposalId).toBe(mcpProposal.id);
+    expect(diffJson.summary).toBeTruthy();
 
     const restList = await request(app).get('/mcp/api/v1/proposals').set(restAuth);
     const mcpList = await callTool(app, mcpLink.token, 'list_my_proposals');

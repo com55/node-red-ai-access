@@ -10,18 +10,11 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { NextFunction, Response } from 'express';
 import { z } from 'zod';
 
-import {
-  AdapterUnavailableError,
-  FlowNotFoundError,
-  FlowRevisionConflictError,
-  PluginMisconfiguredError,
-} from '../runtime/errors.js';
-import { ProposalNotFoundError } from '../storage/proposals.js';
-import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
+import { MAX_PROPOSAL_JSON_BYTES } from '../storage/trusted-write.js';
 
 import {
-  ACCESS_LINK_INVALID_CODE,
-  ACCESS_LINK_INVALID_MESSAGE,
+  ACCESS_LINK_MISSING_CODE,
+  ACCESS_LINK_MISSING_MESSAGE,
   ACCESS_LINK_WWW_AUTHENTICATE,
 } from './access-link-auth.js';
 import {
@@ -32,9 +25,12 @@ import {
   listMyProposals,
   submitReplaceFlowProposal,
 } from './ai-ops.js';
+import { mapErrorForChannel } from './channel-errors.js';
+import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
-import { presentOptionsFor } from './proposal-present.js';
+import { computeProposalDiff } from './proposal-diff.js';
+import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
@@ -55,6 +51,10 @@ function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] 
   };
 }
 
+function includeSetFromPayloadFlag(includePayload: boolean | undefined): Set<string> {
+  return includePayload === true ? new Set(['payload', 'baseFlow']) : new Set();
+}
+
 function jsonError(
   error: unknown,
   fallbackStatus = 500
@@ -62,42 +62,19 @@ function jsonError(
   isError: true;
   content: { type: 'text'; text: string }[];
 } {
-  if (error instanceof AiOpsValidationError) {
+  const mapped = mapErrorForChannel(error, 'mcp');
+  if (mapped) {
     return {
       isError: true,
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            error: error.message,
-            code: error.code,
-            statusCode: error.statusCode,
-            ...(error.details ?? {}),
+            ...mapped.body,
+            statusCode: mapped.statusCode,
           }),
         },
       ],
-    };
-  }
-  if (
-    error instanceof FlowNotFoundError ||
-    error instanceof ProposalNotFoundError ||
-    error instanceof StoragePayloadTooLargeError ||
-    error instanceof FlowRevisionConflictError ||
-    error instanceof PluginMisconfiguredError ||
-    error instanceof AdapterUnavailableError
-  ) {
-    const body: Record<string, unknown> = {
-      error: error.message,
-      code: error.code,
-      statusCode: error.statusCode,
-    };
-    if (error instanceof FlowRevisionConflictError) {
-      body.expectedRev = error.expectedRev;
-      body.currentRev = error.currentRev;
-    }
-    return {
-      isError: true,
-      content: [{ type: 'text', text: JSON.stringify(body) }],
     };
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -236,7 +213,7 @@ function registerReadTools(
         'Text search across string fields. Returns hits with node id, field, line numbers, and a short snippet. ' +
         'Results are capped; truncated=true when the cap is hit. Optional flow scopes to one tab.',
       inputSchema: {
-        q: z.string().min(1).describe('Substring to find (case-sensitive)'),
+        q: z.string().describe('Substring to find (case-sensitive; non-empty required)'),
         flow: z.string().min(1).optional().describe('Optional tab id'),
       },
     },
@@ -255,7 +232,7 @@ function registerReadTools(
       description:
         'List installed Node-RED palette node types (type, module, category, description, …). ' +
         'Optional q filters type/module/category/description (case-insensitive). Results are capped. ' +
-        'Call this before proposing nodes with unfamiliar types. Prefer MCP/REST over GET-link when possible.',
+        'Call this before proposing nodes with unfamiliar types.',
       inputSchema: {
         q: z.string().optional().describe('Optional case-insensitive filter'),
       },
@@ -307,7 +284,7 @@ function registerReadTools(
         '(cross-checked against installed modules). Core node-red types are not in the catalogue — ' +
         'use list_node_types. RECOMMEND ONLY — never installs.',
       inputSchema: {
-        q: z.string().min(1).describe('Search string (id / description / keywords)'),
+        q: z.string().describe('Search string (id / description / keywords; non-empty required)'),
       },
     },
     async ({ q }) => {
@@ -351,8 +328,8 @@ function registerProposalTools(
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
         'search_palette and ask the user to install via Manage palette (never auto-install). ' +
-        'Returns the pending proposal with title, displayName (title · server-local datetime with offset), ' +
-        'reviewUrl (absolute when Host is known), and reviewPath (relative /mcp#proposal=<id>). ' +
+        'Returns a lean proposal (id, status, title, displayName, reviewUrl, changeSummary, …) by default. ' +
+        'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
         'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
       inputSchema: {
@@ -360,7 +337,6 @@ function registerProposalTools(
         expectedRev: z
           .string()
           .min(1)
-          .optional()
           .describe(
             'Top-level current flow revision from get_flow/list_flows (required; sit next to type and payload, not inside payload)'
           ),
@@ -376,6 +352,10 @@ function registerProposalTools(
           .describe(
             'Optional short human title (≤80 chars). Auto-generated from changes when omitted.'
           ),
+        include_payload: z
+          .boolean()
+          .optional()
+          .describe('When true, include payload and baseFlow in the response (default lean)'),
         nodes: z
           .array(z.record(z.string(), z.unknown()))
           .optional()
@@ -426,7 +406,12 @@ function registerProposalTools(
           presentOpts,
           services.nodeTypesAdapter
         );
-        return jsonResult(proposal);
+        return jsonResult(
+          presentProposalForApi(proposal, {
+            ...presentOpts,
+            include: includeSetFromPayloadFlag(args.include_payload),
+          })
+        );
       } catch (error) {
         return jsonError(error);
       }
@@ -437,14 +422,23 @@ function registerProposalTools(
     'list_my_proposals',
     {
       description:
-        'List proposals created by this access link only. Returns { proposals: [...] } with ' +
-        'title, displayName (server-local time with offset), reviewUrl (absolute), and reviewPath. ' +
+        'List proposals created by this access link only. Returns lean { proposals: [...] } with ' +
+        'title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
         'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
+      inputSchema: {
+        include_payload: z
+          .boolean()
+          .optional()
+          .describe('When true, include payload and baseFlow on each proposal'),
+      },
     },
-    () => {
+    args => {
       try {
+        const include = includeSetFromPayloadFlag(args.include_payload);
         return jsonResult({
-          proposals: listMyProposals(services.proposalStore, accessLink, presentOpts),
+          proposals: listMyProposals(services.proposalStore, accessLink, presentOpts).map(p =>
+            presentProposalForApi(p, { ...presentOpts, include })
+          ),
         });
       } catch (error) {
         return jsonError(error);
@@ -456,16 +450,59 @@ function registerProposalTools(
     'get_proposal',
     {
       description:
-        'Get one proposal by id if owned by this access link. Returns title, displayName, ' +
-        'reviewUrl, and reviewPath — cite displayName + reviewUrl when talking to the user. ' +
+        'Get one proposal by id if owned by this access link. Lean by default (no payload/baseFlow); ' +
+        'pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user. ' +
         '404-style tool error if missing or not yours.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
+        include_payload: z.boolean().optional().describe('When true, include payload and baseFlow'),
       },
     },
-    ({ id }) => {
+    ({ id, include_payload }) => {
       try {
-        return jsonResult(getMyProposal(services.proposalStore, accessLink, id, presentOpts));
+        const proposal = getMyProposal(services.proposalStore, accessLink, id, presentOpts);
+        return jsonResult(
+          presentProposalForApi(proposal, {
+            ...presentOpts,
+            include: includeSetFromPayloadFlag(include_payload),
+          })
+        );
+      } catch (error) {
+        return jsonError(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_proposal_diff',
+    {
+      description:
+        'Diff one owned proposal against its stored baseFlow snapshot (what changed). ' +
+        'Optional format=summary|full (default summary). Pending + stale also includes vsCurrent.',
+      inputSchema: {
+        id: z.string().min(1).describe('Proposal id (prop-…)'),
+        format: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe('Diff payload format (default summary)'),
+      },
+    },
+    async ({ id, format }) => {
+      try {
+        const proposal = getMyProposal(services.proposalStore, accessLink, id);
+        const resolved = resolveDiffFormat(format ?? 'summary');
+        if (!resolved.ok) {
+          return jsonError(
+            new AiOpsValidationError('Invalid diff format', 'invalid_diff_format', {
+              details: { hint: 'Valid formats: summary, full (default summary).' },
+            })
+          );
+        }
+        const diff = applyDiffFormat(
+          await computeProposalDiff(proposal, services.flowAdapter),
+          resolved.format
+        );
+        return jsonResult(diff);
       } catch (error) {
         return jsonError(error);
       }
@@ -502,8 +539,8 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
       if (!req.accessLink) {
         res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
         res.status(401).json({
-          error: ACCESS_LINK_INVALID_MESSAGE,
-          code: ACCESS_LINK_INVALID_CODE,
+          error: ACCESS_LINK_MISSING_MESSAGE,
+          code: ACCESS_LINK_MISSING_CODE,
         });
         return;
       }
