@@ -434,7 +434,7 @@ function registerProposalTools(
     },
     args => {
       try {
-        const include = includeSetFromPayloadFlag(args?.include_payload);
+        const include = includeSetFromPayloadFlag(args.include_payload);
         return jsonResult({
           proposals: listMyProposals(services.proposalStore, accessLink, presentOpts).map(p =>
             presentProposalForApi(p, { ...presentOpts, include })
