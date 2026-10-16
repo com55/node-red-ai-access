@@ -23,8 +23,10 @@ import {
   findConflictingProposals,
   getAccessibleProposal,
   getFlow,
+  invalidFilterError,
   isProposalStatus,
   listAccessibleProposals,
+  listPageFields,
   LIST_PROPOSALS_MAX_LIMIT,
   listFlows,
   presentAccessibleProposalForApi,
@@ -36,7 +38,7 @@ import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
-import { expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
 import { sendCaughtRouteError } from './route-errors.js';
@@ -106,6 +108,99 @@ function jsonError(
         }),
       },
     ],
+  };
+}
+
+/** MCP tools whose filter arguments map to `invalid_filter` (same as GET/REST). */
+const LIST_FILTER_TOOLS = new Set(['list_proposals', 'list_my_proposals']);
+const LIST_FILTER_PARAMS = new Set(['status', 'limit', 'offset', 'mine']);
+
+interface ZodLikeIssue {
+  path?: readonly PropertyKey[];
+  message?: string;
+}
+
+interface ZodLikeSchema {
+  safeParseAsync(
+    value: unknown
+  ): Promise<
+    { success: true; data: unknown } | { success: false; error: { issues: ZodLikeIssue[] } }
+  >;
+}
+
+function isZodLikeSchema(value: unknown): value is ZodLikeSchema {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as { safeParseAsync?: unknown }).safeParseAsync === 'function'
+  );
+}
+
+/**
+ * Map schema-validation failures on MCP tool arguments to the same JSON error
+ * bodies as GET/REST: list filters → `invalid_filter`; anything else →
+ * `invalid_arguments` naming the parameter. Never returns raw Zod output.
+ */
+export function mcpArgumentError(
+  toolName: string,
+  args: unknown,
+  issues: readonly ZodLikeIssue[]
+): AiOpsValidationError {
+  const argObj = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const first = issues[0];
+  const parameter = first?.path && first.path.length > 0 ? String(first.path[0]) : '(arguments)';
+  if (LIST_FILTER_TOOLS.has(toolName) && LIST_FILTER_PARAMS.has(parameter)) {
+    return invalidFilterError(
+      parameter as 'status' | 'limit' | 'offset' | 'mine',
+      argObj[parameter]
+    );
+  }
+  const listed = issues.map(issue => ({
+    parameter:
+      issue.path && issue.path.length > 0 ? issue.path.map(String).join('.') : '(arguments)',
+    message: issue.message ?? 'Invalid value',
+  }));
+  const message =
+    listed.length === 1
+      ? `Invalid argument '${listed[0]?.parameter}' for tool ${toolName}: ${listed[0]?.message}`
+      : `${listed.length} invalid arguments for tool ${toolName}`;
+  return new AiOpsValidationError(message, 'invalid_arguments', {
+    details: {
+      parameter,
+      errors: listed,
+      hint: `Fix '${parameter}' to match the ${toolName} input schema (see tools/list).`,
+    },
+  });
+}
+
+type ValidateToolInput = (
+  tool: { inputSchema?: unknown },
+  args: unknown,
+  toolName: string
+) => Promise<unknown>;
+
+/**
+ * Replace the SDK's argument validation so failures surface as our JSON error
+ * body (tool result with `isError: true`) instead of raw Zod text.
+ */
+export function installMcpArgumentErrorMapping(server: McpServer): void {
+  const target = server as unknown as { validateToolInput?: ValidateToolInput };
+  const original = target.validateToolInput;
+  if (typeof original !== 'function') {
+    return;
+  }
+  target.validateToolInput = async (tool, args, toolName) => {
+    const schema = tool.inputSchema;
+    if (!isZodLikeSchema(schema)) {
+      return original.call(server, tool, args, toolName);
+    }
+    const parsed = await schema.safeParseAsync(args ?? {});
+    if (parsed.success) {
+      return parsed.data;
+    }
+    const mapped = mapErrorForChannel(mcpArgumentError(toolName, args, parsed.error.issues), 'mcp');
+    const body = mapped ? { ...mapped.body, statusCode: mapped.statusCode } : {};
+    throw new Error(JSON.stringify(body));
   };
 }
 
@@ -432,9 +527,13 @@ function registerProposalTools(
           }),
           mine: true,
         };
-        expireStalePendingProposals(services.proposalStore, proposal.expectedRev, {
-          flowId: proposal.payload.flowId,
-        });
+        const autoClosedCount = expireStalePendingProposals(
+          services.proposalStore,
+          proposal.expectedRev,
+          {
+            flowId: proposal.payload.flowId,
+          }
+        );
         const conflicts = conflictWarningFields(
           findConflictingProposals(
             services.proposalStore,
@@ -442,7 +541,7 @@ function registerProposalTools(
             accessLink.id
           )
         );
-        return jsonResult({ ...lean, ...conflicts });
+        return jsonResult({ ...lean, ...conflicts, ...autoClosedFields(autoClosedCount) });
       } catch (error) {
         return jsonError(error);
       }
@@ -504,9 +603,9 @@ function registerListProposalsTools(
     try {
       const include = includeSetFromPayloadFlag(args.include_payload);
       const liveRev = await tryLiveRev(services.flowAdapter);
-      if (liveRev) {
-        expireStalePendingProposals(services.proposalStore, liveRev);
-      }
+      const autoClosedCount = liveRev
+        ? expireStalePendingProposals(services.proposalStore, liveRev)
+        : 0;
       const filter: ListProposalsFilter = {};
       if (args.mine === true) {
         filter.mine = true;
@@ -534,9 +633,8 @@ function registerListProposalsTools(
             { includeConflicts: false }
           )
         ),
-        total: page.total,
-        ...(page.limit !== null ? { limit: page.limit } : {}),
-        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
+        ...listPageFields({ ...page, returned: page.proposals.length }),
+        ...autoClosedFields(autoClosedCount),
       });
     } catch (error) {
       return jsonError(error);
@@ -549,7 +647,8 @@ function registerListProposalsTools(
       description:
         'List proposals visible to this access link (all proposals by default). Each item includes ' +
         'mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with ' +
-        'limit/offset (response includes total). Returns lean { proposals, total, … } with title, ' +
+        'limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return ' +
+        'invalid_filter. Returns lean { proposals, total, … } with title, ' +
         'displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
         'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
       inputSchema: listProposalsInputSchema,
@@ -702,6 +801,7 @@ function createAiMcpServer(
     name: 'node-red-ai-access',
     version: pluginVersion(),
   });
+  installMcpArgumentErrorMapping(server);
 
   const accessLink = req.accessLink;
   if (!accessLink) {

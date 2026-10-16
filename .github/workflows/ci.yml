@@ -48,6 +48,9 @@ jobs:
       - name: Check MCP tools docs are fresh
         run: yarn check:mcp-tools
 
+      - name: Check error-code docs are fresh
+        run: yarn check:errors
+
       - name: Security audit
         run: yarn npm audit --environment production
         continue-on-error: true

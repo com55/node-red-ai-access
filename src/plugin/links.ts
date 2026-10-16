@@ -8,7 +8,9 @@ import {
   AccessLinkLimitError,
   AccessLinkNotFoundError,
   AccessLinkStore,
+  AccessLinkTtlError,
   AccessLinkValidationError,
+  INVALID_TTL_HINT,
   isAccessLinkKind,
 } from '../access/index.js';
 import type { AccessLinkKind, CreateAccessLinkInput } from '../access/link-store.js';
@@ -74,7 +76,11 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
 
     if (body.ttlSeconds !== undefined) {
       if (typeof body.ttlSeconds !== 'number') {
-        res.status(400).json({ error: 'ttlSeconds must be a positive number' });
+        res.status(400).json({
+          error: 'ttlSeconds must be a positive number',
+          code: 'invalid_ttl',
+          hint: INVALID_TTL_HINT,
+        });
         return;
       }
       input.ttlSeconds = body.ttlSeconds;
@@ -125,6 +131,12 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
     } catch (error) {
       if (error instanceof AccessLinkLimitError) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
+      if (error instanceof AccessLinkTtlError) {
+        res
+          .status(error.statusCode)
+          .json({ error: error.message, code: error.code, hint: error.hint });
         return;
       }
       if (error instanceof AccessLinkValidationError) {

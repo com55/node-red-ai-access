@@ -8,8 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- List filters are validated on GET, REST, and MCP: bad `status`, `limit` (not
+  1–200; no longer clamped), `offset`, or `mine` return **400** `invalid_filter`
+  naming the parameter and allowed values. MCP argument schema errors return the
+  same JSON body (`invalid_filter` / `invalid_arguments`) instead of raw Zod
+  output.
+- List responses on every channel share `total`, `offset`, `limit` (when set),
+  `hasMore`, and `nextOffset` (offset-based pagination).
+- Several validation errors in one proposal return **400** `validation_failed`
+  (`N validation errors`, all listed in `errors[]`); a single error keeps its
+  own code (e.g. **404** `node_not_found`).
+- Out-of-range or non-positive `ttlSeconds` returns **400** `invalid_ttl` with a
+  hint stating the per-kind caps (was `access_link_invalid`).
+- `staleOnOlderRev` removed (stale peers are auto-closed on read); responses
+  include `autoClosedCount` when a request auto-closed pending proposals.
+- `minutesRemaining` rounds up; `/status` also reports `secondsRemaining`.
+- `token_expired` includes `expiredAt` and `accessLinksUrl`; GET-link 401s
+  include `WWW-Authenticate`.
+
 ### Added
 
+- Duplicate node ids in a full tab or batch are rejected with
+  `duplicate_node_id`.
+- Central error-code registry (`src/plugin/error-registry.ts`) generating
+  `docs/errors.md`, the GET guide error table, and the OpenAPI `ErrorCode` list
+  (`yarn generate:errors`; CI staleness check `yarn check:errors`).
 - Channel onboarding on `/mcp`: REST copies a ready-to-paste AI prompt (base
   URL, Bearer, OpenAPI + discovery, human-approve note, and a stop-and-ask-for-
   GET-link line when custom headers are unavailable); MCP shows a setup panel

@@ -86,7 +86,10 @@ describe('AccessLinkStore', () => {
 
     now += 11_000;
     expect(store.validate(created.token)).toBeNull();
-    expect(store.validateResult(created.token)).toEqual({ status: 'expired' });
+    expect(store.validateResult(created.token)).toEqual({
+      status: 'expired',
+      expiresAt: new Date(1_000_000 + 10_000).toISOString(),
+    });
     expect(store.validateResult('aia_unknown')).toEqual({ status: 'invalid' });
 
     now = 1_000_000;

@@ -251,9 +251,9 @@ describe('multi-error accumulation', () => {
         message: string;
         details?: { errors?: unknown[]; errorCount?: number };
       };
-      // Primary code/message come from the first issue (not a generic batch label).
-      expect(err.code).toBe('invalid_wires');
-      expect(err.message).toBe('wires bad');
+      // Several issues → validation_failed with every issue listed.
+      expect(err.code).toBe('validation_failed');
+      expect(err.message).toBe('2 validation errors');
       expect(err.details?.errors).toHaveLength(2);
       expect(err.details?.errorCount).toBe(2);
     }

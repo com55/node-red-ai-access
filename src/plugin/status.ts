@@ -26,13 +26,25 @@ function readPackageVersion(): string {
   return packageVersion();
 }
 
-/** Whole minutes until ISO expiry (floor of remaining; never negative). */
+/** Whole seconds until ISO expiry (rounded up; never negative). */
+export function secondsRemainingUntil(expiresAt: string, nowMs = Date.now()): number {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1000));
+}
+
+/**
+ * Whole minutes until ISO expiry, rounded **up** so a still-valid token never
+ * reports 0 (e.g. 30s left → 1). Never negative.
+ */
 export function minutesRemainingUntil(expiresAt: string, nowMs = Date.now()): number {
   const expiresAtMs = Date.parse(expiresAt);
   if (!Number.isFinite(expiresAtMs)) {
     return 0;
   }
-  return Math.max(0, Math.floor((expiresAtMs - nowMs) / 60_000));
+  return Math.max(0, Math.ceil((expiresAtMs - nowMs) / 60_000));
 }
 
 /**
@@ -63,6 +75,7 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
   // Access-link callers are not admin sessions: permission stays null; caller
   // identifies the AI token so clients do not treat null as "logged out".
   if (req.accessLink) {
+    const nowMs = Date.now();
     return {
       ok: true,
       version: readPackageVersion(),
@@ -82,7 +95,8 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
         tokenKind: req.accessLink.kind,
         ...(req.accessLink.label !== undefined ? { label: req.accessLink.label } : {}),
         expiresAt: req.accessLink.expiresAt,
-        minutesRemaining: minutesRemainingUntil(req.accessLink.expiresAt),
+        minutesRemaining: minutesRemainingUntil(req.accessLink.expiresAt, nowMs),
+        secondsRemaining: secondsRemainingUntil(req.accessLink.expiresAt, nowMs),
         permissions: [...ACCESS_LINK_PERMISSIONS],
         baseUrls: baseUrlsForTokenKind(req.accessLink.kind, RED.settings.httpAdminRoot),
       },

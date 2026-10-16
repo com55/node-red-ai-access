@@ -133,7 +133,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
-  it('findConflictingProposals keeps same-rev and overlaps; counts other older-rev peers', () => {
+  it('findConflictingProposals keeps same-rev and overlaps; skips other older-rev peers', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);
     const store = new ProposalStore(paths, {
@@ -211,8 +211,8 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
       },
     });
 
-    // Different rev, no overlap — count only.
-    store.create({
+    // Different rev, no overlap — not a conflict.
+    const staleOther = store.create({
       ...base,
       expectedRev: 'rev-0',
       title: 'stale-other',
@@ -234,7 +234,8 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
     const ids = result.conflictingProposals.map(c => c.id);
     expect(ids).toContain(sameRevPeer.id);
     expect(ids).toContain(overlapOld.id);
-    expect(result.staleOnOlderRev).toBe(1);
+    expect(ids).not.toContain(staleOther.id);
+    expect(result).not.toHaveProperty('staleOnOlderRev');
     const overlapRef = result.conflictingProposals.find(c => c.id === overlapOld.id);
     expect(overlapRef?.overlappingNodeIds).toEqual(expect.arrayContaining(['n1']));
   });

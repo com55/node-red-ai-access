@@ -20,7 +20,13 @@ export interface ValidationIssue {
   [key: string]: unknown;
 }
 
-/** Throw a single AiOpsValidationError that always includes `errors: [...]`. */
+/**
+ * Throw a single AiOpsValidationError that always includes `errors: [...]`.
+ *
+ * One issue → that issue's own code/status (e.g. 404 `node_not_found`).
+ * Several issues → 400 `validation_failed` with message `N validation errors`
+ * and every issue listed in `errors[]`.
+ */
 export function throwValidationIssues(issues: ValidationIssue[]): void {
   if (issues.length === 0) {
     return;
@@ -29,14 +35,13 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
   if (!primary) {
     return;
   }
-  // Always use the first issue's code/message as the main error (even in batches)
-  // so clients see e.g. invalid_wires / missing_node_type, not a generic summary.
-  const code = primary.code;
-  const message = primary.error;
-  const details: Record<string, unknown> = { errors: issues };
   if (issues.length > 1) {
-    details.errorCount = issues.length;
+    throw new AiOpsValidationError(`${issues.length} validation errors`, 'validation_failed', {
+      statusCode: 400,
+      details: { errors: issues, errorCount: issues.length },
+    });
   }
+  const details: Record<string, unknown> = { errors: issues };
   for (const [k, v] of Object.entries(primary)) {
     if (k === 'code' || k === 'error' || k === 'errors' || k === 'statusCode') {
       continue;
@@ -46,7 +51,39 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
     }
   }
   const statusCode = typeof primary.statusCode === 'number' ? primary.statusCode : 400;
-  throw new AiOpsValidationError(message, code, { statusCode, details });
+  throw new AiOpsValidationError(primary.error, primary.code, { statusCode, details });
+}
+
+/**
+ * Report every node id that appears more than once across `nodes` + `configs`
+ * as `duplicate_node_id` (one issue per duplicated id).
+ */
+export function collectDuplicateNodeIdIssues(
+  lists: readonly (readonly unknown[])[],
+  where = 'payload.flow'
+): ValidationIssue[] {
+  const counts = new Map<string, number>();
+  for (const list of lists) {
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === 'string' && id.length > 0) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  const issues: ValidationIssue[] = [];
+  for (const [id, count] of counts) {
+    if (count > 1) {
+      issues.push({
+        code: 'duplicate_node_id',
+        error: `Node id '${id}' appears ${count} times in ${where}; node ids must be unique`,
+        nodeId: id,
+        count,
+      });
+    }
+  }
+  return issues;
 }
 
 const IGNORE_TOUCH_KEYS = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
@@ -147,6 +184,7 @@ export function collectFullFlowShapeIssues(
   if (Array.isArray(tab.configs)) {
     lists.push({ key: 'configs', list: tab.configs as unknown[] });
   }
+  issues.push(...collectDuplicateNodeIdIssues(lists.map(l => l.list)));
   for (const { key, list } of lists) {
     for (let i = 0; i < list.length; i += 1) {
       const raw: unknown = list[i];

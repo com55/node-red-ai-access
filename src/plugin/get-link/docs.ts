@@ -7,6 +7,7 @@
 
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
 import { MAX_GET_ACCESS_URL_BYTES } from '../access-path.js';
+import { renderGetLinkErrorTable } from '../error-registry.js';
 import type { AccessLinkAuthInfo } from '../types.js';
 
 export interface GetLinkDocsContext {
@@ -121,9 +122,10 @@ these docs).
 ## Expiry
 
 - Link expires at: **${expires}** (ISO-8601); \`GET ./status\` also reports
-  \`caller.minutesRemaining\`
-- After expiry, every path under this link returns \`401 token_expired\`
-- Ask the user for a **new** link if you see that error (or \`access_link_invalid\`)
+  \`caller.minutesRemaining\` (rounded up) and \`caller.secondsRemaining\`
+- After expiry, every path under this link returns \`401 token_expired\` with
+  \`expiredAt\` and \`accessLinksUrl\` (the /mcp page → Access links section)
+- Ask the user for a **new** link there if you see that error (or \`access_link_invalid\`)
 
 ## What you can do
 
@@ -201,7 +203,9 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved, rejected, or
    withdrawn. Every token can list/read **all** proposals; each item has
    \`mine:true|false\`. Filter with \`?mine=true\`, \`?status=\`, \`?flowId=\`;
-   paginate with \`?limit=\` / \`?offset=\` (response includes \`total\`). Cite \`displayName\` +
+   paginate with \`?limit=\` (1–200) / \`?offset=\` (response includes \`total\`,
+   \`offset\`, \`hasMore\`, and \`nextOffset\` when more remain). Invalid filters
+   return \`400 invalid_filter\` naming the parameter. Cite \`displayName\` +
    \`reviewUrl\` when updating the user.
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
@@ -488,26 +492,7 @@ function docsKnownIssues(): string {
 function docsErrorsAndAlso(): string {
   return `## Error codes (JSON unless docs)
 
-| Code | Meaning | Next step |
-| --- | --- | --- |
-| \`token_expired\` | Link past \`expiresAt\` | Ask user for a new link |
-| \`access_link_missing\` / \`access_link_invalid\` | Missing/invalid/revoked link | Ask user for a new link |
-| \`url_too_long\` | GET URL over ~8KB | Use drafts or Bearer POST |
-| \`version_mismatch\` | Stale \`rev\` | Re-read flows and retry |
-| \`node_not_found\` / \`field_not_found\` | Unknown node/field at draft/new or propose | Re-read the flow |
-| \`text_not_found\` | \`replace_text\` find had no match | Re-read the field; find is exact |
-| \`ambiguous_match\` | \`replace_text\` find matched more than once | Pass \`occurrence\` (1-based) or a unique find |
-| \`chunk_conflict\` | Same seq, different data | Re-send identical data or new draft |
-| \`draft_hash_mismatch\` / \`missing_chunks\` | Draft incomplete | Fix seqs / sha256 |
-| \`payload_too_large\` | Over decoded size cap (${MAX_PROPOSAL_JSON_BYTES} bytes on every channel) | Shrink content or use last-resort paste |
-| \`rate_limited\` | Too many calls (per IP or per token) | Wait \`retryAfter\` seconds (\`Retry-After\` header) |
-| \`proposal_not_owned\` | Withdraw of another link's proposal | Only the creating token can withdraw |
-| \`proposal_not_pending\` | Withdraw/decide on non-pending | Only pending proposals can be withdrawn |
-| \`unknown_node_type\` | Proposal uses a type not installed | Call \`./node-types\` / \`./palette/search\`; ask user to install via Manage palette |
-| \`node_type_not_found\` | Unknown type on \`./node-types/<type>\` | List types or search palette; ask user to install |
-| \`not_found\` | Unknown path under this link | Re-read these docs |
-| \`link_create_not_supported\` | Attempted create/list/revoke under \`./links\` | Ask admin to mint via \`POST /mcp/api/v1/links\` — GET links cannot create tokens |
-| \`wrong_token_kind\` | Path token is rest/mcp, not get_link | Ask owner: Node-RED /mcp → Access links → create kind=get_link; tell the user that sentence from the response \`tellUser\` field |
+${renderGetLinkErrorTable()}
 
 All JSON responses use \`Cache-Control: no-store\`. Never put secrets in query
 strings you will paste publicly beyond this temporary link.

@@ -2,6 +2,8 @@
  * Errors for the in-memory access-link store.
  */
 
+import { INVALID_TTL_HINT } from './ttl.js';
+
 export class AccessLinkLimitError extends Error {
   readonly code = 'access_link_limit' as const;
   readonly statusCode = 409;
@@ -31,5 +33,17 @@ export class AccessLinkValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'AccessLinkValidationError';
+  }
+}
+
+/** ttlSeconds is zero/negative/non-numeric or above the per-kind cap. */
+export class AccessLinkTtlError extends Error {
+  readonly code = 'invalid_ttl' as const;
+  readonly statusCode = 400;
+  readonly hint = INVALID_TTL_HINT;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'AccessLinkTtlError';
   }
 }
