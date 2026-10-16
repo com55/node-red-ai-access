@@ -138,6 +138,57 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     expect(logs.status).toBe(200);
     expect(logs.body.logs.some((e: { action: string }) => e.action === 'link.created')).toBe(true);
     expect(logs.body.logs.some((e: { action: string }) => e.action === 'link.revoked')).toBe(true);
+
+    // Real stored event shape (post-sanitize): label + expiry must survive for the audit UI.
+    const createdLog = logs.body.logs.find(
+      (e: { action: string }) => e.action === 'link.created'
+    ) as {
+      details?: {
+        linkId?: string;
+        label?: string;
+        expiresAt?: string;
+        createdAt?: string;
+        ttlSeconds?: number;
+      };
+    };
+    expect(createdLog?.details).toMatchObject({
+      linkId: created.body.id,
+      label: 'agent',
+      expiresAt: created.body.expiresAt,
+      createdAt: created.body.createdAt,
+      ttlSeconds: 120,
+    });
+    const revokedLog = logs.body.logs.find(
+      (e: { action: string }) => e.action === 'link.revoked'
+    ) as { details?: { linkId?: string; label?: string; expiresAt?: string } };
+    expect(revokedLog?.details).toMatchObject({
+      linkId: created.body.id,
+      label: 'agent',
+      expiresAt: created.body.expiresAt,
+    });
+  });
+
+  it('persists link label/expiry in audit even for a smoke-test style create', async () => {
+    const { app } = createMockRed({
+      adminAuth: { type: 'credentials' },
+      authenticate: asStarUser,
+    });
+
+    const created = await request(app)
+      .post('/mcp/api/v1/links')
+      .send({ label: 'smoke-test-d546bec', ttlSeconds: 86_400 });
+    expect(created.status).toBe(201);
+
+    const logs = await request(app).get('/mcp/api/v1/logs?limit=5');
+    expect(logs.status).toBe(200);
+    const entry = logs.body.logs.find((e: { action: string }) => e.action === 'link.created');
+    expect(entry).toBeTruthy();
+    // Client reads details.label / details.expiresAt / details.ttlSeconds (not nested).
+    expect(entry.details.label).toBe('smoke-test-d546bec');
+    expect(entry.details.expiresAt).toBe(created.body.expiresAt);
+    expect(entry.details.linkId).toBe(created.body.id);
+    expect(entry.details.ttlSeconds).toBe(86_400);
+    expect(typeof entry.details.expiresAt).toBe('string');
   });
 
   it('returns 403 when a read user tries to manage links', async () => {

@@ -33,6 +33,7 @@ function editorSidebarStyles(): string {
   white-space: nowrap;
 }
 #red-ui-sidebar-ai-access .red-ui-sidebar-ai-access-body {
+  position: relative;
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 10px 12px 16px;
@@ -104,11 +105,35 @@ function editorSidebarStyles(): string {
   margin: 0 0 2px;
   font-weight: 600;
 }
+#red-ui-sidebar-ai-access #ai-access-flash {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  left: 12px;
+  z-index: 5;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  box-sizing: border-box;
+  background: var(--red-ui-secondary-background, #f3f3f3);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s;
+}
+#red-ui-sidebar-ai-access #ai-access-flash.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 #red-ui-sidebar-ai-access #ai-access-flash.ok {
   color: #1b6b4a;
+  background: #e8f6ef;
 }
 #red-ui-sidebar-ai-access #ai-access-flash.error {
   color: #9b2c2c;
+  background: #fdecec;
 }`;
 }
 
@@ -215,7 +240,8 @@ function editorSidebarScriptPartA(): string {
       if (!$el || !$el.length) return;
       $el.toggleClass('ok', !!ok).toggleClass('error', !ok);
       $el.text(message || '');
-      $el.toggle(!!message);
+      // Overlay toast — opacity/visibility only (never display:none) so content is not pushed.
+      $el.toggleClass('is-visible', !!message);
     }
 
     function hoursFromSeconds(seconds) {
@@ -320,7 +346,7 @@ function editorSidebarScriptPartA(): string {
       savedToastTimer = setTimeout(function () {
         savedToastTimer = null;
         setFlash($flash, '', true);
-      }, 1600);
+      }, 2000);
     }
 
     function saveSettings(opts) {
@@ -381,8 +407,7 @@ function editorSidebarScriptPartB(): string {
         .text('Read-only: full admin permission (*) is required to change these settings.')
         .appendTo(body);
 
-      $('<div id="ai-access-flash" class="form-tips" style="display:none;margin-bottom:8px;"></div>')
-        .appendTo(body);
+      $('<div id="ai-access-flash" class="form-tips" aria-live="polite"></div>').appendTo(body);
 
       var status = $(
         '<div id="ai-access-status-block" class="ai-access-status-block" style="display:none;"></div>'

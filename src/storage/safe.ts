@@ -15,7 +15,7 @@ const SAFE_PROPOSAL_ID_RE = /^prop-[A-Za-z0-9_-]+$/;
 /** Top-level FlowTab fields we persist (nodes/configs handled separately). */
 const FLOW_TAB_KEYS = ['id', 'type', 'label', 'disabled', 'info', 'env'] as const;
 
-/** Audit detail keys we persist. */
+/** Audit detail keys we persist (strings unless listed in {@link AUDIT_DETAIL_NUMBER_KEYS}). */
 const AUDIT_DETAIL_KEYS = [
   'proposalId',
   'flowId',
@@ -26,7 +26,17 @@ const AUDIT_DETAIL_KEYS = [
   'currentRev',
   'title',
   'displayName',
+  'flowLabel',
+  // Access-link create/revoke (must survive sanitize or the audit UI only shows the action).
+  'linkId',
+  'label',
+  'expiresAt',
+  'createdAt',
+  'ttlSeconds',
 ] as const;
+
+/** Numeric audit detail fields (not coerced through sanitizeString). */
+const AUDIT_DETAIL_NUMBER_KEYS = new Set(['ttlSeconds']);
 
 export function assertSafeSegment(value: string, paramName: string): string {
   if (!value || !SAFE_SEGMENT_RE.test(value) || value.includes('..')) {
@@ -127,7 +137,19 @@ export function sanitizeAuditDetails(details: Record<string, unknown>): Record<s
     if (!(key in details)) {
       continue;
     }
-    const asString = sanitizeString(details[key], 2_000);
+    const value = details[key];
+    if (AUDIT_DETAIL_NUMBER_KEYS.has(key)) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        out[key] = value;
+      } else if (typeof value === 'string' && value.trim() !== '') {
+        const n = Number(value);
+        if (Number.isFinite(n)) {
+          out[key] = n;
+        }
+      }
+      continue;
+    }
+    const asString = sanitizeString(value, 2_000);
     if (asString !== undefined) {
       out[key] = asString;
     }
