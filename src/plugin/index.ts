@@ -54,6 +54,7 @@ import {
   rejectProposalHandler,
 } from './proposals-routes.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
+import { asyncRoute } from './route-errors.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import { getSettingsHandler, putSettingsHandler } from './settings-routes.js';
 import { buildStatus } from './status.js';
@@ -169,9 +170,9 @@ export function registerRoutes(
     limiter,
     tokenLimiter,
     requireAdminSessionOrAccessLink(RED, token => services.linkStore.validate(token)),
-    (req: AuthenticatedRequest, res: Response) => {
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
       res.json(buildStatus(RED, req));
-    }
+    })
   );
 
   // Settings API (sidebar AI Access tab) — admin session; PUT requires *.
@@ -179,14 +180,14 @@ export function registerRoutes(
     '/mcp/api/v1/settings',
     limiter,
     requireAdminSession(RED, 'api'),
-    getSettingsHandler(RED, services.settingsStore)
+    asyncRoute(getSettingsHandler(RED, services.settingsStore))
   );
   RED.httpAdmin.put(
     '/mcp/api/v1/settings',
     limiter,
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
-    putSettingsHandler(RED, services.settingsStore, services.linkStore)
+    asyncRoute(putSettingsHandler(RED, services.settingsStore, services.linkStore))
   );
 
   const linkGuards = [
@@ -196,16 +197,20 @@ export function registerRoutes(
     requireStarPermission(RED),
   ];
 
-  RED.httpAdmin.get('/mcp/api/v1/links', ...linkGuards, listLinksHandler(RED, services.linkStore));
+  RED.httpAdmin.get(
+    '/mcp/api/v1/links',
+    ...linkGuards,
+    asyncRoute(listLinksHandler(RED, services.linkStore))
+  );
   RED.httpAdmin.post(
     '/mcp/api/v1/links',
     ...linkGuards,
-    createLinkHandler(RED, services.linkStore, services.auditLog)
+    asyncRoute(createLinkHandler(RED, services.linkStore, services.auditLog))
   );
   RED.httpAdmin.delete(
     '/mcp/api/v1/links/:id',
     ...linkGuards,
-    revokeLinkHandler(RED, services.linkStore, services.auditLog)
+    asyncRoute(revokeLinkHandler(RED, services.linkStore, services.auditLog))
   );
 
   const sharedRead = [
@@ -222,25 +227,33 @@ export function registerRoutes(
     ...(services.catalogueFetcher ? { catalogueFetcher: services.catalogueFetcher } : {}),
     ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),
   };
-  RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(flows));
-  RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowOrSummaryHandler(flows));
-  RED.httpAdmin.get('/mcp/api/v1/nodes/:id', ...sharedRead, getNodeHandler(flows));
-  RED.httpAdmin.get('/mcp/api/v1/nodes/:id/field/:name', ...sharedRead, getNodeFieldHandler(flows));
-  RED.httpAdmin.get('/mcp/api/v1/search', ...sharedRead, searchFlowsHandler(flows));
+  RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, asyncRoute(listFlowsHandler(flows)));
+  RED.httpAdmin.get(
+    '/mcp/api/v1/flows/:id',
+    ...sharedRead,
+    asyncRoute(getFlowOrSummaryHandler(flows))
+  );
+  RED.httpAdmin.get('/mcp/api/v1/nodes/:id', ...sharedRead, asyncRoute(getNodeHandler(flows)));
+  RED.httpAdmin.get(
+    '/mcp/api/v1/nodes/:id/field/:name',
+    ...sharedRead,
+    asyncRoute(getNodeFieldHandler(flows))
+  );
+  RED.httpAdmin.get('/mcp/api/v1/search', ...sharedRead, asyncRoute(searchFlowsHandler(flows)));
   RED.httpAdmin.get(
     '/mcp/api/v1/node-types',
     ...sharedRead,
-    listNodeTypesHandler(nodeTypeRouteOpts)
+    asyncRoute(listNodeTypesHandler(nodeTypeRouteOpts))
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/node-types/:type',
     ...sharedRead,
-    getNodeTypeHandler(nodeTypeRouteOpts)
+    asyncRoute(getNodeTypeHandler(nodeTypeRouteOpts))
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/palette/search',
     ...sharedRead,
-    searchPaletteHandler(nodeTypeRouteOpts)
+    asyncRoute(searchPaletteHandler(nodeTypeRouteOpts))
   );
 
   // Proposal routes stay in this function so CodeQL can see the local limiters
@@ -249,44 +262,46 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals',
     ...sharedRead,
-    listProposalsHandler(services.proposalStore, services.flowAdapter, httpAdminRoot)
+    asyncRoute(listProposalsHandler(services.proposalStore, services.flowAdapter, httpAdminRoot))
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id',
     ...sharedRead,
-    getProposalHandler(services.proposalStore, httpAdminRoot)
+    asyncRoute(getProposalHandler(services.proposalStore, httpAdminRoot))
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id/diff',
     ...sharedRead,
-    getProposalDiffHandler(services.proposalStore, services.flowAdapter)
+    asyncRoute(getProposalDiffHandler(services.proposalStore, services.flowAdapter))
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals',
     limiter,
     tokenLimiter,
     requireAccessLink(RED, services.linkStore, 'rest'),
-    createProposalHandler(
-      services.proposalStore,
-      services.auditLog,
-      services.flowAdapter,
-      httpAdminRoot,
-      services.nodeTypesAdapter
+    asyncRoute(
+      createProposalHandler(
+        services.proposalStore,
+        services.auditLog,
+        services.flowAdapter,
+        httpAdminRoot,
+        services.nodeTypesAdapter
+      )
     )
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/approve',
     ...linkGuards,
-    approveProposalHandler(services.proposalService, httpAdminRoot)
+    asyncRoute(approveProposalHandler(services.proposalService, httpAdminRoot))
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/reject',
     ...linkGuards,
-    rejectProposalHandler(services.proposalService, httpAdminRoot)
+    asyncRoute(rejectProposalHandler(services.proposalService, httpAdminRoot))
   );
 
   const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore, 'mcp')];
-  RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, mcpRpcPostHandler(RED, services));
+  RED.httpAdmin.post('/mcp/rpc', ...mcpRpcGuards, asyncRoute(mcpRpcPostHandler(RED, services)));
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
 
@@ -295,7 +310,7 @@ export function registerRoutes(
     limiter,
     requireAdminSession(RED, 'api'),
     requireAiFeatures(RED),
-    listLogsHandler(services.auditLog, services.linkStore)
+    asyncRoute(listLogsHandler(services.auditLog, services.linkStore))
   );
 
   // JSON 404 for unmatched /mcp/api/v1 routes (never HTML "Cannot GET").

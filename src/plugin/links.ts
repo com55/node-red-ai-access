@@ -15,6 +15,7 @@ import type { AccessLinkKind, CreateAccessLinkInput } from '../access/link-store
 import type { AuditLog } from '../storage/audit-log.js';
 
 import { buildAccessLinkUrl, DEFAULT_ACCESS_LINK_TTL_SECONDS } from './access-path.js';
+import { sendCaughtRouteError } from './route-errors.js';
 import { resolveAiAccessSettings } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -130,7 +131,8 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -167,7 +169,8 @@ export function revokeLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }

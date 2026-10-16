@@ -43,6 +43,7 @@ import {
   presentProposalsForApi,
 } from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
+import { sendCaughtRouteError } from './route-errors.js';
 import type { AuthenticatedRequest } from './types.js';
 
 function adminActor(req: AuthenticatedRequest) {
@@ -96,7 +97,8 @@ export function createProposalHandler(
         res.status(mapped.statusCode).json(mapped.body);
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -178,7 +180,8 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
         res.status(mapped.statusCode).json(mapped.body);
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -216,7 +219,8 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -245,7 +249,8 @@ export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: 
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }
@@ -293,7 +298,8 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
         res.status(mapped.statusCode).json(mapped.body);
         return;
       }
-      throw error;
+      sendCaughtRouteError(res, error);
+      return;
     }
   };
 }

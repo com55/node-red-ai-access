@@ -166,8 +166,33 @@ export function isStructuralNodeType(type: string): boolean {
   return type.startsWith('subflow:');
 }
 
+/**
+ * Validate a palette node type name for propose/add ops.
+ * - missing / empty → `missing_node_type`
+ * - non-string (number, object, …) → `invalid_node_type`
+ */
+export function requireNodeTypeName(type: unknown, context = 'node.type'): string {
+  if (type === undefined || type === null || type === '') {
+    throw new AiOpsValidationError(`${context} is required`, 'missing_node_type');
+  }
+  if (typeof type !== 'string') {
+    throw new AiOpsValidationError(
+      `${context} must be a non-empty string (got ${typeof type})`,
+      'invalid_node_type',
+      { details: { type, got: typeof type } }
+    );
+  }
+  if (!type.trim()) {
+    throw new AiOpsValidationError(`${context} is required`, 'missing_node_type');
+  }
+  return type;
+}
+
 /** Simple Levenshtein distance for nearest-type hints. */
 export function editDistance(a: string, b: string): number {
+  if (typeof a !== 'string' || typeof b !== 'string') {
+    return Number.MAX_SAFE_INTEGER;
+  }
   const s = a.toLowerCase();
   const t = b.toLowerCase();
   if (s === t) {
@@ -228,10 +253,18 @@ export function nearestDistanceCutoff(type: string): number {
  * matches return an empty list.
  */
 export function nearestNodeTypes(type: string, candidates: string[], limit = 5): string[] {
+  if (typeof type !== 'string' || !type) {
+    return [];
+  }
   const cutoff = nearestDistanceCutoff(type);
   const scored = candidates
     .filter(
-      c => c !== type && !NEAREST_EXCLUDE.has(c) && !c.startsWith('_') && !c.startsWith('subflow:')
+      (c): c is string =>
+        typeof c === 'string' &&
+        c !== type &&
+        !NEAREST_EXCLUDE.has(c) &&
+        !c.startsWith('_') &&
+        !c.startsWith('subflow:')
     )
     .map(c => ({
       c,
@@ -1179,22 +1212,24 @@ export async function assertKnownNodeTypes(
 
 /**
  * Assert a single type is installed (for flow-patch op:add).
+ * Validates type is a non-empty string first so nearest-match never crashes.
  */
-export async function assertKnownNodeType(adapter: NodeTypesAdapter, type: string): Promise<void> {
-  if (isStructuralNodeType(type)) {
+export async function assertKnownNodeType(adapter: NodeTypesAdapter, type: unknown): Promise<void> {
+  const name = requireNodeTypeName(type, 'node.type');
+  if (isStructuralNodeType(name)) {
     return;
   }
   const { allNames } = await flattenInstalledTypes(adapter);
-  if (allNames.includes(type)) {
+  if (allNames.includes(name)) {
     return;
   }
   throw new AiOpsValidationError(
-    `Unknown node type '${type}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
+    `Unknown node type '${name}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
     'unknown_node_type',
     {
       details: {
-        type,
-        nearest: nearestNodeTypes(type, allNames, 5),
+        type: name,
+        nearest: nearestNodeTypes(name, allNames, 5),
       },
     }
   );

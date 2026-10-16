@@ -11,6 +11,7 @@ import type { ErrorRequestHandler, Express, NextFunction, Request, Response } fr
 import { MAX_PROPOSAL_JSON_BYTES } from '../storage/trusted-write.js';
 
 import { httpAdminAppsForMcpErrors } from './http-admin-host.js';
+import { internalErrorBody } from './route-errors.js';
 import type { NodeRedPluginAPI } from './types.js';
 
 const ATTACHED = Symbol.for('com55.ai-access.mcpJsonErrorHandler');
@@ -87,6 +88,25 @@ export function mcpJsonErrorHandler(): ErrorRequestHandler {
         error: `Request body exceeds limit of ${MAX_PROPOSAL_JSON_BYTES} bytes`,
         code: 'payload_too_large',
       });
+      return;
+    }
+
+    // Last-resort safety net: never let an uncaught /mcp* error become an HTML
+    // stack page or an unhandled rejection that can crash Node-RED.
+    if (isMcpPath(path)) {
+      if (isMcpRpcPath(path)) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: internalErrorBody(err).error,
+            data: { code: 'internal_error' },
+          },
+          id: null,
+        });
+        return;
+      }
+      res.status(500).json(internalErrorBody(err));
       return;
     }
 

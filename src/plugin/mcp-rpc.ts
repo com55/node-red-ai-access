@@ -35,6 +35,7 @@ import {
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
 import { presentOptionsFor } from './proposal-present.js';
+import { sendCaughtRouteError } from './route-errors.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -510,6 +511,11 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
         void server.close();
       });
     } catch (error) {
+      // Prefer JSON 500 here; error middleware is a second safety net.
+      if (!res.headersSent) {
+        sendCaughtRouteError(res, error);
+        return;
+      }
       next(error instanceof Error ? error : new Error(String(error)));
     }
   };
