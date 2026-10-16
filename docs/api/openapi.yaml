@@ -132,15 +132,40 @@ info:
 
     ## Size limits
 
-    Proposal JSON is capped at **1_500_000 bytes** (`MAX_PROPOSAL_JSON_BYTES`).
-    Oversized proposal JSON or audit append payloads return **413** with
-    `code: payload_too_large` (never silently truncate). Malformed JSON
-    bodies return **400** JSON (`code: invalid_json` on REST;
+    Proposal JSON is capped at **1_500_000 bytes** (`MAX_PROPOSAL_JSON_BYTES` /
+    ~1.5MB) on **every** channel: GET propose/drafts, REST `POST /proposals`,
+    and MCP `submit_proposal`. Oversized proposal JSON or audit append payloads
+    return **413** with `code: payload_too_large` (never silently truncate).
+    Malformed JSON bodies return **400** JSON (`code: invalid_json` on REST;
     JSON-RPC `-32700` Parse error on `/mcp/rpc`) — never HTML stack traces.
     Unauthenticated admin API calls return JSON `{ code: auth_required }`
     (not plain-text `Unauthorized` from `needsPermission`).
     The MCP endpoint shares the same limits, rate limiting, and audit logging
     as REST.
+
+    ## Proposal visibility and conflicts
+
+    Every access-link token can **list and read all proposals**. Each item
+    includes `mine: true|false` for the caller. Filter with `?mine=true`
+    (REST/GET) or MCP `list_my_proposals` with `mine: true`.
+
+    On submit and on read of a **pending** proposal, responses may include
+    `conflictingProposals` (pending work on the same flow from any token) with
+    optional `overlappingNodeIds` / `overlappingFields` — treat like a git
+    conflict warning.
+
+    ## Withdraw
+
+    The creating access link may withdraw its own pending proposal
+    (`POST /proposals/{id}/withdraw`, GET `…/proposals/{id}/withdraw`, or MCP
+    `withdraw_proposal`). Status becomes `withdrawn` (separate from admin
+    `rejected`).
+
+    ## Known issues
+
+    - **Rate limits are per token (and per IP).** Each access-link token has its
+      own token bucket. Several tokens can each use the full per-token limit at
+      the same time; the shared IP bucket still applies across them.
 
   contact:
     name: com55
@@ -752,12 +777,21 @@ paths:
       tags: [Proposals]
       summary: List proposals
       description: |
-        Admins see all proposals. Access-link clients see only proposals they
-        created with that link.
+        Admins see all proposals. Access-link clients also see **all** proposals,
+        each marked `mine: true|false`. Pass `?mine=true` to list only proposals
+        created by this access link. Pending items may include
+        `conflictingProposals`.
       operationId: listProposals
       security:
         - AccessLinkBearer: []
         - AdminSession: []
+      parameters:
+        - name: mine
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true (access-link only), return only this token's proposals
       responses:
         '200':
           description: Proposal list
@@ -980,6 +1014,52 @@ paths:
                 $ref: '#/components/schemas/Error'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+
+  /proposals/{id}/withdraw:
+    post:
+      tags: [Proposals]
+      summary: Withdraw own pending proposal
+      description: |
+        Access-link Bearer only. Withdraws a **pending** proposal created by
+        this token. Status becomes `withdrawn` (not `rejected`). Optional
+        JSON body `{ "reason": "…" }`.
+      operationId: withdrawProposal
+      security:
+        - AccessLinkBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Proposal withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not owned by this access link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Proposal is not pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /logs:
     get:
@@ -1752,7 +1832,7 @@ components:
 
     ProposalStatus:
       type: string
-      enum: [pending, approved, rejected, failed]
+      enum: [pending, approved, rejected, failed, withdrawn]
 
     Proposal:
       type: object
@@ -1825,13 +1905,51 @@ components:
         updatedAt:
           type: string
           format: date-time
+        mine:
+          type: boolean
+          description: |
+            Present on access-link responses: true when this token created the
+            proposal.
+        conflictingProposals:
+          type: array
+          description: |
+            Pending proposals on the same flow (any token). Included on submit
+            and on read of pending proposals when siblings exist.
+          items:
+            type: object
+            required: [id, title, displayName, mine]
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              displayName:
+                type: string
+              mine:
+                type: boolean
+              overlappingNodeIds:
+                type: array
+                items:
+                  type: string
+              overlappingFields:
+                type: array
+                items:
+                  type: object
+                  required: [nodeId, fields]
+                  properties:
+                    nodeId:
+                      type: string
+                    fields:
+                      type: array
+                      items:
+                        type: string
         decidedBy:
           $ref: '#/components/schemas/ProposalDecisionBy'
         reason:
           type: string
           description: |
-            Present when rejected or failed. On revision conflict after
-            approve, explains that expectedRev is stale and the AI should
+            Present when rejected, failed, or withdrawn. On revision conflict
+            after approve, explains that expectedRev is stale and the AI should
             re-read flows and submit a new proposal.
         resultRev:
           type: string
@@ -1840,9 +1958,20 @@ components:
       type: object
       required: [flowId]
       description: |
-        Either `flow` (full tab) and/or `nodes` ops (`set` / `add` / `remove` /
-        `replace_text`). When `nodes` is present without `flow`, the server
-        loads the live tab at `expectedRev` and applies the ops in order.
+        **Canonical form (preferred):** `{ flowId, nodes: [op…] }` with no
+        `flow`. Ops apply to the live tab at top-level `expectedRev`.
+
+        Supported `nodes[]` ops:
+        - `replace_text` — `{ op:"replace_text", node, field, find, replace, occurrence? }`
+        - `set` — `{ id, set:{…} }` or `{ op:"set", id, …props }`
+        - `add` — `{ op:"add", node:{ id, type, … } }`
+        - `remove` — `{ op:"remove", id }` (or `{ id }` remove shape)
+
+        **Alternative:** top-level `nodes` on `CreateProposalRequest` is an
+        alias for `payload.nodes` (same shapes).
+
+        **Full tab:** `{ flowId, flow }` from `GET /flows/{id}` still works
+        (optionally with `nodes` applied first when both are present).
       properties:
         flowId:
           type: string
@@ -1850,7 +1979,9 @@ components:
           $ref: '#/components/schemas/FlowTab'
         nodes:
           type: array
-          description: Node-level ops applied to the live tab when `flow` is omitted
+          description: |
+            Canonical node ops (`replace_text` / `set` / `add` / `remove`)
+            applied to the live tab when `flow` is omitted
           items:
             type: object
             additionalProperties: true
@@ -1870,11 +2001,17 @@ components:
     ProposalDecisionBy:
       type: object
       required: [kind]
+      description: |
+        Admin for approve/reject/fail; access-link for withdraw.
       properties:
         kind:
           type: string
-          const: admin
+          enum: [admin, access-link]
         username:
+          type: string
+        linkId:
+          type: string
+        label:
           type: string
 
     CreateProposalRequest:

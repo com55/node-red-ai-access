@@ -26,11 +26,13 @@ import {
 } from './access-link-auth.js';
 import {
   aiOpsErrorToHttp,
-  getMyProposal,
-  listMyProposals,
-  siblingWarningFields,
-  siblingsOnSameRev,
+  conflictWarningFields,
+  findConflictingProposals,
+  getAccessibleProposal,
+  listAccessibleProposals,
+  presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
+  withdrawMyProposal,
 } from './ai-ops.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
@@ -89,11 +91,12 @@ export function createProposalHandler(
         presentOpts,
         nodeTypesAdapter
       );
-      const siblings = siblingsOnSameRev(store, proposal);
+      const conflicts = findConflictingProposals(store, store.get(proposal.id), req.accessLink.id);
       const warnings = proposal.warnings;
       res.status(201).json({
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
-        ...siblingWarningFields(siblings),
+        mine: true,
+        ...conflictWarningFields(conflicts),
         ...(warnings && warnings.length > 0 ? { warnings } : {}),
       });
     } catch (error) {
@@ -141,11 +144,28 @@ export function listProposalsHandler(
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
     };
     const include = parseIncludeQuery(req.query.include);
-    const list = req.accessLink
-      ? listMyProposals(store, req.accessLink, presentOpts)
-      : store.list();
+    const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
 
-    const proposals = presentProposalsForApi(list, { ...presentOpts, include }).map(p => {
+    const accessLink = req.accessLink;
+    if (accessLink) {
+      const list = listAccessibleProposals(store, accessLink, presentOpts, {
+        ...(mineOnly ? { mine: true } : {}),
+      });
+      const proposals = list.map(p => {
+        const lean = presentAccessibleProposalForApi(store, accessLink, p, {
+          ...presentOpts,
+          include,
+        });
+        if (lean.status !== 'pending' || liveRev === undefined) {
+          return lean;
+        }
+        return { ...lean, baseRevStale: lean.expectedRev !== liveRev };
+      });
+      res.json({ proposals });
+      return;
+    }
+
+    const proposals = presentProposalsForApi(store.list(), { ...presentOpts, include }).map(p => {
       if (p.status !== 'pending' || liveRev === undefined) {
         return p;
       }
@@ -166,8 +186,9 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
     const include = parseIncludeQuery(req.query.include);
     try {
       if (req.accessLink) {
+        const presented = getAccessibleProposal(store, req.accessLink, id, presentOpts);
         res.json(
-          presentProposalForApi(getMyProposal(store, req.accessLink, id, presentOpts), {
+          presentAccessibleProposalForApi(store, req.accessLink, presented, {
             ...presentOpts,
             include,
           })
@@ -261,9 +282,61 @@ export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: 
 }
 
 /**
+ * POST /proposals/:id/withdraw — access-link only; withdraw own pending proposal.
+ */
+export function withdrawProposalHandler(
+  store: ProposalStore,
+  audit: AuditLog,
+  httpAdminRoot?: string
+) {
+  return (req: AuthenticatedRequest, res: Response): void => {
+    if (!req.accessLink) {
+      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+      res.status(401).json({
+        error: ACCESS_LINK_MISSING_MESSAGE,
+        code: ACCESS_LINK_MISSING_CODE,
+      });
+      return;
+    }
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      res.status(400).json({ error: 'Missing proposal id', code: 'missing_proposal_id' });
+      return;
+    }
+    const body = (req.body ?? {}) as { reason?: unknown };
+    const presentOpts = presentOptionsFor(req, httpAdminRoot);
+    const include = parseIncludeQuery(req.query.include);
+    try {
+      const withdrawn = withdrawMyProposal(
+        store,
+        audit,
+        req.accessLink,
+        id,
+        body.reason,
+        presentOpts
+      );
+      res.json(
+        presentAccessibleProposalForApi(store, req.accessLink, withdrawn, {
+          ...presentOpts,
+          include,
+        })
+      );
+    } catch (error) {
+      const mapped = aiOpsErrorToHttp(error, 'rest');
+      if (mapped) {
+        res.status(mapped.statusCode).json(mapped.body);
+        return;
+      }
+      sendCaughtRouteError(res, error);
+      return;
+    }
+  };
+}
+
+/**
  * GET /proposals/:id/diff — compare proposal payload to its stored baseFlow
  * snapshot (what the AI changed). Pending + stale also includes `vsCurrent`.
- * Requires admin `read` or the owning access link (same as getProposal).
+ * Requires admin `read` or any access link (all proposals are readable).
  */
 export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -273,7 +346,9 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
       return;
     }
     try {
-      const proposal = req.accessLink ? getMyProposal(store, req.accessLink, id) : store.get(id);
+      const proposal = req.accessLink
+        ? getAccessibleProposal(store, req.accessLink, id)
+        : store.get(id);
       const resolved = resolveDiffFormat(req.query.format);
       if (!resolved.ok) {
         res.status(400).json({

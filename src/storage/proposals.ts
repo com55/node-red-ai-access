@@ -17,7 +17,7 @@ import {
 } from './safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
 
-export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed';
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed' | 'withdrawn';
 
 export type ProposalType = 'replace_flow';
 
@@ -27,10 +27,8 @@ export interface ProposalCreator {
   label?: string;
 }
 
-export interface ProposalDecisionBy {
-  kind: 'admin';
-  username?: string;
-}
+export type ProposalDecisionBy =
+  { kind: 'admin'; username?: string } | { kind: 'access-link'; linkId: string; label?: string };
 
 export interface ReplaceFlowPayload {
   flowId: string;
@@ -109,6 +107,15 @@ export class ProposalNotPendingError extends Error {
   }
 }
 
+export class ProposalNotOwnedError extends Error {
+  readonly code = 'proposal_not_owned' as const;
+  readonly statusCode = 403;
+  constructor(id: string) {
+    super(`Proposal '${id}' was not created by this access link`);
+    this.name = 'ProposalNotOwnedError';
+  }
+}
+
 export class ProposalConcurrentApproveError extends Error {
   readonly code = 'proposal_approve_in_progress' as const;
   readonly statusCode = 409;
@@ -119,7 +126,13 @@ export class ProposalConcurrentApproveError extends Error {
 }
 
 function isProposalStatus(value: unknown): value is ProposalStatus {
-  return value === 'pending' || value === 'approved' || value === 'rejected' || value === 'failed';
+  return (
+    value === 'pending' ||
+    value === 'approved' ||
+    value === 'rejected' ||
+    value === 'failed' ||
+    value === 'withdrawn'
+  );
 }
 
 const MAX_STORED_WARNINGS = 50;
@@ -241,11 +254,22 @@ export class ProposalStore {
     }
 
     if (proposal.decidedBy) {
-      const decidedBy: ProposalDecisionBy = { kind: 'admin' };
-      if (typeof proposal.decidedBy.username === 'string') {
-        decidedBy.username = proposal.decidedBy.username.replace(/\0/g, '').slice(0, 200);
+      if (proposal.decidedBy.kind === 'access-link') {
+        const decidedBy: ProposalDecisionBy = {
+          kind: 'access-link',
+          linkId: assertSafeSegment(String(proposal.decidedBy.linkId).slice(0, 200), 'linkId'),
+        };
+        if (typeof proposal.decidedBy.label === 'string') {
+          decidedBy.label = proposal.decidedBy.label.replace(/\0/g, '').slice(0, 200);
+        }
+        record.decidedBy = decidedBy;
+      } else {
+        const decidedBy: ProposalDecisionBy = { kind: 'admin' };
+        if (typeof proposal.decidedBy.username === 'string') {
+          decidedBy.username = proposal.decidedBy.username.replace(/\0/g, '').slice(0, 200);
+        }
+        record.decidedBy = decidedBy;
       }
-      record.decidedBy = decidedBy;
     }
     if (typeof proposal.reason === 'string') {
       record.reason = proposal.reason.replace(/\0/g, '').slice(0, 2_000);
@@ -374,6 +398,19 @@ export class ProposalStore {
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
     }
+    proposal.reason = reason;
+    proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  markWithdrawn(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
+    const proposal = this.get(id);
+    if (proposal.status !== 'pending') {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+    proposal.status = 'withdrawn';
+    proposal.decidedBy = decidedBy;
     proposal.reason = reason;
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);

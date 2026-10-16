@@ -19,11 +19,15 @@ import {
 } from './access-link-auth.js';
 import {
   AiOpsValidationError,
+  conflictWarningFields,
+  findConflictingProposals,
+  getAccessibleProposal,
   getFlow,
-  getMyProposal,
+  listAccessibleProposals,
   listFlows,
-  listMyProposals,
+  presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
+  withdrawMyProposal,
 } from './ai-ops.js';
 import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
@@ -406,26 +410,50 @@ function registerProposalTools(
           presentOpts,
           services.nodeTypesAdapter
         );
-        return jsonResult(
-          presentProposalForApi(proposal, {
+        const lean = {
+          ...presentProposalForApi(proposal, {
             ...presentOpts,
             include: includeSetFromPayloadFlag(args.include_payload),
-          })
+          }),
+          mine: true,
+        };
+        const conflicts = conflictWarningFields(
+          findConflictingProposals(
+            services.proposalStore,
+            services.proposalStore.get(proposal.id),
+            accessLink.id
+          )
         );
+        return jsonResult({ ...lean, ...conflicts });
       } catch (error) {
         return jsonError(error);
       }
     }
   );
 
+  registerProposalQueryTools(server, services, accessLink, presentOpts);
+}
+
+function registerProposalQueryTools(
+  server: McpServer,
+  services: PluginServices,
+  accessLink: NonNullable<AuthenticatedRequest['accessLink']>,
+  presentOpts: ReturnType<typeof presentOptionsFor>
+): void {
   server.registerTool(
     'list_my_proposals',
     {
       description:
-        'List proposals created by this access link only. Returns lean { proposals: [...] } with ' +
-        'title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
-        'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
+        'List proposals visible to this access link (all proposals by default). Each item includes ' +
+        'mine:true|false for the caller. Pass mine=true to filter to your own. Returns lean ' +
+        '{ proposals: [...] } with title, displayName, reviewUrl, changeSummary ' +
+        '(no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when ' +
+        'referring to a proposal with the user (not the raw id).',
       inputSchema: {
+        mine: z
+          .boolean()
+          .optional()
+          .describe('When true, only proposals created by this access link'),
         include_payload: z
           .boolean()
           .optional()
@@ -435,9 +463,15 @@ function registerProposalTools(
     args => {
       try {
         const include = includeSetFromPayloadFlag(args.include_payload);
+        const list = listAccessibleProposals(services.proposalStore, accessLink, presentOpts, {
+          ...(args.mine === true ? { mine: true } : {}),
+        });
         return jsonResult({
-          proposals: listMyProposals(services.proposalStore, accessLink, presentOpts).map(p =>
-            presentProposalForApi(p, { ...presentOpts, include })
+          proposals: list.map(p =>
+            presentAccessibleProposalForApi(services.proposalStore, accessLink, p, {
+              ...presentOpts,
+              include,
+            })
           ),
         });
       } catch (error) {
@@ -450,9 +484,10 @@ function registerProposalTools(
     'get_proposal',
     {
       description:
-        'Get one proposal by id if owned by this access link. Lean by default (no payload/baseFlow); ' +
-        'pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user. ' +
-        '404-style tool error if missing or not yours.',
+        'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
+        'pending proposals, conflictingProposals when other pending work touches the same flow. ' +
+        'Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
+        'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
         include_payload: z.boolean().optional().describe('When true, include payload and baseFlow'),
@@ -460,9 +495,9 @@ function registerProposalTools(
     },
     ({ id, include_payload }) => {
       try {
-        const proposal = getMyProposal(services.proposalStore, accessLink, id, presentOpts);
+        const proposal = getAccessibleProposal(services.proposalStore, accessLink, id, presentOpts);
         return jsonResult(
-          presentProposalForApi(proposal, {
+          presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, {
             ...presentOpts,
             include: includeSetFromPayloadFlag(include_payload),
           })
@@ -477,7 +512,7 @@ function registerProposalTools(
     'get_proposal_diff',
     {
       description:
-        'Diff one owned proposal against its stored baseFlow snapshot (what changed). ' +
+        'Diff any proposal against its stored baseFlow snapshot (what changed). ' +
         'Optional format=summary|full (default summary). Pending + stale also includes vsCurrent.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
@@ -489,7 +524,7 @@ function registerProposalTools(
     },
     async ({ id, format }) => {
       try {
-        const proposal = getMyProposal(services.proposalStore, accessLink, id);
+        const proposal = getAccessibleProposal(services.proposalStore, accessLink, id);
         const resolved = resolveDiffFormat(format ?? 'summary');
         if (!resolved.ok) {
           return jsonError(
@@ -503,6 +538,42 @@ function registerProposalTools(
           resolved.format
         );
         return jsonResult(diff);
+      } catch (error) {
+        return jsonError(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    'withdraw_proposal',
+    {
+      description:
+        'Withdraw one of YOUR pending proposals (status becomes withdrawn, not rejected). ' +
+        'Optional reason. Only the creating access link can withdraw; other tokens get 403. ' +
+        'Cite displayName + reviewUrl when telling the user.',
+      inputSchema: {
+        id: z.string().min(1).describe('Proposal id (prop-…) owned by this access link'),
+        reason: z.string().optional().describe('Optional withdraw reason'),
+      },
+    },
+    ({ id, reason }) => {
+      try {
+        const withdrawn = withdrawMyProposal(
+          services.proposalStore,
+          services.auditLog,
+          accessLink,
+          id,
+          reason,
+          presentOpts
+        );
+        return jsonResult(
+          presentAccessibleProposalForApi(
+            services.proposalStore,
+            accessLink,
+            withdrawn,
+            presentOpts
+          )
+        );
       } catch (error) {
         return jsonError(error);
       }

@@ -294,6 +294,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'search_flows',
         'search_palette',
         'submit_proposal',
+        'withdraw_proposal',
       ].sort()
     );
     const tools = (res.body.result as { tools: { name: string; description?: string }[] }).tools;
@@ -407,10 +408,11 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(proposal.expectedRev).toBe('rev-1');
     expect(proposal.createdBy.linkId).toBe(link.id);
 
-    const mine = await callTool(app, link.token, 'list_my_proposals');
-    const mineJson = parseToolJson(mine.result) as { proposals: { id: string }[] };
+    const mine = await callTool(app, link.token, 'list_my_proposals', { mine: true });
+    const mineJson = parseToolJson(mine.result) as { proposals: { id: string; mine: boolean }[] };
     expect(mineJson.proposals).toHaveLength(1);
     expect(mineJson.proposals[0]!.id).toBe(proposal.id);
+    expect(mineJson.proposals[0]!.mine).toBe(true);
 
     const got = await callTool(app, link.token, 'get_proposal', { id: proposal.id });
     const gotJson = parseToolJson(got.result) as { id: string };
@@ -503,12 +505,15 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(diffJson.proposalId).toBe(mcpProposal.id);
     expect(diffJson.summary).toBeTruthy();
 
-    const restList = await request(app).get('/mcp/api/v1/proposals').set(restAuth);
-    const mcpList = await callTool(app, mcpLink.token, 'list_my_proposals');
+    const restList = await request(app).get('/mcp/api/v1/proposals?mine=true').set(restAuth);
+    const mcpList = await callTool(app, mcpLink.token, 'list_my_proposals', { mine: true });
     const mcpListJson = parseToolJson(mcpList.result) as { proposals: unknown[] };
-    // Each surface lists only its own link's proposals (one each).
+    // mine=true still scopes to the caller's own proposals (one each).
     expect(restList.body.proposals).toHaveLength(1);
     expect(mcpListJson.proposals).toHaveLength(1);
+
+    const restAll = await request(app).get('/mcp/api/v1/proposals').set(restAuth);
+    expect(restAll.body.proposals.length).toBeGreaterThanOrEqual(2);
 
     const restFlows = await request(app).get('/mcp/api/v1/flows').set(restAuth);
     const mcpFlows = await callTool(app, mcpLink.token, 'list_flows');

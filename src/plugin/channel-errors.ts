@@ -12,7 +12,11 @@ import {
   FlowRevisionConflictError,
   PluginMisconfiguredError,
 } from '../runtime/errors.js';
-import { ProposalNotFoundError } from '../storage/proposals.js';
+import {
+  ProposalNotFoundError,
+  ProposalNotOwnedError,
+  ProposalNotPendingError,
+} from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { AiOpsValidationError } from './ai-ops.js';
@@ -47,6 +51,8 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   invalid_line_range: 'lines must be A or A-B (1-based inclusive; end >= start)',
   line_range_out_of_bounds: 'lines range is out of bounds',
   proposal_not_found: 'Proposal was not found',
+  proposal_not_owned: 'Proposal was not created by this access link',
+  proposal_not_pending: 'Proposal is not pending',
   unsupported_media_type: 'Content-Type must be application/json',
 };
 
@@ -81,6 +87,10 @@ function hintFor(code: string, channel: ErrorChannel): string | undefined {
       return channel === 'mcp'
         ? 'Call list_my_proposals and use an id from that response.'
         : 'List proposals and use an id from that response.';
+    case 'proposal_not_owned':
+      return 'Only the access link that created a pending proposal can withdraw it.';
+    case 'proposal_not_pending':
+      return 'Only pending proposals can be withdrawn or decided.';
     case 'node_type_not_found':
     case 'unknown_node_type':
       if (channel === 'mcp') {
@@ -174,6 +184,8 @@ export function mapErrorForChannel(
     };
   } else if (
     error instanceof ProposalNotFoundError ||
+    error instanceof ProposalNotOwnedError ||
+    error instanceof ProposalNotPendingError ||
     error instanceof StoragePayloadTooLargeError
   ) {
     mapped = {

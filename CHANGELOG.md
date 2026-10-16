@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- Proposal visibility: every access-link token can list/read **all** proposals
+  with `mine: true|false`; filter with `?mine=true` / MCP `list_my_proposals`
+  `{ mine: true }`.
+- Cross-token conflict warnings on submit/read: `conflictingProposals` with
+  optional `overlappingNodeIds` / `overlappingFields` (replaces private
+  `otherLinkSiblingCount`).
+- Withdraw own pending proposals (`withdrawn` status): GET
+  `…/proposals/<id>/withdraw`, REST `POST /proposals/{id}/withdraw`, MCP
+  `withdraw_proposal` (+ `/mcp` pill + audit `proposal.withdrawn`).
+- Docs: Known issues (per-token rate limits stack), 1.5MB cap on every channel,
+  canonical REST/MCP `payload.nodes` op shapes.
 - Phase 2C: GET `/mcp/a/<token>` cannot mint tokens — explicit **405**
   `link_create_not_supported` on `/mcp/a/<token>/links`; OpenAPI documents
   `AccessLinkKind`, `CreateLinkRequest.kind`, `wrong_token_kind` /

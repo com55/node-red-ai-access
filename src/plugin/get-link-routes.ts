@@ -9,7 +9,14 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import type { ProposalStore } from '../storage/proposals.js';
 
-import { aiOpsErrorToHttp, getMyProposal, listFlows, listMyProposals } from './ai-ops.js';
+import {
+  aiOpsErrorToHttp,
+  getAccessibleProposal,
+  listAccessibleProposals,
+  listFlows,
+  presentAccessibleProposalForApi,
+  withdrawMyProposal,
+} from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
@@ -41,12 +48,7 @@ import {
 } from './node-types-routes.js';
 import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
-import {
-  parseIncludeQuery,
-  presentOptionsFor,
-  presentProposalForApi,
-  presentProposalsForApi,
-} from './proposal-present.js';
+import { parseIncludeQuery, presentOptionsFor } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute, sendCaughtRouteError } from './route-errors.js';
 import { buildStatus } from './status.js';
@@ -256,13 +258,16 @@ function registerGetLinkProposalRoutes(
       }
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
       const include = parseIncludeQuery(req.query.include);
+      const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
+      const list = listAccessibleProposals(options.proposalStore, link, presentOpts, {
+        ...(mineOnly ? { mine: true } : {}),
+      });
       res.json({
-        proposals: presentProposalsForApi(
-          listMyProposals(options.proposalStore, link, presentOpts),
-          {
+        proposals: list.map(p =>
+          presentAccessibleProposalForApi(options.proposalStore, link, p, {
             ...presentOpts,
             include,
-          }
+          })
         ),
       });
     })
@@ -286,18 +291,19 @@ function registerGetLinkProposalRoutes(
       try {
         const presentOpts = presentOptionsFor(req, httpAdminRoot);
         const include = parseIncludeQuery(req.query.include);
+        const presented = getAccessibleProposal(options.proposalStore, link, id, presentOpts);
         res.json(
-          presentProposalForApi(getMyProposal(options.proposalStore, link, id, presentOpts), {
+          presentAccessibleProposalForApi(options.proposalStore, link, presented, {
             ...presentOpts,
             include,
           })
         );
       } catch (error) {
-        const mapped = aiOpsErrorToHttp(error);
+        const mapped = aiOpsErrorToHttp(error, 'get');
         if (mapped) {
           res.status(mapped.statusCode).json({
             ...mapped.body,
-            hint: 'List proposals with GET …/proposals.',
+            hint: mapped.body.hint ?? 'List proposals with GET …/proposals.',
           });
           return;
         }
@@ -307,6 +313,70 @@ function registerGetLinkProposalRoutes(
     })
   );
 
+  registerGetLinkWithdrawRoute(app, base, gate, options, httpAdminRoot);
+  registerGetLinkDiffRoute(app, base, gate, options, httpAdminRoot);
+}
+
+function registerGetLinkWithdrawRoute(
+  app: Express,
+  base: string,
+  gate: GetLinkGate,
+  options: RegisterGetLinkRoutesOptions,
+  httpAdminRoot?: string
+): void {
+  app.get(
+    `${base}/proposals/:id/withdraw`,
+    ...gate,
+    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+      setNoStore(res);
+      const id = req.params.id;
+      const link = req.accessLink;
+      if (typeof id !== 'string' || !id) {
+        jsonError(res, 400, 'Missing proposal id', 'missing_proposal_id');
+        return;
+      }
+      if (!link) {
+        jsonError(res, 401, 'Access link required', 'access_link_missing');
+        return;
+      }
+      const reason = typeof req.query.reason === 'string' ? req.query.reason : undefined;
+      const presentOpts = presentOptionsFor(req, httpAdminRoot);
+      const include = parseIncludeQuery(req.query.include);
+      try {
+        const withdrawn = withdrawMyProposal(
+          options.proposalStore,
+          options.auditLog,
+          link,
+          id,
+          reason,
+          presentOpts
+        );
+        res.json(
+          presentAccessibleProposalForApi(options.proposalStore, link, withdrawn, {
+            ...presentOpts,
+            include,
+          })
+        );
+      } catch (error) {
+        const mapped = aiOpsErrorToHttp(error, 'get');
+        if (mapped) {
+          res.status(mapped.statusCode).json(mapped.body);
+          return;
+        }
+        sendCaughtRouteError(res, error);
+        return;
+      }
+    })
+  );
+}
+
+function registerGetLinkDiffRoute(
+  app: Express,
+  base: string,
+  gate: GetLinkGate,
+  options: RegisterGetLinkRoutesOptions,
+  httpAdminRoot?: string
+): void {
   app.get(
     `${base}/proposals/:id/diff`,
     ...gate,
@@ -323,7 +393,7 @@ function registerGetLinkProposalRoutes(
         return;
       }
       try {
-        const proposal = getMyProposal(
+        const proposal = getAccessibleProposal(
           options.proposalStore,
           link,
           id,

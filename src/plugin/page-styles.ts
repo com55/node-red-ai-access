@@ -1039,6 +1039,7 @@ dialog h3 { margin: 0 0 0.4rem; }
 .status-pill.approved { background: #e8f6ef; color: var(--ok); }
 .status-pill.rejected { background: #f4efe6; color: #6a4a14; }
 .status-pill.failed { background: #fdeceb; color: var(--danger); }
+.status-pill.withdrawn { background: #eef0f3; color: #4a5564; }
 .debug-toggle {
   flex-direction: row;
   align-items: center;
