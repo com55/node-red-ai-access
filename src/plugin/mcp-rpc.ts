@@ -23,11 +23,14 @@ import {
   findConflictingProposals,
   getAccessibleProposal,
   getFlow,
+  isProposalStatus,
   listAccessibleProposals,
+  LIST_PROPOSALS_MAX_LIMIT,
   listFlows,
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  type ListProposalsFilter,
 } from './ai-ops.js';
 import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
@@ -450,58 +453,130 @@ function registerProposalTools(
   registerProposalActionTools(server, services, accessLink, presentOpts);
 }
 
+function registerListProposalsTools(
+  server: McpServer,
+  services: PluginServices,
+  accessLink: NonNullable<AuthenticatedRequest['accessLink']>,
+  presentOpts: ReturnType<typeof presentOptionsFor>
+): void {
+  const listProposalsInputSchema = {
+    mine: z.boolean().optional().describe('When true, only proposals created by this access link'),
+    status: z
+      .enum(['pending', 'approved', 'rejected', 'failed', 'withdrawn', 'expired', 'superseded'])
+      .optional()
+      .describe('Filter by proposal status'),
+    flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(LIST_PROPOSALS_MAX_LIMIT)
+      .optional()
+      .describe(`Page size (1–${LIST_PROPOSALS_MAX_LIMIT}). Omit to return all matches.`),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Skip this many filtered results (default 0)'),
+    include_payload: z
+      .boolean()
+      .optional()
+      .describe('When true, include payload and baseFlow on each proposal'),
+  };
+
+  const listProposalsHandler = async (args: {
+    mine?: boolean | undefined;
+    status?:
+      | 'pending'
+      | 'approved'
+      | 'rejected'
+      | 'failed'
+      | 'withdrawn'
+      | 'expired'
+      | 'superseded'
+      | undefined;
+    flowId?: string | undefined;
+    limit?: number | undefined;
+    offset?: number | undefined;
+    include_payload?: boolean | undefined;
+  }) => {
+    try {
+      const include = includeSetFromPayloadFlag(args.include_payload);
+      const liveRev = await tryLiveRev(services.flowAdapter);
+      if (liveRev) {
+        expireStalePendingProposals(services.proposalStore, liveRev);
+      }
+      const filter: ListProposalsFilter = {};
+      if (args.mine === true) {
+        filter.mine = true;
+      }
+      if (args.status !== undefined && isProposalStatus(args.status)) {
+        filter.status = args.status;
+      }
+      if (typeof args.flowId === 'string' && args.flowId.length > 0) {
+        filter.flowId = args.flowId;
+      }
+      if (typeof args.limit === 'number') {
+        filter.limit = args.limit;
+      }
+      if (typeof args.offset === 'number') {
+        filter.offset = args.offset;
+      }
+      const page = listAccessibleProposals(services.proposalStore, accessLink, presentOpts, filter);
+      return jsonResult({
+        proposals: page.proposals.map(p =>
+          presentAccessibleProposalForApi(
+            services.proposalStore,
+            accessLink,
+            p,
+            { ...presentOpts, include },
+            { includeConflicts: false }
+          )
+        ),
+        total: page.total,
+        ...(page.limit !== null ? { limit: page.limit } : {}),
+        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
+      });
+    } catch (error) {
+      return jsonError(error);
+    }
+  };
+
+  server.registerTool(
+    'list_proposals',
+    {
+      description:
+        'List proposals visible to this access link (all proposals by default). Each item includes ' +
+        'mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with ' +
+        'limit/offset (response includes total). Returns lean { proposals, total, … } with title, ' +
+        'displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
+        'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
+      inputSchema: listProposalsInputSchema,
+    },
+    listProposalsHandler
+  );
+
+  // Alias kept for older clients / prompts.
+  server.registerTool(
+    'list_my_proposals',
+    {
+      description:
+        'Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this access ' +
+        'link with optional mine/status/flowId filters and limit/offset pagination.',
+      inputSchema: listProposalsInputSchema,
+    },
+    listProposalsHandler
+  );
+}
+
 function registerProposalQueryTools(
   server: McpServer,
   services: PluginServices,
   accessLink: NonNullable<AuthenticatedRequest['accessLink']>,
   presentOpts: ReturnType<typeof presentOptionsFor>
 ): void {
-  server.registerTool(
-    'list_my_proposals',
-    {
-      description:
-        'List proposals visible to this access link (all proposals by default). Each item includes ' +
-        'mine:true|false for the caller. Pass mine=true to filter to your own. Returns lean ' +
-        '{ proposals: [...] } with title, displayName, reviewUrl, changeSummary ' +
-        '(no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when ' +
-        'referring to a proposal with the user (not the raw id).',
-      inputSchema: {
-        mine: z
-          .boolean()
-          .optional()
-          .describe('When true, only proposals created by this access link'),
-        include_payload: z
-          .boolean()
-          .optional()
-          .describe('When true, include payload and baseFlow on each proposal'),
-      },
-    },
-    async args => {
-      try {
-        const include = includeSetFromPayloadFlag(args.include_payload);
-        const liveRev = await tryLiveRev(services.flowAdapter);
-        if (liveRev) {
-          expireStalePendingProposals(services.proposalStore, liveRev);
-        }
-        const list = listAccessibleProposals(services.proposalStore, accessLink, presentOpts, {
-          ...(args.mine === true ? { mine: true } : {}),
-        });
-        return jsonResult({
-          proposals: list.map(p =>
-            presentAccessibleProposalForApi(
-              services.proposalStore,
-              accessLink,
-              p,
-              { ...presentOpts, include },
-              { includeConflicts: false }
-            )
-          ),
-        });
-      } catch (error) {
-        return jsonError(error);
-      }
-    }
-  );
+  registerListProposalsTools(server, services, accessLink, presentOpts);
 
   server.registerTool(
     'get_proposal',

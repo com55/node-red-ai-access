@@ -198,7 +198,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 
 7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved, rejected, or
    withdrawn. Every token can list/read **all** proposals; each item has
-   \`mine:true|false\`. Filter with \`?mine=true\`. Cite \`displayName\` +
+   \`mine:true|false\`. Filter with \`?mine=true\`, \`?status=\`, \`?flowId=\`;
+   paginate with \`?limit=\` / \`?offset=\` (response includes \`total\`). Cite \`displayName\` +
    \`reviewUrl\` when updating the user.
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
@@ -252,7 +253,7 @@ function docsUrlTable(): string {
 | List node types | \`GET ./node-types?q=\` |
 | One node type | \`GET ./node-types/<type>\` (\`?help=0\` omits help) |
 | Palette search (recommend only) | \`GET ./palette/search?q=\` |
-| All proposals (\`?mine=true\` = own only) | \`GET ./proposals\` |
+| All proposals (\`?mine=\` / \`?status=\` / \`?flowId=\` / \`?limit=\` / \`?offset=\`) | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
 | Withdraw own pending | \`GET ./proposals/<id>/withdraw?confirm=1&reason=\` |

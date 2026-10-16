@@ -310,7 +310,7 @@ describe('proposal visibility, conflicts, withdraw', () => {
     expect(docs.text).toMatch(/pull request/i);
   });
 
-  it('MCP list_my_proposals returns all with mine filter', async () => {
+  it('MCP list_proposals returns all with mine filter (alias list_my_proposals)', async () => {
     const { app, linkStore } = createApp(userDir);
     const a = linkStore.create({ label: 'ma', kind: 'mcp' });
     const b = linkStore.create({ label: 'mb', kind: 'mcp' });
@@ -328,13 +328,18 @@ describe('proposal visibility, conflicts, withdraw', () => {
       payload: { flowId: 'tab-1', nodes: [{ op: 'set', id: 'n2', set: { name: 'B' } }] },
     });
 
-    const allRes = await callTool(app, b.token, 'list_my_proposals');
+    const allRes = await callTool(app, b.token, 'list_proposals');
     const all = parseToolJson(allRes.body);
     expect((all.proposals as unknown[]).length).toBe(2);
+    expect(all.total).toBe(2);
 
-    const mineRes = await callTool(app, b.token, 'list_my_proposals', { mine: true });
+    const mineRes = await callTool(app, b.token, 'list_proposals', { mine: true });
     const mineOnly = parseToolJson(mineRes.body);
     expect((mineOnly.proposals as unknown[]).length).toBe(1);
     expect((mineOnly.proposals as { mine: boolean }[])[0]!.mine).toBe(true);
+
+    const aliasRes = await callTool(app, b.token, 'list_my_proposals', { mine: true });
+    const alias = parseToolJson(aliasRes.body);
+    expect((alias.proposals as unknown[]).length).toBe(1);
   });
 });

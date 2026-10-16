@@ -15,6 +15,7 @@ import {
   ProposalConcurrentApproveError,
   ProposalNotFoundError,
   ProposalNotPendingError,
+  type ProposalStatus,
   type ProposalStore,
 } from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
@@ -30,6 +31,7 @@ import {
   findConflictingProposals,
   getAccessibleProposal,
   listAccessibleProposals,
+  parseListProposalsQuery,
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
@@ -171,7 +173,7 @@ export function listProposalsHandler(
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
     };
     const include = resolveIncludeFromQuery(req.query);
-    const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
+    const listFilter = parseListProposalsQuery(req.query);
 
     if (liveRev) {
       expireStalePendingProposals(store, liveRev);
@@ -179,10 +181,8 @@ export function listProposalsHandler(
 
     const accessLink = req.accessLink;
     if (accessLink) {
-      const list = listAccessibleProposals(store, accessLink, presentOpts, {
-        ...(mineOnly ? { mine: true } : {}),
-      });
-      const proposals = list.map(p => {
+      const page = listAccessibleProposals(store, accessLink, presentOpts, listFilter);
+      const proposals = page.proposals.map(p => {
         const lean = presentAccessibleProposalForApi(
           store,
           accessLink,
@@ -195,17 +195,43 @@ export function listProposalsHandler(
         }
         return { ...lean, baseRevStale: lean.expectedRev !== liveRev };
       });
-      res.json({ proposals });
+      res.json({
+        proposals,
+        total: page.total,
+        ...(page.limit !== null ? { limit: page.limit } : {}),
+        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
+      });
       return;
     }
 
-    const proposals = presentProposalsForApi(store.list(), { ...presentOpts, include }).map(p => {
+    const storeFilter: { status?: ProposalStatus; flowId?: string } = {};
+    if (listFilter.status) {
+      storeFilter.status = listFilter.status;
+    }
+    if (listFilter.flowId) {
+      storeFilter.flowId = listFilter.flowId;
+    }
+    const all = presentProposalsForApi(store.list(storeFilter), { ...presentOpts, include });
+    const total = all.length;
+    const offset = listFilter.offset ?? 0;
+    const sliced =
+      listFilter.limit !== undefined
+        ? all.slice(offset, offset + listFilter.limit)
+        : offset > 0
+          ? all.slice(offset)
+          : all;
+    const proposals = sliced.map(p => {
       if (p.status !== 'pending' || liveRev === undefined) {
         return p;
       }
       return { ...p, baseRevStale: p.expectedRev !== liveRev };
     });
-    res.json({ proposals });
+    res.json({
+      proposals,
+      total,
+      ...(listFilter.limit !== undefined ? { limit: listFilter.limit } : {}),
+      ...(offset > 0 || listFilter.limit !== undefined ? { offset } : {}),
+    });
   };
 }
 

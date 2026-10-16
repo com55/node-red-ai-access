@@ -16,8 +16,11 @@ and this project adheres to
   only; other older-rev peers appear as `staleOnOlderRev` count. List items omit
   `conflictingProposals`.
 - GET withdraw requires `confirm=1` (prefetch-safe).
+- Proposal list pagination and filters on GET/REST/MCP: `status`, `flowId`,
+  `limit`/`offset` (response `total`; max limit 200). MCP tool renamed to
+  `list_proposals` (`list_my_proposals` kept as alias).
 - Proposal visibility: every access-link token can list/read **all** proposals
-  with `mine: true|false`; filter with `?mine=true` / MCP `list_my_proposals`
+  with `mine: true|false`; filter with `?mine=true` / MCP `list_proposals`
   `{ mine: true }`.
 - Cross-token conflict warnings on submit/read: `conflictingProposals` with
   optional `overlappingNodeIds` / `overlappingFields` (replaces private

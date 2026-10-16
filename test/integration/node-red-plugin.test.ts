@@ -647,13 +647,19 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(winnerApproved.status).toBe(200);
     expect(winnerApproved.body.status).toBe('approved');
 
+    // Approving the winner auto-closes other pending on the same flow as superseded.
+    const staleAfter = await request(RED.httpAdmin)
+      .get(`/mcp/api/v1/proposals/${staleCandidate.body.id}`)
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(staleAfter.status).toBe(200);
+    expect(staleAfter.body.status).toBe('superseded');
+    expect(staleAfter.body.reason).toMatch(/superseded/i);
+
     const staleApproved = await request(RED.httpAdmin)
       .post(`/mcp/api/v1/proposals/${staleCandidate.body.id}/approve`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({});
-    expect(staleApproved.status).toBe(200);
-    expect(staleApproved.body.status).toBe('rejected');
-    expect(staleApproved.body.reason).toMatch(/resubmit|stale|revision/i);
-    expect(staleApproved.body.status).not.toBe('failed');
+    expect(staleApproved.status).toBe(409);
+    expect(staleApproved.body.code).toBe('proposal_not_pending');
   });
 });

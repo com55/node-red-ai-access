@@ -142,17 +142,17 @@ API. Tools mirror the AI-facing REST surface only:
 
 `get_status`, `list_flows`, `get_flow`, `submit_proposal` (including
 `replace_flow` with `expectedRev`; `expected_rev` accepted as alias; optional
-`title` ≤80 chars), `list_my_proposals`, `get_proposal`. Tool descriptions
-document purpose, inputs, returns, and when to use them. Proposal
-create/list/get responses include `title`, `displayName` (`title ·`
-**server-local** datetime with explicit offset, e.g. `16 Oct 01:35 +00:00`),
-`reviewUrl` (absolute URL using the request Host/protocol — `X-Forwarded-*` only
-when Express `trust proxy` is set), and `reviewPath` (relative
-`/mcp#proposal=<id>`). `createdAt` remains ISO-8601. The `/mcp` page renders
-times in the browser's local timezone. AI clients should refer to proposals by
-`displayName` + `reviewUrl`, not the raw id. For access-link callers,
-`get_status` reports `permission: null` and `caller.kind: "access-link"`
-(expected — AI tokens are not admin sessions).
+`title` ≤80 chars), `list_proposals` (alias `list_my_proposals`),
+`get_proposal`. Tool descriptions document purpose, inputs, returns, and when to
+use them. Proposal create/list/get responses include `title`, `displayName`
+(`title ·` **server-local** datetime with explicit offset, e.g.
+`16 Oct 01:35 +00:00`), `reviewUrl` (absolute URL using the request
+Host/protocol — `X-Forwarded-*` only when Express `trust proxy` is set), and
+`reviewPath` (relative `/mcp#proposal=<id>`). `createdAt` remains ISO-8601. The
+`/mcp` page renders times in the browser's local timezone. AI clients should
+refer to proposals by `displayName` + `reviewUrl`, not the raw id. For
+access-link callers, `get_status` reports `permission: null` and
+`caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
 
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and
@@ -212,7 +212,8 @@ errors mark it **failed**. Reject never mutates flows.
      `POST /mcp/api/v1/proposals`, `GET /mcp/api/v1/proposals`
    - MCP: `POST /mcp/rpc` tools `list_flows`, `get_flow` (optional `summary`),
      `get_node`, `get_node_field`, `search_flows`, `submit_proposal`,
-     `list_my_proposals` (same access-link auth and limits)
+     `list_proposals` / alias `list_my_proposals` (same access-link auth and
+     limits)
 
 3. The owner reviews the proposal on `/mcp` and approves or rejects it.
 4. If the token is invalid, expired, revoked, or cleared by a restart, the API

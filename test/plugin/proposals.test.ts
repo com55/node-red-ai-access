@@ -320,7 +320,9 @@ describe('proposals / flows / logs HTTP API', () => {
     const listed = await request(app2).get('/mcp/api/v1/proposals');
     expect(listed.status).toBe(200);
     expect(listed.body.proposals).toHaveLength(1);
-    expect(listed.body.proposals[0].baseRevStale).toBe(true);
+    // Live rev moved → pending auto-closes as expired (no longer baseRevStale pending).
+    expect(listed.body.proposals[0].status).toBe('expired');
+    expect(listed.body.proposals[0].reason).toMatch(/expired/i);
     expect(listed.body.proposals[0].flowLabel).toBe('Test Flow');
     expect(listed.body.proposals[0].flowLabel).not.toBe('tab-1');
   });
