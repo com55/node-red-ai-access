@@ -126,6 +126,7 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/Flow changed since this was submitted/);
     expect(client).toMatch(/displayTitleForProposal|resolveLinkDetails|cachedLinksById/);
     expect(client).toMatch(/ensureTitleIncludesFlowName|cachedFlowLabels/);
+    expect(client).toMatch(/buildDisambiguatedTitles|fmtClockHm|titleForProposalCard/);
     expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);
@@ -168,5 +169,6 @@ describe('ai-access sidebar TTL layout', () => {
     expect(sidebar).toMatch(/flex-wrap:\s*nowrap/);
     expect(sidebar).toMatch(/red-ui-settings-row stacked/);
     expect(sidebar).toMatch(/flex-direction:\s*column/);
+    expect(sidebar).toMatch(/showSavedToast|#ai-access-flash\.is-visible|position:\s*absolute/);
   });
 });

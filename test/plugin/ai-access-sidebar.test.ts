@@ -275,5 +275,9 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(js).toMatch(/flex-wrap:\s*nowrap/);
     expect(js).toMatch(new RegExp(`v=${EDITOR_SIDEBAR_ASSET_VERSION}`));
     expect(js).toMatch(/showSavedToast|Saved/);
+    expect(js).toMatch(/2000/);
+    expect(js).toMatch(/is-visible/);
+    expect(js).toMatch(/opacity:\s*0/);
+    expect(js).toMatch(/position:\s*absolute/);
   });
 });

@@ -894,6 +894,70 @@ function pageClientScriptPartB(): string {
     return n === 1 ? 'node' : 'nodes';
   }
 
+  var disambiguatedTitleCache = {};
+
+  function fmtClockHm(iso) {
+    try {
+      var d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      return hh + ':' + mm;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * When two cards share a base title, append · HH:mm; if times collide, #1/#2.
+   */
+  function buildDisambiguatedTitles(proposals) {
+    var map = {};
+    var groups = {};
+    (proposals || []).forEach(function (p) {
+      if (!p || !p.id) return;
+      var base = displayTitleForProposal(p, proposalDiffCache[p.id]);
+      map[p.id] = base;
+      if (!groups[base]) groups[base] = [];
+      groups[base].push(p);
+    });
+    Object.keys(groups).forEach(function (base) {
+      var list = groups[base];
+      if (list.length < 2) return;
+      var timed = {};
+      list.forEach(function (p) {
+        var hm = fmtClockHm(p.createdAt);
+        var withTime = hm ? base + ' · ' + hm : base;
+        if (!timed[withTime]) timed[withTime] = [];
+        timed[withTime].push(p);
+      });
+      Object.keys(timed).forEach(function (t) {
+        var group = timed[t];
+        if (group.length === 1) {
+          map[group[0].id] = t;
+          return;
+        }
+        group.sort(function (a, b) {
+          var ca = String(a.createdAt || '');
+          var cb = String(b.createdAt || '');
+          if (ca !== cb) return ca < cb ? -1 : 1;
+          return String(a.id).localeCompare(String(b.id));
+        });
+        group.forEach(function (p, i) {
+          map[p.id] = t + ' #' + (i + 1);
+        });
+      });
+    });
+    return map;
+  }
+
+  function titleForProposalCard(p) {
+    if (p && p.id && disambiguatedTitleCache[p.id]) {
+      return disambiguatedTitleCache[p.id];
+    }
+    return displayTitleForProposal(p, proposalDiffCache[p && p.id]);
+  }
+
   function displayTitleForProposal(p, diff) {
     var stored = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : '');
     var flowLabel = flowLabelOf(p);
@@ -1514,7 +1578,7 @@ function pageClientScriptPartB2Cards(): string {
 
   function renderProposalCard(p) {
     var cached = proposalDiffCache[p.id];
-    var title = displayTitleForProposal(p, cached);
+    var title = titleForProposalCard(p);
     var flowLabel = flowLabelOf(p);
     var createdBy = renderRequestedVia(p);
     var reason = p.reason
@@ -1557,7 +1621,7 @@ function pageClientScriptPartB2CardsList(): string {
   return `
   function renderStaleItem(p) {
     var cached = proposalDiffCache[p.id];
-    var title = displayTitleForProposal(p, cached);
+    var title = titleForProposalCard(p);
     var flowLabel = flowLabelOf(p);
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     var dismissBtn = canApprove
@@ -1605,7 +1669,7 @@ function pageClientScriptPartB2CardsList(): string {
   }
 
   function renderCompactProposal(p) {
-    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
+    var title = titleForProposalCard(p);
     var flowLabel = flowLabelOf(p);
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
       '" role="button" tabindex="0" aria-expanded="false">' +
@@ -1641,6 +1705,7 @@ function pageClientScriptPartB2CardsList(): string {
           '<p class="muted">Switch the filter above to see other proposals.</p></div>';
         return;
       }
+      disambiguatedTitleCache = buildDisambiguatedTitles(live.concat(stale));
       list.innerHTML = live.map(renderProposalCard).join('') + renderStaleGroup(stale);
       live.concat(stale).forEach(function (p) { loadProposalDiff(p.id); });
     } else {
@@ -1649,6 +1714,7 @@ function pageClientScriptPartB2CardsList(): string {
           '<p class="muted">Switch the filter above to see other proposals.</p></div>';
         return;
       }
+      disambiguatedTitleCache = buildDisambiguatedTitles(decided);
       list.innerHTML = decided.map(renderCompactProposal).join('');
     }
     bindProposalActions(list);
@@ -1817,11 +1883,13 @@ function pageClientScriptPartB2Apply(): string {
       existingBanner.parentNode.removeChild(existingBanner);
     }
 
-    // Refresh heading from the live diff (legacy "Update …" / delete-leading titles).
-    var titleEl = document.querySelector('[data-title-for="' + id + '"]');
-    if (titleEl && p) {
-      titleEl.textContent = displayTitleForProposal(p, diff);
-    }
+    // Refresh headings from the live diff; rebuild disambiguation across peers.
+    var pendingPeers = cachedProposals.filter(function (x) { return x.status === 'pending'; });
+    disambiguatedTitleCache = buildDisambiguatedTitles(pendingPeers);
+    pendingPeers.forEach(function (peer) {
+      var el = document.querySelector('[data-title-for="' + peer.id + '"]');
+      if (el) el.textContent = titleForProposalCard(peer);
+    });
     updatePendingBadges();
   }
 
