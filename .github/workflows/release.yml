@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v0.1.0)'
+        required: true
+        type: string
+
+# One release run per tag; never cancel a publish in progress.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create/update the GitHub release
+  id-token: write # npm trusted publishing (OIDC) and provenance
+
+jobs:
+  release:
+    name: Publish to npm and GitHub
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Use a recent npm
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - name: Check tag matches package.json version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match package.json version v$version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=$(node -p "require('./package.json').name")" >> "$GITHUB_ENV"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Quality
+        run: yarn quality
+
+      - name: Test
+        run: yarn test
+
+      - name: Production build
+        run: yarn build:prod
+
+      - name: Pack tarball
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+          ls -l release
+
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$VERSION is already on npm; skipping publish."
+            exit 0
+          fi
+          tarball="$(ls release/*.tgz)"
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "Publishing with the NPM_TOKEN secret (first-publish fallback)."
+            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish "$tarball" --access public --provenance
+          else
+            echo "Publishing with npm trusted publishing (OIDC)."
+            unset NODE_AUTH_TOKEN
+            npm publish "$tarball" --access public --provenance
+          fi
+
+      - name: Extract CHANGELOG section
+        run: |
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG section found for $VERSION"
+            exit 1
+          fi
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tarball="$(ls release/*.tgz)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+            gh release upload "$TAG" "$tarball" --clobber
+          else
+            gh release create "$TAG" "$tarball" --title "$TAG" --notes-file release-notes.md --verify-tag
+          fi
