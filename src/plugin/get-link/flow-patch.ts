@@ -7,6 +7,7 @@ import { AiOpsValidationError } from '../ai-ops.js';
 import {
   assertValidWiresShape,
   collectConfigWarnings,
+  collectDuplicateNodeIdIssues,
   collectWireValidation,
   collectZMismatchIssues,
   throwValidationIssues,
@@ -245,6 +246,12 @@ export async function applyFlowNodeOps(
 
   // 1) Patch shape before I/O or palette — accumulate every shape error.
   const shapeIssues = collectOpShapeIssues(ops);
+  shapeIssues.push(
+    ...collectDuplicateNodeIdIssues(
+      [ops.flatMap(op => (op.op === 'add' ? [op.node as unknown] : []))],
+      'the batch (add ops)'
+    )
+  );
   throwValidationIssues(shapeIssues);
 
   // 2) Load + rev check before types / wire semantics.

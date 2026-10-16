@@ -27,11 +27,6 @@ export interface ConflictingProposalRef {
 
 export interface ConflictingProposalsResult {
   conflictingProposals: ConflictingProposalRef[];
-  /**
-   * Pending same-flow peers on a different expectedRev with no node overlap.
-   * Not listed in `conflictingProposals` — count only.
-   */
-  staleOnOlderRev?: number;
 }
 
 function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
@@ -175,8 +170,9 @@ export function supersedePendingOnFlow(
 /**
  * Pending proposals on the same flowId that may conflict when approved.
  * Includes same-`expectedRev` peers and peers with true node/field overlap.
- * Other pending peers on a different rev (no overlap) contribute only to
- * `staleOnOlderRev`. Closed proposals are never conflicts.
+ * Pending peers on a different rev with no overlap are skipped (in practice
+ * they are auto-closed as `expired` before this runs). Closed proposals are
+ * never conflicts.
  */
 export function findConflictingProposals(
   store: ProposalStore,
@@ -185,7 +181,6 @@ export function findConflictingProposals(
 ): ConflictingProposalsResult {
   const selfTouches = computeProposalTouches(proposal);
   const conflictingProposals: ConflictingProposalRef[] = [];
-  let staleOnOlderRev = 0;
 
   for (const other of store.list()) {
     if (
@@ -204,7 +199,6 @@ export function findConflictingProposals(
     const trulyOverlapping = overlap.nodeIds.length > 0;
 
     if (!sameRev && !trulyOverlapping) {
-      staleOnOlderRev += 1;
       continue;
     }
 
@@ -223,11 +217,7 @@ export function findConflictingProposals(
     conflictingProposals.push(ref);
   }
 
-  const result: ConflictingProposalsResult = { conflictingProposals };
-  if (staleOnOlderRev > 0) {
-    result.staleOnOlderRev = staleOnOlderRev;
-  }
-  return result;
+  return { conflictingProposals };
 }
 
 /** Spread conflict warning fields onto a JSON response (omit when empty). */
@@ -238,8 +228,14 @@ export function conflictWarningFields(result: ConflictingProposalsResult): Recor
     out.warning =
       'Other pending proposals touch the same flow — approve order may conflict (like a git merge).';
   }
-  if (result.staleOnOlderRev !== undefined && result.staleOnOlderRev > 0) {
-    out.staleOnOlderRev = result.staleOnOlderRev;
-  }
   return out;
+}
+
+/**
+ * `autoClosedCount` response field: how many pending proposals this request
+ * auto-closed as `expired` (live rev moved past their expectedRev). Omitted
+ * when zero.
+ */
+export function autoClosedFields(count: number): { autoClosedCount?: number } {
+  return count > 0 ? { autoClosedCount: count } : {};
 }

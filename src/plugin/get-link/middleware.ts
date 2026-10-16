@@ -6,12 +6,12 @@ import type { NextFunction, Request, Response } from 'express';
 
 import type { AccessLinkStore } from '../../access/link-store.js';
 import {
-  ACCESS_LINK_EXPIRED_CODE,
-  ACCESS_LINK_EXPIRED_MESSAGE,
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
   ACCESS_LINK_MISSING_MESSAGE,
+  ACCESS_LINK_WWW_AUTHENTICATE,
+  sendTokenExpired,
   sendWrongTokenKind,
 } from '../access-link-auth.js';
 import { MAX_GET_ACCESS_URL_BYTES, redactAccessLinkTokenInPath } from '../access-path.js';
@@ -73,6 +73,7 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
 
     const raw = req.params.token;
     if (typeof raw !== 'string' || raw.length === 0) {
+      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
       res.status(401).json({
         error: ACCESS_LINK_MISSING_MESSAGE,
         code: ACCESS_LINK_MISSING_CODE,
@@ -90,11 +91,7 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
 
     const result = store.validateResult(token);
     if (result.status === 'expired') {
-      res.status(401).json({
-        error: ACCESS_LINK_EXPIRED_MESSAGE,
-        code: ACCESS_LINK_EXPIRED_CODE,
-        hint: 'Ask the user for a new self-contained access link URL.',
-      });
+      sendTokenExpired(req, res, RED.settings.httpAdminRoot, result.expiresAt);
       return;
     }
     if (result.status !== 'active') {
@@ -102,6 +99,7 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
         token.length < 24 || (token.startsWith('aia_') && token.length < 40)
           ? 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.'
           : 'Ask the user for a new self-contained access link URL (it may have expired, or Node-RED may have restarted).';
+      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
       res.status(401).json({
         error: ACCESS_LINK_INVALID_MESSAGE,
         code: ACCESS_LINK_INVALID_CODE,

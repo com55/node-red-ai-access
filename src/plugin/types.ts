@@ -73,7 +73,10 @@ export interface AiAccessStatusCallerAccessLink {
   /** ISO-8601 expiry of this access link. */
   expiresAt?: string;
   /** Whole minutes until `expiresAt` (0 when already past). */
+  /** Whole minutes left, rounded up (never 0 while the token is valid). */
   minutesRemaining?: number;
+  /** Whole seconds left, rounded up. */
+  secondsRemaining?: number;
   /**
    * Capabilities granted to this access link (not admin scopes).
    * Example: `status:read`, `flows:read`, `proposals:create`, `proposals:read-own`.

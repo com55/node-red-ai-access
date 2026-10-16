@@ -155,14 +155,28 @@ info:
     Every access-link token can **list and read all proposals**. Each item
     includes `mine: true|false` for the caller. Filter with `?mine=true`,
     `?status=`, and/or `?flowId=` (REST/GET), or MCP `list_proposals` with the
-    same fields. Paginate with `limit`/`offset` (response includes `total`;
-    max `limit` is 200). MCP keeps `list_my_proposals` as an alias.
+    same fields. Paginate with `limit`/`offset`; every channel returns the
+    same pagination fields: `total` (matches before paging), `offset`, `limit`
+    (when given), `hasMore`, and `nextOffset` (only when `hasMore`). Pagination
+    is offset-based (no cursor). MCP keeps `list_my_proposals` as an alias.
+
+    Invalid filters are rejected (never clamped or ignored) with
+    `400 invalid_filter`, naming `parameter` and `allowed`: `status` must be a
+    proposal status, `limit` an integer 1–200, `offset` an integer ≥ 0, and
+    `mine` one of true/false/1/0. MCP argument errors use the same JSON body
+    (`invalid_filter` for list filters, `invalid_arguments` otherwise).
 
     On submit and on **get** of a **pending** proposal, responses may include
     `conflictingProposals` (same-`expectedRev` peers or true node/field overlaps)
-    with optional `overlappingNodeIds` / `overlappingFields`, plus
-    `staleOnOlderRev` (count of other pending peers on a different rev with no
-    overlap). List endpoints omit `conflictingProposals`.
+    with optional `overlappingNodeIds` / `overlappingFields`. List endpoints
+    omit `conflictingProposals`. Submit, get, and list responses include
+    `autoClosedCount` when that request auto-closed pending proposals as
+    `expired` (omitted when zero).
+
+    Validation: a single error returns its own code (e.g. `404 node_not_found`);
+    several errors return `400 validation_failed` with message
+    `N validation errors` and every entry in `errors[]`. Duplicate node ids in a
+    full tab or batch return `duplicate_node_id`.
 
     Pending proposals whose `expectedRev` no longer matches the live flow rev
     are auto-closed as `expired`. When a proposal is approved, other pending
@@ -1246,7 +1260,9 @@ components:
         (`code: bearer_scheme_required`), known-expired
         (`code: token_expired`), or invalid/revoked/pre-restart
         (`code: access_link_invalid`) access link. Includes
-        `WWW-Authenticate: Bearer`. Message instructs the AI to ask the user
+        `WWW-Authenticate: Bearer` (on every channel, including GET links).
+        `token_expired` also includes `expiredAt` and `accessLinksUrl` (the
+        `/mcp` page's Access links section, where the user creates a new link). Message instructs the AI to ask the user
         for a new access link (or to use Bearer, not Basic).
       headers:
         WWW-Authenticate:
@@ -1270,6 +1286,9 @@ components:
               value:
                 error: 'Access link token has expired. Ask the user for a new access link.'
                 code: token_expired
+                expiredAt: '2026-01-01T12:00:00.000Z'
+                accessLinksUrl: 'https://node-red.example/mcp#links'
+                hint: 'Ask the user to create a new access link in Node-RED on the /mcp page → Access links (https://node-red.example/mcp#links).'
             askForNewLink:
               value:
                 error: 'Access link is invalid, revoked, or no longer available after a restart. Ask the user for a new access link.'
@@ -1353,8 +1372,120 @@ components:
           type: string
         code:
           type: string
+          description: Machine-readable error code — see `ErrorCode` and docs/errors.md.
         hint:
           type: string
+
+    # BEGIN GENERATED ERROR CODES (src/plugin/error-registry.ts)
+    ErrorCode:
+      type: string
+      description: |
+        Machine-readable `code` on JSON error bodies. See docs/errors.md.
+
+        - `access_link_missing` (401): No Bearer / path token
+        - `bearer_scheme_required` (401): Auth used Basic (or non-Bearer)
+        - `token_expired` (401): Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`)
+        - `access_link_invalid` (401): Unknown, revoked, or cleared after restart
+        - `wrong_token_kind` (403): Token kind does not match this surface
+        - `ai_features_disabled` (403): Plugin AI features off
+        - `auth_required` (401): Admin session required
+        - `insufficient_permissions` (403): Admin lacks required scope
+        - `invalid_link_kind` (400): Unknown `kind` on create
+        - `invalid_ttl` (400): `ttlSeconds` is zero, negative, not a number, or over the cap for the kind
+        - `access_link_limit` (409): Too many active links
+        - `access_link_not_found` (404): Unknown link id on revoke
+        - `link_create_not_supported` (405): Attempted mint under a GET link
+        - `rate_limited` (429): Per-IP or per-token limit
+        - `payload_too_large` (413): Body / proposal over ~1.5MB
+        - `invalid_json` (400): Malformed JSON body
+        - `unsupported_media_type` (415): POST body is not `application/json`
+        - `url_too_long` (414): GET URL over soft cap (~8KB)
+        - `not_found` (404): Unknown path or resource
+        - `missing_query` (400): Required search `q` missing
+        - `invalid_filter` (400): Invalid list filter (`status`, `limit`, `offset`, `mine`); body names `parameter` and `allowed`
+        - `invalid_arguments` (400): MCP tool arguments failed schema validation; body names `parameter`
+        - `invalid_diff_format` (400): Unknown `format` on proposal diff
+        - `confirm_required` (400): GET withdraw without `confirm=1`
+        - `missing_expected_rev` (400): Proposal submitted without `expectedRev` / `rev`
+        - `version_mismatch` (409): Stale `rev` / `expectedRev`
+        - `proposal_not_found` (404): Unknown proposal id
+        - `proposal_not_pending` (409): Action needs a pending proposal
+        - `proposal_not_owned` (403): Withdraw of another token’s proposal
+        - `validation_failed` (400): Several validation errors at once (message `N validation errors`)
+        - `duplicate_node_id` (400): The same node id appears more than once in a full tab or batch
+        - `missing_node_id` (400): Node / op without an id
+        - `missing_node_type` (400): Node without a `type`
+        - `invalid_node_type` (400): `type` is not a string
+        - `invalid_nodes` (400): `flow.nodes` / `flow.configs` not an array
+        - `invalid_node` (400): Node entry is not an object
+        - `invalid_wires` (400): Bad wires shape, missing target, or more ports than outputs
+        - `z_mismatch` (400): Node `z` differs from the flow id
+        - `node_already_exists` (400): `add` op for an id already in the flow
+        - `protected_property` (400): Tried to change id / type / z
+        - `node_not_found` (404): Unknown node (single error only; several errors → `validation_failed`)
+        - `field_not_found` (404): Unknown field on a node
+        - `text_not_found` (400): `replace_text` find had no match
+        - `ambiguous_match` (409): `replace_text` matched more than once
+        - `unknown_node_type` (400): Proposal uses a type that is not installed
+        - `node_type_not_found` (404): Unknown type on node-types detail
+        - `chunk_conflict` (409): Same draft seq re-sent with different data
+        - `missing_chunks` (400): Draft submit with gaps in seq
+        - `draft_hash_mismatch` (400): Draft sha256 does not match assembled bytes
+        - `upstream_error` (502): Node-RED runtime/flows error
+        - `internal_error` (500): Unexpected server error
+      enum:
+        - access_link_missing
+        - bearer_scheme_required
+        - token_expired
+        - access_link_invalid
+        - wrong_token_kind
+        - ai_features_disabled
+        - auth_required
+        - insufficient_permissions
+        - invalid_link_kind
+        - invalid_ttl
+        - access_link_limit
+        - access_link_not_found
+        - link_create_not_supported
+        - rate_limited
+        - payload_too_large
+        - invalid_json
+        - unsupported_media_type
+        - url_too_long
+        - not_found
+        - missing_query
+        - invalid_filter
+        - invalid_arguments
+        - invalid_diff_format
+        - confirm_required
+        - missing_expected_rev
+        - version_mismatch
+        - proposal_not_found
+        - proposal_not_pending
+        - proposal_not_owned
+        - validation_failed
+        - duplicate_node_id
+        - missing_node_id
+        - missing_node_type
+        - invalid_node_type
+        - invalid_nodes
+        - invalid_node
+        - invalid_wires
+        - z_mismatch
+        - node_already_exists
+        - protected_property
+        - node_not_found
+        - field_not_found
+        - text_not_found
+        - ambiguous_match
+        - unknown_node_type
+        - node_type_not_found
+        - chunk_conflict
+        - missing_chunks
+        - draft_hash_mismatch
+        - upstream_error
+        - internal_error
+    # END GENERATED ERROR CODES
 
     WrongTokenKindError:
       allOf:
@@ -1680,7 +1811,13 @@ components:
                   type: integer
                   minimum: 0
                   description: >
-                    Whole minutes until `expiresAt` (floored; never negative).
+                    Whole minutes until `expiresAt`, rounded up so it is never 0 while
+                    the token is still valid (never negative).
+                secondsRemaining:
+                  type: integer
+                  minimum: 0
+                  description: >
+                    Whole seconds until `expiresAt` (rounded up; never negative).
                 permissions:
                   type: array
                   items:

@@ -18,7 +18,7 @@ import {
 } from '../../src/access/index.js';
 import { ACCESS_LINK_EXPIRED_CODE } from '../../src/plugin/access-link-auth.js';
 import { registerRoutes } from '../../src/plugin/index.js';
-import { minutesRemainingUntil } from '../../src/plugin/status.js';
+import { minutesRemainingUntil, secondsRemainingUntil } from '../../src/plugin/status.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 
 interface MockUser {
@@ -146,10 +146,93 @@ describe('token expiry UX', () => {
     expect(res.body.caller.minutesRemaining).toBeLessThanOrEqual(120);
   });
 
-  it('minutesRemainingUntil floors remaining minutes and never goes negative', () => {
+  it.each([
+    ['get_link over 24h', { kind: 'get_link', ttlSeconds: MAX_TTL_SECONDS_GET_LINK + 1 }],
+    ['rest over 30d', { kind: 'rest', ttlSeconds: MAX_TTL_SECONDS_REST_MCP + 1 }],
+    ['mcp over 30d', { kind: 'mcp', ttlSeconds: MAX_TTL_SECONDS_REST_MCP + 1 }],
+    ['zero', { kind: 'rest', ttlSeconds: 0 }],
+    ['negative', { kind: 'get_link', ttlSeconds: -5 }],
+    ['non-number', { kind: 'rest', ttlSeconds: '3600' }],
+  ])('rejects ttlSeconds %s with 400 invalid_ttl and per-kind caps hint', async (_n, body) => {
+    const { app } = createApp(userDir);
+    const res = await request(app).post('/mcp/api/v1/links').send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_ttl');
+    expect(res.body.code).not.toBe('access_link_invalid');
+    expect(res.body.hint).toMatch(/get_link.*24h/);
+    expect(res.body.hint).toMatch(/rest and mcp.*30 days/);
+  });
+
+  it('REST token_expired includes expiredAt, accessLinksUrl, and WWW-Authenticate', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const store = new AccessLinkStore({ now: () => now, randomToken: () => 'aia_exp-rest-0001' });
+    const { app } = createApp(userDir, store);
+    const created = store.create({ kind: 'rest', ttlSeconds: 30 });
+    now += 60_000;
+    const res = await request(app)
+      .get('/mcp/api/v1/flows')
+      .set('Host', 'nr.example:1880')
+      .set('Authorization', `Bearer ${created.token}`);
+    expect(res.status).toBe(401);
+    expect(res.headers['www-authenticate']).toMatch(/^Bearer /);
+    expect(res.body.code).toBe('token_expired');
+    expect(res.body.expiredAt).toBe(created.expiresAt);
+    expect(res.body.accessLinksUrl).toBe('http://nr.example:1880/mcp#links');
+    expect(res.body.hint).toMatch(/Access links/);
+  });
+
+  it('GET-link 401s (token_expired, access_link_invalid) include WWW-Authenticate', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const store = new AccessLinkStore({
+      now: () => now,
+      randomToken: () => 'aia_get-link-expiry-token-000000000000000',
+    });
+    const { app } = createApp(userDir, store);
+    const created = store.create({ kind: 'get_link', ttlSeconds: 30 });
+    now += 60_000;
+    const expired = await request(app).get(`/mcp/a/${created.token}/status`);
+    expect(expired.status).toBe(401);
+    expect(expired.headers['www-authenticate']).toMatch(/^Bearer /);
+    expect(expired.body.code).toBe('token_expired');
+    expect(expired.body.expiredAt).toBe(created.expiresAt);
+    expect(expired.body.accessLinksUrl).toMatch(/\/mcp#links$/);
+
+    const invalid = await request(app).get(
+      '/mcp/a/aia_unknown-token-that-is-long-enough-000000/status'
+    );
+    expect(invalid.status).toBe(401);
+    expect(invalid.body.code).toBe('access_link_invalid');
+    expect(invalid.headers['www-authenticate']).toMatch(/^Bearer /);
+  });
+
+  it('status reports minutesRemaining rounded up and secondsRemaining', async () => {
+    const store = new AccessLinkStore({ maxActiveLinks: 5 });
+    const { app } = createApp(userDir, store);
+    const link = store.create({ kind: 'rest', ttlSeconds: 20 });
+    const res = await request(app)
+      .get('/mcp/api/v1/status')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.caller.minutesRemaining).toBe(1);
+    expect(res.body.caller.secondsRemaining).toBeGreaterThan(0);
+    expect(res.body.caller.secondsRemaining).toBeLessThanOrEqual(20);
+  });
+
+  it('minutesRemainingUntil rounds up (never 0 while valid) and never goes negative', () => {
     const now = Date.parse('2026-01-01T00:00:00.000Z');
-    expect(minutesRemainingUntil('2026-01-01T00:59:59.000Z', now)).toBe(59);
+    expect(minutesRemainingUntil('2026-01-01T00:59:59.000Z', now)).toBe(60);
+    expect(minutesRemainingUntil('2026-01-01T01:00:00.000Z', now)).toBe(60);
+    expect(minutesRemainingUntil('2026-01-01T00:00:30.000Z', now)).toBe(1);
+    expect(minutesRemainingUntil('2026-01-01T00:00:00.001Z', now)).toBe(1);
+    expect(minutesRemainingUntil('2026-01-01T00:00:00.000Z', now)).toBe(0);
     expect(minutesRemainingUntil('2025-12-31T23:00:00.000Z', now)).toBe(0);
+  });
+
+  it('secondsRemainingUntil rounds up and never goes negative', () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z');
+    expect(secondsRemainingUntil('2026-01-01T00:00:30.000Z', now)).toBe(30);
+    expect(secondsRemainingUntil('2026-01-01T00:00:00.400Z', now)).toBe(1);
+    expect(secondsRemainingUntil('2025-12-31T23:00:00.000Z', now)).toBe(0);
   });
 
   it('/mcp page client resets expiry to 1h when switching to get_link above 24h', async () => {

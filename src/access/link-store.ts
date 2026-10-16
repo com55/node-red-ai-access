@@ -5,11 +5,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-import {
-  AccessLinkLimitError,
-  AccessLinkNotFoundError,
-  AccessLinkValidationError,
-} from './errors.js';
+import { AccessLinkLimitError, AccessLinkNotFoundError, AccessLinkTtlError } from './errors.js';
 import {
   DEFAULT_ACCESS_LINK_TTL_SECONDS,
   maxTtlSecondsForKind,
@@ -86,7 +82,9 @@ export interface AccessLinkStoreOptions {
 
 /** Result of looking up a raw token in the in-memory store. */
 export type AccessLinkValidateResult =
-  { status: 'active'; link: AccessLinkPublic } | { status: 'expired' } | { status: 'invalid' };
+  | { status: 'active'; link: AccessLinkPublic }
+  | { status: 'expired'; expiresAt: string }
+  | { status: 'invalid' };
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
@@ -187,7 +185,7 @@ export class AccessLinkStore {
         !Number.isFinite(input.ttlSeconds) ||
         input.ttlSeconds <= 0
       ) {
-        throw new AccessLinkValidationError('ttlSeconds must be a positive number');
+        throw new AccessLinkTtlError('ttlSeconds must be a positive number');
       }
       ttlSeconds = Math.floor(input.ttlSeconds);
     }
@@ -200,7 +198,7 @@ export class AccessLinkStore {
     const kind = resolveAccessLinkKind(input.kind);
     const maxTtl = maxTtlSecondsForKind(kind);
     if (ttlSeconds > maxTtl) {
-      throw new AccessLinkValidationError(ttlCapErrorMessage(kind, maxTtl));
+      throw new AccessLinkTtlError(ttlCapErrorMessage(kind, maxTtl));
     }
 
     const id = this.randomId();
@@ -285,7 +283,7 @@ export class AccessLinkStore {
         return { status: 'invalid' };
       }
       if (record.expiresAtMs <= atMs) {
-        return { status: 'expired' };
+        return { status: 'expired', expiresAt: new Date(record.expiresAtMs).toISOString() };
       }
       record.lastUsedAtMs = atMs;
       return { status: 'active', link: toPublic(record) };

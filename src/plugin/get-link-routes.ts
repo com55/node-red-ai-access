@@ -13,6 +13,7 @@ import {
   aiOpsErrorToHttp,
   getAccessibleProposal,
   listAccessibleProposals,
+  listPageFields,
   listFlows,
   parseListProposalsQuery,
   presentAccessibleProposalForApi,
@@ -49,7 +50,7 @@ import {
   searchPaletteHandler,
 } from './node-types-routes.js';
 import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
-import { expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { resolveIncludeFromQuery, presentOptionsFor } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
@@ -268,9 +269,9 @@ function registerGetLinkProposalRoutes(
       } catch {
         // Expiry is best-effort when live rev is unavailable.
       }
-      if (liveRev) {
-        expireStalePendingProposals(options.proposalStore, liveRev);
-      }
+      const autoClosedCount = liveRev
+        ? expireStalePendingProposals(options.proposalStore, liveRev)
+        : 0;
       const page = listAccessibleProposals(options.proposalStore, link, presentOpts, listFilter);
       res.json({
         proposals: page.proposals.map(p =>
@@ -282,9 +283,8 @@ function registerGetLinkProposalRoutes(
             { includeConflicts: false }
           )
         ),
-        total: page.total,
-        ...(page.limit !== null ? { limit: page.limit } : {}),
-        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
+        ...listPageFields({ ...page, returned: page.proposals.length }),
+        ...autoClosedFields(autoClosedCount),
       });
     })
   );

@@ -31,6 +31,7 @@ import {
 } from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
+  autoClosedFields,
   conflictWarningFields,
   expireStalePendingProposals,
   findConflictingProposals,
@@ -125,10 +126,85 @@ export function isProposalStatus(value: unknown): value is ProposalStatus {
   return typeof value === 'string' && PROPOSAL_STATUSES.has(value);
 }
 
+/** Allowed values per list filter parameter (for `invalid_filter` bodies). */
+export const LIST_FILTER_ALLOWED: Readonly<Record<'status' | 'limit' | 'offset' | 'mine', string>> =
+  {
+    status: [...PROPOSAL_STATUSES].join(', '),
+    limit: `integer 1–${LIST_PROPOSALS_MAX_LIMIT}`,
+    offset: 'integer ≥ 0',
+    mine: 'true, false, 1, 0',
+  };
+
+/** Build the shared `400 invalid_filter` error for one list parameter. */
+export function invalidFilterError(
+  parameter: keyof typeof LIST_FILTER_ALLOWED,
+  received: unknown
+): AiOpsValidationError {
+  const allowed = LIST_FILTER_ALLOWED[parameter];
+  const shown = typeof received === 'string' ? received : String(JSON.stringify(received));
+  return new AiOpsValidationError(
+    `Invalid ${parameter} filter: '${shown}'. Allowed: ${allowed}`,
+    'invalid_filter',
+    {
+      details: {
+        parameter,
+        allowed,
+        received: shown,
+        hint: `Pass ${parameter} as ${allowed}, or omit it.`,
+      },
+    }
+  );
+}
+
+function firstQueryValue(raw: unknown): unknown {
+  return Array.isArray(raw) ? (raw as unknown[])[0] : raw;
+}
+
+function parseIntegerFilter(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) ? raw : null;
+  }
+  if (typeof raw === 'string' && /^-?\d+$/.test(raw.trim())) {
+    return Number(raw.trim());
+  }
+  return null;
+}
+
 /**
- * Parse shared list-query fields from REST/GET `req.query` (or similar).
- * Invalid `status` is ignored. `limit`/`offset` are clamped; omit `limit` for all.
+ * Parse shared list-query fields from REST/GET `req.query` (or MCP args).
+ * Invalid `status`, `limit`, `offset`, or `mine` throws `400 invalid_filter`
+ * naming the parameter and allowed values. `limit` over the max is rejected,
+ * not clamped. Omit `limit` to return all matches.
  */
+function isUnset(raw: unknown): boolean {
+  return raw === undefined || raw === null || raw === '';
+}
+
+function parseMineFilter(raw: unknown): boolean | undefined {
+  if (isUnset(raw)) return undefined;
+  if (raw === 'true' || raw === '1' || raw === true) return true;
+  if (raw === 'false' || raw === '0' || raw === false) return undefined;
+  throw invalidFilterError('mine', raw);
+}
+
+function parseStatusFilter(raw: unknown): ProposalStatus | undefined {
+  if (isUnset(raw)) return undefined;
+  if (!isProposalStatus(raw)) throw invalidFilterError('status', raw);
+  return raw;
+}
+
+function parseRangeFilter(
+  parameter: 'limit' | 'offset',
+  raw: unknown,
+  min: number,
+  max: number
+): number | undefined {
+  if (isUnset(raw)) return undefined;
+  const n = parseIntegerFilter(raw);
+  if (n === null || n < min || n > max) throw invalidFilterError(parameter, raw);
+  return n;
+}
+
 export function parseListProposalsQuery(query: {
   mine?: unknown;
   status?: unknown;
@@ -139,33 +215,58 @@ export function parseListProposalsQuery(query: {
   offset?: unknown;
 }): ListProposalsFilter {
   const filter: ListProposalsFilter = {};
-  const mineRaw = query.mine;
-  if (mineRaw === 'true' || mineRaw === '1' || mineRaw === true) {
+  if (parseMineFilter(firstQueryValue(query.mine))) {
     filter.mine = true;
   }
-  const statusRaw = query.status;
-  if (typeof statusRaw === 'string' && isProposalStatus(statusRaw)) {
-    filter.status = statusRaw;
+  const status = parseStatusFilter(firstQueryValue(query.status));
+  if (status) {
+    filter.status = status;
   }
-  const flowRaw = query.flowId ?? query.flow_id ?? query.flow;
+  const flowRaw = firstQueryValue(query.flowId ?? query.flow_id ?? query.flow);
   if (typeof flowRaw === 'string' && flowRaw.length > 0) {
     filter.flowId = flowRaw;
   }
-  const limitRaw = query.limit;
-  if (limitRaw !== undefined && limitRaw !== null && limitRaw !== '') {
-    const n = typeof limitRaw === 'number' ? limitRaw : Number(limitRaw);
-    if (Number.isFinite(n) && n > 0) {
-      filter.limit = Math.min(Math.floor(n), LIST_PROPOSALS_MAX_LIMIT);
-    }
+  const limit = parseRangeFilter(
+    'limit',
+    firstQueryValue(query.limit),
+    1,
+    LIST_PROPOSALS_MAX_LIMIT
+  );
+  if (limit !== undefined) {
+    filter.limit = limit;
   }
-  const offsetRaw = query.offset;
-  if (offsetRaw !== undefined && offsetRaw !== null && offsetRaw !== '') {
-    const n = typeof offsetRaw === 'number' ? offsetRaw : Number(offsetRaw);
-    if (Number.isFinite(n) && n >= 0) {
-      filter.offset = Math.floor(n);
-    }
+  const offset = parseRangeFilter(
+    'offset',
+    firstQueryValue(query.offset),
+    0,
+    Number.MAX_SAFE_INTEGER
+  );
+  if (offset !== undefined) {
+    filter.offset = offset;
   }
   return filter;
+}
+
+/**
+ * Pagination fields shared by every list channel (GET / REST / MCP):
+ * `total` (pre-page count), `offset`, `limit` (when set), `hasMore`, and
+ * `nextOffset` (only when `hasMore`). Offset-based; there is no cursor.
+ */
+export function listPageFields(page: {
+  total: number;
+  limit: number | null;
+  offset: number;
+  returned: number;
+}): { total: number; offset: number; limit?: number; hasMore: boolean; nextOffset?: number } {
+  const end = page.offset + page.returned;
+  const hasMore = end < page.total;
+  return {
+    total: page.total,
+    offset: page.offset,
+    ...(page.limit !== null ? { limit: page.limit } : {}),
+    hasMore,
+    ...(hasMore ? { nextOffset: end } : {}),
+  };
 }
 
 function applyListPagination<T>(
@@ -365,10 +466,11 @@ export function presentAccessibleProposalForApi(
           mine: isMineProposal(proposal, accessLink),
         };
   // Expire stale before presenting so list/get reflect closed status.
+  let autoClosedCount = 0;
   if (options.liveRev) {
     try {
       const flowId = store.get(presented.id).payload.flowId;
-      expireStalePendingProposals(store, options.liveRev, { flowId });
+      autoClosedCount = expireStalePendingProposals(store, options.liveRev, { flowId });
       const refreshed = store.get(presented.id);
       presented = {
         ...presentProposal(refreshed, apiOptions),
@@ -382,6 +484,7 @@ export function presentAccessibleProposalForApi(
   const out: PresentedProposalApiWithMine & Record<string, unknown> = {
     ...lean,
     mine: presented.mine,
+    ...autoClosedFields(autoClosedCount),
   };
   if (options.includeConflicts !== false && lean.status === 'pending') {
     // Already expired above when liveRev was set — do not expire again.

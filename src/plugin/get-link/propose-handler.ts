@@ -15,7 +15,7 @@ import {
 } from '../ai-ops.js';
 import { channelErrorHint } from '../channel-errors.js';
 import type { NodeTypesAdapter } from '../node-types.js';
-import { expireStalePendingProposals } from '../proposal-conflicts.js';
+import { autoClosedFields, expireStalePendingProposals } from '../proposal-conflicts.js';
 import {
   resolveIncludeFromQuery,
   presentOptionsFor,
@@ -361,7 +361,7 @@ export function getLinkProposeHandler(
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         mine: true,
       };
-      expireStalePendingProposals(proposalStore, proposal.expectedRev, {
+      const autoClosedCount = expireStalePendingProposals(proposalStore, proposal.expectedRev, {
         flowId: proposal.payload.flowId,
       });
       const conflicts = findConflictingProposals(
@@ -375,6 +375,7 @@ export function getLinkProposeHandler(
         proposal: presented,
         ...(summary ? { summary } : {}),
         ...conflictWarningFields(conflicts),
+        ...autoClosedFields(autoClosedCount),
         ...(warnings && warnings.length > 0 ? { warnings } : {}),
         hint:
           `Waiting for human approval. Tell the user about "${presented.displayName}" ` +

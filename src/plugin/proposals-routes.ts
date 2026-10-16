@@ -31,6 +31,7 @@ import {
   findConflictingProposals,
   getAccessibleProposal,
   listAccessibleProposals,
+  listPageFields,
   parseListProposalsQuery,
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
@@ -39,7 +40,7 @@ import {
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
-import { expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
   resolveIncludeFromQuery,
@@ -117,7 +118,7 @@ export function createProposalHandler(
         nodeTypesAdapter
       );
       // expectedRev matched live at submit — expire any older pending on this flow.
-      expireStalePendingProposals(store, proposal.expectedRev, {
+      const autoClosedCount = expireStalePendingProposals(store, proposal.expectedRev, {
         flowId: proposal.payload.flowId,
       });
       const conflicts = findConflictingProposals(store, store.get(proposal.id), req.accessLink.id);
@@ -126,6 +127,7 @@ export function createProposalHandler(
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         mine: true,
         ...conflictWarningFields(conflicts),
+        ...autoClosedFields(autoClosedCount),
         ...(warnings && warnings.length > 0 ? { warnings } : {}),
       });
     } catch (error) {
@@ -173,11 +175,20 @@ export function listProposalsHandler(
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
     };
     const include = resolveIncludeFromQuery(req.query);
-    const listFilter = parseListProposalsQuery(req.query);
-
-    if (liveRev) {
-      expireStalePendingProposals(store, liveRev);
+    let listFilter: ReturnType<typeof parseListProposalsQuery>;
+    try {
+      listFilter = parseListProposalsQuery(req.query);
+    } catch (error) {
+      const mapped = aiOpsErrorToHttp(error, 'rest');
+      if (mapped) {
+        res.status(mapped.statusCode).json(mapped.body);
+        return;
+      }
+      sendCaughtRouteError(res, error);
+      return;
     }
+
+    const autoClosedCount = liveRev ? expireStalePendingProposals(store, liveRev) : 0;
 
     const accessLink = req.accessLink;
     if (accessLink) {
@@ -197,9 +208,8 @@ export function listProposalsHandler(
       });
       res.json({
         proposals,
-        total: page.total,
-        ...(page.limit !== null ? { limit: page.limit } : {}),
-        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
+        ...listPageFields({ ...page, returned: page.proposals.length }),
+        ...autoClosedFields(autoClosedCount),
       });
       return;
     }
@@ -212,7 +222,6 @@ export function listProposalsHandler(
       storeFilter.flowId = listFilter.flowId;
     }
     const all = presentProposalsForApi(store.list(storeFilter), { ...presentOpts, include });
-    const total = all.length;
     const offset = listFilter.offset ?? 0;
     const sliced =
       listFilter.limit !== undefined
@@ -228,9 +237,13 @@ export function listProposalsHandler(
     });
     res.json({
       proposals,
-      total,
-      ...(listFilter.limit !== undefined ? { limit: listFilter.limit } : {}),
-      ...(offset > 0 || listFilter.limit !== undefined ? { offset } : {}),
+      ...listPageFields({
+        total: all.length,
+        limit: listFilter.limit ?? null,
+        offset,
+        returned: proposals.length,
+      }),
+      ...autoClosedFields(autoClosedCount),
     });
   };
 }

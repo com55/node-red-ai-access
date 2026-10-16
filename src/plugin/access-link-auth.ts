@@ -2,10 +2,11 @@
  * Bearer access-link middleware for AI-facing routes.
  */
 
-import type { NextFunction, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 
 import type { AccessLinkKind, AccessLinkStore } from '../access/link-store.js';
 
+import { absolutizePath } from './access-path.js';
 import { areAiFeaturesEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -61,6 +62,45 @@ function sendUnauthorized(
 ): void {
   res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
   res.status(401).json({ error: message, code, ...(hint ? { hint } : {}) });
+}
+
+/** Admin path of the `/mcp` page's Access links section (respects httpAdminRoot). */
+export function accessLinksPagePath(httpAdminRoot: string | undefined): string {
+  const root = !httpAdminRoot || httpAdminRoot === '/' ? '' : httpAdminRoot.replace(/\/+$/, '');
+  return `${root}/mcp#links`;
+}
+
+/**
+ * `401 token_expired` body: when it expired and where the user creates a new link.
+ */
+export function tokenExpiredBody(
+  req: Request,
+  httpAdminRoot: string | undefined,
+  expiredAt: string | undefined,
+  hint?: string
+): Record<string, unknown> {
+  const accessLinksUrl = absolutizePath(req, accessLinksPagePath(httpAdminRoot));
+  return {
+    error: ACCESS_LINK_EXPIRED_MESSAGE,
+    code: ACCESS_LINK_EXPIRED_CODE,
+    ...(expiredAt ? { expiredAt } : {}),
+    accessLinksUrl,
+    hint:
+      hint ??
+      `Ask the user to create a new access link in Node-RED on the /mcp page → Access links (${accessLinksUrl}).`,
+  };
+}
+
+/** Send `401 token_expired` with `WWW-Authenticate`. */
+export function sendTokenExpired(
+  req: Request,
+  res: Response,
+  httpAdminRoot: string | undefined,
+  expiredAt: string | undefined,
+  hint?: string
+): void {
+  res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+  res.status(401).json(tokenExpiredBody(req, httpAdminRoot, expiredAt, hint));
 }
 
 /** Bearer (REST/MCP) truncated-token hint — never mention GET-link URL paths. */
@@ -167,7 +207,7 @@ export function requireAccessLink(
 
     const result = store.validateResult(parsed.token);
     if (result.status === 'expired') {
-      sendUnauthorized(res, ACCESS_LINK_EXPIRED_MESSAGE, ACCESS_LINK_EXPIRED_CODE);
+      sendTokenExpired(req, res, RED.settings.httpAdminRoot, result.expiresAt);
       return;
     }
     if (result.status !== 'active') {

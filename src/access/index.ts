@@ -5,6 +5,7 @@
 export {
   AccessLinkLimitError,
   AccessLinkNotFoundError,
+  AccessLinkTtlError,
   AccessLinkValidationError,
 } from './errors.js';
 export {
@@ -24,6 +25,7 @@ export type {
 } from './link-store.js';
 export {
   DEFAULT_ACCESS_LINK_TTL_SECONDS,
+  INVALID_TTL_HINT,
   LONG_TTL_WARN_SECONDS,
   MAX_TTL_SECONDS_GET_LINK,
   MAX_TTL_SECONDS_REST_MCP,

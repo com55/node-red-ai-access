@@ -96,7 +96,7 @@ List installed Node-RED palette node types (type, module, category, description,
 
 ## `list_proposals`
 
-List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total). Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
+List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return invalid_filter. Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

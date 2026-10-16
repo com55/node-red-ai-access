@@ -170,7 +170,10 @@ audit logging match REST. Missing tokens return **401** `access_link_missing`;
 known-expired tokens return **401** `token_expired`; other invalid/revoked
 tokens return **401** `access_link_invalid` (all with `WWW-Authenticate`)
 telling the AI to ask the user for a new access link. Every error JSON includes
-a `code`. Access-link `/status` includes `expiresAt` and `minutesRemaining`.
+a `code`. `token_expired` also includes `expiredAt` and `accessLinksUrl` (the
+`/mcp` page's Access links section). Access-link `/status` includes `expiresAt`,
+`minutesRemaining` (rounded up), and `secondsRemaining`. See `docs/errors.md`
+(generated from `src/plugin/error-registry.ts`).
 
 Access links are **in memory** (default TTL **4h**, max 10). Caps: **get_link ≤
 24h**, **rest/mcp ≤ 30d**. Creating a link returns the raw `token` plus a

@@ -7,13 +7,12 @@ import type { NextFunction, Response } from 'express';
 import type { AccessLinkKind, AccessLinkValidateResult } from '../access/link-store.js';
 
 import {
-  ACCESS_LINK_EXPIRED_CODE,
-  ACCESS_LINK_EXPIRED_MESSAGE,
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
   ACCESS_LINK_MISSING_MESSAGE,
   ACCESS_LINK_WWW_AUTHENTICATE,
+  sendTokenExpired,
   sendWrongTokenKind,
 } from './access-link-auth.js';
 import { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
@@ -321,7 +320,8 @@ function tryAccessLinkBearer(
   req: AuthenticatedRequest,
   res: Response,
   validateAccessLink: AccessLinkValidator,
-  expectedKind: AccessLinkKind
+  expectedKind: AccessLinkKind,
+  httpAdminRoot: string | undefined
 ): 'ok' | 'invalid' | 'wrong_kind' | 'continue' {
   const authHeader = req.headers.authorization;
   if (typeof authHeader !== 'string' || !/^Bearer\s+\S+/i.test(authHeader.trim())) {
@@ -342,11 +342,7 @@ function tryAccessLinkBearer(
     return 'ok';
   }
   if (result.status === 'expired') {
-    res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-    res.status(401).json({
-      error: ACCESS_LINK_EXPIRED_MESSAGE,
-      code: ACCESS_LINK_EXPIRED_CODE,
-    });
+    sendTokenExpired(req, res, httpAdminRoot, result.expiresAt);
     return 'invalid';
   }
   if (looksLikeFailedAccessLinkAttempt(token)) {
@@ -391,7 +387,13 @@ export function requireAdminReadOrAccessLink(
       return;
     }
 
-    const access = tryAccessLinkBearer(req, res, validateAccessLink, expectedAccessLinkKind);
+    const access = tryAccessLinkBearer(
+      req,
+      res,
+      validateAccessLink,
+      expectedAccessLinkKind,
+      RED.settings.httpAdminRoot
+    );
     if (access === 'ok') {
       next();
       return;
@@ -421,7 +423,13 @@ export function requireAdminSessionOrAccessLink(
   expectedAccessLinkKind: AccessLinkKind = 'rest'
 ) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-    const access = tryAccessLinkBearer(req, res, validateAccessLink, expectedAccessLinkKind);
+    const access = tryAccessLinkBearer(
+      req,
+      res,
+      validateAccessLink,
+      expectedAccessLinkKind,
+      RED.settings.httpAdminRoot
+    );
     if (access === 'ok') {
       next();
       return;

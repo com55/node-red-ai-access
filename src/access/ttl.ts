@@ -26,3 +26,8 @@ export function ttlCapErrorMessage(kind: AccessLinkKind, maxSeconds: number): st
   }
   return `ttlSeconds must be ≤ ${maxSeconds} (30 days) for ${kind} tokens`;
 }
+
+/** Hint for `invalid_ttl` errors — states the per-kind caps. */
+export const INVALID_TTL_HINT =
+  `ttlSeconds must be a positive number of seconds within the cap for the token kind: ` +
+  `get_link ≤ ${MAX_TTL_SECONDS_GET_LINK} (24h); rest and mcp ≤ ${MAX_TTL_SECONDS_REST_MCP} (30 days).`;
