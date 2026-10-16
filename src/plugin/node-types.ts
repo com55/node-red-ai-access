@@ -247,8 +247,12 @@ function sharedPrefixLength(a: string, b: string): number {
   return i;
 }
 
-/** Types that must never appear in nearest-match suggestions. */
-const NEAREST_EXCLUDE = new Set(['unknown', 'tab', 'subflow', 'group', 'junction']);
+/**
+ * Types that must never appear in nearest-match suggestions.
+ * Note: `junction` is a real palette type (wiring junction) — do not exclude it,
+ * or typos like `junktion` will prefer `function` over `junction`.
+ */
+const NEAREST_EXCLUDE = new Set(['unknown', 'tab', 'subflow', 'group']);
 
 /**
  * Max edit distance for a candidate to count as "near".
@@ -1369,15 +1373,64 @@ export async function getNodeTypeDetail(
   return detail;
 }
 
-function collectFlowNodeTypes(flow: Partial<FlowTab> | Record<string, unknown>): string[] {
-  const types: string[] = [];
+/**
+ * Walk flow nodes/configs and validate each `type` (missing / invalid / unknown).
+ * Non-string types (objects, numbers) must fail — never skip them (titles would
+ * become "[object Object]" and unknown types would slip through).
+ */
+export async function assertKnownNodeTypes(
+  adapter: NodeTypesAdapter,
+  flow: Partial<FlowTab> | Record<string, unknown>
+): Promise<void> {
+  const { allNames } = await flattenInstalledTypes(adapter);
+  const installed = new Set(allNames);
+  const seen = new Set<string>();
+
+  const checkType = (type: unknown): void => {
+    const name = requireNodeTypeName(type, 'node.type');
+    if (seen.has(name) || isStructuralNodeType(name)) {
+      seen.add(name);
+      return;
+    }
+    seen.add(name);
+    if (installed.has(name)) {
+      return;
+    }
+    const ci = findCaseInsensitiveType(name, allNames);
+    if (ci && ci !== name) {
+      throw new AiOpsValidationError(
+        `Unknown node type '${name}' — did you mean '${ci}'? Types are case-sensitive.`,
+        'unknown_node_type',
+        {
+          details: {
+            type: name,
+            didYouMean: ci,
+            caseSensitive: true,
+            nearest: [ci],
+          },
+        }
+      );
+    }
+    throw new AiOpsValidationError(
+      `Unknown node type '${name}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
+      'unknown_node_type',
+      {
+        details: {
+          type: name,
+          nearest: nearestNodeTypes(name, allNames, 5),
+        },
+      }
+    );
+  };
+
   const visit = (node: unknown): void => {
     if (!node || typeof node !== 'object' || Array.isArray(node)) {
       return;
     }
     const n = node as Record<string, unknown>;
-    if (typeof n.type === 'string' && n.type) {
-      types.push(n.type);
+    // Node-like entries (have id) must carry a valid type string.
+    if (typeof n.id === 'string' && n.id.length > 0) {
+      checkType(n.type);
     }
     if (Array.isArray(n.nodes)) {
       for (const child of n.nodes) {
@@ -1390,63 +1443,8 @@ function collectFlowNodeTypes(flow: Partial<FlowTab> | Record<string, unknown>):
       }
     }
   };
-  visit(flow);
-  if (Array.isArray((flow as FlowTab).nodes)) {
-    for (const n of (flow as FlowTab).nodes ?? []) {
-      visit(n);
-    }
-  }
-  if (Array.isArray((flow as FlowTab).configs)) {
-    for (const n of (flow as FlowTab).configs ?? []) {
-      visit(n);
-    }
-  }
-  return types;
-}
 
-/**
- * Ensure every non-structural node.type in the flow is installed.
- */
-export async function assertKnownNodeTypes(
-  adapter: NodeTypesAdapter,
-  flow: Partial<FlowTab> | Record<string, unknown>
-): Promise<void> {
-  const { allNames } = await flattenInstalledTypes(adapter);
-  const installed = new Set(allNames);
-  const seen = new Set<string>();
-  for (const type of collectFlowNodeTypes(flow)) {
-    if (seen.has(type) || isStructuralNodeType(type)) {
-      continue;
-    }
-    seen.add(type);
-    if (!installed.has(type)) {
-      const ci = findCaseInsensitiveType(type, allNames);
-      if (ci && ci !== type) {
-        throw new AiOpsValidationError(
-          `Unknown node type '${type}' — did you mean '${ci}'? Types are case-sensitive.`,
-          'unknown_node_type',
-          {
-            details: {
-              type,
-              didYouMean: ci,
-              caseSensitive: true,
-              nearest: [ci],
-            },
-          }
-        );
-      }
-      throw new AiOpsValidationError(
-        `Unknown node type '${type}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
-        'unknown_node_type',
-        {
-          details: {
-            type,
-            nearest: nearestNodeTypes(type, allNames, 5),
-          },
-        }
-      );
-    }
-  }
+  visit(flow);
 }
 
 /**
@@ -1641,8 +1639,9 @@ export async function searchPalette(
 }
 
 /**
- * Rank palette hits: exact/prefix/substring on module id and keywords beat
- * description-only matches (so `q=modbus` prefers node-red-contrib-modbus).
+ * Rank palette hits. Exact package suffix (`node-red-contrib-<q>` /
+ * `node-red-node-<q>`) wins over keyword stacking so `q=modbus` ranks
+ * `node-red-contrib-modbus` first; callers then sort by downloads.
  */
 export function paletteMatchScore(
   needle: string,
@@ -1653,10 +1652,14 @@ export function paletteMatchScore(
   if (!needle) {
     return 0;
   }
-  let score = 0;
+  // Exclusive top tier — must beat any keyword/description stack.
   if (id === needle || id === `node-red-contrib-${needle}` || id === `node-red-node-${needle}`) {
-    score += 100;
-  } else if (id.startsWith(needle) || id.startsWith(`node-red-contrib-${needle}`)) {
+    return 10_000;
+  }
+  let score = 0;
+  if (id.startsWith(`node-red-contrib-${needle}`) || id.startsWith(`node-red-node-${needle}`)) {
+    score += 500;
+  } else if (id.startsWith(needle)) {
     score += 80;
   } else if (id.includes(needle)) {
     score += 60;

@@ -32,58 +32,45 @@ import {
 import { jsonError, rejectOversizedGetUrl, setNoStore } from './middleware.js';
 import { queryString } from './query.js';
 
+const PROPOSE_ERROR_HINTS: Record<string, string> = {
+  version_mismatch: 'Re-read the flow and retry with the current rev.',
+  node_not_found: 'Call GET …/flows/<id> and use a node id from that response.',
+  node_already_exists: 'Choose a new node id, or use op:set / op:remove on the existing node.',
+  flow_not_found: 'Call GET …/flows to list valid ids.',
+  protected_property:
+    'Omit id, type, and z from set props. wires are allowed when targets exist in the flow.',
+  invalid_wires: 'wires must list existing node ids (or add those nodes in the same patch).',
+  invalid_patch: 'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.',
+  invalid_patch_json:
+    'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.',
+  missing_edits:
+    'Provide set.<prop>=value, find+replace+field, or patch nodes with at least one op.',
+  missing_node_id:
+    'Pass node=<id> with set.<prop>= or find/replace, or include id on each patch.nodes entry.',
+  missing_flow_id: 'Pass flow=<id> from GET …/flows.',
+  missing_expected_rev: 'Pass rev from GET …/flows or …/flows/<id>.',
+  missing_field: 'Pass field=<prop> (e.g. template, func) with find= and replace=.',
+  missing_find: 'Pass a non-empty find= string (URL-encoded).',
+  text_not_found: 'Re-read the node field; find must match exactly (case-sensitive).',
+  ambiguous_match:
+    'find matched more than once — pass occurrence=N (1-based) or a more unique find string.',
+  invalid_occurrence: 'occurrence must be a 1-based index within the match count.',
+  field_not_string: 'replace_text only works on string fields (template, func, …).',
+  field_not_found:
+    'Re-read the node; field must be an existing string property (template, func, …).',
+  invalid_replace:
+    'Pass replace= as a string (URL-encoded; empty string is allowed to delete the find text).',
+  conflicting_edits: 'Use either find/replace/field or set.<prop>=, not both in one propose URL.',
+  unknown_node_type:
+    'Call GET …/node-types?q= or …/palette/search?q=. Ask the user to install via Manage palette, then recheck. This API never installs.',
+  missing_node_type: 'Each add op needs node.type as a non-empty string (e.g. "inject").',
+  invalid_node_type:
+    'node.type must be a string (not a number or object). Use the palette type name exactly.',
+  invalid_node: 'add op needs node as a JSON object: { id, type, … } — not a string or array.',
+};
+
 function proposeErrorHint(code: string): string | undefined {
-  switch (code) {
-    case 'version_mismatch':
-      return 'Re-read the flow and retry with the current rev.';
-    case 'node_not_found':
-      return 'Call GET …/flows/<id> and use a node id from that response.';
-    case 'node_already_exists':
-      return 'Choose a new node id, or use op:set / op:remove on the existing node.';
-    case 'flow_not_found':
-      return 'Call GET …/flows to list valid ids.';
-    case 'protected_property':
-      return 'Omit id, type, and z from set props. wires are allowed when targets exist in the flow.';
-    case 'invalid_wires':
-      return 'wires must list existing node ids (or add those nodes in the same patch).';
-    case 'invalid_patch':
-    case 'invalid_patch_json':
-      return 'Pass patch as base64url JSON with nodes[{op,….}] or type/flow for replace_flow.';
-    case 'missing_edits':
-      return 'Provide set.<prop>=value, find+replace+field, or patch nodes with at least one op.';
-    case 'missing_node_id':
-      return 'Pass node=<id> with set.<prop>= or find/replace, or include id on each patch.nodes entry.';
-    case 'missing_flow_id':
-      return 'Pass flow=<id> from GET …/flows.';
-    case 'missing_expected_rev':
-      return 'Pass rev from GET …/flows or …/flows/<id>.';
-    case 'missing_field':
-      return 'Pass field=<prop> (e.g. template, func) with find= and replace=.';
-    case 'missing_find':
-      return 'Pass a non-empty find= string (URL-encoded).';
-    case 'text_not_found':
-      return 'Re-read the node field; find must match exactly (case-sensitive).';
-    case 'ambiguous_match':
-      return 'find matched more than once — pass occurrence=N (1-based) or a more unique find string.';
-    case 'invalid_occurrence':
-      return 'occurrence must be a 1-based index within the match count.';
-    case 'field_not_string':
-      return 'replace_text only works on string fields (template, func, …).';
-    case 'field_not_found':
-      return 'Re-read the node; field must be an existing string property (template, func, …).';
-    case 'invalid_replace':
-      return 'Pass replace= as a string (URL-encoded; empty string is allowed to delete the find text).';
-    case 'conflicting_edits':
-      return 'Use either find/replace/field or set.<prop>=, not both in one propose URL.';
-    case 'unknown_node_type':
-      return 'Call GET …/node-types?q= or …/palette/search?q=. Ask the user to install via Manage palette, then recheck. This API never installs.';
-    case 'missing_node_type':
-      return 'Each add op needs node.type as a non-empty string (e.g. "inject").';
-    case 'invalid_node_type':
-      return 'node.type must be a string (not a number or object). Use the palette type name exactly.';
-    default:
-      return undefined;
-  }
+  return PROPOSE_ERROR_HINTS[code];
 }
 
 function sendVersionMismatch(res: Response, expectedRev: string, currentRev: string): void {

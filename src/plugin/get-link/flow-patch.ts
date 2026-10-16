@@ -29,6 +29,26 @@ export type FlowNodeOp =
 /** Identity fields that cannot be changed via set (wires are validated separately). */
 const PROTECTED_KEYS = new Set(['id', 'type', 'z']);
 
+function describeNonObjectNode(node: unknown): string {
+  if (node === null) {
+    return 'null';
+  }
+  if (Array.isArray(node)) {
+    return 'array';
+  }
+  return typeof node;
+}
+
+/** Runtime guard — typed ops assume FlowNode, but decoded patches may not. */
+function assertAddNodeObject(node: unknown): asserts node is FlowNode {
+  if (typeof node !== 'object' || node === null || Array.isArray(node)) {
+    throw new AiOpsValidationError(
+      `add op needs node as an object (got ${describeNonObjectNode(node)})`,
+      'invalid_node'
+    );
+  }
+}
+
 /**
  * Load a flow, apply property edits to named nodes, return the full tab
  * suitable for a `replace_flow` proposal (approve with deploymentType `nodes`).
@@ -166,13 +186,13 @@ export async function applyFlowNodeOps(
   // Patch shape first (before I/O or palette) so bad payloads fail cheaply.
   for (const op of ops) {
     if (op.op === 'add') {
-      if (typeof op.node !== 'object' || op.node === null || Array.isArray(op.node)) {
-        throw new AiOpsValidationError('add op needs a node object', 'invalid_patch');
-      }
-      if (!op.node.id || typeof op.node.id !== 'string') {
+      // Defense in depth: parseAddOp should already reject non-objects.
+      const addNode: unknown = op.node;
+      assertAddNodeObject(addNode);
+      if (!addNode.id || typeof addNode.id !== 'string') {
         throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
       }
-      requireNodeTypeName(op.node.type, 'node.type');
+      requireNodeTypeName(addNode.type, 'node.type');
     }
   }
 
@@ -452,8 +472,11 @@ function parseOccurrence(raw: unknown): number | undefined {
 
 function parseAddOp(entry: Record<string, unknown>): FlowNodeOp {
   const nested = entry.node;
-  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-    return { op: 'add', node: nested as FlowNode };
+  // Explicit `node` must be a plain object — strings/arrays yield invalid_node
+  // (not missing_node_type / missing_node_id via a rewritten fake node).
+  if (nested !== undefined) {
+    assertAddNodeObject(nested);
+    return { op: 'add', node: nested };
   }
   const rest: Record<string, unknown> = { ...entry };
   delete rest.op;
