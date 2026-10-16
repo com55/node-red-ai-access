@@ -338,11 +338,14 @@ function registerProposalTools(
         'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
       inputSchema: {
         type: z.literal('replace_flow').describe("Must be 'replace_flow'"),
+        // Both optional in Zod so a missing rev yields our friendly
+        // missing_expected_rev (via submitReplaceFlowProposal), not a raw Zod error.
         expectedRev: z
           .string()
           .min(1)
+          .optional()
           .describe(
-            'Top-level current flow revision from get_flow/list_flows (required; sit next to type and payload, not inside payload)'
+            'Top-level current flow revision from get_flow/list_flows (required at submit; sit next to type and payload, not inside payload)'
           ),
         expected_rev: z
           .string()

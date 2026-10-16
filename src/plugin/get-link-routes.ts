@@ -49,7 +49,7 @@ import {
 } from './node-types-routes.js';
 import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
-import { parseIncludeQuery, presentOptionsFor } from './proposal-present.js';
+import { resolveIncludeFromQuery, presentOptionsFor } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute, sendCaughtRouteError } from './route-errors.js';
 import { buildStatus } from './status.js';
@@ -258,7 +258,7 @@ function registerGetLinkProposalRoutes(
         return;
       }
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
-      const include = parseIncludeQuery(req.query.include);
+      const include = resolveIncludeFromQuery(req.query);
       const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
       const list = listAccessibleProposals(options.proposalStore, link, presentOpts, {
         ...(mineOnly ? { mine: true } : {}),
@@ -291,7 +291,7 @@ function registerGetLinkProposalRoutes(
       }
       try {
         const presentOpts = presentOptionsFor(req, httpAdminRoot);
-        const include = parseIncludeQuery(req.query.include);
+        const include = resolveIncludeFromQuery(req.query);
         const presented = getAccessibleProposal(options.proposalStore, link, id, presentOpts);
         res.json(
           presentAccessibleProposalForApi(options.proposalStore, link, presented, {
@@ -342,7 +342,7 @@ function registerGetLinkWithdrawRoute(
       }
       const reason = typeof req.query.reason === 'string' ? req.query.reason : undefined;
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
-      const include = parseIncludeQuery(req.query.include);
+      const include = resolveIncludeFromQuery(req.query);
       try {
         const withdrawn = withdrawMyProposal(
           options.proposalStore,

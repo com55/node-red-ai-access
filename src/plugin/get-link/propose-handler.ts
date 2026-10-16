@@ -16,7 +16,7 @@ import {
 import { channelErrorHint } from '../channel-errors.js';
 import type { NodeTypesAdapter } from '../node-types.js';
 import {
-  parseIncludeQuery,
+  resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposalForApi,
 } from '../proposal-present.js';
@@ -341,7 +341,7 @@ export function getLinkProposeHandler(
       }
 
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
-      const include = parseIncludeQuery(req.query.include);
+      const include = resolveIncludeFromQuery(req.query);
       const proposal = await submitReplaceFlowProposal(
         proposalStore,
         auditLog,

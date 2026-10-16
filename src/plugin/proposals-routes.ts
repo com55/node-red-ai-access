@@ -39,7 +39,7 @@ import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
-  parseIncludeQuery,
+  resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposal,
   presentProposalForApi,
@@ -97,7 +97,7 @@ export function createProposalHandler(
 
     try {
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
-      const include = parseIncludeQuery(req.query.include);
+      const include = resolveIncludeFromQuery(req.query);
       const proposal = await submitReplaceFlowProposal(
         store,
         audit,
@@ -165,7 +165,7 @@ export function listProposalsHandler(
       ...presentOptionsFor(req, httpAdminRoot),
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
     };
-    const include = parseIncludeQuery(req.query.include);
+    const include = resolveIncludeFromQuery(req.query);
     const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
 
     const accessLink = req.accessLink;
@@ -205,7 +205,7 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
       return;
     }
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
-    const include = parseIncludeQuery(req.query.include);
+    const include = resolveIncludeFromQuery(req.query);
     try {
       if (req.accessLink) {
         const presented = getAccessibleProposal(store, req.accessLink, id, presentOpts);
@@ -327,7 +327,7 @@ export function withdrawProposalHandler(
     }
     const body = (req.body ?? {}) as { reason?: unknown };
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
-    const include = parseIncludeQuery(req.query.include);
+    const include = resolveIncludeFromQuery(req.query);
     try {
       const withdrawn = withdrawMyProposal(
         store,
