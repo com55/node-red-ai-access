@@ -54,6 +54,7 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   proposal_not_owned: 'Proposal was not created by this access link',
   proposal_not_pending: 'Proposal is not pending',
   unsupported_media_type: 'Content-Type must be application/json',
+  upstream_error: 'Upstream request failed',
   internal_error: 'Internal server error',
 };
 
@@ -128,77 +129,100 @@ function nodeTypeHint(channel: ErrorChannel): string {
   );
 }
 
-type HintFn = (channel: ErrorChannel, context: HintContext) => string | undefined;
-
-function byChannel(mcp: string, rest: string, get: string): HintFn {
-  return channel => (channel === 'mcp' ? mcp : channel === 'rest' ? rest : get);
+function pickChannel(channel: ErrorChannel, mcp: string, rest: string, get: string): string {
+  if (channel === 'mcp') return mcp;
+  if (channel === 'rest') return rest;
+  return get;
 }
 
-const HINTS: Record<string, HintFn> = {
-  version_mismatch: byChannel(
-    'Re-read with list_flows/get_flow and retry with the current rev.',
-    'Re-read the flow and retry with the current rev.',
-    'Re-read the flow and retry with the current rev.'
-  ),
-  node_not_found: byChannel(
-    'Call get_flow or get_node and use a node id from that response.',
-    'Call GET /flows/{id} and use a node id from that response.',
-    'Call GET …/flows/<id> and use a node id from that response.'
-  ),
-  flow_not_found: byChannel(
-    'Call list_flows to list valid ids.',
-    'Call GET /flows to list valid ids.',
-    // GET-link: relative ./flows only — never absolute Admin GET /flows.
-    'Use an id from GET ./flows.'
-  ),
-  proposal_not_found: byChannel(
-    'Call list_my_proposals and use an id from that response.',
-    'List proposals and use an id from that response.',
-    'List proposals and use an id from that response.'
-  ),
-  proposal_not_owned: () => 'Only the access link that created a pending proposal can withdraw it.',
-  proposal_not_pending: () => 'Only pending proposals can be withdrawn or decided.',
-  invalid_wires: (channel, context) => invalidWiresHint(channel, context.cause),
-  node_type_not_found: channel => nodeTypeHint(channel),
-  unknown_node_type: channel => nodeTypeHint(channel),
-  missing_node_type: () => 'Each add op needs node.type as a non-empty string (e.g. "inject").',
-  invalid_line_range: byChannel(
-    'Pass lines as "A" or "A-B" (1-based inclusive). Reversed ranges (end < start) are invalid.',
-    'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.',
-    'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.'
-  ),
-  line_range_out_of_bounds: () =>
-    'start is past the end of the field — check totalLines and request a lower lines range.',
-  ambiguous_match: () =>
-    'find matched more than once — pass occurrence=N (1-based) or a more unique find string.',
-  missing_expected_rev: byChannel(
-    'Pass expectedRev from list_flows/get_flow (top-level, next to type and payload).',
-    'Pass expectedRev from GET /flows or GET /flows/{id} (top-level, next to type and payload).',
-    'Pass rev from GET …/flows or …/flows/<id>.'
-  ),
-  missing_query: byChannel(
-    'Pass a non-empty q string.',
-    'q query parameter is required.',
-    'q query parameter is required.'
-  ),
-  unsupported_media_type: () => 'Send Content-Type: application/json with a JSON body.',
-  text_not_found: () => 'Re-read the node field; find must match exactly (case-sensitive).',
-  field_not_found: () =>
-    'Re-read the node; field must be an existing string property (template, func, …).',
-  field_not_string: byChannel(
-    'This tool only returns string fields (template, func, …). Use get_node for other property types.',
-    'This endpoint only returns string fields (template, func, …). Use GET /nodes/{id} for other property types.',
-    'This endpoint only returns string fields (template, func, …). Use GET /nodes/{id} for other property types.'
-  ),
-};
-
+/** Explicit switch — avoid dynamic dispatch on user-influenced error codes (CodeQL). */
 function hintFor(
   code: string,
   channel: ErrorChannel,
   context: HintContext = {}
 ): string | undefined {
-  const fn = HINTS[code];
-  return fn ? fn(channel, context) : undefined;
+  switch (code) {
+    case 'version_mismatch':
+      return pickChannel(
+        channel,
+        'Re-read with list_flows/get_flow and retry with the current rev.',
+        'Re-read the flow and retry with the current rev.',
+        'Re-read the flow and retry with the current rev.'
+      );
+    case 'node_not_found':
+      return pickChannel(
+        channel,
+        'Call get_flow or get_node and use a node id from that response.',
+        'Call GET /flows/{id} and use a node id from that response.',
+        'Call GET …/flows/<id> and use a node id from that response.'
+      );
+    case 'flow_not_found':
+      return pickChannel(
+        channel,
+        'Call list_flows to list valid ids.',
+        'Call GET /flows to list valid ids.',
+        // GET-link: relative ./flows only — never absolute Admin GET /flows.
+        'Use an id from GET ./flows.'
+      );
+    case 'proposal_not_found':
+      return pickChannel(
+        channel,
+        'Call list_my_proposals and use an id from that response.',
+        'List proposals and use an id from that response.',
+        'List proposals and use an id from that response.'
+      );
+    case 'proposal_not_owned':
+      return 'Only the access link that created a pending proposal can withdraw it.';
+    case 'proposal_not_pending':
+      return 'Only pending proposals can be withdrawn or decided.';
+    case 'invalid_wires':
+      return invalidWiresHint(channel, context.cause);
+    case 'node_type_not_found':
+    case 'unknown_node_type':
+      return nodeTypeHint(channel);
+    case 'missing_node_type':
+      return 'Each add op needs node.type as a non-empty string (e.g. "inject").';
+    case 'invalid_line_range':
+      return pickChannel(
+        channel,
+        'Pass lines as "A" or "A-B" (1-based inclusive). Reversed ranges (end < start) are invalid.',
+        'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.',
+        'Use lines=A or lines=A-B (1-based inclusive). Reversed ranges (end < start) are invalid.'
+      );
+    case 'line_range_out_of_bounds':
+      return 'start is past the end of the field — check totalLines and request a lower lines range.';
+    case 'ambiguous_match':
+      return 'find matched more than once — pass occurrence=N (1-based) or a more unique find string.';
+    case 'missing_expected_rev':
+      return pickChannel(
+        channel,
+        'Pass expectedRev from list_flows/get_flow (top-level, next to type and payload).',
+        'Pass expectedRev from GET /flows or GET /flows/{id} (top-level, next to type and payload).',
+        'Pass rev from GET …/flows or …/flows/<id>.'
+      );
+    case 'missing_query':
+      return pickChannel(
+        channel,
+        'Pass a non-empty q string.',
+        'q query parameter is required.',
+        'q query parameter is required.'
+      );
+    case 'unsupported_media_type':
+      return 'Send Content-Type: application/json with a JSON body.';
+    case 'text_not_found':
+      return 'Re-read the node field; find must match exactly (case-sensitive).';
+    case 'field_not_found':
+      return 'Re-read the node; field must be an existing string property (template, func, …).';
+    case 'field_not_string':
+      return pickChannel(
+        channel,
+        'This tool only returns string fields (template, func, …). Use get_node for other property types.',
+        'This endpoint only returns string fields (template, func, …). Use GET /nodes/{id} for other property types.',
+        'This endpoint only returns string fields (template, func, …). Use GET /nodes/{id} for other property types.'
+      );
+    default:
+      return undefined;
+  }
 }
 
 /**
