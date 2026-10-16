@@ -29,17 +29,24 @@ export function escapeForDocs(value: string): string {
 function docsAlsoAvailable(rest: string, openapi: string, rpc: string): string {
   return `## Also available (prefer when your client can send headers)
 
-**Prefer MCP or REST Bearer** whenever the AI client can send custom headers and
-JSON bodies — no URL length limits and no chunked drafts. Use this **GET link
-only as a fallback** for headerless GET-only clients.
+**Prefer MCP or REST** whenever the AI client can send custom headers and JSON
+bodies — no URL length limits and no chunked drafts. Use this **GET link
+(get_link) only as a fallback** for headerless GET-only clients.
 
-- REST: \`${rest}\` with \`Authorization: Bearer <token>\`
+The path token in this URL is **get_link only**. It will **not** work as a
+Bearer on REST or MCP. Ask the owner for a separate **rest** or **mcp** token
+from the Access links page.
+
+- REST: \`${rest}\` with \`Authorization: Bearer <rest-token>\` (**rest** kind —
+  not this path token)
 - OpenAPI: \`${openapi}\`
-- MCP Streamable HTTP: \`POST ${rpc}\` with the same Bearer token
+- MCP Streamable HTTP: \`POST ${rpc}\` with \`Authorization: Bearer <mcp-token>\`
+  (**mcp** kind — not this path token)
 
 ### MCP client config snippets
 
 Replace placeholders — never paste real personal URLs into shared docs.
+Use an **mcp** token from the owner (not the get_link path token).
 
 **Claude Desktop** (\`claude_desktop_config.json\` → \`mcpServers\`):
 
@@ -72,7 +79,8 @@ Replace placeholders — never paste real personal URLs into shared docs.
 \`\`\`
 
 **ChatGPT connectors / custom GPT:** use Streamable HTTP URL
-\`https://YOUR-NODE-RED/mcp/rpc\` and set Authorization Bearer \`aia_…\`.
+\`https://YOUR-NODE-RED/mcp/rpc\` and set Authorization Bearer \`aia_…\`
+(an **mcp** token).
 
 **Generic Streamable HTTP** (curl):
 
@@ -87,11 +95,12 @@ curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
 }
 
 function docsIntro(label: string, expires: string): string {
-  return `# Node-RED AI Access — self-contained link${label}
+  return `# Node-RED AI Access — self-contained GET link (get_link)${label}
 
-This URL is a **temporary access link** for an AI client that can only issue
-**HTTP GET** (no custom headers, no MCP). A **human owner** must approve every
-flow change before it is deployed.
+This URL is a **temporary get_link access link** for an AI client that can only
+issue **HTTP GET** (no custom headers, no MCP). It is **not** a REST or MCP
+Bearer token — those need a separate **rest** or **mcp** token from the owner.
+A **human owner** must approve every flow change before it is deployed.
 
 All paths below are **relative to this link URL** (the address you used to open
 these docs).

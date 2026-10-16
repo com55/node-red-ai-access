@@ -162,6 +162,10 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(docs.text).toMatch(/\./);
     expect(docs.text).toMatch(/GET \.\/flows/);
     expect(docs.text).toMatch(/access_link_invalid/);
+    expect(docs.text).toMatch(/get_link/);
+    expect(docs.text).toMatch(/not.*REST or MCP Bearer|separate \*\*rest\*\* or \*\*mcp\*\*/i);
+    expect(docs.text).toMatch(/rest-token|rest\*\* kind/i);
+    expect(docs.text).toMatch(/mcp-token|mcp\*\* kind/i);
     const alsoIdx = docs.text.indexOf('## Also available');
     const workflowIdx = docs.text.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);

@@ -146,6 +146,16 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/proposals\/.*\/diff|loadProposalDiff/);
     expect(res.text).toMatch(/accessLinkCopyText|Copy link for AI|token-copy-btn/);
     expect(res.text).toMatch(/mcpRpc|openapi\.yaml|Self-contained GET link|mcp\/a\//);
+    // Phase 2B — token kind channel select + kind-aware copy labels.
+    expect(res.text).toMatch(/id="link-kind"|Token channel/);
+    expect(res.text).toMatch(/GET link \(chat paste\)/);
+    expect(res.text).toMatch(/REST Bearer/);
+    expect(res.text).toMatch(/MCP token/);
+    expect(res.text).toMatch(/linkCopyMaterial|normalizeLinkKind|kindBadgeHtml/);
+    expect(res.text).toMatch(/Copy REST Bearer token|REST Bearer token/);
+    expect(res.text).toMatch(/MCP token for \/mcp\/rpc/);
+    expect(res.text).toMatch(/kind-badge|data-kind/);
+    expect(res.text).toMatch(/wrong_token_kind|separate tokens/);
     expect(res.text).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
     expect(res.text).toMatch(/Side by side|data-diff-mode/);
     expect(res.text).toMatch(/diff-split|diff-line/);

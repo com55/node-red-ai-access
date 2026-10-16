@@ -639,20 +639,26 @@ function pageClientScriptPartATabs(): string {
     host.innerHTML =
       '<form id="create-link-form">' +
       '<div class="row" style="align-items:flex-end">' +
-      '<div><span class="muted">Link expires after</span>' +
-      '<div class="ttl-presets" id="link-ttl-presets" role="group" aria-label="Link expires after">' +
+      '<label>Channel<select id="link-kind" aria-label="Token channel">' +
+      '<option value="get_link" selected>GET link (chat paste)</option>' +
+      '<option value="rest">REST Bearer</option>' +
+      '<option value="mcp">MCP token</option>' +
+      '</select></label>' +
+      '<div><span class="muted">Expires after</span>' +
+      '<div class="ttl-presets" id="link-ttl-presets" role="group" aria-label="Expires after">' +
       '<button type="button" data-hours="1"' + (defaultHours === 1 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>1 hour</button>' +
       '<button type="button" data-hours="4"' + (defaultHours === 4 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>4 hours</button>' +
       '<button type="button" data-hours="24"' + (defaultHours === 24 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>24 hours</button>' +
       '</div></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
-      '<button type="submit" class="action">Create access link</button></div></form>' +
+      '<button type="submit" class="action">Create access token</button></div></form>' +
       '<div id="token-once" class="token-once" hidden>' +
+      '<p id="token-kind-label" class="token-kind-label" hidden></p>' +
       '<p id="token-docs-hint" class="muted"></p>' +
       '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy link for your AI assistant</button>' +
       '<details class="advanced-block" id="token-dev-details">' +
       '<summary>For developers</summary>' +
-      '<p class="muted">Bearer token and API endpoints (reusable while this link is active — also available via Copy link in the table).</p>' +
+      '<p id="token-dev-blurb" class="muted">Details reusable while this token is active — also available via Copy in the table.</p>' +
       '<code id="token-value"></code>' +
       '<pre id="token-copy-block" class="token-copy-block"></pre>' +
       '</details></div>';
@@ -700,33 +706,47 @@ function pageClientScriptPartA2(): string {
         return;
       }
       list.innerHTML = '<table class="links-table"><thead><tr>' +
-        '<th>Created</th><th>Last used</th><th>Label</th><th>Expires</th><th></th>' +
+        '<th>Created</th><th>Kind</th><th>Last used</th><th>Label</th><th>Expires</th><th></th>' +
         '</tr></thead><tbody>' +
         links.map(function (l) {
-          var copyDisabled = l.url ? '' : ' disabled title="URL unavailable"';
-          return '<tr data-id="' + esc(l.id) + '">' +
+          var kind = normalizeLinkKind(l.kind);
+          var material = linkCopyMaterial(kind, l.token || '', l.url || '');
+          var hasCopy = !!(material && material.primary);
+          var copyDisabled = hasCopy ? '' : ' disabled title="Copy unavailable — create a new token"';
+          var copyLabel = kind === 'get_link'
+            ? 'Copy link'
+            : (kind === 'rest' ? 'Copy REST Bearer' : 'Copy MCP token');
+          return '<tr data-id="' + esc(l.id) + '" data-kind="' + esc(kind) + '">' +
             '<td>' + timeCell(l.createdAt) + '</td>' +
+            '<td>' + kindBadgeHtml(kind) + '</td>' +
             '<td>' + timeCell(l.lastUsedAt) + '</td>' +
             '<td>' + esc(l.label || '—') + '</td>' +
             '<td>' + timeCell(l.expiresAt) + '</td>' +
             '<td class="row-actions">' +
             '<button type="button" class="action secondary copy-link" data-id="' + esc(l.id) + '"' +
-            ' data-url="' + esc(l.url || '') + '"' + copyDisabled + '>Copy link</button> ' +
+            ' data-kind="' + esc(kind) + '"' +
+            ' data-copy="' + esc(material.primary) + '"' +
+            ' data-label="' + esc(copyLabel) + '"' +
+            copyDisabled + '>' + esc(copyLabel) + '</button> ' +
             '<button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button>' +
             '</td></tr>';
         }).join('') + '</tbody></table>';
       list.querySelectorAll('.copy-link').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          var url = btn.getAttribute('data-url') || '';
-          if (!url) {
-            showFlash(flash, 'Clipboard unavailable — create a new link to copy.', false);
+          var text = btn.getAttribute('data-copy') || '';
+          var kind = normalizeLinkKind(btn.getAttribute('data-kind'));
+          if (!text) {
+            showFlash(flash, 'Clipboard unavailable — create a new token to copy.', false);
             return;
           }
-          copyTextToClipboard(url).then(function () {
-            markCopied(btn, flash, 'Link copied.');
-            showToast('Link copied.', true);
+          var okMsg = kind === 'get_link'
+            ? 'Link copied.'
+            : (kind === 'rest' ? 'REST Bearer token copied.' : 'MCP token copied.');
+          copyTextToClipboard(text).then(function () {
+            markCopied(btn, flash, okMsg);
+            showToast(okMsg, true);
           }).catch(function () {
-            showFlash(flash, 'Clipboard unavailable — select the URL from a new create.', false);
+            showFlash(flash, 'Clipboard unavailable — create a new token and copy from the flash block.', false);
           });
         });
       });
@@ -769,67 +789,171 @@ function pageClientScriptPartA2(): string {
 function pageClientScriptPartB(): string {
   return `
 
-  function accessLinkCopyText(token, url) {
+  function normalizeLinkKind(kind) {
+    if (kind === 'rest' || kind === 'mcp' || kind === 'get_link') return kind;
+    return 'get_link';
+  }
+
+  function kindBadgeHtml(kind) {
+    var k = normalizeLinkKind(kind);
+    var labels = {
+      get_link: 'GET link',
+      rest: 'REST Bearer',
+      mcp: 'MCP token'
+    };
+    return '<span class="kind-badge kind-' + esc(k) + '" title="Token kind: ' + esc(k) + '">' +
+      esc(labels[k] || k) + '</span>';
+  }
+
+  /**
+   * Clipboard + flash text per token kind. get_link never suggests using the
+   * path token as REST/MCP Bearer (those need separate rest/mcp tokens).
+   */
+  function linkCopyMaterial(kind, token, url) {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
     var base = origin + apiBase;
-    var getLink = url || (origin + (apiBase.replace(/\\/mcp\\/api\\/v1\\/?$/, '/mcp/a/') + token));
-    return [
-      'Self-contained GET link (preferred for chat AIs that can only HTTP GET):',
-      getLink,
-      '',
-      'Open that URL for markdown docs + token-scoped GET routes (status, flows, propose, drafts).',
-      '',
-      'Also (if your client can send headers):',
-      'Authorization: Bearer ' + token,
-      'REST API base: ' + base,
-      'OpenAPI: GET ' + base + '/openapi.yaml',
-      'MCP (optional): POST ' + origin + mcpRpc,
-      '',
-      'If you get 401 access_link_missing or access_link_invalid, ask the user for a new link.'
-    ].join('\\n');
+    var rpc = origin + mcpRpc;
+    var k = normalizeLinkKind(kind);
+    var tok = String(token || '');
+    if (k === 'rest') {
+      var restPrimary = tok ? ('Authorization: Bearer ' + tok) : '';
+      return {
+        kind: 'rest',
+        label: 'REST Bearer token',
+        buttonLabel: 'Copy REST Bearer token',
+        primary: restPrimary,
+        hint: 'Use this as Authorization on /mcp/api/v1. It is a rest token — not a chat GET link and not for /mcp/rpc. Copy again from the table while it is active.',
+        flashOk: 'REST Bearer token created.',
+        copiedOk: 'Copied REST Bearer token.',
+        block: [
+          'REST Bearer token (kind=rest)',
+          restPrimary,
+          '',
+          'REST API base: ' + base,
+          'OpenAPI: GET ' + base + '/openapi.yaml',
+          '',
+          'Do not use this token on /mcp/a/… or /mcp/rpc — mint get_link or mcp tokens for those.'
+        ].join('\\n'),
+        tokenDisplay: tok,
+        showDev: true
+      };
+    }
+    if (k === 'mcp') {
+      var mcpPrimary = tok ? ('Authorization: Bearer ' + tok) : '';
+      var mcpSnippet = [
+        'MCP token for /mcp/rpc (kind=mcp)',
+        mcpPrimary,
+        'POST ' + rpc,
+        '',
+        'Example header:',
+        'Authorization: Bearer ' + (tok || 'aia_…')
+      ].join('\\n');
+      return {
+        kind: 'mcp',
+        label: 'MCP token for /mcp/rpc',
+        buttonLabel: 'Copy MCP token for /mcp/rpc',
+        primary: mcpPrimary,
+        hint: 'Use this Bearer on POST /mcp/rpc only. It is an mcp token — not a chat GET link and not for REST. Copy again from the table while it is active.',
+        flashOk: 'MCP token created.',
+        copiedOk: 'Copied MCP token for /mcp/rpc.',
+        block: mcpSnippet + '\\n\\nDo not use this token on /mcp/a/… or /mcp/api/v1 — mint get_link or rest tokens for those.',
+        tokenDisplay: tok,
+        showDev: true
+      };
+    }
+    var getLink = url || (tok
+      ? (origin + (apiBase.replace(/\\/mcp\\/api\\/v1\\/?$/, '/mcp/a/') + tok))
+      : '');
+    return {
+      kind: 'get_link',
+      label: 'GET link (chat paste)',
+      buttonLabel: 'Copy link for your AI assistant',
+      primary: getLink,
+      hint: 'Paste this GET link in your AI chat. It is get_link only — REST and MCP need separate tokens from this page. While active you can copy it again from the table.',
+      flashOk: 'GET link created.',
+      copiedOk: 'Copied link for your AI assistant.',
+      block: [
+        'Self-contained GET link (kind=get_link, preferred for chat AIs that can only HTTP GET):',
+        getLink,
+        '',
+        'Open that URL for markdown docs + token-scoped GET routes (status, flows, propose, drafts).',
+        '',
+        'This path token does not work as REST or MCP Bearer — create a REST Bearer or MCP token on this page for those clients.',
+        '',
+        'If you get 401 access_link_missing, access_link_invalid, or wrong_token_kind, ask the user for a new token of the right kind.'
+      ].join('\\n'),
+      tokenDisplay: tok || getLink,
+      showDev: true
+    };
+  }
+
+  // Kept for page.test source assertions (get_link developer block).
+  function accessLinkCopyText(token, url) {
+    return linkCopyMaterial('get_link', token, url).block;
   }
 
   async function onCreateLink(ev) {
     ev.preventDefault();
     var flash = $('links-flash');
     var labelInput = $('link-label');
+    var kindSelect = $('link-kind');
     var ttlSeconds = selectedTtlSeconds();
-    var payload = { ttlSeconds: ttlSeconds };
+    var kind = normalizeLinkKind(kindSelect && kindSelect.value);
+    var payload = { ttlSeconds: ttlSeconds, kind: kind };
     if (labelInput && labelInput.value.trim()) payload.label = labelInput.value.trim();
     try {
       var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
+      var createdKind = normalizeLinkKind(created.kind || kind);
+      var material = linkCopyMaterial(createdKind, created.token || '', created.url || '');
       var box = $('token-once');
       box.hidden = false;
+      var kindLabel = $('token-kind-label');
+      if (kindLabel) {
+        kindLabel.hidden = false;
+        kindLabel.textContent = material.label;
+      }
       var tokenEl = $('token-value');
-      if (tokenEl) tokenEl.textContent = created.token || created.url || '';
+      if (tokenEl) tokenEl.textContent = material.tokenDisplay || '';
       var copyBlock = $('token-copy-block');
-      var copyText = accessLinkCopyText(created.token, created.url);
-      var getLinkOnly = created.url || '';
       if (copyBlock) {
-        copyBlock.textContent = copyText;
+        copyBlock.textContent = material.block;
       }
       var hint = $('token-docs-hint');
       if (hint) {
-        hint.textContent = 'Paste this link in your AI chat. It can read flows and submit proposals — it cannot deploy until you approve. While the link is active you can copy it again from the table below.';
+        hint.textContent = material.hint;
+      }
+      var devBlurb = $('token-dev-blurb');
+      if (devBlurb) {
+        if (createdKind === 'rest') {
+          devBlurb.textContent = 'REST Bearer and API base (reusable while active — also via Copy REST Bearer in the table).';
+        } else if (createdKind === 'mcp') {
+          devBlurb.textContent = 'MCP Bearer for /mcp/rpc (reusable while active — also via Copy MCP token in the table).';
+        } else {
+          devBlurb.textContent = 'GET link details (reusable while active — also via Copy link in the table).';
+        }
       }
       var copyBtn = $('token-copy-btn');
       if (copyBtn) {
-        copyBtn.textContent = 'Copy link for your AI assistant';
+        copyBtn.textContent = material.buttonLabel;
         copyBtn.classList.remove('copied');
-        copyBtn.disabled = false;
+        copyBtn.disabled = !material.primary;
         copyBtn.onclick = function () {
-          var toCopy = getLinkOnly || copyText;
+          var toCopy = material.primary;
+          if (!toCopy) {
+            showFlash(flash, 'Nothing to copy — create a new token.', false);
+            return;
+          }
           copyTextToClipboard(toCopy).then(function () {
-            markCopied(copyBtn, flash, 'Copied link for your AI assistant.');
-            showToast('Link copied for your AI assistant.', true);
+            markCopied(copyBtn, flash, material.copiedOk);
+            showToast(material.copiedOk, true);
           }).catch(function () {
             showFlash(flash, 'Clipboard unavailable — expand For developers and copy manually.', false);
           });
         };
       }
       if (labelInput) labelInput.value = '';
-      showFlash(flash, 'Link created.', true);
-      showToast('Access link created.', true);
+      showFlash(flash, material.flashOk, true);
+      showToast(material.flashOk, true);
       loadLinks();
       loadLogs();
     } catch (e) {

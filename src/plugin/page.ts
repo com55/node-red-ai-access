@@ -113,8 +113,9 @@ function renderMcpPageLinksSection(): string {
     <section class="panel" id="section-links" aria-label="Access links" hidden>
       <h2>Access links</h2>
       <p class="muted" id="links-intro">
-        An access link lets an AI assistant read your flows and submit change proposals.
-        It cannot deploy anything — you always approve first.
+        Create a token for the channel your AI uses: a GET link to paste in chat,
+        a REST Bearer, or an MCP token. It can read flows and submit proposals —
+        it cannot deploy anything until you approve.
       </p>
       <div id="links-flash" class="flash" hidden></div>
       <div id="links-manage"></div>

@@ -44,18 +44,19 @@ export function listLinksHandler(RED: NodeRedPluginAPI, store: AccessLinkStore) 
   return (req: AuthenticatedRequest, res: Response): void => {
     const linkStore = storeForRequest(RED, store);
     const active = linkStore.list().map(link => {
-      // GET-link URLs only make sense for get_link tokens (PR B polishes copy UX).
-      if (link.kind !== 'get_link') {
-        return link;
-      }
       const token = linkStore.peekToken(link.id);
       if (!token) {
         return link;
       }
-      return {
-        ...link,
-        url: buildAccessLinkUrl(req, RED.settings.httpAdminRoot, token),
-      };
+      // get_link: rebuild /mcp/a/… URL for re-copy. rest/mcp: expose raw token
+      // for admin Bearer re-copy (token stays create-only for get_link rows).
+      if (link.kind === 'get_link') {
+        return {
+          ...link,
+          url: buildAccessLinkUrl(req, RED.settings.httpAdminRoot, token),
+        };
+      }
+      return { ...link, token };
     });
     res.json({ links: active });
   };
