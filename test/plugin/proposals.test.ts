@@ -146,8 +146,9 @@ describe('proposals / flows / logs HTTP API', () => {
       .send({
         type: 'replace_flow',
         expectedRev: 'rev-1',
-        payload: { flowId: 'tab-1', flow: { nodes: [] } },
+        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
       });
+    expect(created.status).toBe(201);
 
     const approved = await request(app)
       .post(`/mcp/api/v1/proposals/${created.body.id}/approve`)
@@ -194,7 +195,7 @@ describe('proposals / flows / logs HTTP API', () => {
         expectedRev: 'rev-1',
         payload: {
           flowId: 'tab-1',
-          flow: { label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
+          flow: { id: 'tab-1', type: 'tab', label: 'Main', nodes: [{ id: 'n1', type: 'inject' }] },
         },
       });
     expect(created.status).toBe(201);
@@ -215,7 +216,12 @@ describe('proposals / flows / logs HTTP API', () => {
         title: 'Add inject sensor',
         payload: {
           flowId: 'tab-1',
-          flow: { label: 'Main', nodes: [{ id: 'n2', type: 'inject', name: 'sensor' }] },
+          flow: {
+            id: 'tab-1',
+            type: 'tab',
+            label: 'Main',
+            nodes: [{ id: 'n2', type: 'inject', name: 'sensor' }],
+          },
         },
       });
     expect(withTitle.status).toBe(201);
