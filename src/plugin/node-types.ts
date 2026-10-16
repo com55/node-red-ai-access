@@ -1132,16 +1132,7 @@ export async function searchPalette(
   const needle = query.toLowerCase();
   const hits: PaletteSearchItem[] = [];
   for (const mod of modules) {
-    if (!mod || typeof mod.id !== 'string' || mod.id.length === 0) {
-      continue;
-    }
-    const hay = [
-      mod.id,
-      mod.description ?? '',
-      ...(Array.isArray(mod.keywords) ? mod.keywords : []),
-    ]
-      .join('\n')
-      .toLowerCase();
+    const hay = [mod.id, mod.description ?? '', ...(mod.keywords ?? [])].join('\n').toLowerCase();
     if (!hay.includes(needle)) {
       continue;
     }
