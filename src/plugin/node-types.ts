@@ -17,7 +17,9 @@ export const STRUCTURAL_NODE_TYPES = new Set(['tab', 'subflow', 'group', 'juncti
 export const DEFAULT_NODE_TYPE_LIST_CAP = 100;
 export const DEFAULT_PALETTE_SEARCH_CAP = 30;
 export const PALETTE_HINT =
-  'Recommend only — ask the user to install via Manage palette, then recheck node-types. This API never installs.';
+  'Recommend only — ask the user to install via Manage palette, then recheck node-types. ' +
+  'This API never installs. Core Node-RED nodes (module node-red) are not listed in the ' +
+  'public catalogue; use node-types for installed core types.';
 
 const DEFAULT_CATALOGUE_URL = 'https://catalogue.nodered.org/catalogue.json';
 const CATALOGUE_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -91,6 +93,14 @@ export interface NodeTypeListItem {
   setId?: string;
 }
 
+export interface NodeTypeHelpSections {
+  summary?: string;
+  inputs?: string;
+  outputs?: string;
+  /** Full flattened help when sections were not detected. */
+  text?: string;
+}
+
 export interface NodeTypeDetail {
   type: string;
   module: string;
@@ -99,12 +109,13 @@ export interface NodeTypeDetail {
   enabled?: boolean;
   category?: string;
   color?: string;
-  inputs?: number;
-  outputs?: number;
-  properties?: Record<string, unknown>;
-  defaults?: Record<string, unknown>;
+  inputs: number;
+  outputs: number;
+  /** Property defaults from registerType (JSON values, not raw JS source). */
+  defaults?: Record<string, unknown> | null;
   requiredConfigNodeTypes?: string[];
-  help?: string;
+  /** @deprecated Prefer `help` sections; omitted when `includeHelp` is false. */
+  help?: string | NodeTypeHelpSections;
 }
 
 export interface ListNodeTypesResult {
@@ -726,7 +737,6 @@ export function parseRegisterTypeFromHtml(
   inputs?: number;
   outputs?: number;
   defaults?: Record<string, unknown>;
-  properties?: Record<string, unknown>;
   requiredConfigNodeTypes?: string[];
   help?: string;
 } | null {
@@ -813,7 +823,6 @@ function parseRegisterTypeAt(
   }
   if (defaults) {
     result.defaults = defaults;
-    result.properties = defaults;
   }
   if (requiredConfigNodeTypes.length > 0) {
     result.requiredConfigNodeTypes = [...new Set(requiredConfigNodeTypes)];
@@ -822,6 +831,41 @@ function parseRegisterTypeAt(
     result.help = help;
   }
   return result;
+}
+
+/** Split markdown/HTML help into summary / inputs / outputs when headings exist. */
+export function splitHelpSections(helpText: string): NodeTypeHelpSections {
+  const text = helpText.trim();
+  if (!text) {
+    return {};
+  }
+  const headingRe = /\n(?=#{1,3}\s*(inputs?|outputs?)\b)/i;
+  if (!headingRe.test(`\n${text}`)) {
+    return { text, summary: text };
+  }
+  const parts = text.split(/\n(?=#{1,3}\s+)/);
+  let summary = '';
+  let inputs: string | undefined;
+  let outputs: string | undefined;
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const hm = /^(#{1,3})\s*(inputs?|outputs?)\b[\s:]*\n?([\s\S]*)$/i.exec(trimmed);
+    if (hm) {
+      const kind = (hm[2] ?? '').toLowerCase();
+      const body = (hm[3] ?? '').trim();
+      if (kind.startsWith('input')) inputs = body || trimmed;
+      else outputs = body || trimmed;
+    } else if (!summary) {
+      summary = trimmed.replace(/^#{1,3}\s*/, '').trim();
+    }
+  }
+  const out: NodeTypeHelpSections = {};
+  if (summary) out.summary = summary;
+  if (inputs) out.inputs = inputs;
+  if (outputs) out.outputs = outputs;
+  if (!out.summary && !out.inputs && !out.outputs) out.text = text;
+  return out;
 }
 
 function extractBalancedObject(text: string): string | null {
@@ -996,15 +1040,20 @@ export function normalizeDefaultValue(value: unknown): unknown {
   return value;
 }
 
-function parseLooseValue(rest: string): unknown {
-  if (rest.startsWith("'") || rest.startsWith('"')) {
-    const q = rest[0];
+/**
+ * Parse a JS array/object literal into JSON-compatible values (nested).
+ * Falls back to undefined when the literal cannot be represented as JSON.
+ */
+export function parseJsLiteral(rest: string): unknown {
+  const s = rest.trimStart();
+  if (s.startsWith("'") || s.startsWith('"')) {
+    const q = s[0];
     let i = 1;
     let out = '';
-    while (i < rest.length) {
-      const ch = rest[i];
-      if (ch === '\\' && i + 1 < rest.length) {
-        const esc = unescapeJsStringEscape(rest, i + 1);
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === '\\' && i + 1 < s.length) {
+        const esc = unescapeJsStringEscape(s, i + 1);
         out += esc.char;
         i = esc.next;
         continue;
@@ -1017,34 +1066,170 @@ function parseLooseValue(rest: string): unknown {
     }
     return normalizeDefaultValue(out);
   }
-  if (rest.startsWith('[')) {
-    const end = rest.indexOf(']');
-    if (end > 0) {
-      try {
-        return JSON.parse(rest.slice(0, end + 1).replace(/'/g, '"')) as unknown;
-      } catch {
-        return rest.slice(0, end + 1);
-      }
+  if (s.startsWith('[')) {
+    const body = extractBalancedArray(s);
+    if (!body) {
+      return undefined;
     }
+    const inner = body.slice(1, -1).trim();
+    if (!inner) {
+      return [];
+    }
+    const items: unknown[] = [];
+    let i = 0;
+    while (i < inner.length) {
+      while (i < inner.length && /[\s,]/.test(inner.charAt(i))) {
+        i += 1;
+      }
+      if (i >= inner.length) {
+        break;
+      }
+      const slice = inner.slice(i);
+      const value = parseJsLiteral(slice);
+      items.push(value);
+      const consumed = measureJsLiteralLength(slice);
+      i += consumed > 0 ? consumed : 1;
+    }
+    return items;
   }
-  if (rest.startsWith('{')) {
-    const obj = extractBalancedObject(rest);
-    return obj ?? undefined;
+  if (s.startsWith('{')) {
+    const body = extractBalancedObject(s);
+    if (!body) {
+      return undefined;
+    }
+    const inner = body.slice(1, -1);
+    if (!inner.trim()) {
+      return {};
+    }
+    const out: Record<string, unknown> = {};
+    let i = 0;
+    while (i < inner.length) {
+      while (i < inner.length && /[\s,]/.test(inner.charAt(i))) {
+        i += 1;
+      }
+      if (i >= inner.length) {
+        break;
+      }
+      let key: string;
+      if (inner[i] === "'" || inner[i] === '"') {
+        const rawKey = parseJsLiteral(inner.slice(i));
+        key = typeof rawKey === 'string' ? rawKey : '';
+        i += measureJsLiteralLength(inner.slice(i));
+      } else {
+        const km = /^[a-zA-Z_$][\w$]*/.exec(inner.slice(i));
+        if (!km) {
+          break;
+        }
+        key = km[0];
+        i += key.length;
+      }
+      while (i < inner.length && /\s/.test(inner.charAt(i))) {
+        i += 1;
+      }
+      if (inner[i] !== ':') {
+        break;
+      }
+      i += 1;
+      while (i < inner.length && /\s/.test(inner.charAt(i))) {
+        i += 1;
+      }
+      const valueSlice = inner.slice(i);
+      out[key] = parseJsLiteral(valueSlice);
+      i += measureJsLiteralLength(valueSlice);
+    }
+    return out;
   }
-  const num = /^-?\d+(?:\.\d+)?/.exec(rest);
+  const num = /^-?\d+(?:\.\d+)?/.exec(s);
   if (num) {
     return Number(num[0]);
   }
-  if (rest.startsWith('true')) {
+  if (s.startsWith('true')) {
     return true;
   }
-  if (rest.startsWith('false')) {
+  if (s.startsWith('false')) {
     return false;
   }
-  if (rest.startsWith('null')) {
+  if (s.startsWith('null')) {
     return null;
   }
+  // Skip function / identifier / bare identifiers — not JSON.
   return undefined;
+}
+
+function measureJsLiteralLength(rest: string): number {
+  const s = rest.trimStart();
+  const pad = rest.length - s.length;
+  if (s.startsWith("'") || s.startsWith('"')) {
+    const q = s[0]!;
+    let i = 1;
+    while (i < s.length) {
+      if (s[i] === '\\' && i + 1 < s.length) {
+        i += 2;
+        continue;
+      }
+      if (s[i] === q) {
+        return pad + i + 1;
+      }
+      i += 1;
+    }
+    return pad + s.length;
+  }
+  if (s.startsWith('[')) {
+    const body = extractBalancedArray(s);
+    return pad + (body?.length ?? 1);
+  }
+  if (s.startsWith('{')) {
+    const body = extractBalancedObject(s);
+    return pad + (body?.length ?? 1);
+  }
+  const atom = /^(?:-?\d+(?:\.\d+)?|true|false|null)/.exec(s);
+  if (atom) {
+    return pad + atom[0].length;
+  }
+  return pad + 1;
+}
+
+function extractBalancedArray(text: string): string | null {
+  if (!text.startsWith('[')) {
+    return null;
+  }
+  let depth = 0;
+  let inStr: string | null = null;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (ch === '\\') {
+        esc = true;
+        continue;
+      }
+      if (ch === inStr) {
+        inStr = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      inStr = ch;
+      continue;
+    }
+    if (ch === '[') {
+      depth += 1;
+    } else if (ch === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(0, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function parseLooseValue(rest: string): unknown {
+  return parseJsLiteral(rest);
 }
 
 function findSetForType(
@@ -1063,29 +1248,66 @@ function findSetForType(
 }
 
 /**
+ * Find an installed type that matches `type` case-insensitively (exact preferred).
+ */
+export function findCaseInsensitiveType(type: string, candidates: string[]): string | undefined {
+  const lower = type.toLowerCase();
+  if (candidates.includes(type)) {
+    return type;
+  }
+  return candidates.find(c => c.toLowerCase() === lower);
+}
+
+/**
  * Detail for one installed type. 404-style AiOpsValidationError when unknown.
+ * Defaults come from the registerType definition object (parsed to JSON).
  */
 export async function getNodeTypeDetail(
   adapter: NodeTypesAdapter,
-  type: string
+  type: string,
+  options: { includeHelp?: boolean } = {}
 ): Promise<NodeTypeDetail> {
   if (!type || typeof type !== 'string') {
     throw new AiOpsValidationError('Missing node type', 'missing_node_type');
   }
+  const includeHelp = options.includeHelp !== false;
   if (isStructuralNodeType(type)) {
     const detail: NodeTypeDetail = {
       type,
       module: 'node-red',
       category: 'config',
-      help: 'Built-in structural Node-RED type (not a palette node).',
+      inputs: 0,
+      outputs: 0,
+      defaults: null,
     };
+    if (includeHelp) {
+      detail.help = {
+        summary: 'Built-in structural Node-RED type (not a palette node).',
+      };
+    }
     return detail;
   }
 
   const sets = await adapter.listNodeSets();
-  const found = findSetForType(sets, type);
-  if (!found) {
-    const allNames = sets.flatMap(s => s.types);
+  const allNames = sets.flatMap(s => s.types);
+  const exact = findSetForType(sets, type);
+  if (!exact) {
+    const ci = findCaseInsensitiveType(type, allNames);
+    if (ci && ci !== type) {
+      throw new AiOpsValidationError(
+        `Node type '${type}' was not found — did you mean '${ci}'? Types are case-sensitive.`,
+        'node_type_not_found',
+        {
+          statusCode: 404,
+          details: {
+            type,
+            didYouMean: ci,
+            caseSensitive: true,
+            nearest: [ci],
+          },
+        }
+      );
+    }
     throw new AiOpsValidationError(`Node type '${type}' was not found`, 'node_type_not_found', {
       statusCode: 404,
       details: { type, nearest: nearestNodeTypes(type, allNames, 5) },
@@ -1094,21 +1316,26 @@ export async function getNodeTypeDetail(
 
   const detail: NodeTypeDetail = {
     type,
-    module: found.set.module,
-    setId: found.setId,
+    module: exact.set.module,
+    setId: exact.setId,
+    inputs: 1,
+    outputs: 1,
+    defaults: null,
   };
-  if (found.set.version) {
-    detail.version = found.set.version;
+  if (exact.set.version) {
+    detail.version = exact.set.version;
   }
-  if (typeof found.set.enabled === 'boolean') {
-    detail.enabled = found.set.enabled;
+  if (typeof exact.set.enabled === 'boolean') {
+    detail.enabled = exact.set.enabled;
   }
 
+  // registerType({ defaults, inputs, outputs }) is the registry definition —
+  // sourced from the node set's HTML config (Node-RED stores definitions there).
   if (typeof adapter.getNodeConfigHtml === 'function') {
     try {
       const html =
-        (await adapter.getNodeConfigHtml(found.setId)) ??
-        (await adapter.getNodeConfigHtml(`${found.set.module}/${type}`)) ??
+        (await adapter.getNodeConfigHtml(exact.setId)) ??
+        (await adapter.getNodeConfigHtml(`${exact.set.module}/${type}`)) ??
         (await adapter.getNodeConfigHtml(type));
       if (html) {
         const parsed = parseRegisterTypeFromHtml(html, type);
@@ -1119,21 +1346,18 @@ export async function getNodeTypeDetail(
           if (parsed.color) {
             detail.color = parsed.color;
           }
-          if (parsed.inputs !== undefined) {
-            detail.inputs = parsed.inputs;
-          }
-          if (parsed.outputs !== undefined) {
-            detail.outputs = parsed.outputs;
-          }
-          if (parsed.defaults) {
+          detail.inputs = parsed.inputs ?? detail.inputs;
+          detail.outputs = parsed.outputs ?? detail.outputs;
+          if (parsed.defaults && Object.keys(parsed.defaults).length > 0) {
             detail.defaults = parsed.defaults;
-            detail.properties = parsed.properties ?? parsed.defaults;
+          } else {
+            detail.defaults = null;
           }
           if (parsed.requiredConfigNodeTypes) {
             detail.requiredConfigNodeTypes = parsed.requiredConfigNodeTypes;
           }
-          if (parsed.help) {
-            detail.help = parsed.help;
+          if (includeHelp && parsed.help) {
+            detail.help = splitHelpSections(parsed.help);
           }
         }
       }
@@ -1196,6 +1420,21 @@ export async function assertKnownNodeTypes(
     }
     seen.add(type);
     if (!installed.has(type)) {
+      const ci = findCaseInsensitiveType(type, allNames);
+      if (ci && ci !== type) {
+        throw new AiOpsValidationError(
+          `Unknown node type '${type}' — did you mean '${ci}'? Types are case-sensitive.`,
+          'unknown_node_type',
+          {
+            details: {
+              type,
+              didYouMean: ci,
+              caseSensitive: true,
+              nearest: [ci],
+            },
+          }
+        );
+      }
       throw new AiOpsValidationError(
         `Unknown node type '${type}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
         'unknown_node_type',
@@ -1222,6 +1461,21 @@ export async function assertKnownNodeType(adapter: NodeTypesAdapter, type: unkno
   const { allNames } = await flattenInstalledTypes(adapter);
   if (allNames.includes(name)) {
     return;
+  }
+  const ci = findCaseInsensitiveType(name, allNames);
+  if (ci && ci !== name) {
+    throw new AiOpsValidationError(
+      `Unknown node type '${name}' — did you mean '${ci}'? Types are case-sensitive.`,
+      'unknown_node_type',
+      {
+        details: {
+          type: name,
+          didYouMean: ci,
+          caseSensitive: true,
+          nearest: [ci],
+        },
+      }
+    );
   }
   throw new AiOpsValidationError(
     `Unknown node type '${name}'. Call node-types / palette search; ask the user to install via Manage palette, then recheck.`,
@@ -1325,7 +1579,16 @@ export async function searchPalette(
   const modules = Array.isArray(catalogue.modules) ? catalogue.modules : [];
 
   const sets = await adapter.listNodeSets();
-  const installedModules = new Set(sets.map(s => s.module));
+  // Cross-check catalogue ids against installed module names (case-insensitive).
+  const installedModules = new Set(
+    sets.flatMap(s => {
+      const names = [s.module, s.id];
+      if (s.id.includes('/')) {
+        names.push(s.id.split('/')[0] ?? s.module);
+      }
+      return names.map(n => n.toLowerCase());
+    })
+  );
 
   const needle = query.toLowerCase();
   const scored: { item: PaletteSearchItem; score: number }[] = [];
@@ -1339,7 +1602,7 @@ export async function searchPalette(
     }
     const item: PaletteSearchItem = {
       module: mod.id,
-      installed: installedModules.has(mod.id),
+      installed: installedModules.has(id),
     };
     if (typeof mod.description === 'string') {
       item.description = mod.description;

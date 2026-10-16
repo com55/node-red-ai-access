@@ -273,16 +273,25 @@ function registerReadTools(
     'get_node_type',
     {
       description:
-        'Get detail for one installed node type: properties/defaults, inputs/outputs, ' +
-        'requiredConfigNodeTypes, short help, category/module/color when available. ' +
-        '404 node_type_not_found when unknown (includes nearest type names).',
+        'Get detail for one installed node type: defaults (JSON), inputs/outputs (always set), ' +
+        'requiredConfigNodeTypes, help sections (summary/inputs/outputs), category/module/color. ' +
+        'Types are case-sensitive. Pass includeHelp=false to omit help. ' +
+        '404 node_type_not_found when unknown (didYouMean on case mismatch; else nearest names).',
       inputSchema: {
-        type: z.string().min(1).describe('Node type id (e.g. inject, template)'),
+        type: z.string().min(1).describe('Node type id (e.g. inject, template) — case-sensitive'),
+        includeHelp: z
+          .boolean()
+          .optional()
+          .describe('When false, omit help sections (default true)'),
       },
     },
-    async ({ type }) => {
+    async ({ type, includeHelp }) => {
       try {
-        return jsonResult(await getNodeTypeDetail(services.nodeTypesAdapter, type));
+        return jsonResult(
+          await getNodeTypeDetail(services.nodeTypesAdapter, type, {
+            includeHelp: includeHelp !== false,
+          })
+        );
       } catch (error) {
         return jsonError(error, 502);
       }
@@ -294,8 +303,9 @@ function registerReadTools(
     {
       description:
         'Search the public Node-RED catalogue for modules to recommend. ' +
-        'Returns module id, description, version, updated, link, and installed boolean. ' +
-        'RECOMMEND ONLY — never installs. Ask the user to install via Manage palette, then recheck list_node_types.',
+        'Returns module id, description, version, updated, link, and installed boolean ' +
+        '(cross-checked against installed modules). Core node-red types are not in the catalogue — ' +
+        'use list_node_types. RECOMMEND ONLY — never installs.',
       inputSchema: {
         q: z.string().min(1).describe('Search string (id / description / keywords)'),
       },

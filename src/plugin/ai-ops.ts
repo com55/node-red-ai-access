@@ -196,6 +196,7 @@ async function materializePayloadFromNodes(
     throw new AiOpsValidationError('payload.nodes must be node ops', 'invalid_patch');
   }
   const patched = await applyFlowNodeOps(adapter, interpreted.flowId, interpreted.ops, {
+    expectedRev,
     ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
   });
   if (patched.expectedRev !== expectedRev) {

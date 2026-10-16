@@ -217,13 +217,47 @@ describe('node-types helpers', () => {
     expect(detail.inputs).toBe(0);
     expect(detail.outputs).toBe(1);
     expect(detail.requiredConfigNodeTypes).toEqual(['mqtt-broker']);
-    expect(detail.help).toMatch(/Inject a message/i);
+    expect(detail.help).toEqual(
+      expect.objectContaining({ summary: expect.stringMatching(/Inject a message/i) })
+    );
+    expect(detail).not.toHaveProperty('properties');
     expect(detail.defaults?.name).toEqual(expect.objectContaining({ value: '' }));
+
+    const noHelp = await getNodeTypeDetail(adapter, 'inject', { includeHelp: false });
+    expect(noHelp.help).toBeUndefined();
+
+    await expect(getNodeTypeDetail(adapter, 'Debug')).rejects.toMatchObject({
+      code: 'node_type_not_found',
+      details: expect.objectContaining({ didYouMean: 'debug', caseSensitive: true }),
+    });
 
     await expect(getNodeTypeDetail(adapter, 'nope-node')).rejects.toMatchObject({
       code: 'node_type_not_found',
       statusCode: 404,
     });
+  });
+
+  it('parses nested JS literal defaults to JSON (props/rules)', () => {
+    const html = `
+<script type="text/javascript">
+  RED.nodes.registerType('inject',{
+    category: 'common',
+    defaults: {
+      name: {value:""},
+      props: {value:[{p:"payload"},{p:"topic",vt:"str"}]},
+      rules: {value:[]}
+    },
+    inputs:0,
+    outputs:1
+  });
+</script>`;
+    const parsed = parseRegisterTypeFromHtml(html, 'inject');
+    expect(parsed?.defaults?.props).toEqual(
+      expect.objectContaining({
+        value: [{ p: 'payload' }, { p: 'topic', vt: 'str' }],
+      })
+    );
+    expect(parsed?.defaults?.rules).toEqual(expect.objectContaining({ value: [] }));
   });
 
   it('parseRegisterTypeFromHtml tolerates bad HTML', () => {
@@ -439,8 +473,10 @@ describe('node-types HTTP + MCP + docs', () => {
     const workflowIdx = md.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);
     expect(alsoIdx).toBeLessThan(workflowIdx);
+    expect(md).toMatch(/Which channel to use/i);
     expect(md).toMatch(/Prefer MCP or REST/i);
     expect(md).toMatch(/get_link/);
+    expect(md).toMatch(/help=0|Core.*catalogue|case-sensitive/i);
     expect(md).toMatch(/rest.*token|rest-token/i);
     expect(md).toMatch(/mcp.*token|mcp-token/i);
     expect(md).toMatch(/not this path token/i);

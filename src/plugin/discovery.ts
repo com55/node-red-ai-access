@@ -84,7 +84,8 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       method: 'GET',
       path: '/node-types/{type}',
       auth: 'admin-or-access-link',
-      summary: 'Detail for one installed node type (properties, defaults, help)',
+      summary:
+        'Detail for one installed node type (defaults JSON, inputs/outputs, help; ?help=0 omits help)',
     },
     {
       method: 'GET',
