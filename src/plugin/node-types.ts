@@ -211,15 +211,34 @@ function sharedPrefixLength(a: string, b: string): number {
   return i;
 }
 
-/** Rank installed type names nearest to `type` (edit distance, then shared prefix). */
+/** Types that must never appear in nearest-match suggestions. */
+const NEAREST_EXCLUDE = new Set(['unknown', 'tab', 'subflow', 'group', 'junction']);
+
+/**
+ * Max edit distance for a candidate to count as "near".
+ * Weak matches (above this) yield an empty list when nothing passes.
+ */
+export function nearestDistanceCutoff(type: string): number {
+  return Math.max(2, Math.floor(type.length / 3));
+}
+
+/**
+ * Rank installed type names nearest to `type` (edit distance, then shared prefix).
+ * Drops internal/structural types and applies a similarity cutoff so weak
+ * matches return an empty list.
+ */
 export function nearestNodeTypes(type: string, candidates: string[], limit = 5): string[] {
+  const cutoff = nearestDistanceCutoff(type);
   const scored = candidates
-    .filter(c => c !== type)
+    .filter(
+      c => c !== type && !NEAREST_EXCLUDE.has(c) && !c.startsWith('_') && !c.startsWith('subflow:')
+    )
     .map(c => ({
       c,
       dist: editDistance(type, c),
       prefix: sharedPrefixLength(type, c),
     }))
+    .filter(s => s.dist <= cutoff)
     .sort((a, b) => a.dist - b.dist || b.prefix - a.prefix || a.c.localeCompare(b.c));
   return scored.slice(0, limit).map(s => s.c);
 }
@@ -876,6 +895,74 @@ function parseDefaultsBlock(objectText: string): Record<string, unknown> | undef
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Interpret a JS string escape after a backslash (e.g. `n` → newline). */
+export function unescapeJsStringEscape(rest: string, at: number): { char: string; next: number } {
+  const code = rest.charAt(at);
+  if (code === 'u' && /^[0-9a-fA-F]{4}/.test(rest.slice(at + 1, at + 5))) {
+    return {
+      char: String.fromCharCode(Number.parseInt(rest.slice(at + 1, at + 5), 16)),
+      next: at + 5,
+    };
+  }
+  if (code === 'x' && /^[0-9a-fA-F]{2}/.test(rest.slice(at + 1, at + 3))) {
+    return {
+      char: String.fromCharCode(Number.parseInt(rest.slice(at + 1, at + 3), 16)),
+      next: at + 3,
+    };
+  }
+  let char: string | undefined;
+  switch (code) {
+    case 'n':
+      char = '\n';
+      break;
+    case 'r':
+      char = '\r';
+      break;
+    case 't':
+      char = '\t';
+      break;
+    case 'b':
+      char = '\b';
+      break;
+    case 'f':
+      char = '\f';
+      break;
+    case 'v':
+      char = '\v';
+      break;
+    case '0':
+      char = '\0';
+      break;
+    case '\\':
+      char = '\\';
+      break;
+    case "'":
+      char = "'";
+      break;
+    case '"':
+      char = '"';
+      break;
+    case '/':
+      char = '/';
+      break;
+    default:
+      // Unknown escape: keep the escaped character (drop the backslash).
+      char = code;
+      break;
+  }
+  return { char, next: at + 1 };
+}
+
+/**
+ * Normalize Node-RED default placeholders (`_DEFAULT_` → empty string).
+ */
+export function normalizeDefaultValue(value: unknown): unknown {
+  if (value === '_DEFAULT_') {
+    return '';
+  }
+  return value;
+}
+
 function parseLooseValue(rest: string): unknown {
   if (rest.startsWith("'") || rest.startsWith('"')) {
     const q = rest[0];
@@ -884,8 +971,9 @@ function parseLooseValue(rest: string): unknown {
     while (i < rest.length) {
       const ch = rest[i];
       if (ch === '\\' && i + 1 < rest.length) {
-        out += rest[i + 1];
-        i += 2;
+        const esc = unescapeJsStringEscape(rest, i + 1);
+        out += esc.char;
+        i = esc.next;
         continue;
       }
       if (ch === q) {
@@ -894,7 +982,7 @@ function parseLooseValue(rest: string): unknown {
       out += ch;
       i += 1;
     }
-    return out;
+    return normalizeDefaultValue(out);
   }
   if (rest.startsWith('[')) {
     const end = rest.indexOf(']');
@@ -1205,10 +1293,13 @@ export async function searchPalette(
   const installedModules = new Set(sets.map(s => s.module));
 
   const needle = query.toLowerCase();
-  const hits: PaletteSearchItem[] = [];
+  const scored: { item: PaletteSearchItem; score: number }[] = [];
   for (const mod of modules) {
-    const hay = [mod.id, mod.description ?? '', ...(mod.keywords ?? [])].join('\n').toLowerCase();
-    if (!hay.includes(needle)) {
+    const id = mod.id.toLowerCase();
+    const keywords = (mod.keywords ?? []).map(k => String(k).toLowerCase());
+    const description = (mod.description ?? '').toLowerCase();
+    const score = paletteMatchScore(needle, id, keywords, description);
+    if (score <= 0) {
       continue;
     }
     const item: PaletteSearchItem = {
@@ -1230,16 +1321,59 @@ export async function searchPalette(
     if (typeof mod.url === 'string') {
       item.link = mod.url;
     }
-    hits.push(item);
+    scored.push({ item, score });
   }
 
-  const total = hits.length;
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (b.item.downloads ?? 0) - (a.item.downloads ?? 0) ||
+      a.item.module.localeCompare(b.item.module)
+  );
+
+  const total = scored.length;
   const truncated = total > limit;
   return {
     q: query,
-    modules: hits.slice(0, limit),
+    modules: scored.slice(0, limit).map(s => s.item),
     total,
     truncated,
     hint: PALETTE_HINT,
   };
+}
+
+/**
+ * Rank palette hits: exact/prefix/substring on module id and keywords beat
+ * description-only matches (so `q=modbus` prefers node-red-contrib-modbus).
+ */
+export function paletteMatchScore(
+  needle: string,
+  id: string,
+  keywords: string[],
+  description: string
+): number {
+  if (!needle) {
+    return 0;
+  }
+  let score = 0;
+  if (id === needle || id === `node-red-contrib-${needle}` || id === `node-red-node-${needle}`) {
+    score += 100;
+  } else if (id.startsWith(needle) || id.startsWith(`node-red-contrib-${needle}`)) {
+    score += 80;
+  } else if (id.includes(needle)) {
+    score += 60;
+  }
+  for (const kw of keywords) {
+    if (kw === needle) {
+      score += 50;
+    } else if (kw.startsWith(needle) || needle.startsWith(kw)) {
+      score += 35;
+    } else if (kw.includes(needle)) {
+      score += 25;
+    }
+  }
+  if (description.includes(needle)) {
+    score += 10;
+  }
+  return score;
 }

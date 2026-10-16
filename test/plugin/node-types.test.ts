@@ -97,6 +97,24 @@ function mockCatalogueFetcher(): CatalogueFetcher {
           url: 'https://nodered.org',
         },
         {
+          id: 'node-red-contrib-modbus',
+          description: 'Modbus serial and TCP nodes',
+          version: '5.0.0',
+          updated_at: '2024-03-01',
+          keywords: ['modbus', 'serial'],
+          url: 'https://flows.nodered.org/node/node-red-contrib-modbus',
+          downloads: 9000,
+        },
+        {
+          id: 'node-red-contrib-something-else',
+          description: 'Mentions modbus only in the long description as a random aside',
+          version: '0.1.0',
+          updated_at: '2024-02-01',
+          keywords: ['unrelated'],
+          url: 'https://flows.nodered.org/node/node-red-contrib-something-else',
+          downloads: 1,
+        },
+        {
           id: 'node-red-contrib-bar',
           description: 'Unrelated bar module',
           version: '0.1.0',
@@ -212,11 +230,35 @@ describe('node-types helpers', () => {
     expect(parseRegisterTypeFromHtml('<div>nope</div>')).toBeNull();
   });
 
-  it('nearestNodeTypes ranks by edit distance', () => {
-    expect(nearestNodeTypes('injct', ['inject', 'debug', 'template'], 2)).toEqual([
+  it('preserves JS escape sequences in default string values', () => {
+    const html = `
+<script type="text/javascript">
+  RED.nodes.registerType('function',{
+    category: 'function',
+    defaults: {
+      name: {value:'_DEFAULT_'},
+      func: {value:"\\nreturn msg;"},
+      path: {value:'C:\\\\temp\\\\file.txt'}
+    },
+    inputs:1,
+    outputs:1
+  });
+</script>`;
+    const parsed = parseRegisterTypeFromHtml(html, 'function');
+    expect(parsed?.defaults?.func).toEqual(expect.objectContaining({ value: '\nreturn msg;' }));
+    expect(parsed?.defaults?.name).toEqual(expect.objectContaining({ value: '' }));
+    expect(parsed?.defaults?.path).toEqual(
+      expect.objectContaining({ value: 'C:\\temp\\file.txt' })
+    );
+  });
+
+  it('nearestNodeTypes ranks by edit distance, drops internals, and applies cutoff', () => {
+    expect(nearestNodeTypes('injct', ['inject', 'debug', 'template', 'unknown'], 5)).toEqual([
       'inject',
-      expect.any(String),
     ]);
+    expect(nearestNodeTypes('injct', ['inject', 'unknown'], 5)).not.toContain('unknown');
+    // Weak/unrelated matches → empty list (not "nearest garbage").
+    expect(nearestNodeTypes('zzzzzz', ['inject', 'debug', 'template'], 5)).toEqual([]);
   });
 
   it('assertKnownNodeTypes throws unknown_node_type with nearest', async () => {
@@ -252,6 +294,12 @@ describe('node-types helpers', () => {
     const coreHit = await searchPalette(adapter, 'core', { catalogueFetcher: fetcher });
     const nr = coreHit.modules.find(m => m.module === 'node-red');
     expect(nr?.installed).toBe(true);
+
+    resetCatalogueCache();
+    const modbus = await searchPalette(adapter, 'modbus', { catalogueFetcher: fetcher });
+    expect(modbus.modules[0]?.module).toBe('node-red-contrib-modbus');
+    expect(modbus.modules.map(m => m.module)).toContain('node-red-contrib-something-else');
+    expect(modbus.modules[0]?.module).not.toBe('node-red-contrib-something-else');
   });
 });
 
