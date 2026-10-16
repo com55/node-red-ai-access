@@ -188,6 +188,7 @@ function renderMcpPageDialogs(): string {
         <p id="delete-confirm-proposal-title" class="dialog-proposal-title"></p>
         <p id="delete-confirm-msg" class="danger-text"></p>
         <p id="delete-confirm-summary" class="muted"></p>
+        <div id="delete-confirm-warnings" hidden></div>
         <label id="delete-confirm-type-label">Type <strong id="delete-confirm-phrase">DELETE</strong> to confirm
           <input id="delete-confirm-input" type="text" autocomplete="off" />
         </label>

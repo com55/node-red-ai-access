@@ -1074,10 +1074,12 @@ function pageClientScriptPartB(): string {
   }
 
   /**
-   * Destructive enough to need an in-page confirm: any node deletes, or a
-   * cleared/replaced flow. Small add/modify-only edits stay one-click.
+   * Destructive enough to need an in-page confirm: any node deletes, a
+   * cleared/replaced flow, or soft validation warnings (scaffold gaps).
+   * Small add/modify-only edits without warnings stay one-click.
    */
-  function needsApproveConfirm(diff) {
+  function needsApproveConfirm(diff, proposal) {
+    if (proposalWarnings(proposal, diff).length > 0) return true;
     if (!diff || !diff.summary) return false;
     var removed = Number(diff.summary.removed) || 0;
     var before = Number(diff.summary.beforeNodeCount) || 0;
@@ -1085,6 +1087,33 @@ function pageClientScriptPartB(): string {
     if (removed > 0) return true;
     if (before > 0 && after === 0) return true;
     return false;
+  }
+
+  /** Soft validation notes from the proposal and/or its diff. */
+  function proposalWarnings(proposal, diff) {
+    var fromDiff = diff && Array.isArray(diff.warnings) ? diff.warnings : [];
+    if (fromDiff.length) return fromDiff;
+    if (proposal && Array.isArray(proposal.warnings)) return proposal.warnings;
+    return [];
+  }
+
+  function renderValidationWarnings(warnings, opts) {
+    if (!warnings || !warnings.length) return '';
+    opts = opts || {};
+    var title = opts.title || ('Needs configuration (' + warnings.length + ')');
+    var extraClass = opts.className ? ' ' + opts.className : '';
+    var items = warnings.map(function (w) {
+      var code = w && w.code ? String(w.code) : '';
+      var msg = w && w.error ? String(w.error) : 'Configuration needed before deploy';
+      return '<li>' +
+        (code ? '<span class="warn-code">' + esc(code) + '</span> — ' : '') +
+        esc(msg) +
+        '</li>';
+    }).join('');
+    return '<div class="proposal-warnings' + extraClass + '" role="status">' +
+      '<p class="proposal-warnings-title">' + esc(title) + '</p>' +
+      '<ul>' + items + '</ul>' +
+      '</div>';
   }
 
   function formatDiffActionSummary(diff) {
@@ -1605,6 +1634,10 @@ function pageClientScriptPartBDiffView2(): string {
         (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
         '</div></div>';
     }
+    var warnHtml = renderValidationWarnings(diff.warnings, {
+      title: 'Scaffold warnings — configure before deploy if needed',
+      className: 'diff-warnings'
+    });
     var sections = renderDiffSections(
       diff,
       mode,
@@ -1621,7 +1654,7 @@ function pageClientScriptPartBDiffView2(): string {
           places + ' other place' + (places === 1 ? '' : 's') + ' since then.</p>';
       }
     }
-    return missing + toolbar + sections + vsCurrent;
+    return missing + warnHtml + toolbar + sections + vsCurrent;
   }
 
   function renderDiffRevMeta(diff) {
@@ -1771,7 +1804,17 @@ function pageClientScriptPartB2Actions(): string {
     if (!canApprove || p.status !== 'pending') return '';
     // Stale items live in the Out of date group (Dismiss only).
     if (stale) return '';
-    return '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
+    var cached = proposalDiffCache[p.id];
+    var warns = proposalWarnings(p, cached);
+    var warnNote = warns.length
+      ? renderValidationWarnings(warns, {
+          title: 'Approve will deploy with ' + warns.length +
+            ' configuration warning' + (warns.length === 1 ? '' : 's') +
+            ' — you can finish setup in the editor afterward'
+        })
+      : '';
+    return warnNote +
+      '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
       '<div class="row">' +
       '<button type="button" class="action approve-btn" data-id="' + esc(p.id) +
       '">Approve &amp; deploy</button>' +
@@ -1892,6 +1935,11 @@ function pageClientScriptPartB2Cards(): string {
     var plain = cached ? plainDiffSentence(cached, flowLabel) : '';
     // Show for any large delete — including stale — so owners see the risk.
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
+    // Card-level banner even before diff loads (warnings come from list API).
+    var cardWarns = proposalWarnings(p, cached);
+    var warnBanner = cardWarns.length && !cached
+      ? renderValidationWarnings(cardWarns)
+      : '';
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
     var changes =
@@ -1910,6 +1958,7 @@ function pageClientScriptPartB2Cards(): string {
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
       (plain ? esc(plain) : '<span class="muted">Loading summary…</span>') + '</p>' +
       deleteBanner +
+      warnBanner +
       reason +
       changes +
       renderProposalTech(p, cached) +
@@ -2407,6 +2456,7 @@ function pageClientScriptPartC(): string {
     var titleEl = $('delete-confirm-proposal-title');
     var msg = $('delete-confirm-msg');
     var summaryEl = $('delete-confirm-summary');
+    var warnEl = $('delete-confirm-warnings');
     var typeLabel = $('delete-confirm-type-label');
     var input = $('delete-confirm-input');
     var btn = $('delete-confirm-btn');
@@ -2414,8 +2464,18 @@ function pageClientScriptPartC(): string {
     var beforeN = (diff && diff.summary && diff.summary.beforeNodeCount) || 0;
     var removedN = (diff && diff.summary && diff.summary.removed) || 0;
     var large = isLargeDelete(diff);
+    var warns = proposalWarnings(p, diff);
+    var destructive = removedN > 0 || (beforeN > 0 && ((diff && diff.summary && diff.summary.afterNodeCount) || 0) === 0);
     if (heading) {
-      heading.textContent = large ? 'Confirm large deletion' : 'Confirm approve & deploy';
+      if (large) {
+        heading.textContent = 'Confirm large deletion';
+      } else if (destructive) {
+        heading.textContent = 'Confirm approve & deploy';
+      } else if (warns.length) {
+        heading.textContent = 'Approve with configuration warnings';
+      } else {
+        heading.textContent = 'Confirm approve & deploy';
+      }
     }
     if (titleEl) {
       var t = proposalToastTitle(p);
@@ -2427,17 +2487,38 @@ function pageClientScriptPartC(): string {
         msg.textContent = 'This proposal deletes ' + removedN + ' of ' + beforeN +
           ' nodes. Type DELETE to confirm approve & deploy.';
         msg.className = 'danger-text';
+        msg.hidden = false;
       } else if (removedN > 0) {
         msg.textContent = 'This proposal deletes ' + removedN +
           ' node' + (removedN === 1 ? '' : 's') + '. Confirm before deploying.';
         msg.className = 'danger-text';
-      } else {
+        msg.hidden = false;
+      } else if (destructive) {
         msg.textContent = 'This proposal replaces or clears the flow. Confirm before deploying.';
         msg.className = 'danger-text';
+        msg.hidden = false;
+      } else if (warns.length) {
+        msg.textContent = 'This proposal has configuration gaps (scaffold). You can approve now and finish setup in the editor afterward.';
+        msg.className = 'muted';
+        msg.hidden = false;
+      } else {
+        msg.textContent = '';
+        msg.hidden = true;
       }
     }
     if (summaryEl) {
       summaryEl.textContent = formatDiffActionSummary(diff);
+    }
+    if (warnEl) {
+      if (warns.length) {
+        warnEl.hidden = false;
+        warnEl.innerHTML = renderValidationWarnings(warns, {
+          title: 'Configuration warnings'
+        });
+      } else {
+        warnEl.hidden = true;
+        warnEl.innerHTML = '';
+      }
     }
     if (typeLabel) typeLabel.hidden = !large;
     if (input) {
@@ -2553,11 +2634,12 @@ function pageClientScriptPartC(): string {
     var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
     var deploymentType = select ? select.value : defaultDeploy;
     var diff = proposalDiffCache[id];
+    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     if (diff && diff.baseRevStale) {
       showToast('This proposal is out of date. Ask the AI to resubmit.', false);
       return;
     }
-    if (needsApproveConfirm(diff)) {
+    if (needsApproveConfirm(diff, p)) {
       openDeleteConfirmDialog(id, deploymentType, diff);
       return;
     }

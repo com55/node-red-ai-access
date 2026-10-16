@@ -87,7 +87,7 @@ export function createProposalHandler(
         nodeTypesAdapter
       );
       const siblings = siblingsOnSameRev(store, proposal);
-      const warnings = 'warnings' in proposal ? proposal.warnings : undefined;
+      const warnings = proposal.warnings;
       res.status(201).json({
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         ...siblingWarningFields(siblings),

@@ -7,8 +7,7 @@ import { AiOpsValidationError } from '../ai-ops.js';
 import {
   assertValidWiresShape,
   collectConfigWarnings,
-  collectMissingConfigIssues,
-  collectWireIssues,
+  collectWireValidation,
   collectZMismatchIssues,
   throwValidationIssues,
   type ValidationIssue,
@@ -285,10 +284,8 @@ export async function applyFlowNodeOps(
     }
   }
   previewIssues.push(...collectZMismatchIssues(preview, flowId));
-  previewIssues.push(...(await collectWireIssues(preview, options.nodeTypes)));
-  if (options.nodeTypes) {
-    previewIssues.push(...(await collectMissingConfigIssues(preview, configs, options.nodeTypes)));
-  }
+  const wirePreview = await collectWireValidation(preview, options.nodeTypes);
+  previewIssues.push(...wirePreview.errors);
   throwValidationIssues(previewIssues);
 
   // 4) Apply for real (same ops; validation already passed).
@@ -296,15 +293,16 @@ export async function applyFlowNodeOps(
     applyOneNodeOp(nodes, flowId, op);
   }
 
-  let warnings: ValidationIssue[] | undefined;
+  // Soft warnings only — missing config / unwired / incomplete wires (scaffold OK).
+  const soft: ValidationIssue[] = [...wirePreview.warnings];
   if (options.nodeTypes) {
-    const soft = await collectConfigWarnings(nodes, configs, options.nodeTypes);
-    if (soft.length > 0) {
-      warnings = soft;
-    }
+    soft.push(...(await collectConfigWarnings(nodes, configs, options.nodeTypes)));
   }
-
-  return { expectedRev: snapshot.rev, flow, ...(warnings ? { warnings } : {}) };
+  return {
+    expectedRev: snapshot.rev,
+    flow,
+    ...(soft.length > 0 ? { warnings: soft } : {}),
+  };
 }
 
 function requireNodeIndex(nodes: FlowNode[], nodeId: string, flowId: string): number {

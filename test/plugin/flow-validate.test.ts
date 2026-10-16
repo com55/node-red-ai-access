@@ -1,6 +1,6 @@
 /**
- * Wire output counts, required config nodes, multi-error accumulation,
- * structured wire diffs, and status tokenKind.
+ * Soft validation: hard-reject only excess/nonexistent wire ports;
+ * missing config + unwired/incomplete wires are warnings[].
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,6 +18,7 @@ import {
 } from '../../src/plugin/access-link-auth.js';
 import {
   collectWireIssues,
+  collectWireValidation,
   throwValidationIssues,
   validateFlowTab,
   wireCountIssue,
@@ -145,10 +146,41 @@ describe('wire output count + structured wires', () => {
     expect(wireCountIssue(node, 0, [])).toBeUndefined();
   });
 
+  it('wireCountIssue: fewer ports than outputs is not an error', () => {
+    const node = { id: 'f1', type: 'function' } as FlowNode;
+    expect(wireCountIssue(node, 2, [[]])).toBeUndefined();
+    expect(wireCountIssue(node, 2, [])).toBeUndefined();
+  });
+
   it('collectWireIssues rejects extra ports vs registry outputs', async () => {
     const adapter = createStaticNodeTypesAdapter(['debug'], { configs: { debug: DEBUG_HTML } });
     const issues = await collectWireIssues([{ id: 'd1', type: 'debug', wires: [['x']] }], adapter);
     expect(issues.some(i => i.code === 'invalid_wires' && i.error.includes('0 outputs'))).toBe(
+      true
+    );
+  });
+
+  it('collectWireValidation soft-warns incomplete / unwired; errors only on excess', async () => {
+    const adapter = createStaticNodeTypesAdapter(['function', 'debug', 'inject'], {
+      configs: { debug: DEBUG_HTML, inject: INJECT_HTML },
+    });
+    const soft = await collectWireValidation(
+      [
+        { id: 'f1', type: 'function', outputs: 2, wires: [['n2']] },
+        { id: 'n2', type: 'debug', wires: [] },
+        { id: 'inj', type: 'inject', wires: [[]] },
+      ],
+      adapter
+    );
+    expect(soft.errors.filter(i => i.code === 'invalid_wires')).toEqual([]);
+    expect(soft.warnings.some(w => w.code === 'incomplete_wires' && w.nodeId === 'f1')).toBe(true);
+    expect(soft.warnings.some(w => w.code === 'unwired_node' && w.nodeId === 'inj')).toBe(true);
+
+    const hard = await collectWireValidation(
+      [{ id: 'f1', type: 'function', outputs: 1, wires: [[], []] }],
+      adapter
+    );
+    expect(hard.errors.some(e => e.code === 'invalid_wires' && e.error.includes('1 outputs'))).toBe(
       true
     );
   });
@@ -184,12 +216,12 @@ describe('wire output count + structured wires', () => {
   });
 });
 
-describe('required config nodes', () => {
-  it('validateFlowTab returns missing_config_node with candidates', async () => {
+describe('required config nodes (soft warnings)', () => {
+  it('validateFlowTab returns missing_config_node in warnings[], never errors', async () => {
     const adapter = createStaticNodeTypesAdapter(['mqtt in', 'mqtt-broker'], {
       configs: { 'mqtt in': MQTT_HTML },
     });
-    const { errors } = await validateFlowTab(
+    const { errors, warnings } = await validateFlowTab(
       {
         id: 'tab-1',
         type: 'tab',
@@ -198,8 +230,9 @@ describe('required config nodes', () => {
       },
       { flowId: 'tab-1', nodeTypes: adapter }
     );
-    expect(errors.some(e => e.code === 'missing_config_node')).toBe(true);
-    const miss = errors.find(e => e.code === 'missing_config_node');
+    expect(errors.some(e => e.code === 'missing_config_node')).toBe(false);
+    expect(warnings.some(w => w.code === 'missing_config_node')).toBe(true);
+    const miss = warnings.find(w => w.code === 'missing_config_node');
     expect(miss?.candidates).toContain('broker1');
   });
 });
@@ -244,7 +277,7 @@ describe('status tokenKind + wrong_token_kind hint', () => {
   });
 });
 
-describe('GET propose wire output validation', () => {
+describe('GET propose soft vs hard validation', () => {
   let userDir: string;
 
   beforeEach(() => {
@@ -272,6 +305,42 @@ describe('GET propose wire output validation', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toMatch(/invalid_wires|validation_failed/);
     expect(JSON.stringify(res.body)).toMatch(/0 outputs/);
+  });
+
+  it('accepts mqtt in without broker and returns warnings[]', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const link = linkStore.create({ kind: 'get_link', label: 'bot' });
+    const patch = encodePatch({
+      nodes: [
+        {
+          op: 'add',
+          node: { id: 'm9', type: 'mqtt in', z: 'tab-1', name: 'topic', wires: [['n1']] },
+        },
+      ],
+    });
+    const res = await request(app).get(
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&patch=${patch}`
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.warnings)).toBe(true);
+    expect(res.body.warnings.some((w: { code: string }) => w.code === 'missing_config_node')).toBe(
+      true
+    );
+    expect(
+      res.body.proposal?.warnings?.some((w: { code: string }) => w.code === 'missing_config_node')
+    ).toBe(true);
+    // Hard error path must not use missing_config_node
+    expect(res.body.code).toBeUndefined();
+    expect(res.body.errors).toBeUndefined();
+
+    const diff = await request(app).get(
+      `/mcp/a/${link.token}/proposals/${res.body.proposal.id}/diff`
+    );
+    expect(diff.status).toBe(200);
+    expect(
+      diff.body.warnings?.some((w: { code: string }) => w.code === 'missing_config_node')
+    ).toBe(true);
   });
 
   it('returns errors[] for z_mismatch together with other issues', async () => {
