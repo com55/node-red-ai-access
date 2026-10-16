@@ -168,14 +168,18 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/for troubleshooting/);
     expect(res.text).toMatch(/You're an admin/);
     // Diagnostics "Your role" row — never a "full access" chip (sounds like AI scope).
-    expect(res.text).not.toMatch(/full access|full-access/i);
+    // a90b73c landed in #50 squash (b961271); stale dist/plugin.cjs was the
+    // real-world cause of the chip resurfacing after hard refresh — assert HTML.
+    expect(res.text).not.toMatch(/['"]full access['"]|full-access/i);
     expect(res.text).not.toMatch(/id="status-badge"/);
+    expect(res.text).not.toMatch(/modeLabel = s\.permission === '\*' \? 'full access'/);
     expect(res.text).toMatch(/id="status-role"/);
     expect(res.text).toMatch(/Your role/);
     expect(res.text).toMatch(/Admin \(can approve & manage links\)/);
     expect(res.text).toMatch(/'Read-only'/);
     expect(res.text).toMatch(/This is your Node-RED permission/);
     expect(res.text).toMatch(/AI access links can only read/);
+    expect(res.text).toMatch(/titleWasDisambiguated|time-exact|buildDisambiguatedTitles/);
     expect(res.text).toMatch(/renderHumanDiff|proposal-changes/);
     expect(res.text).toMatch(/dismiss-vs-reject/);
     expect(res.text).toMatch(/Out of date \(/);

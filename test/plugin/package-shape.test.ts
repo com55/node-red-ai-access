@@ -170,7 +170,9 @@ describe('ai-access sidebar TTL layout', () => {
     expect(sidebar).toMatch(/flex-wrap:\s*nowrap/);
     expect(sidebar).toMatch(/red-ui-settings-row stacked/);
     expect(sidebar).toMatch(/flex-direction:\s*column/);
-    expect(sidebar).toMatch(/showSavedToast|#ai-access-flash\.is-visible|position:\s*absolute/);
+    expect(sidebar).toMatch(/showSavedToast|#ai-access-flash\.is-visible/);
+    expect(sidebar).toMatch(/#ai-access-flash:not\(\.is-visible\)/);
+    expect(sidebar).toMatch(/removeClass\('ok error'\)/);
   });
 });
 

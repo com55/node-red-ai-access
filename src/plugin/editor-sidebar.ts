@@ -105,27 +105,35 @@ function editorSidebarStyles(): string {
   margin: 0 0 2px;
   font-weight: 600;
 }
+/* Compact toast in the header — must not cover the intro description. */
 #red-ui-sidebar-ai-access #ai-access-flash {
-  position: absolute;
-  top: 8px;
-  right: 12px;
-  left: 12px;
-  z-index: 5;
+  flex: 0 1 auto;
   margin: 0;
-  padding: 6px 10px;
+  padding: 0;
+  max-width: 9rem;
+  border: 0;
   border-radius: 4px;
   box-sizing: border-box;
-  background: var(--red-ui-secondary-background, #f3f3f3);
+  background: transparent;
+  color: inherit;
+  font-weight: 500;
+  font-size: 0.85em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s;
 }
 #red-ui-sidebar-ai-access #ai-access-flash.is-visible {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transform: translateY(0);
+  padding: 3px 8px;
 }
 #red-ui-sidebar-ai-access #ai-access-flash.ok {
   color: #1b6b4a;
@@ -134,6 +142,13 @@ function editorSidebarStyles(): string {
 #red-ui-sidebar-ai-access #ai-access-flash.error {
   color: #9b2c2c;
   background: #fdecec;
+}
+/* After fade: strip chrome so no empty green/red outline remains. */
+#red-ui-sidebar-ai-access #ai-access-flash:not(.is-visible) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
 }`;
 }
 
@@ -238,10 +253,20 @@ function editorSidebarScriptPartA(): string {
 
     function setFlash($el, message, ok) {
       if (!$el || !$el.length) return;
+      var text = message ? String(message) : '';
+      if (!text) {
+        // Fade out first; clear ok/error chrome after transition so no empty box remains.
+        $el.removeClass('is-visible');
+        $el.text('');
+        window.setTimeout(function () {
+          if ($el.hasClass('is-visible')) return;
+          $el.removeClass('ok error');
+        }, 400);
+        return;
+      }
       $el.toggleClass('ok', !!ok).toggleClass('error', !ok);
-      $el.text(message || '');
-      // Overlay toast — opacity/visibility only (never display:none) so content is not pushed.
-      $el.toggleClass('is-visible', !!message);
+      $el.text(text);
+      $el.addClass('is-visible');
     }
 
     function hoursFromSeconds(seconds) {
@@ -392,6 +417,8 @@ function editorSidebarScriptPartB(): string {
 
       var header = $('<div class="red-ui-sidebar-header"></div>').appendTo(content);
       $('<span></span>').text('AI Access').appendTo(header);
+      // Saved/error toast lives in the header so it never covers the intro text.
+      $('<div id="ai-access-flash" aria-live="polite"></div>').appendTo(header);
       $('<button type="button" id="ai-access-refresh" class="red-ui-button ai-access-refresh-link"></button>')
         .text('Refresh')
         .appendTo(header)
@@ -406,8 +433,6 @@ function editorSidebarScriptPartB(): string {
       $('<p id="ai-access-readonly-note" class="form-tips" style="display:none;"></p>')
         .text('Read-only: full admin permission (*) is required to change these settings.')
         .appendTo(body);
-
-      $('<div id="ai-access-flash" class="form-tips" aria-live="polite"></div>').appendTo(body);
 
       var status = $(
         '<div id="ai-access-status-block" class="ai-access-status-block" style="display:none;"></div>'
