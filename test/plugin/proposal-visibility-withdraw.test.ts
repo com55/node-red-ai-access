@@ -306,6 +306,8 @@ describe('proposal visibility, conflicts, withdraw', () => {
     expect(docs.text).toMatch(/withdraw/);
     expect(docs.text).toMatch(/replace_text/);
     expect(docs.text).toMatch(/payload\.nodes|Canonical/);
+    expect(docs.text).toMatch(/Git mental model/i);
+    expect(docs.text).toMatch(/pull request/i);
   });
 
   it('MCP list_my_proposals returns all with mine filter', async () => {

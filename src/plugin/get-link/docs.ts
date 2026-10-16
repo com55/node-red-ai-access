@@ -102,6 +102,11 @@ curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
 function docsIntro(label: string, expires: string): string {
   return `# Node-RED AI Access — self-contained GET link (get_link)${label}
 
+**Git mental model:** a proposal is like a pull request. Human approve = merge;
+reject = close; withdraw = you close your own PR. If \`rev\`/\`expectedRev\` does
+not match, treat it as a conflict: re-read the flow, rebase the edit, and
+resubmit. Every access link can see all proposals (\`mine: true|false\`).
+
 **Which channel to use:** prefer **MCP** (\`/mcp/rpc\` + mcp Bearer) or **REST**
 (\`/mcp/api/v1\` + rest Bearer) when your client can send headers and JSON —
 use this **GET link** only as a fallback for headerless GET-only clients.

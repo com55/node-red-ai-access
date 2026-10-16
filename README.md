@@ -13,6 +13,12 @@ Temporary, owner-approved Node-RED access for AI clients. Ships as a **Node-RED
 - an MCP JSON-RPC endpoint at `/mcp/rpc` (Streamable HTTP) over the same
   services
 
+**Git mental model:** a proposal is like a pull request. Human approve = merge;
+reject = close; withdraw = the author closes their own PR. If `rev` /
+`expectedRev` does not match, treat it as a conflict: re-read the flow, rebase
+the edit, and resubmit. Every access link can see all proposals
+(`mine: true|false`).
+
 Derived from
 [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
 

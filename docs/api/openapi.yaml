@@ -8,6 +8,12 @@ info:
     REST surface exposed by the `@com55/node-red-ai-access` Node-RED plugin
     under the editor admin root (respects `httpAdminRoot`).
 
+    **Git mental model:** a proposal is like a pull request. Human approve =
+    merge; reject = close; withdraw = the author closes their own PR. If `rev` /
+    `expectedRev` does not match, treat it as a conflict: re-read the flow,
+    rebase the edit, and resubmit. Every access link can see all proposals
+    (`mine: true|false`).
+
     ## Base path
 
     All routes are under `{httpAdminRoot}/mcp/api/v1`

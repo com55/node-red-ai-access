@@ -590,6 +590,9 @@ describe('node-types HTTP + MCP + docs', () => {
     const workflowIdx = md.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);
     expect(alsoIdx).toBeLessThan(workflowIdx);
+    expect(md).toMatch(/Git mental model/i);
+    expect(md).toMatch(/pull request/i);
+    expect(md.indexOf('Git mental model')).toBeLessThan(md.search(/Which channel to use/i));
     expect(md).toMatch(/Which channel to use/i);
     expect(md).toMatch(/Prefer MCP or REST/i);
     expect(md).toMatch(/get_link/);
