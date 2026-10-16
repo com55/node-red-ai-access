@@ -31,6 +31,7 @@ import {
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   conflictWarningFields,
+  expireStalePendingProposals,
   findConflictingProposals,
   type ConflictingProposalRef,
   type ConflictingProposalsResult,
@@ -209,16 +210,26 @@ export function withdrawMyProposal(
 export function conflictsForProposal(
   store: ProposalStore,
   proposal: Proposal | PresentedProposal | PresentedProposalApi,
-  callerLinkId?: string
+  callerLinkId?: string,
+  options: { liveRev?: string } = {}
 ): Record<string, unknown> {
-  if (proposal.status !== 'pending') {
-    return {};
-  }
   // Prefer store record when we only have a presented view.
   let raw: Proposal;
   try {
     raw = store.get(proposal.id);
   } catch {
+    return {};
+  }
+  // Auto-close peers (and self) that can no longer be approved against liveRev.
+  if (options.liveRev) {
+    expireStalePendingProposals(store, options.liveRev, { flowId: raw.payload.flowId });
+    try {
+      raw = store.get(proposal.id);
+    } catch {
+      return {};
+    }
+  }
+  if (raw.status !== 'pending') {
     return {};
   }
   return conflictWarningFields(findConflictingProposals(store, raw, callerLinkId));
@@ -230,21 +241,36 @@ export function presentAccessibleProposalForApi(
   accessLink: AccessLinkAuthInfo,
   proposal: Proposal | PresentedProposalWithMine,
   apiOptions: PresentProposalApiOptions = {},
-  options: { includeConflicts?: boolean } = {}
+  options: { includeConflicts?: boolean; liveRev?: string } = {}
 ): PresentedProposalApiWithMine & Record<string, unknown> {
-  const presented =
+  let presented: PresentedProposalWithMine =
     'mine' in proposal
       ? proposal
       : {
           ...presentProposal(proposal, apiOptions),
           mine: isMineProposal(proposal, accessLink),
         };
+  // Expire stale before presenting so list/get reflect closed status.
+  if (options.liveRev) {
+    try {
+      const flowId = store.get(presented.id).payload.flowId;
+      expireStalePendingProposals(store, options.liveRev, { flowId });
+      const refreshed = store.get(presented.id);
+      presented = {
+        ...presentProposal(refreshed, apiOptions),
+        mine: isMineProposal(refreshed, accessLink),
+      };
+    } catch {
+      // keep presented
+    }
+  }
   const lean = presentProposalForApi(presented, apiOptions);
   const out: PresentedProposalApiWithMine & Record<string, unknown> = {
     ...lean,
     mine: presented.mine,
   };
   if (options.includeConflicts !== false && lean.status === 'pending') {
+    // Already expired above when liveRev was set — do not expire again.
     Object.assign(out, conflictsForProposal(store, lean, accessLink.id));
   }
   return out;

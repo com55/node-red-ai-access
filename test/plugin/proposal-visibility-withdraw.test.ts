@@ -264,7 +264,7 @@ describe('proposal visibility, conflicts, withdraw', () => {
     expect(gCreated.status).toBe(201);
     const gId = gCreated.body.proposal.id as string;
     const gWithdraw = await request(app).get(
-      `/mcp/a/${getLink.token}/proposals/${gId}/withdraw?reason=done`
+      `/mcp/a/${getLink.token}/proposals/${gId}/withdraw?confirm=1&reason=done`
     );
     expect(gWithdraw.status).toBe(200);
     expect(gWithdraw.body.status).toBe('withdrawn');

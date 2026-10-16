@@ -205,14 +205,14 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
    with a summary sentence; pending+stale may include \`vsCurrent\`.
 9. Withdraw your own pending proposal:
-   \`GET ./proposals/<id>/withdraw?reason=<text>\` (status becomes \`withdrawn\`,
+   \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
    not \`rejected\`).
 
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.
 
 On submit and on read of a pending proposal, the response may include
-\`conflictingProposals\` (any token's pending work on the same flow) with
+\`conflictingProposals\` (same-rev or overlapping pending work; list omits this) with
 \`overlappingNodeIds\` / \`overlappingFields\` when detectable — treat like a
 git conflict warning; prefer one pending change per flow when possible.
 
@@ -255,7 +255,7 @@ function docsUrlTable(): string {
 | All proposals (\`?mine=true\` = own only) | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
-| Withdraw own pending | \`GET ./proposals/<id>/withdraw?reason=\` |
+| Withdraw own pending | \`GET ./proposals/<id>/withdraw?confirm=1&reason=\` |
 | Propose (query) | \`GET ./propose?…\` |
 | Draft start | \`GET ./draft/new?flow=&rev=&node=&field=&title=\` |
 | Draft chunk | \`GET ./draft/<draftId>/append?seq=N&data=<base64url>\` |

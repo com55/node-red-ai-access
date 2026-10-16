@@ -17,7 +17,8 @@ import {
 } from './safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
 
-export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'failed' | 'withdrawn';
+export type ProposalStatus =
+  'pending' | 'approved' | 'rejected' | 'failed' | 'withdrawn' | 'expired' | 'superseded';
 
 export type ProposalType = 'replace_flow';
 
@@ -131,7 +132,9 @@ function isProposalStatus(value: unknown): value is ProposalStatus {
     value === 'approved' ||
     value === 'rejected' ||
     value === 'failed' ||
-    value === 'withdrawn'
+    value === 'withdrawn' ||
+    value === 'expired' ||
+    value === 'superseded'
   );
 }
 
@@ -411,6 +414,30 @@ export class ProposalStore {
     }
     proposal.status = 'withdrawn';
     proposal.decidedBy = decidedBy;
+    proposal.reason = reason;
+    proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  /**
+   * Auto-close a pending proposal that can no longer be approved
+   * (`expired` = live rev moved; `superseded` = another proposal was approved).
+   */
+  markClosed(
+    id: string,
+    status: 'expired' | 'superseded',
+    reason: string,
+    decidedBy?: ProposalDecisionBy
+  ): Proposal {
+    const proposal = this.get(id);
+    if (proposal.status !== 'pending') {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+    proposal.status = status;
+    if (decidedBy) {
+      proposal.decidedBy = decidedBy;
+    }
     proposal.reason = reason;
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);

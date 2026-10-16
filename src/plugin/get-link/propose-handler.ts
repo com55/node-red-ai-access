@@ -15,6 +15,7 @@ import {
 } from '../ai-ops.js';
 import { channelErrorHint } from '../channel-errors.js';
 import type { NodeTypesAdapter } from '../node-types.js';
+import { expireStalePendingProposals } from '../proposal-conflicts.js';
 import {
   resolveIncludeFromQuery,
   presentOptionsFor,
@@ -360,6 +361,9 @@ export function getLinkProposeHandler(
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         mine: true,
       };
+      expireStalePendingProposals(proposalStore, proposal.expectedRev, {
+        flowId: proposal.payload.flowId,
+      });
       const conflicts = findConflictingProposals(
         proposalStore,
         proposalStore.get(proposal.id),

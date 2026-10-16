@@ -33,6 +33,7 @@ import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
+import { expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
 import { sendCaughtRouteError } from './route-errors.js';
@@ -47,6 +48,14 @@ function pluginVersion(): string {
     return __AI_ACCESS_VERSION__;
   }
   return '0.0.0';
+}
+
+async function tryLiveRev(adapter: PluginServices['flowAdapter']): Promise<string | undefined> {
+  try {
+    return (await listFlows(adapter)).rev;
+  } catch {
+    return undefined;
+  }
 }
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
@@ -420,6 +429,9 @@ function registerProposalTools(
           }),
           mine: true,
         };
+        expireStalePendingProposals(services.proposalStore, proposal.expectedRev, {
+          flowId: proposal.payload.flowId,
+        });
         const conflicts = conflictWarningFields(
           findConflictingProposals(
             services.proposalStore,
@@ -435,6 +447,7 @@ function registerProposalTools(
   );
 
   registerProposalQueryTools(server, services, accessLink, presentOpts);
+  registerProposalActionTools(server, services, accessLink, presentOpts);
 }
 
 function registerProposalQueryTools(
@@ -463,18 +476,25 @@ function registerProposalQueryTools(
           .describe('When true, include payload and baseFlow on each proposal'),
       },
     },
-    args => {
+    async args => {
       try {
         const include = includeSetFromPayloadFlag(args.include_payload);
+        const liveRev = await tryLiveRev(services.flowAdapter);
+        if (liveRev) {
+          expireStalePendingProposals(services.proposalStore, liveRev);
+        }
         const list = listAccessibleProposals(services.proposalStore, accessLink, presentOpts, {
           ...(args.mine === true ? { mine: true } : {}),
         });
         return jsonResult({
           proposals: list.map(p =>
-            presentAccessibleProposalForApi(services.proposalStore, accessLink, p, {
-              ...presentOpts,
-              include,
-            })
+            presentAccessibleProposalForApi(
+              services.proposalStore,
+              accessLink,
+              p,
+              { ...presentOpts, include },
+              { includeConflicts: false }
+            )
           ),
         });
       } catch (error) {
@@ -496,21 +516,35 @@ function registerProposalQueryTools(
         include_payload: z.boolean().optional().describe('When true, include payload and baseFlow'),
       },
     },
-    ({ id, include_payload }) => {
+    async ({ id, include_payload }) => {
       try {
+        const liveRev = await tryLiveRev(services.flowAdapter);
         const proposal = getAccessibleProposal(services.proposalStore, accessLink, id, presentOpts);
         return jsonResult(
-          presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, {
-            ...presentOpts,
-            include: includeSetFromPayloadFlag(include_payload),
-          })
+          presentAccessibleProposalForApi(
+            services.proposalStore,
+            accessLink,
+            proposal,
+            {
+              ...presentOpts,
+              include: includeSetFromPayloadFlag(include_payload),
+            },
+            { ...(liveRev ? { liveRev } : {}) }
+          )
         );
       } catch (error) {
         return jsonError(error);
       }
     }
   );
+}
 
+function registerProposalActionTools(
+  server: McpServer,
+  services: PluginServices,
+  accessLink: NonNullable<AuthenticatedRequest['accessLink']>,
+  presentOpts: ReturnType<typeof presentOptionsFor>
+): void {
   server.registerTool(
     'get_proposal_diff',
     {

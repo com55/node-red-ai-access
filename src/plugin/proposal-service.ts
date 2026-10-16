@@ -12,6 +12,7 @@ import {
   type ProposalStore,
 } from '../storage/proposals.js';
 
+import { supersedePendingOnFlow } from './proposal-conflicts.js';
 import { presentProposal, resolveFlowLabel } from './proposal-present.js';
 
 const REV_CONFLICT_RESUBMIT =
@@ -80,6 +81,8 @@ export class ProposalService {
           resultRev: result.rev,
           flowId: proposal.payload.flowId,
         });
+        // Other pending work on this flow can no longer be approved.
+        supersedePendingOnFlow(this.proposals, proposal.payload.flowId, id, result.rev);
         return approved;
       } catch (error) {
         if (error instanceof FlowRevisionConflictError) {
