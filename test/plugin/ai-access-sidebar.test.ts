@@ -15,7 +15,9 @@ import { describe, expect, it } from 'vitest';
 import {
   EDITOR_SIDEBAR_ASSET_VERSION,
   renderEditorSidebarJs,
+  renderEditorSidebarLoaderHtml,
 } from '../../src/plugin/editor-sidebar.js';
+import { packageVersion } from '../../src/plugin/package-version.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const htmlPath = join(root, 'ai-access.html');
@@ -166,6 +168,18 @@ describe('ai-access.html sidebar loader', () => {
     expect(html).not.toMatch(/RED\.userSettings\.add/);
     expect(html).not.toMatch(/Only changed nodes \(recommended\)/);
   });
+
+  it('derives asset version from package.json (single source of truth)', () => {
+    expect(EDITOR_SIDEBAR_ASSET_VERSION).toBe(packageVersion());
+    expect(EDITOR_SIDEBAR_ASSET_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+    const versionLit = new RegExp(
+      `EDITOR_SIDEBAR_ASSET_VERSION\\s*=\\s*['"]${packageVersion().replace(/\./g, '\\.')}['"]`
+    );
+    expect(renderEditorSidebarLoaderHtml()).toMatch(versionLit);
+    expect(readFileSync(htmlPath, 'utf8')).toMatch(versionLit);
+    // No hand-typed rN-N token — version comes from the package.
+    expect(EDITOR_SIDEBAR_ASSET_VERSION).not.toMatch(/^r\d/);
+  });
 });
 
 describe('ai-access-sidebar.js served tab', () => {
@@ -260,5 +274,6 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(js).toMatch(/red-ui-settings-row stacked/);
     expect(js).toMatch(/flex-wrap:\s*nowrap/);
     expect(js).toMatch(new RegExp(`v=${EDITOR_SIDEBAR_ASSET_VERSION}`));
+    expect(js).toMatch(/showSavedToast|Saved/);
   });
 });

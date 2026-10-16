@@ -89,23 +89,41 @@ export function createProposalHandler(
   };
 }
 
+function liveFlowLabelsFromSnapshot(
+  flows: { id: string; type?: string; label?: unknown }[]
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const node of flows) {
+    if (node.type === 'tab' && typeof node.label === 'string' && node.label.trim()) {
+      map.set(node.id, node.label.trim());
+    }
+  }
+  return map;
+}
+
 export function listProposalsHandler(
   store: ProposalStore,
   adapter: FlowAdapter,
   httpAdminRoot?: string
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const presentOpts = presentOptionsFor(req, httpAdminRoot);
-    const list = req.accessLink
-      ? listMyProposals(store, req.accessLink, presentOpts)
-      : presentProposals(store.list(), presentOpts);
-
     let liveRev: string | undefined;
+    let liveFlowLabels: Map<string, string> | undefined;
     try {
-      liveRev = (await adapter.getFlows()).rev;
+      const snapshot = await adapter.getFlows();
+      liveRev = snapshot.rev;
+      liveFlowLabels = liveFlowLabelsFromSnapshot(snapshot.flows);
     } catch {
       // Client can still learn stale from /diff when live rev is unavailable.
     }
+
+    const presentOpts = {
+      ...presentOptionsFor(req, httpAdminRoot),
+      ...(liveFlowLabels ? { liveFlowLabels } : {}),
+    };
+    const list = req.accessLink
+      ? listMyProposals(store, req.accessLink, presentOpts)
+      : presentProposals(store.list(), presentOpts);
 
     const proposals = list.map(p => {
       if (p.status !== 'pending' || liveRev === undefined) {

@@ -47,5 +47,19 @@ export default defineConfig({
     const toDir = join(repoRoot, 'dist');
     mkdirSync(toDir, { recursive: true });
     copyFileSync(from, join(toDir, 'openapi.yaml'));
+
+    // Regenerate companion HTML so ?v= always matches package.json (no hand-typed dup).
+    const { createRequire } = await import('node:module');
+    const { writeFileSync } = await import('node:fs');
+    const require = createRequire(import.meta.url);
+    const plugin = require('./dist/plugin.cjs') as {
+      renderEditorSidebarLoaderHtml?: (v?: string) => string;
+    };
+    const render =
+      plugin.renderEditorSidebarLoaderHtml ??
+      (await import('./dist/plugin.cjs')).renderEditorSidebarLoaderHtml;
+    if (typeof render === 'function') {
+      writeFileSync(join(repoRoot, 'ai-access.html'), render(packageJson.version), 'utf8');
+    }
   },
 });

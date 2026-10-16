@@ -123,7 +123,9 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/to review.*out of date|formatPendingBadgeText/);
     expect(client).toMatch(/badge\.textContent = String\(counts\.live\)/);
     expect(client).toMatch(/displayTitleForProposal|data-title-for/);
-    expect(client).toMatch(/flow changed since/);
+    expect(client).toMatch(/Flow changed since this was submitted/);
+    expect(client).toMatch(/displayTitleForProposal|resolveLinkDetails|cachedLinksById/);
+    expect(client).toMatch(/ensureTitleIncludesFlowName|cachedFlowLabels/);
     expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);

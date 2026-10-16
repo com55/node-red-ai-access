@@ -219,8 +219,8 @@ describe('proposals / flows / logs HTTP API', () => {
         },
       });
     expect(withTitle.status).toBe(201);
-    expect(withTitle.body.title).toBe('Add inject sensor');
-    expect(withTitle.body.displayName.startsWith('Add inject sensor · ')).toBe(true);
+    expect(withTitle.body.title).toBe('Add inject sensor in Main');
+    expect(withTitle.body.displayName.startsWith('Add inject sensor in Main · ')).toBe(true);
     expect(withTitle.body.reviewPath).toBe(`/mcp#proposal=${withTitle.body.id}`);
     expect(withTitle.body.reviewUrl).toBe(
       `http://nr.example:1880/mcp#proposal=${withTitle.body.id}`

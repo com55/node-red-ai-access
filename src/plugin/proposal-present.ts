@@ -21,6 +21,11 @@ export interface PresentProposalOptions {
   req?: Request;
   /** Node-RED `httpAdminRoot` (affects `/mcp` path prefix). */
   httpAdminRoot?: string;
+  /**
+   * Live tab id → label map (from GET flows). Used when the stored proposal
+   * snapshot omitted a label so oldest cards still resolve a flow name.
+   */
+  liveFlowLabels?: Map<string, string>;
 }
 
 /** Build present options without assigning `undefined` under exactOptionalPropertyTypes. */
@@ -249,15 +254,39 @@ function flowLabelHint(
 /**
  * Human flow name for UI / audit — never a raw tab id like `tab1`.
  */
-export function resolveFlowLabel(proposal: {
-  payload?: { flow?: Partial<FlowTab> };
-  baseFlow?: Partial<FlowTab>;
-  flowLabel?: string;
-}): string {
+export function resolveFlowLabel(
+  proposal: {
+    payload?: { flowId?: string; flow?: Partial<FlowTab> };
+    baseFlow?: Partial<FlowTab>;
+    flowLabel?: string;
+  },
+  liveFlowLabels?: Map<string, string>
+): string {
   if (typeof proposal.flowLabel === 'string' && proposal.flowLabel.trim()) {
     return proposal.flowLabel.trim();
   }
-  return flowLabelHint(proposal.payload?.flow, proposal.baseFlow);
+  const fromFlows = flowLabelHint(proposal.payload?.flow, proposal.baseFlow);
+  if (fromFlows) {
+    return fromFlows;
+  }
+  const flowId = proposal.payload?.flowId;
+  if (flowId && liveFlowLabels?.has(flowId)) {
+    return liveFlowLabels.get(flowId) ?? '';
+  }
+  return '';
+}
+
+/** Append ` in {flow}` when the title does not already mention the flow name. */
+export function ensureTitleIncludesFlowName(title: string, flowLabel: string): string {
+  const label = flowLabel.trim();
+  const t = title.trim();
+  if (!label || !t) {
+    return t;
+  }
+  if (t.includes(label)) {
+    return t;
+  }
+  return `${t} in ${label}`;
 }
 
 /**
@@ -292,7 +321,8 @@ export function autoGenerateProposalTitle(
     return label ? `${total} changes in ${label}` : `${total} changes`;
   }
 
-  return describeOneChange(changes) ?? (label ? `Update ${label}` : 'Update flow');
+  const one = describeOneChange(changes) ?? (label ? `Update ${label}` : 'Update flow');
+  return ensureTitleIncludesFlowName(one, label);
 }
 
 /** True for titles we should refresh from a live diff (legacy / auto / non-replace deletes). */
@@ -348,7 +378,7 @@ export function titleFromDiffSummary(
     return label ? `Update ${label}` : 'Update flow';
   }
   if (total === 1 && added === 1 && options.firstAddedType) {
-    return `Add ${options.firstAddedType} node`;
+    return ensureTitleIncludesFlowName(`Add ${options.firstAddedType} node`, label);
   }
   if (total === 1 && modified === 1) {
     return label ? `Edit node in ${label}` : 'Edit node';
@@ -448,17 +478,24 @@ export function buildProposalReviewUrl(
  * Legacy "Update …" titles and non-Replace titles that delete nodes are refreshed
  * from the flow diff so display stays accurate even when the stored title is stale.
  */
-export function resolveProposalTitle(proposal: Proposal): string {
+export function resolveProposalTitle(
+  proposal: Proposal,
+  options: PresentProposalOptions = {}
+): string {
+  const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
   const stored = sanitizeProposalTitle(proposal.title);
-  const auto = autoGenerateProposalTitle(proposal.baseFlow, proposal.payload.flow);
+  const auto = autoGenerateProposalTitle(
+    proposal.baseFlow,
+    flowLabel && !flowLabelHint(proposal.payload.flow, proposal.baseFlow)
+      ? { ...proposal.payload.flow, label: flowLabel }
+      : proposal.payload.flow
+  );
   const changes = classifyFlowChanges(
     collectNodes(proposal.baseFlow ?? {}),
     collectNodes(proposal.payload.flow)
   );
-  if (shouldRefreshDisplayTitle(stored, changes.removed.length)) {
-    return auto;
-  }
-  return stored ?? auto;
+  const raw = shouldRefreshDisplayTitle(stored, changes.removed.length) ? auto : (stored ?? auto);
+  return ensureTitleIncludesFlowName(raw, flowLabel);
 }
 
 /** Attach title, flowLabel, displayName, reviewUrl, and reviewPath for API / MCP responses. */
@@ -466,13 +503,14 @@ export function presentProposal(
   proposal: Proposal,
   options: PresentProposalOptions = {}
 ): PresentedProposal {
-  const title = resolveProposalTitle(proposal);
+  const title = resolveProposalTitle(proposal, options);
+  const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
   const reviewPath = buildProposalReviewPath(proposal.id, options.httpAdminRoot);
   const reviewUrl = options.req ? absolutizePath(options.req, reviewPath) : reviewPath;
   return {
     ...proposal,
     title,
-    flowLabel: resolveFlowLabel(proposal),
+    flowLabel,
     displayName: buildProposalDisplayName(title, proposal.createdAt),
     reviewUrl,
     reviewPath,
