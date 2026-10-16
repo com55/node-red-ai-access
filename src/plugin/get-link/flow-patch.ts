@@ -137,11 +137,18 @@ export function applyReplaceTextToValue(
 export interface ApplyFlowNodeOpsOptions {
   /** When set, `op:add` validates node.type against the installed palette. */
   nodeTypes?: NodeTypesAdapter;
+  /**
+   * When set, compare against the live flow rev **before** node-type checks
+   * so a stale rev fails fast without palette lookup.
+   */
+  expectedRev?: string;
 }
 
 /**
  * Apply set / add / remove / replace_text ops onto a live flow tab.
  * Multiple ops apply in order (later ops see earlier results).
+ *
+ * Order: validate patch shape → load flow → optional rev check → node types → apply.
  */
 export async function applyFlowNodeOps(
   adapter: FlowAdapter,
@@ -156,7 +163,34 @@ export async function applyFlowNodeOps(
     throw new AiOpsValidationError('At least one node edit is required', 'missing_edits');
   }
 
+  // Patch shape first (before I/O or palette) so bad payloads fail cheaply.
+  for (const op of ops) {
+    if (op.op === 'add') {
+      if (typeof op.node !== 'object' || op.node === null || Array.isArray(op.node)) {
+        throw new AiOpsValidationError('add op needs a node object', 'invalid_patch');
+      }
+      if (!op.node.id || typeof op.node.id !== 'string') {
+        throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
+      }
+      requireNodeTypeName(op.node.type, 'node.type');
+    }
+  }
+
   const snapshot = await adapter.getFlow(flowId);
+  if (options.expectedRev !== undefined && snapshot.rev !== options.expectedRev) {
+    // Return live rev without applying or checking palette types.
+    const nodes: FlowNode[] = Array.isArray(snapshot.flow.nodes) ? [...snapshot.flow.nodes] : [];
+    return {
+      expectedRev: snapshot.rev,
+      flow: {
+        ...snapshot.flow,
+        id: snapshot.flow.id,
+        type: snapshot.flow.type ?? 'tab',
+        nodes,
+      },
+    };
+  }
+
   const nodes: FlowNode[] = Array.isArray(snapshot.flow.nodes) ? [...snapshot.flow.nodes] : [];
   const flow: FlowTab = {
     ...snapshot.flow,
@@ -166,12 +200,8 @@ export async function applyFlowNodeOps(
   };
 
   for (const op of ops) {
-    if (op.op === 'add') {
-      // Validate before nearest-match / registry lookup (non-string types crash otherwise).
-      requireNodeTypeName(op.node.type, 'node.type');
-      if (options.nodeTypes) {
-        await assertKnownNodeType(options.nodeTypes, op.node.type);
-      }
+    if (op.op === 'add' && options.nodeTypes) {
+      await assertKnownNodeType(options.nodeTypes, op.node.type);
     }
     applyOneNodeOp(nodes, flowId, op);
   }

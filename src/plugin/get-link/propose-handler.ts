@@ -123,6 +123,7 @@ async function buildFromPatch(
     };
   }
   const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops, {
+    expectedRev: rev,
     ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
   });
   if (patched.expectedRev !== rev) {

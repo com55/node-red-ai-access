@@ -500,6 +500,7 @@ export function getLinkDraftSubmitHandler(
           };
         } else {
           const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops, {
+            expectedRev: draft.expectedRev,
             ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
           });
           if (patched.expectedRev !== draft.expectedRev) {

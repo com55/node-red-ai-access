@@ -51,7 +51,11 @@ function sendMappedError(res: Response, error: unknown): boolean {
   if (Array.isArray(mapped.body.nearest)) {
     body.nearest = mapped.body.nearest;
   }
-  if (code === 'node_type_not_found' || code === 'unknown_node_type') {
+  if (typeof mapped.body.didYouMean === 'string') {
+    body.didYouMean = mapped.body.didYouMean;
+    body.caseSensitive = true;
+    body.hint = `Types are case-sensitive — use '${mapped.body.didYouMean}' exactly.`;
+  } else if (code === 'node_type_not_found' || code === 'unknown_node_type') {
     body.hint =
       'Call GET …/node-types?q= or …/palette/search?q=. Ask the user to install via Manage palette, then recheck node-types. This API never installs.';
   }
@@ -91,7 +95,14 @@ export function getNodeTypeHandler(options: NodeTypesRouteOptions) {
     try {
       const typeParam = req.params.type;
       const type = typeof typeParam === 'string' ? decodeURIComponent(typeParam) : '';
-      const detail = await getNodeTypeDetail(options.nodeTypes, type);
+      const helpFlag = queryString(req.query, 'help');
+      const includeHelp = !(
+        helpFlag === '0' ||
+        helpFlag === 'false' ||
+        helpFlag === 'no' ||
+        helpFlag === 'omit'
+      );
+      const detail = await getNodeTypeDetail(options.nodeTypes, type, { includeHelp });
       sendJson(res, 200, detail);
     } catch (error) {
       if (sendMappedError(res, error)) {

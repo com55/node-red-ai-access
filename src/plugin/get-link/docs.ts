@@ -97,9 +97,12 @@ curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
 function docsIntro(label: string, expires: string): string {
   return `# Node-RED AI Access — self-contained GET link (get_link)${label}
 
-This URL is a **temporary get_link access link** for an AI client that can only
-issue **HTTP GET** (no custom headers, no MCP). It is **not** a REST or MCP
-Bearer token — those need a separate **rest** or **mcp** token from the owner.
+**Which channel to use:** prefer **MCP** (\`/mcp/rpc\` + mcp Bearer) or **REST**
+(\`/mcp/api/v1\` + rest Bearer) when your client can send headers and JSON —
+use this **GET link** only as a fallback for headerless GET-only clients.
+
+This URL is a **temporary get_link** path-token link. It is **not** a REST or
+MCP Bearer — ask the owner for a separate **rest** or **mcp** token when needed.
 A **human owner** must approve every flow change before it is deployed.
 
 All paths below are **relative to this link URL** (the address you used to open
@@ -188,11 +191,13 @@ Before proposing unfamiliar nodes:
 
 1. \`GET ./node-types?q=<text>\` — list installed palette types (filter optional;
    results capped; may include \`truncated\` / \`total\`).
-2. \`GET ./node-types/<type>\` — detail (properties/defaults, inputs/outputs,
-   requiredConfigNodeTypes, short help). \`404 node_type_not_found\` when unknown.
+2. \`GET ./node-types/<type>\` — detail (\`defaults\` as JSON, \`inputs\`/\`outputs\`,
+   \`requiredConfigNodeTypes\`, help sections). Pass \`?help=0\` to omit help.
+   Types are **case-sensitive** (\`Debug\` → did you mean \`debug\`?).
 3. \`GET ./palette/search?q=<text>\` — search the public Node-RED catalogue.
    **Recommend only** — ask the user to install via **Manage palette**, then
    recheck \`./node-types\`. This API **never installs** packages.
+   Core \`node-red\` types are **not** in the catalogue — use \`./node-types\`.
 
 Submit/propose with an unknown \`node.type\` returns \`400 unknown_node_type\`
 with \`nearest\` suggestions — call node-types / palette search and ask the user
@@ -214,7 +219,7 @@ function docsUrlTable(): string {
 | One field (optional lines) | \`GET ./nodes/<id>/field/<name>?lines=A-B\` |
 | Text search | \`GET ./search?q=&flow=\` |
 | List node types | \`GET ./node-types?q=\` |
-| One node type | \`GET ./node-types/<type>\` |
+| One node type | \`GET ./node-types/<type>\` (\`?help=0\` omits help) |
 | Palette search (recommend only) | \`GET ./palette/search?q=\` |
 | My proposals | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
