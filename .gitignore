@@ -130,19 +130,12 @@ build/
 ehthumbs.db
 Thumbs.db
 
-# Docker
-.dockerignore
-
 # Test files
 test-results/
-playwright-report/
-playwright/.cache/
 
 # MCP specific
 *.mcp.log
-mcp-debug.log 
+mcp-debug.log
 
 /dist
-/memory-bank
 core.585
-e2e-results/
