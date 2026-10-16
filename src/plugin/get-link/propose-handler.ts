@@ -60,8 +60,8 @@ const GET_ONLY_ERROR_HINTS: Record<string, string> = {
   validation_failed: 'Fix every entry in errors[] and retry the propose/submit.',
 };
 
-function proposeErrorHint(code: string): string | undefined {
-  return channelErrorHint(code, 'get') ?? GET_ONLY_ERROR_HINTS[code];
+function proposeErrorHint(code: string, cause?: unknown): string | undefined {
+  return channelErrorHint(code, 'get', { cause }) ?? GET_ONLY_ERROR_HINTS[code];
 }
 
 function sendVersionMismatch(res: Response, expectedRev: string, currentRev: string): void {
@@ -381,9 +381,9 @@ export function getLinkProposeHandler(
           }`,
       });
     } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
+      const mapped = aiOpsErrorToHttp(error, 'get');
       if (mapped) {
-        const hint = proposeErrorHint(mapped.body.code);
+        const hint = proposeErrorHint(mapped.body.code, mapped.body.cause);
         res.status(mapped.statusCode).json({
           ...mapped.body,
           ...(hint ? { hint } : {}),

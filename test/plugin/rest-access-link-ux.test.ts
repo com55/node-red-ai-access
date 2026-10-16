@@ -203,11 +203,14 @@ describe('REST access-link UX', () => {
     expect(res.body.caller.baseUrls.rpc).toBeUndefined();
   });
 
-  it('GET /status without auth still returns auth_required for admin page bootstrap', async () => {
-    const { app } = createApp({ userDir });
+  it('GET /status without auth returns access_link_missing (not auth_required / Users realm)', async () => {
+    const { app } = createApp({ userDir, passportStyle401: true });
     const res = await request(app).get('/mcp/api/v1/status');
     expect(res.status).toBe(401);
-    expect(res.body.code).toBe('auth_required');
+    expect(res.body.code).toBe(ACCESS_LINK_MISSING_CODE);
+    expect(res.body.error).toBe(ACCESS_LINK_MISSING_MESSAGE);
+    expect(res.headers['www-authenticate']).toBe(ACCESS_LINK_WWW_AUTHENTICATE);
+    expect(res.headers['www-authenticate']).not.toMatch(/Users/);
   });
 
   it('GET /flows/:id always includes flow.type (defaults to tab)', async () => {

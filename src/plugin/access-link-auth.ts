@@ -58,9 +58,10 @@ function sendUnauthorized(
   res.status(401).json({ error: message, code, ...(hint ? { hint } : {}) });
 }
 
+/** Bearer (REST/MCP) truncated-token hint — never mention GET-link URL paths. */
 function truncatedBearerHint(token: string): string | undefined {
   if (token.length < 24 || (token.startsWith('aia_') && token.length < 40)) {
-    return 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.';
+    return 'The token may be truncated — ask the user for the full access-link token.';
   }
   return undefined;
 }

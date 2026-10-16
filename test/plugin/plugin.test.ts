@@ -144,14 +144,14 @@ describe('AI Access plugin scaffold', () => {
       expect(res.text).not.toMatch(/ai-access-save/);
     });
 
-    it('returns 401 for unauthenticated GET /mcp/api/v1/status', async () => {
+    it('returns 401 access_link_missing for unauthenticated GET /mcp/api/v1/status', async () => {
       const { app } = createMockRed({ adminAuth: { type: 'credentials' } });
 
       const res = await request(app).get('/mcp/api/v1/status');
       expect(res.status).toBe(401);
       expect(res.body).toMatchObject({
-        error: expect.stringMatching(/auth/i),
-        code: 'auth_required',
+        error: expect.stringMatching(/access link/i),
+        code: 'access_link_missing',
       });
     });
 

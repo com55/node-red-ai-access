@@ -215,7 +215,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(adapter.kind).toBe('red');
   });
 
-  it('GET /mcp is public; unauthenticated /status returns JSON auth_required', async () => {
+  it('GET /mcp is public; unauthenticated /status returns JSON access_link_missing', async () => {
     const page = await request(RED.httpAdmin).get('/mcp');
     expect(page.status).toBe(200);
     expect(page.text).toMatch(/localStorage/);
@@ -223,10 +223,10 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     const statusUnauth = await request(RED.httpAdmin).get('/mcp/api/v1/status');
     expect(statusUnauth.status).toBe(401);
     expect(statusUnauth.headers['content-type']).toMatch(/json/);
-    expect(statusUnauth.body).toEqual({
-      error: 'Authentication required',
-      code: 'auth_required',
-    });
+    expect(statusUnauth.body.code).toBe('access_link_missing');
+    expect(String(statusUnauth.body.error)).toMatch(/access link/i);
+    expect(statusUnauth.headers['www-authenticate']).toMatch(/Bearer/);
+    expect(String(statusUnauth.headers['www-authenticate'] ?? '')).not.toMatch(/Users/);
     expect(statusUnauth.text).not.toBe('Unauthorized');
 
     const statusAuth = await request(RED.httpAdmin)

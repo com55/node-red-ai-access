@@ -220,10 +220,10 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
       res.json(presentProposalForApi(store.get(id), { ...presentOpts, include }));
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
-        res.status(404).json({ error: error.message, code: error.code });
+        sendSafeJsonError(res, 404, error.code);
         return;
       }
-      const mapped = aiOpsErrorToHttp(error);
+      const mapped = aiOpsErrorToHttp(error, 'rest');
       if (mapped) {
         res.status(mapped.statusCode).json(mapped.body);
         return;
@@ -264,7 +264,7 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
         error instanceof ProposalConcurrentApproveError ||
         error instanceof StoragePayloadTooLargeError
       ) {
-        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        sendSafeJsonError(res, error.statusCode, error.code);
         return;
       }
       sendCaughtRouteError(res, error);
@@ -294,7 +294,7 @@ export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: 
         error instanceof ProposalNotPendingError ||
         error instanceof StoragePayloadTooLargeError
       ) {
-        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        sendSafeJsonError(res, error.statusCode, error.code);
         return;
       }
       sendCaughtRouteError(res, error);
@@ -385,7 +385,7 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
       res.json(diff);
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
-        res.status(404).json({ error: error.message, code: error.code });
+        sendSafeJsonError(res, 404, error.code);
         return;
       }
       if (
@@ -393,10 +393,10 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
         error instanceof AdapterUnavailableError ||
         error instanceof PluginMisconfiguredError
       ) {
-        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        sendSafeJsonError(res, error.statusCode, error.code);
         return;
       }
-      const mapped = aiOpsErrorToHttp(error);
+      const mapped = aiOpsErrorToHttp(error, 'rest');
       if (mapped) {
         res.status(mapped.statusCode).json(mapped.body);
         return;
