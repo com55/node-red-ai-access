@@ -798,6 +798,8 @@ paths:
           schema:
             type: boolean
           description: When true (access-link only), return only this token's proposals
+        - $ref: '#/components/parameters/ProposalInclude'
+        - $ref: '#/components/parameters/ProposalIncludePayload'
       responses:
         '200':
           description: Proposal list
@@ -839,9 +841,16 @@ paths:
         Unknown palette `node.type` values return **400** `unknown_node_type`
         with `nearest` suggestions — call `/node-types` or `/palette/search`
         and ask the user to install via Manage palette (this API never installs).
+
+        Responses are **lean** by default (no `payload` / `baseFlow`). Pass
+        `?include=payload,baseFlow` or `?include_payload=true` to include them
+        (same as MCP `include_payload`).
       operationId: createProposal
       security:
         - AccessLinkBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalInclude'
+        - $ref: '#/components/parameters/ProposalIncludePayload'
       requestBody:
         required: true
         content:
@@ -878,6 +887,8 @@ paths:
         - AdminSession: []
       parameters:
         - $ref: '#/components/parameters/ProposalId'
+        - $ref: '#/components/parameters/ProposalInclude'
+        - $ref: '#/components/parameters/ProposalIncludePayload'
       responses:
         '200':
           description: Proposal
@@ -1146,6 +1157,25 @@ components:
       schema:
         type: string
         pattern: '^prop-'
+    ProposalInclude:
+      name: include
+      in: query
+      required: false
+      schema:
+        type: string
+      description: |
+        Comma-separated fields to include on lean proposal responses.
+        Supported keys: `payload`, `baseFlow`. Default is lean (omit both).
+        Example: `include=payload,baseFlow`.
+    ProposalIncludePayload:
+      name: include_payload
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: |
+        Alias for MCP clients: when `true` / `1` / `yes`, includes both
+        `payload` and `baseFlow` (same as `include=payload,baseFlow`).
 
   responses:
     BadRequest:

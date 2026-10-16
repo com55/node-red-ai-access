@@ -146,6 +146,21 @@ datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute whe
 Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
 \`displayName\` + \`reviewUrl\` — not the raw id.**
+
+### GET propose response shape (differs from REST/MCP)
+
+\`GET ./propose\` returns a **wrapper** object:
+
+\`\`\`json
+{ "ok": true, "proposal": { /* lean proposal fields */ }, "hint": "…", "conflictingProposals": [] }
+\`\`\`
+
+REST \`POST /proposals\` and MCP \`submit_proposal\` return the **proposal
+fields at the top level** (no \`ok\` / \`proposal\` wrapper). Read
+\`response.proposal\` on GET; read the body itself on REST/MCP.
+
+Lean by default (no \`payload\` / \`baseFlow\`). Pass
+\`?include=payload,baseFlow\` or \`?include_payload=true\` to include them.
 `;
 }
 

@@ -73,6 +73,35 @@ export function parseIncludeQuery(raw: unknown): Set<string> {
   );
 }
 
+/** Truthy query/body flag (`true`, `1`, `yes` — case-insensitive). */
+export function isTruthyFlag(raw: unknown): boolean {
+  if (raw === true || raw === 1) {
+    return true;
+  }
+  if (typeof raw === 'string') {
+    const t = raw.trim().toLowerCase();
+    return t === '1' || t === 'true' || t === 'yes';
+  }
+  return false;
+}
+
+/**
+ * Resolve include set from REST/GET query:
+ * - `?include=payload,baseFlow` (comma list)
+ * - `?include_payload=true|1` (MCP-style alias → adds payload + baseFlow)
+ */
+export function resolveIncludeFromQuery(query: {
+  include?: unknown;
+  include_payload?: unknown;
+}): Set<string> {
+  const set = parseIncludeQuery(query.include);
+  if (isTruthyFlag(query.include_payload)) {
+    set.add('payload');
+    set.add('baseFlow');
+  }
+  return set;
+}
+
 /** Build present options without assigning `undefined` under exactOptionalPropertyTypes. */
 export function presentOptionsFor(req: Request, httpAdminRoot?: string): PresentProposalOptions {
   const opts: PresentProposalOptions = { req };
