@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- Access-link TTL UX: `/mcp` expiry dropdown (15m / 1h / 4h / 24h / 7d /
+  Custom); `get_link` capped at 24h (7d hidden; switching to GET link with
+  expiry above 24h — including Custom — resets to 1 hour with a short note);
+  `rest` / `mcp` capped at 30d with a red warning above 24h. Server enforces the
+  same caps. Status for access-link callers includes `expiresAt` and
+  `minutesRemaining`. Known-expired tokens return **401** `token_expired`
+  (distinct from `access_link_invalid`).
 - Auto-close stale pending proposals: `expired` (live rev moved) and
   `superseded` (another proposal on the same flow was approved).
 - Conflict trim: `conflictingProposals` lists same-rev or overlapping peers

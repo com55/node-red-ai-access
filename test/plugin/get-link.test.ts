@@ -161,7 +161,9 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(docs.text).toMatch(/human owner[\s*]*must approve/i);
     expect(docs.text).toMatch(/\./);
     expect(docs.text).toMatch(/GET \.\/flows/);
+    expect(docs.text).toMatch(/token_expired/);
     expect(docs.text).toMatch(/access_link_invalid/);
+    expect(docs.text).toMatch(/minutesRemaining/);
     expect(docs.text).toMatch(/get_link/);
     expect(docs.text).toMatch(/not.*REST or MCP Bearer|separate \*\*rest\*\* or \*\*mcp\*\*/i);
     expect(docs.text).toMatch(/rest-token|rest\*\* kind/i);

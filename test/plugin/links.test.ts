@@ -362,7 +362,8 @@ describe('requireAccessLink middleware', () => {
       .get('/probe')
       .set('Authorization', `Bearer ${created.token}`);
     expect(expired.status).toBe(401);
-    expect(expired.body.error).toMatch(/Ask the user for a new access link/);
+    expect(expired.body.code).toBe('token_expired');
+    expect(expired.body.error).toMatch(/expired/i);
 
     now = 1_000_000;
     const store2 = new AccessLinkStore({

@@ -418,7 +418,8 @@ paths:
         `kind=get_link`, a self-contained `url` is included for GET-only
         clients at `/mcp/a/<token>`. For `rest` / `mcp`, `url` is omitted
         (use the Bearer token on the matching surface). Default TTL is
-        14400 seconds (4h); max active links defaults to 10
+        14400 seconds (4h). Caps: `get_link` ≤ 24h; `rest` / `mcp` ≤ 30d
+        (over-cap → **400**). Max active links defaults to 10
         (`aiAccess.maxActiveLinks`).
       operationId: createLink
       security:
@@ -1242,8 +1243,9 @@ components:
     AccessLinkUnauthorized:
       description: |
         Missing (`code: access_link_missing`), wrong scheme such as Basic
-        (`code: bearer_scheme_required`), or invalid/expired/revoked/
-        pre-restart (`code: access_link_invalid`) access link. Includes
+        (`code: bearer_scheme_required`), known-expired
+        (`code: token_expired`), or invalid/revoked/pre-restart
+        (`code: access_link_invalid`) access link. Includes
         `WWW-Authenticate: Bearer`. Message instructs the AI to ask the user
         for a new access link (or to use Bearer, not Basic).
       headers:
@@ -1264,9 +1266,13 @@ components:
               value:
                 error: 'Authorization must use the Bearer scheme (Authorization: Bearer <access-link-token>), not Basic. Ask the user for a new access link.'
                 code: bearer_scheme_required
+            expired:
+              value:
+                error: 'Access link token has expired. Ask the user for a new access link.'
+                code: token_expired
             askForNewLink:
               value:
-                error: 'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.'
+                error: 'Access link is invalid, revoked, or no longer available after a restart. Ask the user for a new access link.'
                 code: access_link_invalid
     VersionConflict:
       description: |
@@ -1669,6 +1675,12 @@ components:
                 expiresAt:
                   type: string
                   format: date-time
+                  description: ISO expiry time of this access-link token.
+                minutesRemaining:
+                  type: integer
+                  minimum: 0
+                  description: >
+                    Whole minutes until `expiresAt` (floored; never negative).
                 permissions:
                   type: array
                   items:
@@ -1759,7 +1771,10 @@ components:
         ttlSeconds:
           type: number
           exclusiveMinimum: 0
-          description: Lifetime in seconds (default 14400 = 4h)
+          description: |
+            Lifetime in seconds (default 14400 = 4h). Caps by `kind`:
+            `get_link` ≤ 86400 (24h); `rest` / `mcp` ≤ 2592000 (30d).
+            Over the cap → **400**.
         label:
           type: string
         kind:

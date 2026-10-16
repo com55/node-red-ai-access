@@ -4,9 +4,11 @@
 
 import type { NextFunction, Response } from 'express';
 
-import type { AccessLinkKind } from '../access/link-store.js';
+import type { AccessLinkKind, AccessLinkValidateResult } from '../access/link-store.js';
 
 import {
+  ACCESS_LINK_EXPIRED_CODE,
+  ACCESS_LINK_EXPIRED_MESSAGE,
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
@@ -16,7 +18,6 @@ import {
 } from './access-link-auth.js';
 import { areAiFeaturesEnabled, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type {
-  AccessLinkAuthInfo,
   AiAccessCapabilities,
   AiAccessPermission,
   AuthenticatedRequest,
@@ -266,7 +267,7 @@ function truncatedTokenHint(token: string): string | undefined {
   return undefined;
 }
 
-export type AccessLinkValidator = (token: string) => AccessLinkAuthInfo | null;
+export type AccessLinkValidator = (token: string) => AccessLinkValidateResult;
 
 /**
  * When admin auth fails, return `access_link_missing` (with Bearer
@@ -331,14 +332,22 @@ function tryAccessLinkBearer(
   if (!token) {
     return 'continue';
   }
-  const link = validateAccessLink(token);
-  if (link) {
-    if (link.kind !== expectedKind) {
-      sendWrongTokenKind(res, expectedKind, link.kind);
+  const result = validateAccessLink(token);
+  if (result.status === 'active') {
+    if (result.link.kind !== expectedKind) {
+      sendWrongTokenKind(res, expectedKind, result.link.kind);
       return 'wrong_kind';
     }
-    req.accessLink = link;
+    req.accessLink = result.link;
     return 'ok';
+  }
+  if (result.status === 'expired') {
+    res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
+    res.status(401).json({
+      error: ACCESS_LINK_EXPIRED_MESSAGE,
+      code: ACCESS_LINK_EXPIRED_CODE,
+    });
+    return 'invalid';
   }
   if (looksLikeFailedAccessLinkAttempt(token)) {
     res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);

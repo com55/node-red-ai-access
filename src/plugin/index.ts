@@ -171,7 +171,7 @@ export function registerRoutes(
     '/mcp/api/v1/status',
     limiter,
     tokenLimiter,
-    requireAdminSessionOrAccessLink(RED, token => services.linkStore.validate(token)),
+    requireAdminSessionOrAccessLink(RED, token => services.linkStore.validateResult(token)),
     asyncRoute((req: AuthenticatedRequest, res: Response) => {
       res.json(buildStatus(RED, req));
     })
@@ -219,7 +219,7 @@ export function registerRoutes(
     limiter,
     tokenLimiter,
     requireAiFeatures(RED),
-    requireAdminReadOrAccessLink(RED, token => services.linkStore.validate(token)),
+    requireAdminReadOrAccessLink(RED, token => services.linkStore.validateResult(token)),
   ];
 
   const flows = services.flowAdapter;

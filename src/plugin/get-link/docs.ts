@@ -120,9 +120,10 @@ these docs).
 
 ## Expiry
 
-- Link expires at: **${expires}** (ISO-8601)
-- After expiry, every path under this link returns \`401 access_link_invalid\`
-- Ask the user for a **new** link if you see that error
+- Link expires at: **${expires}** (ISO-8601); \`GET ./status\` also reports
+  \`caller.minutesRemaining\`
+- After expiry, every path under this link returns \`401 token_expired\`
+- Ask the user for a **new** link if you see that error (or \`access_link_invalid\`)
 
 ## What you can do
 
@@ -167,7 +168,8 @@ Lean by default (no \`payload\` / \`baseFlow\`). Pass
 function docsWorkflow(): string {
   return `## Step-by-step workflow
 
-1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\`.
+1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\` /
+   \`caller.minutesRemaining\`.
 2. \`GET ./flows\` — list tabs + current \`rev\`.
 3. **Layered read (prefer this before loading whole tabs):**
    - \`GET ./flows/<id>?summary=1\` — node list with \`id\`/\`type\`/\`name\`/\`wires\` +
@@ -488,7 +490,8 @@ function docsErrorsAndAlso(): string {
 
 | Code | Meaning | Next step |
 | --- | --- | --- |
-| \`access_link_missing\` / \`access_link_invalid\` | Bad or expired link | Ask user for a new link |
+| \`token_expired\` | Link past \`expiresAt\` | Ask user for a new link |
+| \`access_link_missing\` / \`access_link_invalid\` | Missing/invalid/revoked link | Ask user for a new link |
 | \`url_too_long\` | GET URL over ~8KB | Use drafts or Bearer POST |
 | \`version_mismatch\` | Stale \`rev\` | Re-read flows and retry |
 | \`node_not_found\` / \`field_not_found\` | Unknown node/field at draft/new or propose | Re-read the flow |
