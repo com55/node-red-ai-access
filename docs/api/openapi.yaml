@@ -92,10 +92,10 @@ info:
     AI clients may also use MCP Streamable HTTP at `{httpAdminRoot}/mcp/rpc`
     with the same access-link Bearer token. Tools mirror the AI-facing REST
     operations (`get_status`, `list_flows`, `get_flow` with optional `summary`,
-    `get_node`, `get_node_field`, `search_flows`, `submit_proposal`,
-    `list_my_proposals`, `get_proposal`). Approve/reject/link management stay
-    on this REST API and the `/mcp` admin page. This OpenAPI document covers
-    the REST surface only.
+    `get_node`, `get_node_field`, `search_flows`, `list_node_types`,
+    `get_node_type`, `search_palette`, `submit_proposal`, `list_my_proposals`,
+    `get_proposal`). Approve/reject/link management stay on this REST API and
+    the `/mcp` admin page. This OpenAPI document covers the REST surface only.
 
     ## Authentication
 
@@ -147,6 +147,7 @@ tags:
   - name: Status
   - name: Access links
   - name: Flows
+  - name: Node types
   - name: Proposals
   - name: Audit log
   - name: Spec
@@ -586,6 +587,110 @@ paths:
         '502':
           $ref: '#/components/responses/BadGateway'
 
+  /node-types:
+    get:
+      tags: [Node types]
+      summary: List installed palette node types
+      description: |
+        Returns installed Node-RED palette types (`type`, `module`, optional
+        `category`, `description`, `enabled`, `version`, `setId`). Optional
+        `q` filters type/module/category/description (case-insensitive).
+        Results are capped; response includes `total` and `truncated`.
+      operationId: listNodeTypes
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Installed node types
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeTypeListResult'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /node-types/{type}:
+    get:
+      tags: [Node types]
+      summary: Get one installed node type
+      description: |
+        Detail for one type: `properties`/`defaults`, `inputs`/`outputs`,
+        `requiredConfigNodeTypes`, short `help`, plus `category`/`module`/`color`
+        when available. **404** `node_type_not_found` when unknown (may include
+        `nearest` suggestions).
+      operationId: getNodeType
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node type detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeTypeDetail'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /palette/search:
+    get:
+      tags: [Node types]
+      summary: Search Node-RED catalogue (recommend only)
+      description: |
+        Searches `catalogue.nodered.org` (cached ~1h). Returns modules with
+        `installed` boolean. **Recommend only — never installs.** Ask the user
+        to install via Manage palette, then recheck `/node-types`. Response
+        always includes a `hint` stating this.
+      operationId: searchPalette
+      security:
+        - AccessLinkBearer: []
+        - AdminSession: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Catalogue search hits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaletteSearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessLinkUnauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
   /proposals:
     get:
       tags: [Proposals]
@@ -635,6 +740,9 @@ paths:
 
         `payload.flow` must be a tab object (`id`, `type`, `label?`, `nodes[]`,
         optional `configs[]`). Payloads over 1_500_000 bytes return **413**.
+        Unknown palette `node.type` values return **400** `unknown_node_type`
+        with `nearest` suggestions — call `/node-types` or `/palette/search`
+        and ask the user to install via Manage palette (this API never installs).
       operationId: createProposal
       security:
         - AccessLinkBearer: []
@@ -972,6 +1080,111 @@ components:
         error:
           type: string
         code:
+          type: string
+
+    NodeTypeListItem:
+      type: object
+      required: [type, module]
+      properties:
+        type:
+          type: string
+        module:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        version:
+          type: string
+        setId:
+          type: string
+
+    NodeTypeListResult:
+      type: object
+      required: [types, total, truncated]
+      properties:
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeTypeListItem'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+        q:
+          type: string
+
+    NodeTypeDetail:
+      type: object
+      required: [type, module]
+      properties:
+        type:
+          type: string
+        module:
+          type: string
+        setId:
+          type: string
+        version:
+          type: string
+        enabled:
+          type: boolean
+        category:
+          type: string
+        color:
+          type: string
+        inputs:
+          type: number
+        outputs:
+          type: number
+        properties:
+          type: object
+          additionalProperties: true
+        defaults:
+          type: object
+          additionalProperties: true
+        requiredConfigNodeTypes:
+          type: array
+          items:
+            type: string
+        help:
+          type: string
+
+    PaletteSearchItem:
+      type: object
+      required: [module, installed]
+      properties:
+        module:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+        updated:
+          type: string
+        downloads:
+          type: number
+        link:
+          type: string
+        installed:
+          type: boolean
+
+    PaletteSearchResult:
+      type: object
+      required: [q, modules, total, truncated, hint]
+      properties:
+        q:
+          type: string
+        modules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaletteSearchItem'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+        hint:
           type: string
 
     PayloadTooLargeError:

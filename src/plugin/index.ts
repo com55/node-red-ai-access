@@ -38,6 +38,11 @@ import {
 } from './links.js';
 import { listLogsHandler } from './logs-routes.js';
 import { mcpRpcMethodNotAllowed, mcpRpcPostHandler } from './mcp-rpc.js';
+import {
+  getNodeTypeHandler,
+  listNodeTypesHandler,
+  searchPaletteHandler,
+} from './node-types-routes.js';
 import { openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import {
@@ -151,6 +156,9 @@ export function registerRoutes(
     proposalStore: services.proposalStore,
     auditLog: services.auditLog,
     flowAdapter: services.flowAdapter,
+    nodeTypesAdapter: services.nodeTypesAdapter,
+    ...(services.catalogueFetcher ? { catalogueFetcher: services.catalogueFetcher } : {}),
+    ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),
     rateLimiters: dualLimiters,
   });
 
@@ -208,11 +216,32 @@ export function registerRoutes(
   ];
 
   const flows = services.flowAdapter;
+  const nodeTypes = services.nodeTypesAdapter;
+  const nodeTypeRouteOpts = {
+    nodeTypes,
+    ...(services.catalogueFetcher ? { catalogueFetcher: services.catalogueFetcher } : {}),
+    ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),
+  };
   RED.httpAdmin.get('/mcp/api/v1/flows', ...sharedRead, listFlowsHandler(flows));
   RED.httpAdmin.get('/mcp/api/v1/flows/:id', ...sharedRead, getFlowOrSummaryHandler(flows));
   RED.httpAdmin.get('/mcp/api/v1/nodes/:id', ...sharedRead, getNodeHandler(flows));
   RED.httpAdmin.get('/mcp/api/v1/nodes/:id/field/:name', ...sharedRead, getNodeFieldHandler(flows));
   RED.httpAdmin.get('/mcp/api/v1/search', ...sharedRead, searchFlowsHandler(flows));
+  RED.httpAdmin.get(
+    '/mcp/api/v1/node-types',
+    ...sharedRead,
+    listNodeTypesHandler(nodeTypeRouteOpts)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/node-types/:type',
+    ...sharedRead,
+    getNodeTypeHandler(nodeTypeRouteOpts)
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/palette/search',
+    ...sharedRead,
+    searchPaletteHandler(nodeTypeRouteOpts)
+  );
 
   // Proposal routes stay in this function so CodeQL can see the local limiters
   // (passing them into a helper breaks missing-rate-limiting dataflow).
@@ -241,7 +270,8 @@ export function registerRoutes(
       services.proposalStore,
       services.auditLog,
       services.flowAdapter,
-      httpAdminRoot
+      httpAdminRoot,
+      services.nodeTypesAdapter
     )
   );
   RED.httpAdmin.post(

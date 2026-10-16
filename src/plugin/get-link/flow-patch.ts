@@ -4,6 +4,7 @@
 
 import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import { AiOpsValidationError } from '../ai-ops.js';
+import { assertKnownNodeType, type NodeTypesAdapter } from '../node-types.js';
 
 export interface NodePropertyEdit {
   nodeId: string;
@@ -133,6 +134,11 @@ export function applyReplaceTextToValue(
   return current.slice(0, at) + replace + current.slice(at + find.length);
 }
 
+export interface ApplyFlowNodeOpsOptions {
+  /** When set, `op:add` validates node.type against the installed palette. */
+  nodeTypes?: NodeTypesAdapter;
+}
+
 /**
  * Apply set / add / remove / replace_text ops onto a live flow tab.
  * Multiple ops apply in order (later ops see earlier results).
@@ -140,7 +146,8 @@ export function applyReplaceTextToValue(
 export async function applyFlowNodeOps(
   adapter: FlowAdapter,
   flowId: string,
-  ops: FlowNodeOp[]
+  ops: FlowNodeOp[],
+  options: ApplyFlowNodeOpsOptions = {}
 ): Promise<{ expectedRev: string; flow: FlowTab }> {
   if (!flowId) {
     throw new AiOpsValidationError('flow id is required', 'missing_flow_id');
@@ -159,6 +166,9 @@ export async function applyFlowNodeOps(
   };
 
   for (const op of ops) {
+    if (op.op === 'add' && options.nodeTypes) {
+      await assertKnownNodeType(options.nodeTypes, op.node.type);
+    }
     applyOneNodeOp(nodes, flowId, op);
   }
 

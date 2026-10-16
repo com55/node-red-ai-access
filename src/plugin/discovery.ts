@@ -75,6 +75,24 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       summary: 'Text search across string fields (?q=&flow=)',
     },
     {
+      method: 'GET',
+      path: '/node-types',
+      auth: 'admin-or-access-link',
+      summary: 'List installed palette node types (?q= filter)',
+    },
+    {
+      method: 'GET',
+      path: '/node-types/{type}',
+      auth: 'admin-or-access-link',
+      summary: 'Detail for one installed node type (properties, defaults, help)',
+    },
+    {
+      method: 'GET',
+      path: '/palette/search',
+      auth: 'admin-or-access-link',
+      summary: 'Search Node-RED catalogue (recommend only; never installs) (?q=)',
+    },
+    {
       method: 'POST',
       path: '/proposals',
       auth: 'access-link',

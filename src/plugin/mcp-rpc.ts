@@ -33,6 +33,7 @@ import {
   submitReplaceFlowProposal,
 } from './ai-ops.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
+import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
 import { presentOptionsFor } from './proposal-present.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
@@ -70,6 +71,7 @@ function jsonError(
             error: error.message,
             code: error.code,
             statusCode: error.statusCode,
+            ...(error.details ?? {}),
           }),
         },
       ],
@@ -245,6 +247,71 @@ function registerReadTools(
       }
     }
   );
+
+  server.registerTool(
+    'list_node_types',
+    {
+      description:
+        'List installed Node-RED palette node types (type, module, category, description, …). ' +
+        'Optional q filters type/module/category/description (case-insensitive). Results are capped. ' +
+        'Call this before proposing nodes with unfamiliar types. Prefer MCP/REST over GET-link when possible.',
+      inputSchema: {
+        q: z.string().optional().describe('Optional case-insensitive filter'),
+      },
+    },
+    async ({ q }) => {
+      try {
+        return jsonResult(await listNodeTypes(services.nodeTypesAdapter, q ? { q } : {}));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_node_type',
+    {
+      description:
+        'Get detail for one installed node type: properties/defaults, inputs/outputs, ' +
+        'requiredConfigNodeTypes, short help, category/module/color when available. ' +
+        '404 node_type_not_found when unknown (includes nearest type names).',
+      inputSchema: {
+        type: z.string().min(1).describe('Node type id (e.g. inject, template)'),
+      },
+    },
+    async ({ type }) => {
+      try {
+        return jsonResult(await getNodeTypeDetail(services.nodeTypesAdapter, type));
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
+
+  server.registerTool(
+    'search_palette',
+    {
+      description:
+        'Search the public Node-RED catalogue for modules to recommend. ' +
+        'Returns module id, description, version, updated, link, and installed boolean. ' +
+        'RECOMMEND ONLY — never installs. Ask the user to install via Manage palette, then recheck list_node_types.',
+      inputSchema: {
+        q: z.string().min(1).describe('Search string (id / description / keywords)'),
+      },
+    },
+    async ({ q }) => {
+      try {
+        return jsonResult(
+          await searchPalette(services.nodeTypesAdapter, q, {
+            ...(services.catalogueFetcher ? { catalogueFetcher: services.catalogueFetcher } : {}),
+            ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),
+          })
+        );
+      } catch (error) {
+        return jsonError(error, 502);
+      }
+    }
+  );
 }
 
 function registerProposalTools(
@@ -269,6 +336,8 @@ function registerProposalTools(
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
+        'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
+        'search_palette and ask the user to install via Manage palette (never auto-install). ' +
         'Returns the pending proposal with title, displayName (title · server-local datetime with offset), ' +
         'reviewUrl (absolute when Host is known), and reviewPath (relative /mcp#proposal=<id>). ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
@@ -335,7 +404,8 @@ function registerProposalTools(
             expectedRev: args.expectedRev || args.expected_rev,
           },
           services.flowAdapter,
-          presentOpts
+          presentOpts,
+          services.nodeTypesAdapter
         );
         return jsonResult(proposal);
       } catch (error) {

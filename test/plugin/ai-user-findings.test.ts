@@ -752,6 +752,12 @@ describe('AI-user findings', () => {
       expect(docs.text).toMatch(/replace the entire named string field/i);
       expect(docs.text).toMatch(/replace_text/i);
       expect(docs.text).toMatch(/structural/i);
+      expect(docs.text.indexOf('## Also available')).toBeLessThan(
+        docs.text.indexOf('## Step-by-step workflow')
+      );
+      expect(docs.text).toMatch(/claude_desktop_config\.json|mcp\.json/);
+      expect(docs.text).toMatch(/Manage palette/);
+      expect(docs.text).toMatch(/unknown_node_type/);
     });
 
     it('REST truncated hint does not mention GET /mcp/a/<token>', async () => {

@@ -13,6 +13,7 @@ import {
   siblingsOnSameRev,
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
+import type { NodeTypesAdapter } from '../node-types.js';
 import {
   parseIncludeQuery,
   presentOptionsFor,
@@ -73,6 +74,8 @@ function proposeErrorHint(code: string): string | undefined {
       return 'Pass replace= as a string (URL-encoded; empty string is allowed to delete the find text).';
     case 'conflicting_edits':
       return 'Use either find/replace/field or set.<prop>=, not both in one propose URL.';
+    case 'unknown_node_type':
+      return 'Call GET …/node-types?q= or …/palette/search?q=. Ask the user to install via Manage palette, then recheck. This API never installs.';
     default:
       return undefined;
   }
@@ -96,7 +99,8 @@ async function buildFromPatch(
   flowAdapter: FlowAdapter,
   patchEncoded: string,
   flowId: string | undefined,
-  rev: string
+  rev: string,
+  nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<BuiltPropose> {
   const interpreted = interpretPatch(decodeBase64UrlJson(patchEncoded), flowId);
   const builtFlowId = interpreted.flowId;
@@ -113,7 +117,9 @@ async function buildFromPatch(
       expectedRev: rev,
     };
   }
-  const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
+  const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops, {
+    ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
+  });
   if (patched.expectedRev !== rev) {
     return {
       ok: false,
@@ -240,10 +246,11 @@ async function buildProposeFromQuery(
   res: Response,
   flowAdapter: FlowAdapter,
   q: ProposeQuery,
-  rev: string
+  rev: string,
+  nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<BuiltPropose | null> {
   if (q.patchEncoded) {
-    return buildFromPatch(flowAdapter, q.patchEncoded, q.flowId, rev);
+    return buildFromPatch(flowAdapter, q.patchEncoded, q.flowId, rev, nodeTypesAdapter);
   }
 
   const wantsReplaceText =
@@ -317,7 +324,8 @@ export function getLinkProposeHandler(
   proposalStore: ProposalStore,
   auditLog: AuditLog,
   flowAdapter: FlowAdapter,
-  httpAdminRoot?: string
+  httpAdminRoot?: string,
+  nodeTypesAdapter?: NodeTypesAdapter
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (rejectOversizedGetUrl(req, res)) {
@@ -339,7 +347,7 @@ export function getLinkProposeHandler(
     }
 
     try {
-      const built = await buildProposeFromQuery(res, flowAdapter, q, q.rev);
+      const built = await buildProposeFromQuery(res, flowAdapter, q, q.rev, nodeTypesAdapter);
       if (!built) {
         return;
       }
@@ -361,7 +369,8 @@ export function getLinkProposeHandler(
           ...(titleParam ? { title: titleParam } : {}),
         },
         flowAdapter,
-        presentOpts
+        presentOpts,
+        nodeTypesAdapter
       );
       const presented = presentProposalForApi(proposal, { ...presentOpts, include });
       const siblings = siblingsOnSameRev(proposalStore, proposal);

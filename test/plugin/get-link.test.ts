@@ -162,6 +162,14 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(docs.text).toMatch(/\./);
     expect(docs.text).toMatch(/GET \.\/flows/);
     expect(docs.text).toMatch(/access_link_invalid/);
+    const alsoIdx = docs.text.indexOf('## Also available');
+    const workflowIdx = docs.text.indexOf('## Step-by-step workflow');
+    expect(alsoIdx).toBeGreaterThan(0);
+    expect(alsoIdx).toBeLessThan(workflowIdx);
+    expect(docs.text).toMatch(/YOUR-NODE-RED\/mcp\/rpc/);
+    expect(docs.text).toMatch(/\.\/node-types/);
+    expect(docs.text).toMatch(/palette\/search/);
+    expect(docs.text).toMatch(/Manage palette/);
     expect(docs.headers['x-content-type-options']).toBe('nosniff');
     // Path token must not be reflected into the docs body (XSS / sniffing).
     expect(docs.text).not.toContain(link.token);
