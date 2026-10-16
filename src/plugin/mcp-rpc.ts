@@ -406,7 +406,10 @@ function registerProposalTools(
           accessLink,
           {
             ...args,
-            expectedRev: args.expectedRev || args.expected_rev,
+            expectedRev:
+              typeof args.expectedRev === 'string' && args.expectedRev.length > 0
+                ? args.expectedRev
+                : args.expected_rev,
           },
           services.flowAdapter,
           presentOpts,
