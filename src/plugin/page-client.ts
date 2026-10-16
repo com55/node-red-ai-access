@@ -21,6 +21,8 @@ function pageClientScriptPartA(): string {
   var proposalsFilter = 'pending';
   var cachedProposals = [];
   var proposalDiffCache = {};
+  var cachedLinksById = {};
+  var cachedFlowLabels = {};
   var pendingRejectId = null;
   var pendingApproveCtx = null;
 
@@ -393,13 +395,19 @@ function pageClientScriptPartAAudit(): string {
     return cachedProposals.filter(function (x) { return x.id === id; })[0] || null;
   }
   function auditProposalLabel(d, atIso) {
-    // Never render API displayName (server TZ). Rebuild from title + entry.at.
-    // Older audit rows may lack title — resolve from the live proposal cache.
+    // Same render-time title as the Proposals page when the proposal is cached.
     var p = lookupCachedProposal(d.proposalId);
-    var title = d.title ||
-      (p && p.title) ||
-      (d.displayName ? titleFromDisplayName(d.displayName) : '') ||
-      (p && p.displayName ? titleFromDisplayName(p.displayName) : '');
+    var title = '';
+    if (p) {
+      title = displayTitleForProposal(p, proposalDiffCache[p.id]);
+    }
+    if (!title) {
+      title = d.title ||
+        (d.displayName ? titleFromDisplayName(d.displayName) : '') ||
+        (p && p.displayName ? titleFromDisplayName(p.displayName) : '') ||
+        (p && p.title) ||
+        '';
+    }
     var linked = '';
     if (title && d.proposalId) {
       linked = '<a class="audit-proposal-link" href="#proposal=' +
@@ -427,8 +435,27 @@ function pageClientScriptPartAAudit(): string {
       var label = flowLabelOf(p);
       if (label) return label;
     }
+    if (d.flowId && cachedFlowLabels[d.flowId]) {
+      return String(cachedFlowLabels[d.flowId]);
+    }
     // Never show raw flow ids like tab1 in the audit summary.
     return '';
+  }
+  function resolveLinkDetails(d) {
+    var out = {
+      label: d.label,
+      expiresAt: d.expiresAt,
+      createdAt: d.createdAt,
+      ttlSeconds: d.ttlSeconds,
+      linkId: d.linkId
+    };
+    if ((!out.label || !out.expiresAt) && out.linkId && cachedLinksById[out.linkId]) {
+      var link = cachedLinksById[out.linkId];
+      if (!out.label && link.label) out.label = link.label;
+      if (!out.expiresAt && link.expiresAt) out.expiresAt = link.expiresAt;
+      if (!out.createdAt && link.createdAt) out.createdAt = link.createdAt;
+    }
+    return out;
   }
   function auditSummary(entry) {
     var d = entry.details || {};
@@ -455,18 +482,20 @@ function pageClientScriptPartAAudit(): string {
         (failReason ? ': ' + esc(failReason) : '');
     }
     if (action === 'link.created') {
-      var createdTtl = linkTtlFromDetails(d);
+      var created = resolveLinkDetails(d);
+      var createdTtl = linkTtlFromDetails(created);
       return 'Access link created' +
-        (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
+        (created.label ? ' "' + esc(String(created.label)) + '"' : '') +
         (createdTtl ? ' · TTL ' + esc(createdTtl) : '') +
-        (d.expiresAt ? ' · expires ' + timeCell(d.expiresAt) : '');
+        (created.expiresAt ? ' · expires ' + timeCell(created.expiresAt) : '');
     }
     if (action === 'link.revoked') {
-      var revokedTtl = linkTtlFromDetails(d);
+      var revoked = resolveLinkDetails(d);
+      var revokedTtl = linkTtlFromDetails(revoked);
       return 'Access link revoked' +
-        (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
+        (revoked.label ? ' "' + esc(String(revoked.label)) + '"' : '') +
         (revokedTtl ? ' · TTL ' + esc(revokedTtl) : '') +
-        (d.expiresAt ? ' · was set to expire ' + timeCell(d.expiresAt) : '');
+        (revoked.expiresAt ? ' · was set to expire ' + timeCell(revoked.expiresAt) : '');
     }
     var keys = Object.keys(d);
     if (!keys.length) return '<span class="muted">—</span>';
@@ -642,6 +671,9 @@ function pageClientScriptPartA2(): string {
     try {
       var data = await api('/links');
       var links = (data && data.links) || [];
+      links.forEach(function (l) {
+        if (l && l.id) cachedLinksById[l.id] = l;
+      });
       var dashLinks = $('dash-links');
       if (dashLinks) dashLinks.textContent = String(links.length);
       if (!links.length) {
@@ -787,7 +819,17 @@ function pageClientScriptPartB(): string {
     var base = (p && p.baseFlow) || {};
     if (flow.label) return String(flow.label);
     if (base.label) return String(base.label);
+    var flowId = p && p.payload && p.payload.flowId;
+    if (flowId && cachedFlowLabels[flowId]) return String(cachedFlowLabels[flowId]);
     return '';
+  }
+
+  function ensureTitleIncludesFlowName(title, flowLabel) {
+    var t = String(title || '').trim();
+    var label = String(flowLabel || '').trim();
+    if (!label || !t) return t;
+    if (t.indexOf(label) >= 0) return t;
+    return t + ' in ' + label;
   }
 
   function proposalTechSummary(p) {
@@ -856,14 +898,17 @@ function pageClientScriptPartB(): string {
     var stored = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : '');
     var flowLabel = flowLabelOf(p);
     if (!diff || !diff.summary) {
-      return stored || (flowLabel ? 'Update ' + flowLabel : 'Proposal');
+      return ensureTitleIncludesFlowName(
+        stored || (flowLabel ? 'Update ' + flowLabel : 'Proposal'),
+        flowLabel
+      );
     }
     var sum = diff.summary;
     var removed = Number(sum.removed) || 0;
     var added = Number(sum.added) || 0;
     var modified = Number(sum.modified) || 0;
     if (!shouldRefreshDisplayTitle(stored, removed)) {
-      return stored;
+      return ensureTitleIncludesFlowName(stored, flowLabel);
     }
     var firstType = '';
     if (diff.added && diff.added[0] && diff.added[0].type) {
@@ -878,7 +923,9 @@ function pageClientScriptPartB(): string {
     }
     var total = added + modified;
     if (total === 0) return flowLabel ? 'Update ' + flowLabel : 'Update flow';
-    if (total === 1 && added === 1 && firstType) return 'Add ' + firstType + ' node';
+    if (total === 1 && added === 1 && firstType) {
+      return ensureTitleIncludesFlowName('Add ' + firstType + ' node', flowLabel);
+    }
     if (total === 1 && modified === 1) {
       return flowLabel ? 'Edit node in ' + flowLabel : 'Edit node';
     }
@@ -1523,7 +1570,7 @@ function pageClientScriptPartB2CardsList(): string {
       '<div class="stale-item-main">' +
       '<strong class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) +
       '</strong>' +
-      '<span class="stale-reason muted">flow changed since</span>' +
+      '<span class="stale-reason muted">Flow changed since this was submitted</span>' +
       '<span class="proposal-meta-line">' +
       (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
       timeCell(p.createdAt) +
@@ -1612,13 +1659,33 @@ function pageClientScriptPartB2CardsList(): string {
 
 function pageClientScriptPartB2Focus(): string {
   return `
+  async function refreshFlowLabels() {
+    try {
+      var data = await api('/flows');
+      var flows = (data && data.flows) || [];
+      flows.forEach(function (f) {
+        if (f && f.type === 'tab' && f.id && f.label) {
+          cachedFlowLabels[f.id] = String(f.label);
+        }
+      });
+    } catch (e) {
+      /* optional enrichment for oldest cards */
+    }
+  }
+
   async function loadProposals() {
     if (!aiOn) return;
     var flash = $('proposals-flash');
     showFlash(flash, '', true);
     try {
+      await refreshFlowLabels();
       var data = await api('/proposals');
       cachedProposals = (data && data.proposals) || [];
+      cachedProposals.forEach(function (p) {
+        var id = p && p.payload && p.payload.flowId;
+        var label = p && p.flowLabel;
+        if (id && label) cachedFlowLabels[id] = String(label);
+      });
       renderProposalsList();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
@@ -1760,16 +1827,24 @@ function pageClientScriptPartB2Apply(): string {
 
   async function loadProposalDiff(id) {
     var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
-    if (!host) return;
     try {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
       applyDiffToProposalCard(id, diff);
-      host.innerHTML = renderHumanDiff(diff);
-      bindDiffModeToggle(host, diff);
-      bindPresencePreviewToggles(host);
+      if (host) {
+        host.innerHTML = renderHumanDiff(diff);
+        bindDiffModeToggle(host, diff);
+        bindPresencePreviewToggles(host);
+      }
+      // Audit rows reuse displayTitleForProposal — refresh if the log table is open.
+      var logsSection = $('section-logs');
+      if (logsSection && !logsSection.hidden && cachedLogs.length) {
+        applyLogFilter();
+      }
     } catch (e) {
-      host.innerHTML = '<p class="muted">Could not load changes: ' +
-        esc(e.message || String(e)) + '</p>';
+      if (host) {
+        host.innerHTML = '<p class="muted">Could not load changes: ' +
+          esc(e.message || String(e)) + '</p>';
+      }
     }
   }`;
 }
@@ -1930,6 +2005,13 @@ function pageClientScriptPartCLogs(): string {
     var flash = $('logs-flash');
     showFlash(flash, '', true);
     try {
+      // Need proposals (+ diffs) so audit rows use the same render-time titles.
+      if (!cachedProposals.length) {
+        try { await loadProposals(); } catch (e) { /* best-effort */ }
+      }
+      if (canManage) {
+        try { await loadLinks(); } catch (e) { /* best-effort for link label lookup */ }
+      }
       var data = await api('/logs?limit=100');
       cachedLogs = (data && data.logs) || [];
       var filter = $('logs-filter');
@@ -1946,6 +2028,13 @@ function pageClientScriptPartCLogs(): string {
               (a === current ? ' selected' : '') + '>' + esc(actionFilterLabel(a)) + '</option>';
           }).join('');
       }
+      // Prefetch diffs for proposal ids referenced in the log so titles refresh.
+      cachedLogs.forEach(function (e) {
+        var pid = e.details && e.details.proposalId;
+        if (pid && lookupCachedProposal(pid) && !proposalDiffCache[pid]) {
+          loadProposalDiff(pid);
+        }
+      });
       applyLogFilter();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);

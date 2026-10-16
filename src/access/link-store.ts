@@ -211,6 +211,21 @@ export class AccessLinkStore {
   }
 
   /**
+   * Look up a link by id even if revoked/expired (still in memory).
+   * Used to enrich older audit rows that omitted label/expiry.
+   */
+  getById(linkId: string): AccessLinkPublic | null {
+    if (typeof linkId !== 'string' || linkId.length === 0) {
+      return null;
+    }
+    const record = this.links.get(linkId);
+    if (!record) {
+      return null;
+    }
+    return toPublic(record);
+  }
+
+  /**
    * Validate a raw bearer token. Returns the public link metadata when valid;
    * otherwise null (unknown / expired / revoked / pre-restart).
    */

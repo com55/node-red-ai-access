@@ -71,7 +71,7 @@ describe('formatUtcOffset / formatProposalSubmittedAt', () => {
 });
 
 describe('autoGenerateProposalTitle', () => {
-  it('describes a rename', () => {
+  it('describes a rename (includes flow name)', () => {
     expect(
       autoGenerateProposalTitle(
         {
@@ -83,19 +83,19 @@ describe('autoGenerateProposalTitle', () => {
           nodes: [{ id: 'n1', type: 'debug', name: 'out (patched)', complete: 'payload' }],
         }
       )
-    ).toBe('Rename debug node "out" → "out (patched)"');
+    ).toBe('Rename debug node "out" → "out (patched)" in Test Flow');
   });
 
-  it('describes a single added inject', () => {
+  it('describes a single added inject (includes flow name)', () => {
     expect(
       autoGenerateProposalTitle(
         { label: 'Test Flow', nodes: [] },
         { label: 'Test Flow', nodes: [{ id: 'n2', type: 'inject', name: 'tick2' }] }
       )
-    ).toBe('Add inject node "tick2"');
+    ).toBe('Add inject node "tick2" in Test Flow');
   });
 
-  it('describes a single edited template', () => {
+  it('describes a single edited template (includes flow name)', () => {
     expect(
       autoGenerateProposalTitle(
         {
@@ -107,7 +107,7 @@ describe('autoGenerateProposalTitle', () => {
           nodes: [{ id: 't1', type: 'template', name: 'html20k', template: 'b' }],
         }
       )
-    ).toBe('Edit template "html20k"');
+    ).toBe('Edit template "html20k" in Test Flow');
   });
 
   it('summarizes many changes with the flow label', () => {
@@ -236,7 +236,31 @@ describe('buildReplaceFlowTitle / display-title refresh', () => {
         },
       },
     });
-    expect(resolveProposalTitle(updateLegacy)).toBe('Rename debug node "out" → "out (patched)"');
+    expect(resolveProposalTitle(updateLegacy)).toBe(
+      'Rename debug node "out" → "out (patched)" in Test Flow'
+    );
+  });
+
+  it('resolves flow name for oldest cards via liveFlowLabels', () => {
+    const orphan = baseProposal({
+      title: 'Add comment node',
+      baseFlow: { id: 'tab1', type: 'tab', nodes: [] },
+      payload: {
+        flowId: 'tab1',
+        flow: {
+          id: 'tab1',
+          type: 'tab',
+          nodes: [{ id: 'n', type: 'comment', name: 'note' }],
+        },
+      },
+    });
+    const labels = new Map([['tab1', 'Test Flow']]);
+    expect(resolveProposalTitle(orphan, { liveFlowLabels: labels })).toBe(
+      'Add comment node in Test Flow'
+    );
+    const presented = presentProposal(orphan, { liveFlowLabels: labels });
+    expect(presented.flowLabel).toBe('Test Flow');
+    expect(presented.title).toBe('Add comment node in Test Flow');
   });
 });
 
@@ -314,9 +338,9 @@ describe('presentProposal', () => {
         },
       })
     );
-    expect(presented.title).toBe('Edit inject "tick"');
+    expect(presented.title).toBe('Edit inject "tick" in Main');
     expect(presented.flowLabel).toBe('Main');
-    expect(presented.displayName.startsWith('Edit inject "tick" · ')).toBe(true);
+    expect(presented.displayName.startsWith('Edit inject "tick" in Main · ')).toBe(true);
     expect(presented.reviewPath).toBeTruthy();
   });
 

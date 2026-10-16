@@ -6,8 +6,10 @@
  * cache-bust query so Node-RED's cached companion HTML no longer freezes UX.
  */
 
-/** Bump when sidebar UX changes so loaders with ?v= refetch. */
-export const EDITOR_SIDEBAR_ASSET_VERSION = 'r4-1';
+import { packageVersion } from './package-version.js';
+
+/** Derived from package.json via build-time `__AI_ACCESS_VERSION__` (not hand-typed). */
+export const EDITOR_SIDEBAR_ASSET_VERSION = packageVersion();
 
 function editorSidebarStyles(): string {
   return `#red-ui-sidebar-ai-access {
@@ -309,6 +311,18 @@ function editorSidebarScriptPartA(): string {
     var saveTimer = null;
     var saving = false;
 
+    var savedToastTimer = null;
+
+    function showSavedToast() {
+      var $flash = $('#ai-access-flash');
+      setFlash($flash, 'Saved', true);
+      if (savedToastTimer) clearTimeout(savedToastTimer);
+      savedToastTimer = setTimeout(function () {
+        savedToastTimer = null;
+        setFlash($flash, '', true);
+      }, 1600);
+    }
+
     function saveSettings(opts) {
       var silent = !!(opts && opts.silent);
       if (!CAN_EDIT || saving) return;
@@ -322,7 +336,8 @@ function editorSidebarScriptPartA(): string {
       api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
         .then(function (data) {
           applyForm(data);
-          if (!silent) setFlash($('#ai-access-flash'), 'Settings saved.', true);
+          if (silent) showSavedToast();
+          else setFlash($('#ai-access-flash'), 'Settings saved.', true);
           refreshPending();
         })
         .catch(function (err) {
@@ -497,4 +512,49 @@ export function renderEditorSidebarJs(): string {
     `})();`,
     editorSidebarScriptBody(),
   ].join('\n');
+}
+
+/**
+ * Thin companion HTML loader. Version is always {@link EDITOR_SIDEBAR_ASSET_VERSION}
+ * (from package.json) — never hand-typed in a second place.
+ */
+export function renderEditorSidebarLoaderHtml(
+  version: string = EDITOR_SIDEBAR_ASSET_VERSION
+): string {
+  const safeVersion = version.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return `<script>
+  /**
+   * Thin loader for the AI Access editor sidebar.
+   * Logic lives at GET /mcp/editor/ai-access-sidebar.js (Cache-Control: no-store)
+   * so companion-HTML caching does not freeze sidebar UX across plugin updates.
+   * Asset version is derived from package.json at build time.
+   */
+  (function () {
+    if (typeof RED === 'undefined' || !RED.sidebar || !RED.sidebar.addTab) {
+      return;
+    }
+    if (window.__com55AiAccessSidebarLoading) {
+      return;
+    }
+    window.__com55AiAccessSidebarLoading = true;
+
+    var EDITOR_SIDEBAR_ASSET_VERSION = '${safeVersion}';
+    var root = (RED.settings.httpAdminRoot || '/').replace(/\\/$/, '');
+    var src =
+      (root || '') +
+      '/mcp/editor/ai-access-sidebar.js?v=' +
+      encodeURIComponent(EDITOR_SIDEBAR_ASSET_VERSION);
+
+    var s = document.createElement('script');
+    s.src = src;
+    s.async = false;
+    s.onerror = function () {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[ai-access] failed to load sidebar script:', src);
+      }
+    };
+    (document.head || document.documentElement).appendChild(s);
+  })();
+</script>
+`;
 }

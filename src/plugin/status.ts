@@ -3,6 +3,7 @@
  */
 
 import { describeAccess, mcpApiBase, mcpRpcPath } from './auth.js';
+import { packageVersion } from './package-version.js';
 import { resolveAiAccessSettings } from './settings.js';
 import { getStorageDir } from './storage.js';
 import type { AiAccessStatus, AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -15,23 +16,8 @@ export const ACCESS_LINK_PERMISSIONS = [
   'proposals:read-own',
 ] as const;
 
-/** Injected by tsup / vitest define. */
-declare const __AI_ACCESS_VERSION__: string | undefined;
-
-let cachedVersion: string | undefined;
-
 function readPackageVersion(): string {
-  if (cachedVersion) {
-    return cachedVersion;
-  }
-
-  if (typeof __AI_ACCESS_VERSION__ === 'string' && __AI_ACCESS_VERSION__.length > 0) {
-    cachedVersion = __AI_ACCESS_VERSION__;
-    return cachedVersion;
-  }
-
-  cachedVersion = '0.0.0';
-  return cachedVersion;
+  return packageVersion();
 }
 
 export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): AiAccessStatus {

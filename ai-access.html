@@ -3,8 +3,7 @@
    * Thin loader for the AI Access editor sidebar.
    * Logic lives at GET /mcp/editor/ai-access-sidebar.js (Cache-Control: no-store)
    * so companion-HTML caching does not freeze sidebar UX across plugin updates.
-   *
-   * Keep EDITOR_SIDEBAR_ASSET_VERSION in sync with src/plugin/editor-sidebar.ts.
+   * Asset version is derived from package.json at build time.
    */
   (function () {
     if (typeof RED === 'undefined' || !RED.sidebar || !RED.sidebar.addTab) {
@@ -15,7 +14,7 @@
     }
     window.__com55AiAccessSidebarLoading = true;
 
-    var EDITOR_SIDEBAR_ASSET_VERSION = 'r4-1';
+    var EDITOR_SIDEBAR_ASSET_VERSION = '0.1.0';
     var root = (RED.settings.httpAdminRoot || '/').replace(/\/$/, '');
     var src =
       (root || '') +

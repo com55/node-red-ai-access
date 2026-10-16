@@ -79,6 +79,12 @@ export {
 export { createPluginServices } from './services.js';
 export { MAX_PROPOSAL_JSON_BYTES } from './ai-ops.js';
 export { SettingsStore } from '../storage/settings-store.js';
+export {
+  EDITOR_SIDEBAR_ASSET_VERSION,
+  renderEditorSidebarJs,
+  renderEditorSidebarLoaderHtml,
+} from './editor-sidebar.js';
+export { packageVersion } from './package-version.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
@@ -259,7 +265,7 @@ export function registerRoutes(
     limiter,
     requireAdminSession(RED, 'api'),
     requireAiFeatures(RED),
-    listLogsHandler(services.auditLog)
+    listLogsHandler(services.auditLog, services.linkStore)
   );
 
   // JSON 404 for unmatched /mcp/api/v1 routes (never HTML "Cannot GET").
