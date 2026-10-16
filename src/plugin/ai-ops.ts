@@ -16,6 +16,7 @@ import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../sto
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
+import { throwValidationIssues, validateFlowTab, type ValidationIssue } from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   autoGenerateProposalTitle,
@@ -263,7 +264,7 @@ export async function submitReplaceFlowProposal(
   adapter: FlowAdapter,
   presentOptions: PresentProposalOptions = {},
   nodeTypesAdapter?: NodeTypesAdapter
-): Promise<PresentedProposal> {
+): Promise<PresentedProposal & { warnings?: ValidationIssue[] }> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
   const payload = body.payload;
@@ -303,10 +304,7 @@ export async function submitReplaceFlowProposal(
 
   const safeFlow = sanitizeFlowTab(flow) as Partial<FlowTab>;
 
-  if (nodeTypesAdapter) {
-    await assertKnownNodeTypes(nodeTypesAdapter, safeFlow);
-  }
-
+  // Rev before types (stale rev fails without palette lookup).
   const current = await adapter.getFlows();
   if (current.rev !== safeExpectedRev) {
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
@@ -319,6 +317,16 @@ export async function submitReplaceFlowProposal(
     throw new FlowRevisionConflictError(safeExpectedRev, baseSnapshot.rev, 'submit_proposal');
   }
   const safeBaseFlow = sanitizeFlowTab(baseSnapshot.flow) as Partial<FlowTab>;
+
+  if (nodeTypesAdapter) {
+    await assertKnownNodeTypes(nodeTypesAdapter, safeFlow);
+  }
+
+  const { errors: flowErrors, warnings: flowWarnings } = await validateFlowTab(safeFlow, {
+    flowId: safeFlowId,
+    ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
+  });
+  throwValidationIssues(flowErrors);
 
   const createdBy: {
     kind: 'access-link';
@@ -359,6 +367,9 @@ export async function submitReplaceFlowProposal(
     ...(flowLabel ? { flowLabel } : {}),
   });
 
+  if (flowWarnings.length > 0) {
+    return { ...presented, warnings: flowWarnings };
+  }
   return presented;
 }
 

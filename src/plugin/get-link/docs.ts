@@ -35,7 +35,12 @@ bodies — no URL length limits and no chunked drafts. Use this **GET link
 
 The path token in this URL is **get_link only**. It will **not** work as a
 Bearer on REST or MCP. Ask the owner for a separate **rest** or **mcp** token
-from the Access links page.
+from the Access links page (\`/mcp\` → Access links → create \`kind=rest\` or
+\`kind=mcp\`).
+
+**What to tell the user** (copy/paste when you get \`wrong_token_kind\`):
+> Please open Node-RED → /mcp → Access links and create a kind=rest or kind=mcp
+> token (or a get_link URL if that is what I asked for), then send it to me.
 
 - REST: \`${rest}\` with \`Authorization: Bearer <rest-token>\` (**rest** kind —
   not this path token)
@@ -410,7 +415,7 @@ function docsErrorsAndAlso(): string {
 | \`node_type_not_found\` | Unknown type on \`./node-types/<type>\` | List types or search palette; ask user to install |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
 | \`link_create_not_supported\` | Attempted create/list/revoke under \`./links\` | Ask admin to mint via \`POST /mcp/api/v1/links\` — GET links cannot create tokens |
-| \`wrong_token_kind\` | Path token is rest/mcp, not get_link | Ask user for a get_link URL |
+| \`wrong_token_kind\` | Path token is rest/mcp, not get_link | Ask owner: Node-RED /mcp → Access links → create kind=get_link; tell the user that sentence from the response \`tellUser\` field |
 
 All JSON responses use \`Cache-Control: no-store\`. Never put secrets in query
 strings you will paste publicly beyond this temporary link.

@@ -183,6 +183,9 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(status.headers['cache-control']).toMatch(/no-store/);
     expect(status.body.caller.kind).toBe('access-link');
     expect(status.body.caller.label).toBe('docs');
+    expect(status.body.caller.tokenKind).toBe('get_link');
+    expect(status.body.caller.baseUrls.api).toBeUndefined();
+    expect(status.body.caller.baseUrls.rpc).toBeUndefined();
 
     const flows = await request(app).get(`/mcp/a/${link.token}/flows`);
     expect(flows.status).toBe(200);

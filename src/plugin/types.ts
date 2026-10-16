@@ -67,6 +67,8 @@ export interface AiAccessStatusCallerBaseUrls {
 export interface AiAccessStatusCallerAccessLink {
   kind: 'access-link';
   linkId: string;
+  /** Token surface this Bearer was minted for (`get_link` | `rest` | `mcp`). */
+  tokenKind: AccessLinkKind;
   label?: string;
   /** ISO-8601 expiry of this access link. */
   expiresAt?: string;
@@ -75,8 +77,11 @@ export interface AiAccessStatusCallerAccessLink {
    * Example: `status:read`, `flows:read`, `proposals:create`, `proposals:read-own`.
    */
   permissions?: string[];
-  /** Absolute admin paths for REST, MCP, OpenAPI, and discovery. */
-  baseUrls?: AiAccessStatusCallerBaseUrls;
+  /**
+   * Absolute admin paths this token can use.
+   * Surfaces the token cannot call are omitted (not merely marked).
+   */
+  baseUrls?: Partial<AiAccessStatusCallerBaseUrls>;
 }
 
 export type AiAccessStatusCaller = AiAccessStatusCallerAdmin | AiAccessStatusCallerAccessLink;

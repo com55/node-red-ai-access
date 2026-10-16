@@ -456,6 +456,9 @@ describe('requireAccessLink middleware', () => {
       actualKind: 'get_link',
     });
     expect(typeof wrong.body.hint).toBe('string');
+    expect(wrong.body.hint).toMatch(/Access links/);
+    expect(typeof wrong.body.tellUser).toBe('string');
+    expect(wrong.body.tellUser).toMatch(/Access links/);
 
     const ok = await request(app).get('/rest-probe').set('Authorization', `Bearer ${rest.token}`);
     expect(ok.status).toBe(200);

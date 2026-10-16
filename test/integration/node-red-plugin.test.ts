@@ -350,12 +350,12 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
       kind: 'access-link',
       linkId: link.id,
       label: 'status-link',
+      tokenKind: 'rest',
     });
     expect(typeof res.body.caller.expiresAt).toBe('string');
     expect(Array.isArray(res.body.caller.permissions)).toBe(true);
-    expect(res.body.caller.baseUrls).toMatchObject({
+    expect(res.body.caller.baseUrls).toEqual({
       api: '/mcp/api/v1',
-      rpc: '/mcp/rpc',
       openapi: '/mcp/api/v1/openapi.yaml',
       discovery: '/mcp/api/v1',
     });
@@ -544,7 +544,8 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
             name: 'out',
             x: 480,
             y: 120,
-            wires: [[]],
+            // debug has 0 outputs — wires must be []
+            wires: [],
           },
         ],
       };

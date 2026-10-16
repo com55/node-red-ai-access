@@ -87,9 +87,11 @@ export function createProposalHandler(
         nodeTypesAdapter
       );
       const siblings = siblingsOnSameRev(store, proposal);
+      const warnings = 'warnings' in proposal ? proposal.warnings : undefined;
       res.status(201).json({
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         ...siblingWarningFields(siblings),
+        ...(warnings && warnings.length > 0 ? { warnings } : {}),
       });
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error);

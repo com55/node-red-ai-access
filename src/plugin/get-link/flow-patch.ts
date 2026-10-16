@@ -4,6 +4,15 @@
 
 import type { FlowAdapter, FlowNode, FlowTab } from '../../runtime/types.js';
 import { AiOpsValidationError } from '../ai-ops.js';
+import {
+  assertValidWiresShape,
+  collectConfigWarnings,
+  collectMissingConfigIssues,
+  collectWireIssues,
+  collectZMismatchIssues,
+  throwValidationIssues,
+  type ValidationIssue,
+} from '../flow-validate.js';
 import { assertKnownNodeType, requireNodeTypeName, type NodeTypesAdapter } from '../node-types.js';
 
 export interface NodePropertyEdit {
@@ -164,18 +173,57 @@ export interface ApplyFlowNodeOpsOptions {
   expectedRev?: string;
 }
 
+/** Collect patch-shape issues for every op (no I/O). */
+function collectOpShapeIssues(ops: FlowNodeOp[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const op of ops) {
+    if (op.op === 'add') {
+      const addNode: unknown = op.node;
+      if (typeof addNode !== 'object' || addNode === null || Array.isArray(addNode)) {
+        issues.push({
+          code: 'invalid_node',
+          error: `add op needs node as an object (got ${describeNonObjectNode(addNode)})`,
+        });
+        continue;
+      }
+      const node = addNode as FlowNode;
+      if (!node.id || typeof node.id !== 'string') {
+        issues.push({ code: 'missing_node_id', error: 'add op needs node.id' });
+      }
+      try {
+        requireNodeTypeName(node.type, 'node.type');
+      } catch (e) {
+        if (e instanceof AiOpsValidationError) {
+          issues.push({ code: e.code, error: e.message, nodeId: node.id });
+        }
+      }
+      if ('wires' in node) {
+        assertValidWiresShape(
+          node.wires,
+          issues,
+          typeof node.id === 'string' ? node.id : undefined
+        );
+      }
+    } else if (op.op === 'set' && op.set && typeof op.set === 'object' && 'wires' in op.set) {
+      assertValidWiresShape(op.set.wires, issues, op.nodeId);
+    }
+  }
+  return issues;
+}
+
 /**
  * Apply set / add / remove / replace_text ops onto a live flow tab.
  * Multiple ops apply in order (later ops see earlier results).
  *
- * Order: validate patch shape → load flow → optional rev check → node types → apply.
+ * Order: patch shape → load flow → rev check → validate all ops (wires/z/types)
+ * collecting every error in `errors[]` → apply.
  */
 export async function applyFlowNodeOps(
   adapter: FlowAdapter,
   flowId: string,
   ops: FlowNodeOp[],
   options: ApplyFlowNodeOpsOptions = {}
-): Promise<{ expectedRev: string; flow: FlowTab }> {
+): Promise<{ expectedRev: string; flow: FlowTab; warnings?: ValidationIssue[] }> {
   if (!flowId) {
     throw new AiOpsValidationError('flow id is required', 'missing_flow_id');
   }
@@ -183,22 +231,13 @@ export async function applyFlowNodeOps(
     throw new AiOpsValidationError('At least one node edit is required', 'missing_edits');
   }
 
-  // Patch shape first (before I/O or palette) so bad payloads fail cheaply.
-  for (const op of ops) {
-    if (op.op === 'add') {
-      // Defense in depth: parseAddOp should already reject non-objects.
-      const addNode: unknown = op.node;
-      assertAddNodeObject(addNode);
-      if (!addNode.id || typeof addNode.id !== 'string') {
-        throw new AiOpsValidationError('add op needs node.id', 'missing_node_id');
-      }
-      requireNodeTypeName(addNode.type, 'node.type');
-    }
-  }
+  // 1) Patch shape before I/O or palette — accumulate every shape error.
+  const shapeIssues = collectOpShapeIssues(ops);
+  throwValidationIssues(shapeIssues);
 
+  // 2) Load + rev check before types / wire semantics.
   const snapshot = await adapter.getFlow(flowId);
   if (options.expectedRev !== undefined && snapshot.rev !== options.expectedRev) {
-    // Return live rev without applying or checking palette types.
     const nodes: FlowNode[] = Array.isArray(snapshot.flow.nodes) ? [...snapshot.flow.nodes] : [];
     return {
       expectedRev: snapshot.rev,
@@ -212,22 +251,60 @@ export async function applyFlowNodeOps(
   }
 
   const nodes: FlowNode[] = Array.isArray(snapshot.flow.nodes) ? [...snapshot.flow.nodes] : [];
+  const configs: FlowNode[] = Array.isArray(snapshot.flow.configs)
+    ? [...snapshot.flow.configs]
+    : [];
   const flow: FlowTab = {
     ...snapshot.flow,
     id: snapshot.flow.id,
     type: snapshot.flow.type ?? 'tab',
     nodes,
+    configs,
   };
 
+  // 3) Dry-run apply to validate z / existence / types, then wire+config on result.
+  const preview = nodes.map(n => ({ ...n }));
+  const previewIssues: ValidationIssue[] = [];
   for (const op of ops) {
-    if (op.op === 'add' && options.nodeTypes) {
-      await assertKnownNodeType(options.nodeTypes, op.node.type);
+    try {
+      if (op.op === 'add' && options.nodeTypes) {
+        await assertKnownNodeType(options.nodeTypes, op.node.type);
+      }
+      applyOneNodeOp(preview, flowId, op);
+    } catch (e) {
+      if (e instanceof AiOpsValidationError) {
+        previewIssues.push({
+          code: e.code,
+          error: e.message,
+          ...(e.statusCode !== 400 ? { statusCode: e.statusCode } : {}),
+          ...(e.details ?? {}),
+        });
+      } else {
+        throw e;
+      }
     }
+  }
+  previewIssues.push(...collectZMismatchIssues(preview, flowId));
+  previewIssues.push(...(await collectWireIssues(preview, options.nodeTypes)));
+  if (options.nodeTypes) {
+    previewIssues.push(...(await collectMissingConfigIssues(preview, configs, options.nodeTypes)));
+  }
+  throwValidationIssues(previewIssues);
+
+  // 4) Apply for real (same ops; validation already passed).
+  for (const op of ops) {
     applyOneNodeOp(nodes, flowId, op);
   }
 
-  assertWireTargetsExist(nodes);
-  return { expectedRev: snapshot.rev, flow };
+  let warnings: ValidationIssue[] | undefined;
+  if (options.nodeTypes) {
+    const soft = await collectConfigWarnings(nodes, configs, options.nodeTypes);
+    if (soft.length > 0) {
+      warnings = soft;
+    }
+  }
+
+  return { expectedRev: snapshot.rev, flow, ...(warnings ? { warnings } : {}) };
 }
 
 function requireNodeIndex(nodes: FlowNode[], nodeId: string, flowId: string): number {
@@ -310,59 +387,13 @@ function applyOneNodeOp(nodes: FlowNode[], flowId: string, op: FlowNodeOp): void
       );
     }
     if (key === 'wires') {
-      assertValidWiresValue(value);
+      const wireIssues: ValidationIssue[] = [];
+      assertValidWiresShape(value, wireIssues, op.nodeId);
+      throwValidationIssues(wireIssues);
     }
     next[key] = value;
   }
   nodes[idx] = next;
-}
-
-function assertValidWiresValue(value: unknown): void {
-  if (!Array.isArray(value)) {
-    throw new AiOpsValidationError(
-      'wires must be an array of output ports (each a list of node ids)',
-      'invalid_wires'
-    );
-  }
-  for (const port of value) {
-    if (!Array.isArray(port)) {
-      throw new AiOpsValidationError(
-        'wires must be an array of output ports (each a list of node ids)',
-        'invalid_wires'
-      );
-    }
-    for (const target of port) {
-      if (typeof target !== 'string' || target.length === 0) {
-        throw new AiOpsValidationError(
-          'wires targets must be non-empty node id strings',
-          'invalid_wires'
-        );
-      }
-    }
-  }
-}
-
-/** Every wire target must refer to a node present after this patch. */
-function assertWireTargetsExist(nodes: FlowNode[]): void {
-  const ids = new Set(nodes.map(n => n.id));
-  for (const node of nodes) {
-    if (!('wires' in node)) {
-      continue;
-    }
-    assertValidWiresValue(node.wires);
-    const wires = node.wires as unknown[][];
-    for (const port of wires) {
-      for (const target of port) {
-        const id = String(target);
-        if (!ids.has(id)) {
-          throw new AiOpsValidationError(
-            `Wire target '${id}' on node '${node.id}' was not found in this flow (add the node in the same patch or use an existing id)`,
-            'invalid_wires'
-          );
-        }
-      }
-    }
-  }
 }
 
 function stringifyQueryValue(value: unknown): string | undefined {

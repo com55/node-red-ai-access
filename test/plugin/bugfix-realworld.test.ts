@@ -249,10 +249,12 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
       kind: 'access-link',
       linkId: link.id,
       label: 'claude',
+      tokenKind: 'rest',
     });
     expect(status.body.caller.expiresAt).toBeTruthy();
     expect(status.body.caller.permissions).toContain('flows:read');
     expect(status.body.caller.baseUrls.api).toBe('/mcp/api/v1');
+    expect(status.body.caller.baseUrls.rpc).toBeUndefined();
 
     const flows = await request(app)
       .get('/mcp/api/v1/flows')

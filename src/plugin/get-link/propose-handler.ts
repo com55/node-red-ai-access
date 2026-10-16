@@ -67,6 +67,10 @@ const PROPOSE_ERROR_HINTS: Record<string, string> = {
   invalid_node_type:
     'node.type must be a string (not a number or object). Use the palette type name exactly.',
   invalid_node: 'add op needs node as a JSON object: { id, type, … } — not a string or array.',
+  z_mismatch: 'Each node.z must match the flow id (tab id) you are editing.',
+  missing_config_node:
+    'Add or reference the required config node (candidates listed); mqtt in needs mqtt-broker, etc.',
+  validation_failed: 'Fix every entry in errors[] and retry the propose/submit.',
 };
 
 function proposeErrorHint(code: string): string | undefined {
@@ -367,11 +371,13 @@ export function getLinkProposeHandler(
       );
       const presented = presentProposalForApi(proposal, { ...presentOpts, include });
       const siblings = siblingsOnSameRev(proposalStore, proposal);
+      const warnings = 'warnings' in proposal ? proposal.warnings : undefined;
       res.status(201).json({
         ok: true,
         proposal: presented,
         ...(summary ? { summary } : {}),
         ...siblingWarningFields(siblings),
+        ...(warnings && warnings.length > 0 ? { warnings } : {}),
         hint:
           `Waiting for human approval. Tell the user about "${presented.displayName}" ` +
           `(${presented.reviewUrl}). Poll GET …/proposals/<id> for status.`,

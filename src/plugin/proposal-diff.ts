@@ -111,6 +111,8 @@ export interface DiffSections {
   added: PresenceNodeDiff[];
   removed: PresenceNodeDiff[];
   modified: ModifiedNodeDiff[];
+  /** Soft validation notes (e.g. optional unset config refs). */
+  warnings?: { code: string; error: string; [key: string]: unknown }[];
 }
 
 export interface ProposalDiffResult extends DiffSections {
@@ -221,11 +223,11 @@ function nodeProperties(node: FlowNode, allNodes: Map<string, FlowNode>): Presen
       continue;
     }
     if (key === 'wires') {
-      const labels = describeWires(node, allNodes);
+      const structured = describeWiresStructured(node, allNodes);
       properties.push({
         key: 'wires',
         kind: 'scalar',
-        value: labels ?? node.wires ?? null,
+        value: structured.length > 0 ? structured : (node.wires ?? null),
       });
       continue;
     }
@@ -234,30 +236,43 @@ function nodeProperties(node: FlowNode, allNodes: Map<string, FlowNode>): Presen
   return properties;
 }
 
-/** Resolve wire target ids to human node names when possible. */
-function describeWires(node: FlowNode, allNodes: Map<string, FlowNode>): string | undefined {
+/** One output port with resolved target nodes (id + display name). */
+export interface WirePortDescription {
+  port: number;
+  to: { id: string; name: string }[];
+}
+
+/**
+ * Describe wires as `[{port, to:[{id,name}]}]` so diffs keep structure
+ * (not a flat name-only string).
+ */
+export function describeWiresStructured(
+  node: FlowNode,
+  allNodes: Map<string, FlowNode>
+): WirePortDescription[] {
   const wires = node.wires;
   if (!Array.isArray(wires) || wires.length === 0) {
-    return undefined;
+    return [];
   }
-  const labels: string[] = [];
-  for (const port of wires) {
+  const result: WirePortDescription[] = [];
+  wires.forEach((port, portIndex) => {
     if (!Array.isArray(port)) {
-      continue;
+      return;
     }
+    const to: { id: string; name: string }[] = [];
     for (const targetId of port) {
       if (typeof targetId !== 'string' || !targetId) {
         continue;
       }
       const target = allNodes.get(targetId);
-      if (target) {
-        labels.push(nodeName(target) ?? target.type);
-      } else {
-        labels.push(targetId);
-      }
+      to.push({
+        id: targetId,
+        name: target ? (nodeName(target) ?? target.type) : targetId,
+      });
     }
-  }
-  return labels.length > 0 ? labels.join(', ') : undefined;
+    result.push({ port: portIndex, to });
+  });
+  return result;
 }
 
 const KEY_FIELD_TEXT_KEYS = new Set(['func', 'template', 'code', 'text']);
@@ -268,9 +283,9 @@ function buildKeyFields(node: FlowNode, allNodes: Map<string, FlowNode>): Presen
   if (name) {
     fields.push({ key: 'name', kind: 'scalar', value: name });
   }
-  const wireLabels = describeWires(node, allNodes);
-  if (wireLabels) {
-    fields.push({ key: 'wires', kind: 'scalar', value: wireLabels });
+  const wireStruct = describeWiresStructured(node, allNodes);
+  if (wireStruct.length > 0) {
+    fields.push({ key: 'wires', kind: 'scalar', value: wireStruct });
   }
   for (const key of KEY_FIELD_TEXT_KEYS) {
     if (!(key in node)) {
@@ -423,13 +438,24 @@ export function buildDiffSections(
   const removed: PresenceNodeDiff[] = [];
   const modified: ModifiedNodeDiff[] = [];
 
-  for (const [id, node] of afterNodes) {
-    if (!beforeNodes.has(id)) {
+  // Preserve flow/wiring order (nodes array order) — do not sort added by id.
+  for (const node of afterFlow.nodes ?? []) {
+    if (!beforeNodes.has(node.id)) {
       added.push(toPresenceNode(node, 'added', afterLabel, afterNodes));
     }
   }
-  for (const [id, node] of beforeNodes) {
-    if (!afterNodes.has(id)) {
+  for (const node of afterFlow.configs ?? []) {
+    if (!beforeNodes.has(node.id)) {
+      added.push(toPresenceNode(node, 'added', afterLabel, afterNodes));
+    }
+  }
+  for (const node of beforeFlow.nodes ?? []) {
+    if (!afterNodes.has(node.id)) {
+      removed.push(toPresenceNode(node, 'removed', beforeLabel, beforeNodes));
+    }
+  }
+  for (const node of beforeFlow.configs ?? []) {
+    if (!afterNodes.has(node.id)) {
       removed.push(toPresenceNode(node, 'removed', beforeLabel, beforeNodes));
     }
   }
@@ -454,8 +480,7 @@ export function buildDiffSections(
     }
   }
 
-  added.sort((a, b) => a.id.localeCompare(b.id));
-  removed.sort((a, b) => a.id.localeCompare(b.id));
+  // Modified can stay id-sorted for stable UI; added/removed keep patch order.
   modified.sort((a, b) => a.id.localeCompare(b.id));
 
   return {
