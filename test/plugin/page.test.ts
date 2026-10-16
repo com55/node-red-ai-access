@@ -160,8 +160,16 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/id="link-ttl-reset-note"|ttl-reset-note/);
     expect(res.text).toMatch(/id="link-ttl-warn"|Long-lived tokens stay usable longer/);
     expect(res.text).toMatch(/linkCopyMaterial|normalizeLinkKind|kindBadgeHtml/);
-    expect(res.text).toMatch(/Copy REST Bearer token|REST Bearer token/);
-    expect(res.text).toMatch(/MCP token for \/mcp\/rpc/);
+    expect(res.text).toMatch(/Copy REST prompt for AI|restPromptForAi/);
+    expect(res.text).toMatch(
+      /If you cannot send HTTP requests with custom headers \(e\.g\. a web chat app\), stop and ask the user to create a GET link instead; do not retry\./
+    );
+    expect(res.text).toMatch(/mcp-setup-panel|renderMcpSetupPanel|mcpSetupSnippets/);
+    expect(res.text).toMatch(
+      /Copy Claude Desktop JSON|Copy Cursor mcp\.json|Copy VS Code MCP JSON/
+    );
+    expect(res.text).toMatch(/If your AI app cannot add MCP servers/);
+    expect(res.text).toMatch(/Copy GET link for AI chat/);
     expect(res.text).toMatch(/kind-badge|data-kind/);
     expect(res.text).toMatch(/wrong_token_kind|separate tokens/);
     expect(res.text).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);

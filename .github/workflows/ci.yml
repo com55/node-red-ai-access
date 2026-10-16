@@ -45,6 +45,9 @@ jobs:
       - name: Check code formatting
         run: yarn format:check
 
+      - name: Check MCP tools docs are fresh
+        run: yarn check:mcp-tools
+
       - name: Security audit
         run: yarn npm audit --environment production
         continue-on-error: true

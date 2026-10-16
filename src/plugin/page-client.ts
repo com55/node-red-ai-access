@@ -854,7 +854,12 @@ function pageClientScriptPartATabs(): string {
       '<div id="token-once" class="token-once" hidden>' +
       '<p id="token-kind-label" class="token-kind-label" hidden></p>' +
       '<p id="token-docs-hint" class="muted"></p>' +
-      '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy link for your AI assistant</button>' +
+      '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy GET link for AI chat</button>' +
+      '<div id="mcp-setup-panel" class="mcp-setup-panel" hidden>' +
+      '<p class="muted mcp-setup-fallback">If your AI app cannot add MCP servers, create a REST or GET link instead.</p>' +
+      '<div class="mcp-setup-tabs" role="tablist" aria-label="MCP client setup" id="mcp-setup-tabs"></div>' +
+      '<div id="mcp-setup-body" class="mcp-setup-body"></div>' +
+      '</div>' +
       '<details class="advanced-block" id="token-dev-details">' +
       '<summary>For developers</summary>' +
       '<p id="token-dev-blurb" class="muted">Details reusable while this token is active — also available via Copy in the table.</p>' +
@@ -904,8 +909,8 @@ function pageClientScriptPartA2(): string {
           var hasCopy = !!(material && material.primary);
           var copyDisabled = hasCopy ? '' : ' disabled title="Copy unavailable — create a new token"';
           var copyLabel = kind === 'get_link'
-            ? 'Copy link'
-            : (kind === 'rest' ? 'Copy REST Bearer' : 'Copy MCP token');
+            ? 'Copy GET link'
+            : (kind === 'rest' ? 'Copy REST prompt' : 'Copy MCP Bearer');
           return '<tr data-id="' + esc(l.id) + '" data-kind="' + esc(kind) + '">' +
             '<td>' + timeCell(l.createdAt) + '</td>' +
             '<td>' + kindBadgeHtml(kind) + '</td>' +
@@ -915,7 +920,8 @@ function pageClientScriptPartA2(): string {
             '<td class="row-actions">' +
             '<button type="button" class="action secondary copy-link" data-id="' + esc(l.id) + '"' +
             ' data-kind="' + esc(kind) + '"' +
-            ' data-copy="' + esc(material.primary) + '"' +
+            ' data-token="' + esc(l.token || '') + '"' +
+            ' data-url="' + esc(l.url || '') + '"' +
             ' data-label="' + esc(copyLabel) + '"' +
             copyDisabled + '>' + esc(copyLabel) + '</button> ' +
             '<button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button>' +
@@ -923,15 +929,18 @@ function pageClientScriptPartA2(): string {
         }).join('') + '</tbody></table>';
       list.querySelectorAll('.copy-link').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          var text = btn.getAttribute('data-copy') || '';
           var kind = normalizeLinkKind(btn.getAttribute('data-kind'));
+          var material = linkCopyMaterial(
+            kind,
+            btn.getAttribute('data-token') || '',
+            btn.getAttribute('data-url') || ''
+          );
+          var text = material.primary || '';
           if (!text) {
             showFlash(flash, 'Clipboard unavailable — create a new token to copy.', false);
             return;
           }
-          var okMsg = kind === 'get_link'
-            ? 'Link copied.'
-            : (kind === 'rest' ? 'REST Bearer token copied.' : 'MCP token copied.');
+          var okMsg = material.copiedOk || 'Copied.';
           copyTextToClipboard(text).then(function () {
             markCopied(btn, flash, okMsg);
             showToast(okMsg, true);
@@ -999,6 +1008,71 @@ function pageClientScriptPartB(): string {
    * Clipboard + flash text per token kind. get_link never suggests using the
    * path token as REST/MCP Bearer (those need separate rest/mcp tokens).
    */
+  function restPromptForAi(token, base) {
+    var tok = String(token || '');
+    var auth = tok ? ('Authorization: Bearer ' + tok) : 'Authorization: Bearer <token>';
+    return [
+      'You have temporary Node-RED AI Access via REST.',
+      '',
+      'Base URL: ' + base,
+      auth,
+      '',
+      'OpenAPI: ' + base + '/openapi.yaml',
+      'Discovery guide: ' + base,
+      '',
+      'You may read flows and submit proposals. A human owner must approve every change before it is deployed.',
+      '',
+      'If you cannot send HTTP requests with custom headers (e.g. a web chat app), stop and ask the user to create a GET link instead; do not retry.'
+    ].join('\\n');
+  }
+
+  function mcpSetupSnippets(token, rpcUrl) {
+    var tok = String(token || 'aia_…');
+    var authLine = 'Authorization: Bearer ' + tok;
+    var claudeDesktop = JSON.stringify({
+      mcpServers: {
+        'node-red-ai-access': {
+          url: rpcUrl,
+          headers: { Authorization: 'Bearer ' + tok }
+        }
+      }
+    }, null, 2);
+    var cursorJson = JSON.stringify({
+      mcpServers: {
+        'node-red-ai-access': {
+          url: rpcUrl,
+          headers: { Authorization: 'Bearer ' + tok }
+        }
+      }
+    }, null, 2);
+    var vscodeJson = JSON.stringify({
+      servers: {
+        'node-red-ai-access': {
+          type: 'http',
+          url: rpcUrl,
+          headers: { Authorization: 'Bearer ' + tok }
+        }
+      }
+    }, null, 2);
+    var claudeCli =
+      'claude mcp add --transport http node-red-ai-access ' + rpcUrl +
+      ' --header "Authorization: Bearer ' + tok + '"';
+    var generic = [
+      'MCP Streamable HTTP',
+      'URL: ' + rpcUrl,
+      authLine,
+      '',
+      'Send JSON-RPC over POST with Accept: application/json, text/event-stream.'
+    ].join('\\n');
+    return {
+      'claude-desktop': { title: 'Claude Desktop', label: 'Copy Claude Desktop JSON', text: claudeDesktop },
+      cursor: { title: 'Cursor', label: 'Copy Cursor mcp.json', text: cursorJson },
+      vscode: { title: 'VS Code', label: 'Copy VS Code MCP JSON', text: vscodeJson },
+      'claude-cli': { title: 'Claude Code CLI', label: 'Copy Claude Code CLI command', text: claudeCli },
+      generic: { title: 'Streamable HTTP', label: 'Copy Streamable HTTP details', text: generic }
+    };
+  }
+
   function linkCopyMaterial(kind, token, url) {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
     var base = origin + apiBase;
@@ -1006,49 +1080,44 @@ function pageClientScriptPartB(): string {
     var k = normalizeLinkKind(kind);
     var tok = String(token || '');
     if (k === 'rest') {
-      var restPrimary = tok ? ('Authorization: Bearer ' + tok) : '';
+      var restPrompt = tok ? restPromptForAi(tok, base) : '';
       return {
         kind: 'rest',
-        label: 'REST Bearer token',
-        buttonLabel: 'Copy REST Bearer token',
-        primary: restPrimary,
-        hint: 'Use this as Authorization on /mcp/api/v1. It is a rest token — not a chat GET link and not for /mcp/rpc. Copy again from the table while it is active.',
-        flashOk: 'REST Bearer token created.',
-        copiedOk: 'Copied REST Bearer token.',
-        block: [
-          'REST Bearer token (kind=rest)',
-          restPrimary,
-          '',
-          'REST API base: ' + base,
-          'OpenAPI: GET ' + base + '/openapi.yaml',
-          '',
-          'Do not use this token on /mcp/a/… or /mcp/rpc — mint get_link or mcp tokens for those.'
-        ].join('\\n'),
+        label: 'REST prompt for AI',
+        buttonLabel: 'Copy REST prompt for AI',
+        primary: restPrompt,
+        hint: 'Paste this prompt into your AI. It includes the REST base URL, Bearer token, OpenAPI, and discovery guide. This is a rest token — not a chat GET link and not for /mcp/rpc.',
+        flashOk: 'REST token created — copy the prompt for your AI.',
+        copiedOk: 'Copied REST prompt for AI.',
+        block: restPrompt || ('REST Bearer (kind=rest)\\nAuthorization: Bearer <token>\\nBase: ' + base),
         tokenDisplay: tok,
         showDev: true
       };
     }
     if (k === 'mcp') {
       var mcpPrimary = tok ? ('Authorization: Bearer ' + tok) : '';
+      var snippets = mcpSetupSnippets(tok, rpc);
       var mcpSnippet = [
         'MCP token for /mcp/rpc (kind=mcp)',
         mcpPrimary,
         'POST ' + rpc,
         '',
-        'Example header:',
-        'Authorization: Bearer ' + (tok || 'aia_…')
+        'Use the setup tabs above for client-specific config.',
+        '',
+        'If your AI app cannot add MCP servers, create a REST or GET link instead.'
       ].join('\\n');
       return {
         kind: 'mcp',
-        label: 'MCP token for /mcp/rpc',
-        buttonLabel: 'Copy MCP token for /mcp/rpc',
+        label: 'MCP setup for /mcp/rpc',
+        buttonLabel: 'Copy MCP Bearer header',
         primary: mcpPrimary,
-        hint: 'Use this Bearer on POST /mcp/rpc only. It is an mcp token — not a chat GET link and not for REST. Copy again from the table while it is active.',
-        flashOk: 'MCP token created.',
-        copiedOk: 'Copied MCP token for /mcp/rpc.',
-        block: mcpSnippet + '\\n\\nDo not use this token on /mcp/a/… or /mcp/api/v1 — mint get_link or rest tokens for those.',
+        hint: 'Configure your MCP client with the tabs below (real host + token). This mcp token works only on POST /mcp/rpc — not as a chat GET link and not for REST.',
+        flashOk: 'MCP token created — use a setup tab to copy client config.',
+        copiedOk: 'Copied MCP Bearer header.',
+        block: mcpSnippet,
         tokenDisplay: tok,
-        showDev: true
+        showDev: true,
+        mcpSnippets: snippets
       };
     }
     var getLink = url || (tok
@@ -1057,11 +1126,11 @@ function pageClientScriptPartB(): string {
     return {
       kind: 'get_link',
       label: 'GET link (chat paste)',
-      buttonLabel: 'Copy link for your AI assistant',
+      buttonLabel: 'Copy GET link for AI chat',
       primary: getLink,
       hint: 'Paste this GET link in your AI chat. It is get_link only — REST and MCP need separate tokens from this page. While active you can copy it again from the table.',
       flashOk: 'GET link created.',
-      copiedOk: 'Copied link for your AI assistant.',
+      copiedOk: 'Copied GET link for AI chat.',
       block: [
         'Self-contained GET link (kind=get_link, preferred for chat AIs that can only HTTP GET):',
         getLink,
@@ -1070,7 +1139,7 @@ function pageClientScriptPartB(): string {
         '',
         'This path token does not work as REST or MCP Bearer — create a REST Bearer or MCP token on this page for those clients.',
         '',
-        'If you get 401 access_link_missing, access_link_invalid, or wrong_token_kind, ask the user for a new token of the right kind.'
+        'If you get 401 access_link_missing, access_link_invalid, token_expired, or wrong_token_kind, ask the user for a new token of the right kind.'
       ].join('\\n'),
       tokenDisplay: tok || getLink,
       showDev: true
@@ -1126,31 +1195,48 @@ function pageClientScriptPartB(): string {
       var devBlurb = $('token-dev-blurb');
       if (devBlurb) {
         if (createdKind === 'rest') {
-          devBlurb.textContent = 'REST Bearer and API base (reusable while active — also via Copy REST Bearer in the table).';
+          devBlurb.textContent = 'REST prompt + Bearer (reusable while active — also via Copy REST prompt in the table).';
         } else if (createdKind === 'mcp') {
-          devBlurb.textContent = 'MCP Bearer for /mcp/rpc (reusable while active — also via Copy MCP token in the table).';
+          devBlurb.textContent = 'MCP Bearer for /mcp/rpc (reusable while active — also via Copy MCP Bearer in the table).';
         } else {
-          devBlurb.textContent = 'GET link details (reusable while active — also via Copy link in the table).';
+          devBlurb.textContent = 'GET link details (reusable while active — also via Copy GET link in the table).';
         }
       }
       var copyBtn = $('token-copy-btn');
-      if (copyBtn) {
-        copyBtn.textContent = material.buttonLabel;
-        copyBtn.classList.remove('copied');
-        copyBtn.disabled = !material.primary;
-        copyBtn.onclick = function () {
-          var toCopy = material.primary;
-          if (!toCopy) {
-            showFlash(flash, 'Nothing to copy — create a new token.', false);
-            return;
-          }
-          copyTextToClipboard(toCopy).then(function () {
-            markCopied(copyBtn, flash, material.copiedOk);
-            showToast(material.copiedOk, true);
-          }).catch(function () {
-            showFlash(flash, 'Clipboard unavailable — expand For developers and copy manually.', false);
-          });
-        };
+      var mcpPanel = $('mcp-setup-panel');
+      if (createdKind === 'mcp') {
+        if (copyBtn) copyBtn.hidden = true;
+        if (mcpPanel) {
+          mcpPanel.hidden = false;
+          renderMcpSetupPanel(material.mcpSnippets || {}, flash);
+        }
+      } else {
+        if (mcpPanel) {
+          mcpPanel.hidden = true;
+          var clearTabs = $('mcp-setup-tabs');
+          var clearBody = $('mcp-setup-body');
+          if (clearTabs) clearTabs.innerHTML = '';
+          if (clearBody) clearBody.innerHTML = '';
+        }
+        if (copyBtn) {
+          copyBtn.hidden = false;
+          copyBtn.textContent = material.buttonLabel;
+          copyBtn.classList.remove('copied');
+          copyBtn.disabled = !material.primary;
+          copyBtn.onclick = function () {
+            var toCopy = material.primary;
+            if (!toCopy) {
+              showFlash(flash, 'Nothing to copy — create a new token.', false);
+              return;
+            }
+            copyTextToClipboard(toCopy).then(function () {
+              markCopied(copyBtn, flash, material.copiedOk);
+              showToast(material.copiedOk, true);
+            }).catch(function () {
+              showFlash(flash, 'Clipboard unavailable — expand For developers and copy manually.', false);
+            });
+          };
+        }
       }
       if (labelInput) labelInput.value = '';
       showFlash(flash, material.flashOk, true);
@@ -1161,6 +1247,50 @@ function pageClientScriptPartB(): string {
       showFlash(flash, e.message || String(e), false);
       showToast(e.message || String(e), false);
     }
+  }
+
+  function renderMcpSetupPanel(snippets, flash) {
+    var tabsHost = $('mcp-setup-tabs');
+    var body = $('mcp-setup-body');
+    if (!tabsHost || !body) return;
+    var keys = Object.keys(snippets);
+    if (!keys.length) {
+      tabsHost.innerHTML = '';
+      body.innerHTML = '';
+      return;
+    }
+    var active = keys[0];
+    function paint() {
+      tabsHost.innerHTML = keys.map(function (key) {
+        var sn = snippets[key];
+        var selected = key === active;
+        return '<button type="button" class="mcp-setup-tab' + (selected ? ' is-active' : '') +
+          '" role="tab" aria-selected="' + (selected ? 'true' : 'false') +
+          '" data-mcp-tab="' + esc(key) + '">' + esc(sn.title) + '</button>';
+      }).join('');
+      var sn = snippets[active];
+      body.innerHTML =
+        '<pre class="mcp-setup-snippet" id="mcp-setup-snippet">' + esc(sn.text) + '</pre>' +
+        '<button type="button" class="action" id="mcp-setup-copy">' + esc(sn.label) + '</button>';
+      tabsHost.querySelectorAll('[data-mcp-tab]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          active = btn.getAttribute('data-mcp-tab') || keys[0];
+          paint();
+        });
+      });
+      var copyBtn = $('mcp-setup-copy');
+      if (copyBtn) {
+        copyBtn.onclick = function () {
+          copyTextToClipboard(sn.text).then(function () {
+            markCopied(copyBtn, flash, 'Copied ' + sn.title + ' setup.');
+            showToast('Copied ' + sn.title + ' setup.', true);
+          }).catch(function () {
+            showFlash(flash, 'Clipboard unavailable — copy the snippet manually.', false);
+          });
+        };
+      }
+    }
+    paint();
   }
 
   function flowLabelOf(p) {

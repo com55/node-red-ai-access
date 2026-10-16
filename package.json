@@ -61,6 +61,8 @@
     "test:ui": "vitest --ui --open",
     "test:coverage": "vitest run --coverage",
     "test:coverage:ui": "vitest --ui --coverage --open",
+    "generate:mcp-tools": "UPDATE_MCP_TOOLS=1 vitest run test/plugin/mcp-tools-doc.test.ts",
+    "check:mcp-tools": "vitest run test/plugin/mcp-tools-doc.test.ts",
     "prepare": "husky"
   },
   "keywords": [
