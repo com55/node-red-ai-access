@@ -354,6 +354,17 @@ describe('node-types helpers', () => {
     ).rejects.toMatchObject({ code: 'missing_node_type' });
   });
 
+  it('assertKnownNodeTypes allows nested get_flow tabs that omit type', async () => {
+    const adapter = createStaticNodeTypesAdapter(['inject', 'debug']);
+    await expect(
+      assertKnownNodeTypes(adapter, {
+        id: 'tab-1',
+        label: 'Main',
+        nodes: [{ id: 'n1', type: 'inject', z: 'tab-1' }],
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it('paletteMatchScore ranks exact contrib/node suffix above keyword stacks', () => {
     const exact = paletteMatchScore('modbus', 'node-red-contrib-modbus', ['modbus'], 'modbus');
     const stacked = paletteMatchScore(

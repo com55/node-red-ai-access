@@ -1423,28 +1423,40 @@ export async function assertKnownNodeTypes(
     );
   };
 
-  const visit = (node: unknown): void => {
+  const visitNodeOrConfig = (node: unknown): void => {
     if (!node || typeof node !== 'object' || Array.isArray(node)) {
       return;
     }
     const n = node as Record<string, unknown>;
-    // Node-like entries (have id) must carry a valid type string.
+    // Nodes/configs with an id must carry a valid type string.
     if (typeof n.id === 'string' && n.id.length > 0) {
+      checkType(n.type);
+    }
+  };
+
+  const visitTab = (tab: unknown): void => {
+    if (!tab || typeof tab !== 'object' || Array.isArray(tab)) {
+      return;
+    }
+    const n = tab as Record<string, unknown>;
+    // Nested get_flow tabs often omit `type` (id + label + nodes only).
+    // Validate type when present; never skip non-string types on the tab.
+    if (n.type !== undefined) {
       checkType(n.type);
     }
     if (Array.isArray(n.nodes)) {
       for (const child of n.nodes) {
-        visit(child);
+        visitNodeOrConfig(child);
       }
     }
     if (Array.isArray(n.configs)) {
       for (const child of n.configs) {
-        visit(child);
+        visitNodeOrConfig(child);
       }
     }
   };
 
-  visit(flow);
+  visitTab(flow);
 }
 
 /**
