@@ -49,6 +49,11 @@ export function schemaTypeText(schema: unknown): string {
   return typeof s.type === 'string' ? s.type : 'any';
 }
 
+/** Escape a Markdown table cell: backslashes first, then pipes. */
+function escapeTableCell(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+}
+
 export function formatMcpToolsMarkdown(tools: McpToolListItem[]): string {
   const sorted = [...tools].sort((a, b) => a.name.localeCompare(b.name));
   const lines: string[] = [
@@ -76,10 +81,8 @@ export function formatMcpToolsMarkdown(tools: McpToolListItem[]): string {
     lines.push('| --- | --- | --- | --- |');
     for (const key of keys) {
       const prop = props[key] ?? {};
-      const type = schemaTypeText(prop).replace(/\|/g, '\\|');
-      const desc = String(prop.description ?? '')
-        .replace(/\\/g, '\\\\')
-        .replace(/\|/g, '\\|');
+      const type = escapeTableCell(schemaTypeText(prop));
+      const desc = escapeTableCell(String(prop.description ?? ''));
       lines.push(
         `| \`${key}\` | ${required.has(key) ? 'yes' : 'no'} | ${type} | ${desc.length > 0 ? desc : '—'} |`
       );

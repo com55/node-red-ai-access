@@ -168,11 +168,6 @@ export function listProposalsHandler(
     try {
       listFilter = parseListProposalsQuery(req.query);
     } catch (error) {
-      const mapped = aiOpsErrorToHttp(error, 'rest');
-      if (mapped) {
-        res.status(mapped.statusCode).json(mapped.body);
-        return;
-      }
       sendCaughtRouteError(res, error);
       return;
     }
