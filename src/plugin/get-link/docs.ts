@@ -144,7 +144,9 @@ these docs).
 - Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
-Submit responses include \`title\`, \`displayName\` (\`title ·\` **server-local**
+Submit responses include \`title\` (display title; \` in <flow>\` is appended
+when it does not name the flow), \`storedTitle\` (exactly as stored),
+\`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
 Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using

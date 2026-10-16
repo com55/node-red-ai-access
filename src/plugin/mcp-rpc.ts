@@ -437,7 +437,8 @@ function registerProposalTools(
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
         'search_palette and ask the user to install via Manage palette (never auto-install). ' +
-        'Returns a lean proposal (id, status, title, displayName, reviewUrl, changeSummary, …) by default. ' +
+        'Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; ' +
+        'title may gain " in <flow>" while storedTitle is exactly what was stored. ' +
         'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
         'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',

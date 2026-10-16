@@ -897,3 +897,68 @@ describe('mcp-tools.md type rendering', () => {
     expect(doc).not.toMatch(/\| unknown \|/);
   });
 });
+
+describe('submit responses carry the stored title and flowLabel', () => {
+  let userDir: string;
+  beforeEach(() => {
+    userDir = mkdtempSync(join(tmpdir(), 'ai-access-stored-title-'));
+  });
+  afterEach(() => {
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  const expected = {
+    title: 'Tweak greeting in Main',
+    storedTitle: 'Tweak greeting',
+    flowLabel: 'Main',
+  };
+  const pick = (b: Record<string, unknown>) => ({
+    title: b.title,
+    storedTitle: b.storedTitle,
+    flowLabel: b.flowLabel,
+  });
+
+  it('REST create, then read, agree on storedTitle/title/flowLabel', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const res = await submitRest(app, rest.token, 'Tweak greeting', 'hi');
+    expect(res.status).toBe(201);
+    expect(pick(res.body)).toEqual(expected);
+    const read = await request(app)
+      .get(`/mcp/api/v1/proposals/${res.body.id}`)
+      .set('Authorization', `Bearer ${rest.token}`);
+    expect(pick(read.body)).toEqual(expected);
+  });
+
+  it('MCP submit_proposal returns storedTitle exactly as stored', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const mcp = linkStore.create({ kind: 'mcp' });
+    const out = await callTool(app, mcp.token, 'submit_proposal', {
+      type: 'replace_flow',
+      expectedRev: 'rev-1',
+      title: 'Tweak greeting',
+      payload: { flowId: 'tab-1', nodes: [{ op: 'set', id: 'n1', set: { name: 'hi' } }] },
+    });
+    expect(out.isError).toBe(false);
+    expect(pick(out.json)).toEqual(expected);
+  });
+
+  it('GET-link propose returns storedTitle exactly as stored', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const link = linkStore.create({ kind: 'get_link' });
+    const patch = b64({ nodes: [{ op: 'set', id: 'n1', set: { name: 'hi' } }] });
+    const res = await request(app).get(
+      `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&title=${encodeURIComponent('Tweak greeting')}&patch=${patch}`
+    );
+    expect(res.status).toBe(201);
+    expect(pick(res.body.proposal)).toEqual(expected);
+  });
+
+  it('a title that already names the flow is unchanged in both fields', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const res = await submitRest(app, rest.token, 'Fix Main greeting', 'x');
+    expect(res.body.title).toBe('Fix Main greeting');
+    expect(res.body.storedTitle).toBe('Fix Main greeting');
+  });
+});

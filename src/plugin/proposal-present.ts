@@ -76,6 +76,8 @@ export interface PresentedProposalApi {
   status: Proposal['status'];
   type: Proposal['type'];
   title: string;
+  /** Title exactly as stored at submit (no ` in <flow>` suffix). */
+  storedTitle: string;
   displayName: string;
   flowLabel: string;
   reviewUrl: string;
@@ -154,6 +156,8 @@ export function presentOptionsFor(req: Request, httpAdminRoot?: string): Present
 export interface PresentedProposal extends Proposal {
   /** Always set on API responses (stored or auto-generated). */
   title: string;
+  /** Title exactly as stored (before any ` in <flow>` suffix). */
+  storedTitle: string;
   /**
    * Human flow label when known (never a raw tab id). Empty string if unknown.
    */
@@ -618,6 +622,17 @@ export function resolveProposalTitle(
   return ensureTitleIncludesFlowName(raw, flowLabel);
 }
 
+/**
+ * The stored title. An already-presented object keeps its original
+ * `storedTitle` (its `title` may carry the ` in <flow>` suffix).
+ */
+function storedTitleOf(proposal: Proposal & { storedTitle?: unknown }): string | undefined {
+  if (typeof proposal.storedTitle === 'string' && proposal.storedTitle) {
+    return proposal.storedTitle;
+  }
+  return sanitizeProposalTitle(proposal.title);
+}
+
 /** Attach title, flowLabel, displayName, reviewUrl, and reviewPath for API / MCP responses. */
 export function presentProposal(
   proposal: Proposal,
@@ -625,11 +640,13 @@ export function presentProposal(
 ): PresentedProposal {
   const title = resolveProposalTitle(proposal, options);
   const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
+  const storedTitle = storedTitleOf(proposal) ?? title;
   const reviewPath = buildProposalReviewPath(proposal.id, options.httpAdminRoot);
   const reviewUrl = options.req ? absolutizePath(options.req, reviewPath) : reviewPath;
   return {
     ...proposal,
     title,
+    storedTitle,
     flowLabel,
     displayName: buildProposalDisplayName(title, proposal.createdAt),
     reviewUrl,
@@ -695,6 +712,7 @@ export function presentProposalForApi(
     status: full.status,
     type: full.type,
     title: full.title,
+    storedTitle: full.storedTitle,
     displayName: full.displayName,
     flowLabel: full.flowLabel,
     reviewUrl: full.reviewUrl,

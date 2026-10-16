@@ -2141,8 +2141,22 @@ components:
           type: string
           maxLength: 80
           description: |
-            Short human title. Set at submit (AI-supplied or auto-generated).
-            Always present on API responses (resolved for legacy rows).
+            Short human display title. Set at submit (AI-supplied or
+            auto-generated); ` in <flowLabel>` is appended when the title does
+            not already name the flow. Always present on API responses
+            (resolved for legacy rows).
+        storedTitle:
+          type: string
+          maxLength: 80
+          description: |
+            The title exactly as stored at submit (the sanitized AI-supplied
+            title, or the auto-generated one), without the ` in <flowLabel>`
+            suffix. Present on every proposal response, including submit.
+        flowLabel:
+          type: string
+          description: |
+            Human label of the target flow tab (stored snapshot, else the live
+            flows). Empty string when unknown.
         displayName:
           type: string
           description: |
