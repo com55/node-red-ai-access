@@ -188,13 +188,15 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Dismiss closes/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/The flow also changed in/);
-    // Proposal id chip (last 6) + search matches full id / any substring.
+    // Proposal id chip (first 8 hex after prop-) + search matches short/full id.
     expect(res.text).toMatch(/id="proposals-search"/);
-    expect(res.text).toMatch(/proposalIdChip|shortIdTail|data-copy-id/);
+    expect(res.text).toMatch(/proposalIdChip|proposalShortId|data-copy-id/);
     expect(res.text).toMatch(/proposalMatchesSearch/);
-    expect(res.text).toMatch(/idCompact|any substring|full id/);
+    expect(res.text).toMatch(/first 8 hex|prop-/);
+    expect(res.text).toMatch(/idCompact|any substring|full id|short id/);
     expect(res.text).toMatch(/cross-tab-hint|Switch to Decided|Switch to Pending/);
     expect(res.text).toMatch(/Copied proposal id/);
+    expect(res.text).toMatch(/efd159aa/);
     expect(res.text).toMatch(/focusProposalFromHash/);
     expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
     // Reject modal shows proposal title; destructive approve uses confirm + summary.

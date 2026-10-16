@@ -344,21 +344,27 @@ function pageClientScriptPartAFormat(): string {
     if (!s) return '';
     return '<code class="id-short" title="' + esc(s) + '">' + esc(shortId(s, keep)) + '</code>';
   }
-  /** Last N chars of an id (default 6) for visible proposal labels. */
-  function shortIdTail(value, keep) {
+  /**
+   * Visible proposal short id: first 8 hex chars after the prop- prefix
+   * (e.g. prop-efd159aa… → efd159aa) so it matches the real id by eye.
+   */
+  function proposalShortId(value, keep) {
     var s = String(value == null ? '' : value);
-    var n = keep || 6;
+    var n = keep || 8;
     if (!s) return '';
-    if (s.length <= n) return s;
-    return s.slice(-n);
+    var body = s.indexOf('prop-') === 0 ? s.slice(5) : s;
+    var m = /^([0-9a-fA-F]+)/.exec(body);
+    var hex = m ? m[1] : body;
+    if (hex.length <= n) return hex;
+    return hex.slice(0, n);
   }
-  /** Copy-on-click chip showing the last 6 chars; full id in title + clipboard. */
+  /** Copy-on-click chip; shows proposalShortId, copies the full id. */
   function proposalIdChip(id) {
     var s = String(id == null ? '' : id);
     if (!s) return '';
     return '<button type="button" class="id-copy" data-copy-id="' + esc(s) +
       '" title="' + esc(s) + ' — click to copy">' +
-      '<code class="id-short">' + esc(shortIdTail(s, 6)) + '</code></button>';
+      '<code class="id-short">' + esc(proposalShortId(s, 8)) + '</code></button>';
   }
   function actorPlain(actor) {
     actor = actor || {};
@@ -1681,7 +1687,7 @@ function pageClientScriptPartB2(): string {
         if (!fullId) return;
         var flash = $('proposals-flash');
         copyTextToClipboard(fullId).then(function () {
-          showFlash(flash, 'Copied proposal id ' + shortIdTail(fullId, 6), true);
+          showFlash(flash, 'Copied proposal id ' + proposalShortId(fullId, 8), true);
         }).catch(function () {
           showFlash(flash, 'Clipboard unavailable — id is ' + fullId, false);
         });
@@ -1976,14 +1982,16 @@ function pageClientScriptPartB2CardsList(): string {
   function proposalMatchesSearch(p) {
     var q = String(proposalsSearchQuery || '').trim().toLowerCase();
     if (!q) return true;
-    // Match the full id and any substring of it (not only the visible last-6 chip).
+    // Match full id, the visible short id (first 8 hex after prop-), or any substring.
     var id = String(p.id || '').toLowerCase();
+    var short = String(proposalShortId(p.id, 8) || '').toLowerCase();
     var idCompact = id.replace(/[^a-z0-9]/g, '');
     var qCompact = q.replace(/[^a-z0-9]/g, '');
     var title = String(titleForProposalCard(p) || '').toLowerCase();
     var stored = String(p.title || '').toLowerCase();
     var display = String(p.displayName || '').toLowerCase();
     return id.indexOf(q) >= 0 ||
+      (short && short.indexOf(q) >= 0) ||
       (qCompact.length > 0 && idCompact.indexOf(qCompact) >= 0) ||
       title.indexOf(q) >= 0 ||
       stored.indexOf(q) >= 0 ||
@@ -2741,8 +2749,8 @@ function pageClientScriptPartD(): string {
     }
 
     $('proposals-hint').textContent = canApprove
-      ? 'Review changes from your AI assistant. Approve & deploy makes them live; Reject leaves the flow unchanged; Dismiss closes out-of-date items.'
-      : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals.';
+      ? 'Review changes from your AI assistant. Each card shows a short id (first 8 hex after prop-; click to copy the full id). Approve & deploy makes them live; Reject leaves the flow unchanged; Dismiss closes out-of-date items.'
+      : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals. Short ids are the first 8 hex characters after prop- (click to copy the full id).';
 
     renderLinksManage();
   }

@@ -136,8 +136,9 @@ function renderMcpPageProposalsSection(): string {
           Decided <span id="filter-decided-count">0</span>
         </button>
         <input type="search" id="proposals-search" class="proposals-search"
-          placeholder="Search title or id…"
-          aria-label="Search proposals by title or id" autocomplete="off" />
+          placeholder="Search title or id (e.g. efd159aa)…"
+          aria-label="Search proposals by title or short id (first 8 hex after prop-)"
+          autocomplete="off" />
       </div>
       <div id="proposals-flash" class="flash" hidden></div>
       <div id="proposals-list"><p class="muted">Loading…</p></div>
