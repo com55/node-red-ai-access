@@ -157,15 +157,17 @@ access-link callers, `get_status` reports `permission: null` and
 Approve, reject, and access-link management stay human-only on the `/mcp` admin
 page (and the corresponding REST routes). Rate limits, payload size limits, and
 audit logging match REST. Missing tokens return **401** `access_link_missing`;
-invalid/expired/revoked tokens return **401** `access_link_invalid` (both with
-`WWW-Authenticate`) telling the AI to ask the user for a new access link. Every
-error JSON includes a `code`.
+known-expired tokens return **401** `token_expired`; other invalid/revoked
+tokens return **401** `access_link_invalid` (all with `WWW-Authenticate`)
+telling the AI to ask the user for a new access link. Every error JSON includes
+a `code`. Access-link `/status` includes `expiresAt` and `minutesRemaining`.
 
-Access links are **in memory** (default TTL **4h**, max 10). Creating a link
-returns the raw `token` plus a self-contained `url` (`/mcp/a/<token>`). While
-the link remains active, `GET /links` includes `url` again so admins can re-copy
-from `/mcp` (the raw `token` field stays create-only). After a restart every old
-token is invalid.
+Access links are **in memory** (default TTL **4h**, max 10). Caps: **get_link ≤
+24h**, **rest/mcp ≤ 30d**. Creating a link returns the raw `token` plus a
+self-contained `url` for `get_link` (`/mcp/a/<token>`). While the link remains
+active, `GET /links` includes `url` again so admins can re-copy from `/mcp` (the
+raw `token` field stays create-only). After a restart every old token is
+invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
 `expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
@@ -186,8 +188,8 @@ errors mark it **failed**. Reject never mutates flows.
 
 ### Self-contained GET link (chat AIs that can only HTTP GET)
 
-1. An owner with `*` opens `/mcp` → **Access links** → create a link (default
-   TTL **4 hours**). Copy the full URL
+1. An owner with `*` opens `/mcp` → **Access links** → create a **GET link**
+   (default TTL **4 hours**, max **24 hours**). Copy the full URL
    `http(s)://<host><httpAdminRoot>/mcp/a/<token>` (or **Copy link for AI**).
 2. The AI opens that URL for markdown docs, then uses GET-only routes under the
    same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose` with

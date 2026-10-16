@@ -10,6 +10,11 @@ import {
   AccessLinkNotFoundError,
   AccessLinkValidationError,
 } from './errors.js';
+import {
+  DEFAULT_ACCESS_LINK_TTL_SECONDS,
+  maxTtlSecondsForKind,
+  ttlCapErrorMessage,
+} from './ttl.js';
 
 /** Surface a token is minted for. Missing/undefined on legacy records → get_link. */
 export type AccessLinkKind = 'get_link' | 'rest' | 'mcp';
@@ -79,6 +84,10 @@ export interface AccessLinkStoreOptions {
   randomToken?: () => string;
 }
 
+/** Result of looking up a raw token in the in-memory store. */
+export type AccessLinkValidateResult =
+  { status: 'active'; link: AccessLinkPublic } | { status: 'expired' } | { status: 'invalid' };
+
 function hashToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
@@ -120,7 +129,7 @@ export class AccessLinkStore {
   private readonly randomToken: () => string;
 
   constructor(options: AccessLinkStoreOptions = {}) {
-    this.defaultTtlSeconds = options.defaultTtlSeconds ?? 14_400;
+    this.defaultTtlSeconds = options.defaultTtlSeconds ?? DEFAULT_ACCESS_LINK_TTL_SECONDS;
     this.maxActiveLinks = options.maxActiveLinks ?? 10;
     this.now = options.now ?? (() => Date.now());
     this.randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));
@@ -189,6 +198,10 @@ export class AccessLinkStore {
         : undefined;
 
     const kind = resolveAccessLinkKind(input.kind);
+    const maxTtl = maxTtlSecondsForKind(kind);
+    if (ttlSeconds > maxTtl) {
+      throw new AccessLinkValidationError(ttlCapErrorMessage(kind, maxTtl));
+    }
 
     const id = this.randomId();
     const token = this.randomToken();
@@ -252,12 +265,13 @@ export class AccessLinkStore {
   }
 
   /**
-   * Validate a raw bearer token. Returns the public link metadata when valid;
-   * otherwise null (unknown / expired / revoked / pre-restart).
+   * Validate a raw bearer token with distinct expired vs unknown/revoked.
+   * After a process restart the store is empty, so expired tokens cannot be
+   * told apart from unknown ones (both → `invalid`).
    */
-  validate(token: string): AccessLinkPublic | null {
+  validateResult(token: string): AccessLinkValidateResult {
     if (typeof token !== 'string' || token.length === 0) {
-      return null;
+      return { status: 'invalid' };
     }
 
     const tokenHash = hashToken(token);
@@ -267,14 +281,26 @@ export class AccessLinkStore {
       if (!hashesEqual(record.tokenHash, tokenHash)) {
         continue;
       }
-      if (!this.isActive(record, atMs)) {
-        return null;
+      if (record.revokedAtMs !== undefined) {
+        return { status: 'invalid' };
+      }
+      if (record.expiresAtMs <= atMs) {
+        return { status: 'expired' };
       }
       record.lastUsedAtMs = atMs;
-      return toPublic(record);
+      return { status: 'active', link: toPublic(record) };
     }
 
-    return null;
+    return { status: 'invalid' };
+  }
+
+  /**
+   * Validate a raw bearer token. Returns the public link metadata when active;
+   * otherwise null (unknown / expired / revoked / pre-restart).
+   */
+  validate(token: string): AccessLinkPublic | null {
+    const result = this.validateResult(token);
+    return result.status === 'active' ? result.link : null;
   }
 
   /** Test helper: number of records still held in memory (including revoked). */

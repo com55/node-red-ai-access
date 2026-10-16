@@ -151,6 +151,14 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/GET link \(chat paste\)/);
     expect(res.text).toMatch(/REST Bearer/);
     expect(res.text).toMatch(/MCP token/);
+    // Token expiry dropdown + get_link >24h reset note.
+    expect(res.text).toMatch(/id="link-ttl-preset"/);
+    expect(res.text).toMatch(/15 minutes/);
+    expect(res.text).toMatch(/7 days/);
+    expect(res.text).toMatch(/id="link-ttl-custom-row"|Custom/);
+    expect(res.text).toMatch(/TTL_MAX_GET_LINK|Expiry reset to 1 hour/);
+    expect(res.text).toMatch(/id="link-ttl-reset-note"|ttl-reset-note/);
+    expect(res.text).toMatch(/id="link-ttl-warn"|Long-lived tokens stay usable longer/);
     expect(res.text).toMatch(/linkCopyMaterial|normalizeLinkKind|kindBadgeHtml/);
     expect(res.text).toMatch(/Copy REST Bearer token|REST Bearer token/);
     expect(res.text).toMatch(/MCP token for \/mcp\/rpc/);

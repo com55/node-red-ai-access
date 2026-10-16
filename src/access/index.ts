@@ -19,5 +19,14 @@ export type {
   AccessLinkPublic,
   AccessLinkRecord,
   AccessLinkStoreOptions,
+  AccessLinkValidateResult,
   CreateAccessLinkInput,
 } from './link-store.js';
+export {
+  DEFAULT_ACCESS_LINK_TTL_SECONDS,
+  LONG_TTL_WARN_SECONDS,
+  MAX_TTL_SECONDS_GET_LINK,
+  MAX_TTL_SECONDS_REST_MCP,
+  maxTtlSecondsForKind,
+  ttlCapErrorMessage,
+} from './ttl.js';

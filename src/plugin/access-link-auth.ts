@@ -10,7 +10,10 @@ import { areAiFeaturesEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
 export const ACCESS_LINK_INVALID_MESSAGE =
-  'Access link is invalid, expired, revoked, or no longer available after a restart. Ask the user for a new access link.';
+  'Access link is invalid, revoked, or no longer available (it may have expired, or Node-RED may have restarted). Ask the user for a new access link.';
+
+export const ACCESS_LINK_EXPIRED_MESSAGE =
+  'Access link token has expired. Ask the user for a new access link.';
 
 export const ACCESS_LINK_MISSING_MESSAGE =
   'Access link Bearer token is missing. Ask the user for a new access link and send Authorization: Bearer <token>.';
@@ -22,12 +25,14 @@ export const ACCESS_LINK_WWW_AUTHENTICATE = 'Bearer realm="node-red-ai-access", 
 
 export const ACCESS_LINK_MISSING_CODE = 'access_link_missing' as const;
 export const ACCESS_LINK_INVALID_CODE = 'access_link_invalid' as const;
+export const ACCESS_LINK_EXPIRED_CODE = 'token_expired' as const;
 export const ACCESS_LINK_BEARER_REQUIRED_CODE = 'bearer_scheme_required' as const;
 export const WRONG_TOKEN_KIND_CODE = 'wrong_token_kind' as const;
 
 type AccessLinkAuthCode =
   | typeof ACCESS_LINK_MISSING_CODE
   | typeof ACCESS_LINK_INVALID_CODE
+  | typeof ACCESS_LINK_EXPIRED_CODE
   | typeof ACCESS_LINK_BEARER_REQUIRED_CODE;
 
 type AuthHeaderParse =
@@ -160,8 +165,12 @@ export function requireAccessLink(
       return;
     }
 
-    const link = store.validate(parsed.token);
-    if (!link) {
+    const result = store.validateResult(parsed.token);
+    if (result.status === 'expired') {
+      sendUnauthorized(res, ACCESS_LINK_EXPIRED_MESSAGE, ACCESS_LINK_EXPIRED_CODE);
+      return;
+    }
+    if (result.status !== 'active') {
       sendUnauthorized(
         res,
         ACCESS_LINK_INVALID_MESSAGE,
@@ -171,12 +180,12 @@ export function requireAccessLink(
       return;
     }
 
-    if (link.kind !== expectedKind) {
-      sendWrongTokenKind(res, expectedKind, link.kind);
+    if (result.link.kind !== expectedKind) {
+      sendWrongTokenKind(res, expectedKind, result.link.kind);
       return;
     }
 
-    req.accessLink = link;
+    req.accessLink = result.link;
     next();
   };
 }

@@ -26,6 +26,15 @@ function readPackageVersion(): string {
   return packageVersion();
 }
 
+/** Whole minutes until ISO expiry (floor of remaining; never negative). */
+export function minutesRemainingUntil(expiresAt: string, nowMs = Date.now()): number {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((expiresAtMs - nowMs) / 60_000));
+}
+
 /**
  * Only include baseUrls this token kind can call.
  * get_link uses path URLs (not listed here); rest → api/openapi/discovery; mcp → rpc (+ discovery).
@@ -73,6 +82,7 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
         tokenKind: req.accessLink.kind,
         ...(req.accessLink.label !== undefined ? { label: req.accessLink.label } : {}),
         expiresAt: req.accessLink.expiresAt,
+        minutesRemaining: minutesRemainingUntil(req.accessLink.expiresAt),
         permissions: [...ACCESS_LINK_PERMISSIONS],
         baseUrls: baseUrlsForTokenKind(req.accessLink.kind, RED.settings.httpAdminRoot),
       },

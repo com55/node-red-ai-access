@@ -856,26 +856,33 @@ button.id-copy:focus {
   margin: 0.45rem 0 0.65rem;
 }
 .danger-text { color: var(--danger); }
-.ttl-presets {
+.ttl-custom-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.25rem 0 0.55rem;
+  gap: 0.5rem;
+  align-items: flex-end;
+  margin: 0.25rem 0 0.35rem;
 }
-.ttl-presets button {
-  border: 1px solid var(--line);
-  background: #fff;
-  border-radius: 999px;
-  padding: 0.25rem 0.7rem;
-  font: inherit;
+.ttl-long-warn {
+  margin: 0.5rem 0 0;
+  color: #b42318;
+  font-size: 0.9rem;
+}
+.ttl-reset-note {
+  margin: 0.35rem 0 0;
+  color: var(--muted, #667);
   font-size: 0.85rem;
-  cursor: pointer;
 }
-.ttl-presets button[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 650;
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .token-once .copy-ai-primary {
   font-size: 1.05rem;

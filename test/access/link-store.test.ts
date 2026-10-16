@@ -86,6 +86,8 @@ describe('AccessLinkStore', () => {
 
     now += 11_000;
     expect(store.validate(created.token)).toBeNull();
+    expect(store.validateResult(created.token)).toEqual({ status: 'expired' });
+    expect(store.validateResult('aia_unknown')).toEqual({ status: 'invalid' });
 
     now = 1_000_000;
     const store2 = new AccessLinkStore({
@@ -95,6 +97,16 @@ describe('AccessLinkStore', () => {
     const second = store2.create({ ttlSeconds: 100 });
     store2.revoke(second.id);
     expect(store2.validate(second.token)).toBeNull();
+    expect(store2.validateResult(second.token)).toEqual({ status: 'invalid' });
+  });
+
+  it('enforces per-kind TTL caps (get_link 24h, rest/mcp 30d)', () => {
+    const store = new AccessLinkStore();
+    expect(() => store.create({ kind: 'get_link', ttlSeconds: 24 * 3600 + 1 })).toThrow(/24 hours/);
+    expect(() => store.create({ kind: 'rest', ttlSeconds: 30 * 24 * 3600 + 1 })).toThrow(/30 days/);
+    expect(() => store.create({ kind: 'mcp', ttlSeconds: 30 * 24 * 3600 + 1 })).toThrow(/30 days/);
+    expect(store.create({ kind: 'get_link', ttlSeconds: 24 * 3600 }).kind).toBe('get_link');
+    expect(store.create({ kind: 'rest', ttlSeconds: 30 * 24 * 3600 }).kind).toBe('rest');
   });
 
   it('clear (restart) invalidates every prior token', () => {

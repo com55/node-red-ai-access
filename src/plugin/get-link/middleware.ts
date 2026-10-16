@@ -6,6 +6,8 @@ import type { NextFunction, Request, Response } from 'express';
 
 import type { AccessLinkStore } from '../../access/link-store.js';
 import {
+  ACCESS_LINK_EXPIRED_CODE,
+  ACCESS_LINK_EXPIRED_MESSAGE,
   ACCESS_LINK_INVALID_CODE,
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
@@ -86,12 +88,20 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
       // keep raw
     }
 
-    const link = store.validate(token);
-    if (!link) {
+    const result = store.validateResult(token);
+    if (result.status === 'expired') {
+      res.status(401).json({
+        error: ACCESS_LINK_EXPIRED_MESSAGE,
+        code: ACCESS_LINK_EXPIRED_CODE,
+        hint: 'Ask the user for a new self-contained access link URL.',
+      });
+      return;
+    }
+    if (result.status !== 'active') {
       const truncated =
         token.length < 24 || (token.startsWith('aia_') && token.length < 40)
           ? 'The access-link URL may be truncated — ask the user for the full /mcp/a/<token> link.'
-          : 'Ask the user for a new self-contained access link URL.';
+          : 'Ask the user for a new self-contained access link URL (it may have expired, or Node-RED may have restarted).';
       res.status(401).json({
         error: ACCESS_LINK_INVALID_MESSAGE,
         code: ACCESS_LINK_INVALID_CODE,
@@ -100,12 +110,12 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
       return;
     }
 
-    if (link.kind !== 'get_link') {
-      sendWrongTokenKind(res, 'get_link', link.kind);
+    if (result.link.kind !== 'get_link') {
+      sendWrongTokenKind(res, 'get_link', result.link.kind);
       return;
     }
 
-    req.accessLink = link;
+    req.accessLink = result.link;
     // Keep the raw token only for building docs URLs in this request; never audit it.
     (req as AuthenticatedRequest & { getLinkToken?: string }).getLinkToken = token;
     next();

@@ -680,11 +680,135 @@ function pageClientScriptPartATabs(): string {
     });
   });
 
+  var TTL_PRESET_15M = 15 * 60;
+  var TTL_PRESET_1H = 60 * 60;
+  var TTL_PRESET_4H = 4 * 60 * 60;
+  var TTL_PRESET_24H = 24 * 60 * 60;
+  var TTL_PRESET_7D = 7 * 24 * 60 * 60;
+  var TTL_MAX_GET_LINK = TTL_PRESET_24H;
+  var TTL_MAX_REST_MCP = 30 * 24 * 60 * 60;
+  var TTL_WARN_SECONDS = TTL_PRESET_24H;
+
+  function linkKindSelected() {
+    var kindSelect = $('link-kind');
+    return normalizeLinkKind(kindSelect && kindSelect.value);
+  }
+
+  function maxTtlForKind(kind) {
+    return kind === 'get_link' ? TTL_MAX_GET_LINK : TTL_MAX_REST_MCP;
+  }
+
+  function customTtlSecondsFromInputs() {
+    var amountEl = $('link-ttl-custom-amount');
+    var unitEl = $('link-ttl-custom-unit');
+    var amount = amountEl ? Number(amountEl.value) : NaN;
+    var unit = unitEl ? String(unitEl.value || 'hours') : 'hours';
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    var mult = unit === 'days' ? 86400 : (unit === 'minutes' ? 60 : 3600);
+    return Math.floor(amount * mult);
+  }
+
   function selectedTtlSeconds() {
-    var pressed = document.querySelector('#link-ttl-presets button[aria-pressed="true"]');
-    var hours = pressed ? Number(pressed.getAttribute('data-hours')) : Math.max(1, Math.round(defaultTtl / 3600));
-    if (!Number.isFinite(hours) || hours <= 0) hours = 4;
-    return Math.floor(hours * 3600);
+    var sel = $('link-ttl-preset');
+    var value = sel ? String(sel.value || '') : '3600';
+    if (value === 'custom') {
+      var custom = customTtlSecondsFromInputs();
+      if (custom === null) return TTL_PRESET_1H;
+      return custom;
+    }
+    var n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return TTL_PRESET_1H;
+    return Math.floor(n);
+  }
+
+  function applyTtlPresetValue(seconds) {
+    var sel = $('link-ttl-preset');
+    if (!sel) return;
+    var asStr = String(seconds);
+    var opt = sel.querySelector('option[value="' + asStr + '"]');
+    if (opt && !opt.disabled && !opt.hidden) {
+      sel.value = asStr;
+      return;
+    }
+    sel.value = 'custom';
+    var amountEl = $('link-ttl-custom-amount');
+    var unitEl = $('link-ttl-custom-unit');
+    if (seconds % 86400 === 0) {
+      if (amountEl) amountEl.value = String(seconds / 86400);
+      if (unitEl) unitEl.value = 'days';
+    } else if (seconds % 3600 === 0) {
+      if (amountEl) amountEl.value = String(seconds / 3600);
+      if (unitEl) unitEl.value = 'hours';
+    } else {
+      if (amountEl) amountEl.value = String(Math.max(1, Math.round(seconds / 60)));
+      if (unitEl) unitEl.value = 'minutes';
+    }
+  }
+
+  function updateTtlUiState(opts) {
+    opts = opts || {};
+    var kind = linkKindSelected();
+    var maxTtl = maxTtlForKind(kind);
+    var sel = $('link-ttl-preset');
+    var customRow = $('link-ttl-custom-row');
+    var warn = $('link-ttl-warn');
+    var resetNote = $('link-ttl-reset-note');
+    var sevenDay = sel && sel.querySelector('option[value="' + TTL_PRESET_7D + '"]');
+    if (sevenDay) {
+      sevenDay.hidden = kind === 'get_link';
+      sevenDay.disabled = kind === 'get_link';
+    }
+    // If 7d was selected then kind switched to get_link, move off the hidden option.
+    if (kind === 'get_link' && sel && sel.value === String(TTL_PRESET_7D)) {
+      applyTtlPresetValue(TTL_PRESET_1H);
+      if (resetNote) {
+        resetNote.hidden = false;
+        resetNote.textContent = 'Expiry reset to 1 hour (GET links are capped at 24 hours).';
+      }
+      opts.keepResetNote = true;
+    }
+    if (customRow) {
+      customRow.hidden = !(sel && sel.value === 'custom');
+    }
+    var seconds = selectedTtlSeconds();
+    if (kind === 'get_link' && seconds > TTL_MAX_GET_LINK) {
+      applyTtlPresetValue(TTL_PRESET_1H);
+      seconds = TTL_PRESET_1H;
+      if (customRow) customRow.hidden = true;
+      if (resetNote) {
+        resetNote.hidden = false;
+        resetNote.textContent = 'Expiry reset to 1 hour (GET links are capped at 24 hours).';
+      }
+      opts.keepResetNote = true;
+    } else if (resetNote && !opts.keepResetNote) {
+      resetNote.hidden = true;
+      resetNote.textContent = '';
+    }
+    if (seconds > maxTtl) {
+      applyTtlPresetValue(maxTtl);
+      seconds = maxTtl;
+      if (customRow) customRow.hidden = !(sel && sel.value === 'custom');
+    }
+    if (warn) {
+      var showWarn = kind !== 'get_link' && seconds > TTL_WARN_SECONDS;
+      warn.hidden = !showWarn;
+    }
+  }
+
+  function wireTtlControls() {
+    var sel = $('link-ttl-preset');
+    var kindSelect = $('link-kind');
+    var amountEl = $('link-ttl-custom-amount');
+    var unitEl = $('link-ttl-custom-unit');
+    if (sel) sel.addEventListener('change', function () { updateTtlUiState(); });
+    if (amountEl) amountEl.addEventListener('input', function () { updateTtlUiState({ keepResetNote: true }); });
+    if (unitEl) unitEl.addEventListener('change', function () { updateTtlUiState({ keepResetNote: true }); });
+    if (kindSelect) {
+      kindSelect.addEventListener('change', function () {
+        updateTtlUiState();
+      });
+    }
+    updateTtlUiState();
   }
 
   function renderLinksManage() {
@@ -698,8 +822,6 @@ function pageClientScriptPartATabs(): string {
       host.innerHTML = '<p class="readonly-note">Link management requires full admin permission (*).</p>';
       return;
     }
-    var defaultHours = Math.max(1, Math.round(defaultTtl / 3600));
-    if ([1, 4, 24].indexOf(defaultHours) < 0) defaultHours = 4;
     host.innerHTML =
       '<form id="create-link-form">' +
       '<div class="row" style="align-items:flex-end">' +
@@ -708,14 +830,27 @@ function pageClientScriptPartATabs(): string {
       '<option value="rest">REST Bearer</option>' +
       '<option value="mcp">MCP token</option>' +
       '</select></label>' +
-      '<div><span class="muted">Expires after</span>' +
-      '<div class="ttl-presets" id="link-ttl-presets" role="group" aria-label="Expires after">' +
-      '<button type="button" data-hours="1"' + (defaultHours === 1 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>1 hour</button>' +
-      '<button type="button" data-hours="4"' + (defaultHours === 4 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>4 hours</button>' +
-      '<button type="button" data-hours="24"' + (defaultHours === 24 ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>24 hours</button>' +
-      '</div></div>' +
+      '<label>Expires after<select id="link-ttl-preset" aria-label="Expires after">' +
+      '<option value="' + TTL_PRESET_15M + '">15 minutes</option>' +
+      '<option value="' + TTL_PRESET_1H + '" selected>1 hour</option>' +
+      '<option value="' + TTL_PRESET_4H + '">4 hours</option>' +
+      '<option value="' + TTL_PRESET_24H + '">24 hours</option>' +
+      '<option value="' + TTL_PRESET_7D + '">7 days</option>' +
+      '<option value="custom">Custom</option>' +
+      '</select></label>' +
+      '<div id="link-ttl-custom-row" class="ttl-custom-row" hidden>' +
+      '<label>Custom<input id="link-ttl-custom-amount" type="number" min="1" step="1" value="1" aria-label="Custom duration amount" /></label>' +
+      '<label><span class="visually-hidden">Unit</span><select id="link-ttl-custom-unit" aria-label="Custom duration unit">' +
+      '<option value="minutes">minutes</option>' +
+      '<option value="hours" selected>hours</option>' +
+      '<option value="days">days</option>' +
+      '</select></label></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
-      '<button type="submit" class="action">Create access token</button></div></form>' +
+      '<button type="submit" class="action">Create access token</button></div>' +
+      '<p id="link-ttl-reset-note" class="ttl-reset-note" hidden></p>' +
+      '<p id="link-ttl-warn" class="ttl-long-warn" hidden role="alert">' +
+      'Long-lived tokens stay usable longer if they leak. Prefer the shortest expiry that works.' +
+      '</p></form>' +
       '<div id="token-once" class="token-once" hidden>' +
       '<p id="token-kind-label" class="token-kind-label" hidden></p>' +
       '<p id="token-docs-hint" class="muted"></p>' +
@@ -726,16 +861,7 @@ function pageClientScriptPartATabs(): string {
       '<code id="token-value"></code>' +
       '<pre id="token-copy-block" class="token-copy-block"></pre>' +
       '</details></div>';
-    var presets = $('link-ttl-presets');
-    if (presets) {
-      presets.querySelectorAll('button').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          presets.querySelectorAll('button').forEach(function (b) {
-            b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
-          });
-        });
-      });
-    }
+    wireTtlControls();
     var createForm = $('create-link-form');
     if (createForm) {
       createForm.addEventListener('submit', onCreateLink);
@@ -963,6 +1089,17 @@ function pageClientScriptPartB(): string {
     var kindSelect = $('link-kind');
     var ttlSeconds = selectedTtlSeconds();
     var kind = normalizeLinkKind(kindSelect && kindSelect.value);
+    var maxTtl = maxTtlForKind(kind);
+    if (ttlSeconds > maxTtl) {
+      showFlash(
+        flash,
+        kind === 'get_link'
+          ? 'GET link expiry cannot exceed 24 hours.'
+          : 'Token expiry cannot exceed 30 days for REST/MCP.',
+        false
+      );
+      return;
+    }
     var payload = { ttlSeconds: ttlSeconds, kind: kind };
     if (labelInput && labelInput.value.trim()) payload.label = labelInput.value.trim();
     try {
