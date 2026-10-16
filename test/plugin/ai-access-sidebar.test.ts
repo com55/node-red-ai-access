@@ -1,5 +1,5 @@
 /**
- * Editor sidebar tab (ai-access.html) — RED.sidebar.addTab contract.
+ * Editor sidebar tab — thin ai-access.html loader + served sidebar JS.
  *
  * Node-RED 4.x wraps content in #red-ui-sidebar-content and lists the tab
  * (by name) in the View menu / sidebar dropdown next to Information, Help, etc.
@@ -12,10 +12,15 @@ import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  EDITOR_SIDEBAR_ASSET_VERSION,
+  renderEditorSidebarJs,
+} from '../../src/plugin/editor-sidebar.js';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const htmlPath = join(root, 'ai-access.html');
 
-/** Minimal jQuery-like chain used by ai-access.html. */
+/** Minimal jQuery-like chain used by the sidebar script. */
 function createFakeJQuery() {
   interface El {
     id?: string;
@@ -110,6 +115,12 @@ function createFakeJQuery() {
         }
         return api;
       },
+      each(fn: (this: unknown, i: number) => void) {
+        els.forEach((el, i) => {
+          fn.call(wrap([el]), i);
+        });
+        return api;
+      },
     };
     return api;
   }
@@ -145,31 +156,24 @@ function createFakeJQuery() {
   return $;
 }
 
-/** Extract the first inline script body without an HTML-filter regex (CodeQL). */
-function extractInlineScript(html: string): string | null {
-  const lower = html.toLowerCase();
-  const open = lower.indexOf('<script');
-  if (open < 0) return null;
-  const openEnd = html.indexOf('>', open);
-  if (openEnd < 0) return null;
-  const close = lower.indexOf('</script', openEnd + 1);
-  if (close < 0) return null;
-  let closeEnd = close + '</script'.length;
-  while (closeEnd < html.length && /\s/.test(html.charAt(closeEnd))) {
-    closeEnd += 1;
-  }
-  if (html.charAt(closeEnd) !== '>') return null;
-  return html.slice(openEnd + 1, close);
-}
-
-describe('ai-access.html sidebar tab', () => {
-  it('registers RED.sidebar.addTab with content element and no userSettings', () => {
+describe('ai-access.html sidebar loader', () => {
+  it('is a thin cache-busting loader (no inline Save / deploy markup)', () => {
     const html = readFileSync(htmlPath, 'utf8');
-    const scriptBody = extractInlineScript(html);
-    expect(scriptBody).toBeTruthy();
-    expect(html).toMatch(/RED\.sidebar\.addTab/);
+    expect(html).toMatch(/ai-access-sidebar\.js\?v=/);
+    expect(html).toMatch(new RegExp(EDITOR_SIDEBAR_ASSET_VERSION));
+    expect(html).toMatch(/RED\.sidebar/);
+    expect(html).not.toMatch(/ai-access-save/);
     expect(html).not.toMatch(/RED\.userSettings\.add/);
-    expect(html).toMatch(/#red-ui-sidebar-ai-access/);
+    expect(html).not.toMatch(/Only changed nodes \(recommended\)/);
+  });
+});
+
+describe('ai-access-sidebar.js served tab', () => {
+  it('registers RED.sidebar.addTab with content element and no userSettings', () => {
+    const scriptBody = renderEditorSidebarJs();
+    expect(scriptBody).toMatch(/RED\.sidebar\.addTab/);
+    expect(scriptBody).not.toMatch(/RED\.userSettings\.add/);
+    expect(scriptBody).toMatch(/#red-ui-sidebar-ai-access|red-ui-sidebar-ai-access/);
 
     const added: {
       id: string;
@@ -185,6 +189,19 @@ describe('ai-access.html sidebar tab', () => {
 
     const $ = createFakeJQuery();
     const context = {
+      window: {} as Record<string, unknown>,
+      document: {
+        getElementById: () => null,
+        createElement: () => ({
+          id: '',
+          textContent: '',
+        }),
+        head: {
+          appendChild(_node: unknown) {
+            return _node;
+          },
+        },
+      },
       RED: {
         sidebar: {
           addTab(opts: (typeof added)[number]) {
@@ -206,8 +223,10 @@ describe('ai-access.html sidebar tab', () => {
       fetch: () => Promise.reject(new Error('no fetch in unit test')),
       console,
     };
+    (context.window as { __com55AiAccessSidebarLoaded?: boolean }).__com55AiAccessSidebarLoaded =
+      undefined;
 
-    runInNewContext(scriptBody!, context);
+    runInNewContext(scriptBody, context);
 
     expect(added).toHaveLength(1);
     expect(added[0]?.id).toBe('ai-access');
@@ -224,19 +243,22 @@ describe('ai-access.html sidebar tab', () => {
     expect(content.attr('id')).toBe('red-ui-sidebar-ai-access');
   });
 
-  it('builds a content pane with enable, deploy, TTL, Save, and /mcp controls', () => {
-    const html = readFileSync(htmlPath, 'utf8');
-    expect(html).toMatch(/ai-access-enabled/);
-    expect(html).toMatch(/ai-access-allow-without/);
-    expect(html).toMatch(/ai-access-deploy/);
-    expect(html).toMatch(/ai-access-ttl/);
-    expect(html).toMatch(/ai-access-save/);
-    expect(html).toMatch(/Open AI Access dashboard/);
-    expect(html).toMatch(/only changed nodes restart, recommended/);
-    expect(html).toMatch(/ai-access-pending-count|Review/);
-    expect(html).toMatch(/ai-access-ttl-presets|data-hours/);
-    expect(html).toMatch(/canEdit|readonly|\*/);
-    expect(html).toMatch(/red-ui-settings-row stacked/);
-    expect(html).toMatch(/flex-direction:\s*column/);
+  it('auto-saves only (no Save), friendly deploy labels, Refresh in header', () => {
+    const js = renderEditorSidebarJs();
+    expect(js).toMatch(/scheduleAutoSave/);
+    expect(js).toMatch(/Changes apply immediately \(no restart\)/);
+    expect(js).not.toMatch(/ai-access-save/);
+    expect(js).not.toMatch(/\.text\('Save'\)/);
+    expect(js).toMatch(/Only changed nodes \(recommended\)/);
+    expect(js).toMatch(/Changed flows/);
+    expect(js).toMatch(/Full redeploy/);
+    expect(js).not.toMatch(/nodes = only changed nodes restart/);
+    expect(js).toMatch(/ai-access-refresh/);
+    expect(js).toMatch(/Open AI Access dashboard/);
+    expect(js).toMatch(/ai-access-ttl-presets|data-hours/);
+    expect(js).toMatch(/canEdit|readonly|\*/);
+    expect(js).toMatch(/red-ui-settings-row stacked/);
+    expect(js).toMatch(/flex-wrap:\s*nowrap/);
+    expect(js).toMatch(new RegExp(`v=${EDITOR_SIDEBAR_ASSET_VERSION}`));
   });
 });

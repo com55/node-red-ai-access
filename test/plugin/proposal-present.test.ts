@@ -10,10 +10,14 @@ import {
   buildProposalDisplayName,
   buildProposalReviewPath,
   buildProposalReviewUrl,
+  buildReplaceFlowTitle,
   formatProposalSubmittedAt,
   formatUtcOffset,
   presentProposal,
+  resolveProposalTitle,
   sanitizeProposalTitle,
+  shouldRefreshDisplayTitle,
+  titleFromDiffSummary,
 } from '../../src/plugin/proposal-present.js';
 import type { Proposal } from '../../src/storage/proposals.js';
 
@@ -131,6 +135,108 @@ describe('autoGenerateProposalTitle', () => {
 
   it('falls back to Update flow when nothing changed and no label', () => {
     expect(autoGenerateProposalTitle({ nodes: [] }, { nodes: [] })).toBe('Update flow');
+  });
+
+  it('leads with deletes when nodes are removed (never bury under Add …)', () => {
+    expect(
+      autoGenerateProposalTitle(
+        {
+          label: 'Test Flow',
+          nodes: [
+            { id: 'a', type: 'inject', name: 'A' },
+            { id: 'b', type: 'inject', name: 'B' },
+            { id: 'c', type: 'debug', name: 'C' },
+            { id: 'd', type: 'function', name: 'D' },
+          ],
+        },
+        {
+          label: 'Test Flow',
+          nodes: [{ id: 'n', type: 'comment', name: 'note' }],
+        }
+      )
+    ).toBe('Replace Test Flow: deletes 4 nodes, adds 1 comment');
+  });
+});
+
+describe('buildReplaceFlowTitle / display-title refresh', () => {
+  it('formats delete-leading replace titles', () => {
+    expect(
+      buildReplaceFlowTitle({
+        flowLabel: 'Test Flow',
+        removed: 4,
+        added: [{ id: 'n', type: 'comment' }],
+      })
+    ).toBe('Replace Test Flow: deletes 4 nodes, adds 1 comment');
+  });
+
+  it('refreshes legacy Update titles and non-Replace delete titles', () => {
+    expect(shouldRefreshDisplayTitle('Update flow', 0)).toBe(true);
+    expect(shouldRefreshDisplayTitle('Update Test Flow', 0)).toBe(true);
+    expect(shouldRefreshDisplayTitle('Add comment node', 4)).toBe(true);
+    expect(shouldRefreshDisplayTitle('Rename inject', 0)).toBe(false);
+    expect(shouldRefreshDisplayTitle('Replace Test Flow: deletes 4 nodes', 4)).toBe(false);
+  });
+
+  it('builds titles from a diff summary (client/server render path)', () => {
+    expect(
+      titleFromDiffSummary(
+        { added: 1, removed: 4, modified: 0 },
+        { flowLabel: 'Test Flow', storedTitle: 'Add comment node', firstAddedType: 'comment' }
+      )
+    ).toBe('Replace Test Flow: deletes 4 nodes, adds 1 comment');
+    expect(
+      titleFromDiffSummary(
+        { added: 0, removed: 0, modified: 1 },
+        { flowLabel: 'Test Flow', storedTitle: 'Update flow' }
+      )
+    ).toBe('Edit node in Test Flow');
+  });
+
+  it('resolveProposalTitle refreshes legacy Update / buried-delete titles', () => {
+    const legacy = baseProposal({
+      title: 'Add comment node',
+      baseFlow: {
+        id: 'tab1',
+        type: 'tab',
+        label: 'Test Flow',
+        nodes: [
+          { id: 'a', type: 'inject' },
+          { id: 'b', type: 'inject' },
+          { id: 'c', type: 'inject' },
+          { id: 'd', type: 'inject' },
+        ],
+      },
+      payload: {
+        flowId: 'tab1',
+        flow: {
+          id: 'tab1',
+          type: 'tab',
+          label: 'Test Flow',
+          nodes: [{ id: 'n', type: 'comment', name: 'note' }],
+        },
+      },
+    });
+    expect(resolveProposalTitle(legacy)).toBe('Replace Test Flow: deletes 4 nodes, adds 1 comment');
+
+    const updateLegacy = baseProposal({
+      title: 'Update flow',
+      baseFlow: {
+        id: 'tab1',
+        type: 'tab',
+        label: 'Test Flow',
+        nodes: [{ id: 'n1', type: 'debug', name: 'out' }],
+      },
+      payload: {
+        flowId: 'tab1',
+        flow: {
+          id: 'tab1',
+          type: 'tab',
+          label: 'Test Flow',
+          nodes: [{ id: 'n1', type: 'debug', name: 'out (patched)' }],
+        },
+      },
+    });
+    expect(resolveProposalTitle(updateLegacy)).toBe('Rename debug node "out" → "out (patched)"');
   });
 });
 

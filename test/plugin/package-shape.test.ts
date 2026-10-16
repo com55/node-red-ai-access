@@ -37,16 +37,18 @@ describe('package.json Node-RED plugin shape', () => {
     });
   });
 
-  it('ships companion ai-access.html as an editor sidebar tab', () => {
+  it('ships companion ai-access.html as a thin cache-busting sidebar loader', () => {
     expect(packageJson.files).toContain('ai-access.html');
     expect(existsSync(join(root, 'ai-access.html'))).toBe(true);
     const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
-    expect(html).toMatch(/RED\.sidebar\.addTab/);
+    expect(html).toMatch(/ai-access-sidebar\.js\?v=/);
+    expect(html).toMatch(/RED\.sidebar/);
     expect(html).not.toMatch(/RED\.userSettings\.add/);
     expect(html).toMatch(/ai-access/);
-    expect(html).toMatch(/\/settings/);
-    expect(html).toMatch(/red-ui-sidebar-ai-access/);
-    expect(html).toMatch(/fa fa-plug/);
+    const index = readFileSync(join(root, 'src/plugin/index.ts'), 'utf8');
+    expect(index).toMatch(/\/mcp\/editor\/ai-access-sidebar\.js/);
+    expect(index).toMatch(/renderEditorSidebarJs/);
+    expect(index).toMatch(/Cache-Control.*no-store/);
   });
 });
 
@@ -112,9 +114,16 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/vsCurrent|live flow/i);
     expect(client).toMatch(/what the AI started from|base snapshot|live flow/);
     expect(client).toMatch(/showAuthGate|Approve &amp; deploy|fieldLabel|Connects to/);
+    expect(client).toMatch(/Function code|HTML template|fieldLabelHtml/);
     expect(client).toMatch(/You \(admin\)/);
+    expect(client).toMatch(/AI \(/);
     expect(client).toMatch(/Deploy options/);
+    expect(client).toMatch(/Only changed nodes \(recommended\)/);
+    expect(client).toMatch(/Changed flows|Full redeploy/);
     expect(client).toMatch(/to review.*out of date|formatPendingBadgeText/);
+    expect(client).toMatch(/badge\.textContent = String\(counts\.live\)/);
+    expect(client).toMatch(/displayTitleForProposal|data-title-for/);
+    expect(client).toMatch(/flow changed since/);
     expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);
@@ -135,26 +144,27 @@ describe('/mcp audit log page client', () => {
     expect(styles).toMatch(/\.proposal-highlight/);
     expect(styles).toMatch(/\.proposal-changes|\.stale-group/);
     expect(styles).toMatch(/\.delete-banner/);
+    expect(styles).toMatch(/\.stale-reason/);
   });
 });
 
 describe('ai-access sidebar TTL layout', () => {
-  it('stacks long labels above inputs', () => {
-    const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
-    expect(html).toMatch(/red-ui-settings-row stacked/);
-    expect(html).toMatch(/\.red-ui-settings-row\.stacked[\s\S]*flex-direction:\s*column/);
-  });
-
-  it('auto-saves or uses standard Save, AI tools copy, and pending plurals', () => {
-    const html = readFileSync(join(root, 'ai-access.html'), 'utf8');
-    expect(html).toMatch(/ai-access-save/);
-    expect(html).toMatch(/scheduleAutoSave|saveSettings/);
-    expect(html).toMatch(/Default link expiry(?! \(hours\))/);
-    expect(html).not.toMatch(/Default link expiry \(hours\)/);
-    expect(html).toMatch(/AI tools are disabled/);
-    expect(html).not.toMatch(/MCP tools are disabled/);
-    expect(html).toMatch(/pendingSidebarText|1 proposal to review|to review/);
-    expect(html).toMatch(/ai-access-actions/);
-    expect(html).toMatch(/flex-wrap:\s*wrap/);
+  it('auto-saves only with friendly deploy labels (served JS, not cached HTML)', () => {
+    const sidebar = readFileSync(join(root, 'src/plugin/editor-sidebar.ts'), 'utf8');
+    expect(sidebar).toMatch(/scheduleAutoSave/);
+    expect(sidebar).toMatch(/Changes apply immediately \(no restart\)/);
+    expect(sidebar).not.toMatch(/ai-access-save/);
+    expect(sidebar).toMatch(/Default link expiry(?! \(hours\))/);
+    expect(sidebar).not.toMatch(/Default link expiry \(hours\)/);
+    expect(sidebar).toMatch(/AI tools are disabled/);
+    expect(sidebar).not.toMatch(/MCP tools are disabled/);
+    expect(sidebar).toMatch(/pendingSidebarText|1 proposal to review|to review/);
+    expect(sidebar).toMatch(/ai-access-actions/);
+    expect(sidebar).toMatch(/Only changed nodes \(recommended\)/);
+    expect(sidebar).toMatch(/Changed flows/);
+    expect(sidebar).toMatch(/Full redeploy/);
+    expect(sidebar).toMatch(/flex-wrap:\s*nowrap/);
+    expect(sidebar).toMatch(/red-ui-settings-row stacked/);
+    expect(sidebar).toMatch(/flex-direction:\s*column/);
   });
 });

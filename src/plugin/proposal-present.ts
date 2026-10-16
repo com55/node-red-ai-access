@@ -145,6 +145,59 @@ function classifyFlowChanges(
   return { added, removed, modified };
 }
 
+function pluralNodes(n: number): string {
+  return n === 1 ? 'node' : 'nodes';
+}
+
+/** "adds 1 comment" / "adds 2 nodes" */
+function describeAddedClause(added: FlowNode[]): string {
+  if (added.length === 1 && added[0]) {
+    const type = added[0].type || 'node';
+    return `adds 1 ${type}`;
+  }
+  return `adds ${added.length} ${pluralNodes(added.length)}`;
+}
+
+function describeRemovedClause(removed: number): string {
+  return `deletes ${removed} ${pluralNodes(removed)}`;
+}
+
+function describeModifiedClause(modified: number): string {
+  return `edits ${modified} ${pluralNodes(modified)}`;
+}
+
+/**
+ * When any nodes are deleted, lead with that
+ * (`Replace Test Flow: deletes 4 nodes, adds 1 comment`).
+ */
+export function buildReplaceFlowTitle(options: {
+  flowLabel?: string;
+  removed: number;
+  added?: FlowNode[];
+  addedCount?: number;
+  modified?: number;
+}): string {
+  const parts: string[] = [];
+  if (options.removed > 0) {
+    parts.push(describeRemovedClause(options.removed));
+  }
+  const addedNodes = options.added ?? [];
+  const addedCount = options.addedCount ?? addedNodes.length;
+  if (addedCount > 0) {
+    parts.push(
+      addedNodes.length === addedCount
+        ? describeAddedClause(addedNodes)
+        : `adds ${addedCount} ${pluralNodes(addedCount)}`
+    );
+  }
+  if ((options.modified ?? 0) > 0) {
+    parts.push(describeModifiedClause(options.modified ?? 0));
+  }
+  const detail = parts.length ? parts.join(', ') : 'replaces nodes';
+  const label = options.flowLabel?.trim();
+  return label ? `Replace ${label}: ${detail}` : `Replace flow: ${detail}`;
+}
+
 function describeOneChange(changes: {
   added: FlowNode[];
   removed: FlowNode[];
@@ -210,7 +263,7 @@ export function resolveFlowLabel(proposal: {
 /**
  * Auto-generate a title from the actual node changes.
  * Examples: `Rename debug node "out" → "out (patched)"`, `Add inject node "tick2"`,
- * `Edit template "html20k"`, `3 changes in Test Flow`.
+ * `Edit template "html20k"`, `Replace Test Flow: deletes 4 nodes, adds 1 comment`.
  * Callers should prefer an AI-supplied title via sanitizeProposalTitle.
  */
 export function autoGenerateProposalTitle(
@@ -225,11 +278,82 @@ export function autoGenerateProposalTitle(
     return label ? `Update ${label}` : 'Update flow';
   }
 
+  // Deletions always lead — never bury them under a lone "Add …" title.
+  if (changes.removed.length > 0) {
+    return buildReplaceFlowTitle({
+      ...(label ? { flowLabel: label } : {}),
+      removed: changes.removed.length,
+      added: changes.added,
+      modified: changes.modified.length,
+    });
+  }
+
   if (total > MULTI_CHANGE_TITLE_THRESHOLD) {
     return label ? `${total} changes in ${label}` : `${total} changes`;
   }
 
   return describeOneChange(changes) ?? (label ? `Update ${label}` : 'Update flow');
+}
+
+/** True for titles we should refresh from a live diff (legacy / auto / non-replace deletes). */
+export function shouldRefreshDisplayTitle(
+  storedTitle: string | undefined,
+  removedCount: number
+): boolean {
+  const t = (storedTitle ?? '').trim();
+  if (!t) return true;
+  if (/^Update(\s|$)/i.test(t)) return true;
+  if (removedCount > 0 && !/^Replace\b/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Build a display title from a proposal-diff summary (client or server).
+ * Prefer AI-supplied titles unless {@link shouldRefreshDisplayTitle} says otherwise.
+ */
+export function titleFromDiffSummary(
+  summary: {
+    added?: number;
+    removed?: number;
+    modified?: number;
+  },
+  options: {
+    flowLabel?: string;
+    storedTitle?: string;
+    /** First added node type for "adds 1 comment" wording. */
+    firstAddedType?: string;
+  } = {}
+): string {
+  const removed = Number(summary.removed) || 0;
+  const added = Number(summary.added) || 0;
+  const modified = Number(summary.modified) || 0;
+  const stored = options.storedTitle?.trim() ?? '';
+  if (!shouldRefreshDisplayTitle(stored, removed)) {
+    return stored;
+  }
+  const label = options.flowLabel?.trim() ?? '';
+  if (removed > 0) {
+    const addedNodes: FlowNode[] =
+      added === 1 && options.firstAddedType ? [{ id: '_', type: options.firstAddedType }] : [];
+    return buildReplaceFlowTitle({
+      ...(label ? { flowLabel: label } : {}),
+      removed,
+      added: addedNodes,
+      addedCount: added,
+      modified,
+    });
+  }
+  const total = added + modified;
+  if (total === 0) {
+    return label ? `Update ${label}` : 'Update flow';
+  }
+  if (total === 1 && added === 1 && options.firstAddedType) {
+    return `Add ${options.firstAddedType} node`;
+  }
+  if (total === 1 && modified === 1) {
+    return label ? `Edit node in ${label}` : 'Edit node';
+  }
+  return label ? `${total} changes in ${label}` : `${total} changes`;
 }
 
 export function buildProposalDisplayName(title: string, createdAtIso: string): string {
@@ -321,13 +445,20 @@ export function buildProposalReviewUrl(
 
 /**
  * Resolve the effective title for a proposal (stored/AI title, or auto from changes).
+ * Legacy "Update …" titles and non-Replace titles that delete nodes are refreshed
+ * from the flow diff so display stays accurate even when the stored title is stale.
  */
 export function resolveProposalTitle(proposal: Proposal): string {
   const stored = sanitizeProposalTitle(proposal.title);
-  if (stored) {
-    return stored;
+  const auto = autoGenerateProposalTitle(proposal.baseFlow, proposal.payload.flow);
+  const changes = classifyFlowChanges(
+    collectNodes(proposal.baseFlow ?? {}),
+    collectNodes(proposal.payload.flow)
+  );
+  if (shouldRefreshDisplayTitle(stored, changes.removed.length)) {
+    return auto;
   }
-  return autoGenerateProposalTitle(proposal.baseFlow, proposal.payload.flow);
+  return stored ?? auto;
 }
 
 /** Attach title, flowLabel, displayName, reviewUrl, and reviewPath for API / MCP responses. */

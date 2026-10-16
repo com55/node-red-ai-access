@@ -836,6 +836,10 @@ function pageStylesPartH(): string {
   gap: 0.15rem;
   min-width: 0;
 }
+.stale-reason {
+  font-size: 0.85rem;
+  font-weight: 400;
+}
 .stale-item-diff { margin-top: 0.45rem; }
 .stale-item-diff > summary {
   cursor: pointer;
