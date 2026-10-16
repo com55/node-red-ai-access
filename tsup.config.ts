@@ -49,15 +49,18 @@ export default defineConfig({
     copyFileSync(from, join(toDir, 'openapi.yaml'));
 
     // Regenerate companion HTML so ?v= always matches package.json (no hand-typed dup).
+    // Use createRequire only — a dynamic import('./dist/plugin.cjs') is resolved by
+    // esbuild while bundling tsup.config and fails when dist/ does not exist yet.
     const { createRequire } = await import('node:module');
     const { writeFileSync } = await import('node:fs');
     const require = createRequire(import.meta.url);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- post-build CJS
     const plugin = require('./dist/plugin.cjs') as {
       renderEditorSidebarLoaderHtml?: (v?: string) => string;
+      default?: { renderEditorSidebarLoaderHtml?: (v?: string) => string };
     };
     const render =
-      plugin.renderEditorSidebarLoaderHtml ??
-      (await import('./dist/plugin.cjs')).renderEditorSidebarLoaderHtml;
+      plugin.renderEditorSidebarLoaderHtml ?? plugin.default?.renderEditorSidebarLoaderHtml;
     if (typeof render === 'function') {
       writeFileSync(join(repoRoot, 'ai-access.html'), render(packageJson.version), 'utf8');
     }

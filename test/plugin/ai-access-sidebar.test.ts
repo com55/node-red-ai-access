@@ -172,11 +172,11 @@ describe('ai-access.html sidebar loader', () => {
   it('derives asset version from package.json (single source of truth)', () => {
     expect(EDITOR_SIDEBAR_ASSET_VERSION).toBe(packageVersion());
     expect(EDITOR_SIDEBAR_ASSET_VERSION).toMatch(/^\d+\.\d+\.\d+/);
-    const versionLit = new RegExp(
-      `EDITOR_SIDEBAR_ASSET_VERSION\\s*=\\s*['"]${packageVersion().replace(/\./g, '\\.')}['"]`
-    );
-    expect(renderEditorSidebarLoaderHtml()).toMatch(versionLit);
-    expect(readFileSync(htmlPath, 'utf8')).toMatch(versionLit);
+    const version = packageVersion();
+    const loader = renderEditorSidebarLoaderHtml();
+    const html = readFileSync(htmlPath, 'utf8');
+    expect(loader).toContain(`EDITOR_SIDEBAR_ASSET_VERSION = '${version}'`);
+    expect(html).toContain(`EDITOR_SIDEBAR_ASSET_VERSION = '${version}'`);
     // No hand-typed rN-N token — version comes from the package.
     expect(EDITOR_SIDEBAR_ASSET_VERSION).not.toMatch(/^r\d/);
   });
