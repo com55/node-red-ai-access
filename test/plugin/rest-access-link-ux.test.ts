@@ -253,6 +253,9 @@ describe('REST access-link UX', () => {
     expect(Array.isArray(res.body.endpoints)).toBe(true);
     expect(res.body.endpoints.some((e: { path?: string }) => e.path === '/flows')).toBe(true);
     expect(res.body.endpoints.some((e: { path?: string }) => e.path === '/status')).toBe(true);
+    expect(res.body.getLink?.canMintTokens).toBe(false);
+    expect(res.body.auth.mint?.method).toBe('POST');
+    expect(res.body.auth.mint?.path).toBe('/links');
   });
 
   it('OpenAPI includes Quick start for access-link clients with CreateProposalRequest example', async () => {
@@ -264,5 +267,9 @@ describe('REST access-link UX', () => {
     expect(res.text).toMatch(/replace_flow/);
     expect(res.text).toMatch(/expectedRev/);
     expect(res.text).toMatch(/Authorization: Bearer/);
+    expect(res.text).toMatch(/AccessLinkKind/);
+    expect(res.text).toMatch(/wrong_token_kind/);
+    expect(res.text).toMatch(/invalid_link_kind/);
+    expect(res.text).toMatch(/never mints tokens|no link-create operation/i);
   });
 });

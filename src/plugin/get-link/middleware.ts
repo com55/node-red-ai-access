@@ -162,3 +162,21 @@ export function getLinkNotFoundHandler() {
     res.status(404).json({ error: 'Not found', code: 'not_found' });
   };
 }
+
+export const LINK_CREATE_NOT_SUPPORTED_CODE = 'link_create_not_supported' as const;
+
+/**
+ * Explicit rejection for any mint/list/revoke attempt under `/mcp/a/<token>/links`.
+ * GET access links never create tokens — admin `POST /mcp/api/v1/links` only.
+ */
+export function getLinkMintNotSupportedHandler() {
+  return (req: Request, res: Response): void => {
+    redactTokenFromRequestUrl(req);
+    setNoStore(res);
+    res.status(405).json({
+      error: 'GET access links cannot create tokens',
+      code: LINK_CREATE_NOT_SUPPORTED_CODE,
+      hint: 'Ask an admin with * permission to mint tokens via POST /mcp/api/v1/links on the /mcp Access links page. This get_link URL cannot create, list, or revoke tokens.',
+    });
+  };
+}

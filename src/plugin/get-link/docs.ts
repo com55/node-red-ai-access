@@ -118,6 +118,15 @@ these docs).
 3. For large content (e.g. HTML in a \`template\` node), use **chunked drafts**.
 4. Search the public palette catalogue (**recommend only** — never installs).
 
+## What you cannot do
+
+- **Create / mint tokens** — this GET link **cannot** create access tokens.
+  There is no \`./links\` create operation under \`/mcp/a/<token>\`. Only a human
+  admin with \`*\` may mint tokens via \`POST /mcp/api/v1/links\` on the \`/mcp\`
+  Access links page. Attempts under this URL return \`405 link_create_not_supported\`.
+- Approve or reject proposals (human on \`/mcp\` only).
+- Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
+
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
 Submit responses include \`title\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
@@ -215,8 +224,12 @@ function docsUrlTable(): string {
 | Draft chunk | \`GET ./draft/<draftId>/append?seq=N&data=<base64url>\` |
 | Draft submit | \`GET ./draft/<draftId>/submit?sha256=<hex>&title=\` |
 
+There is **no** \`POST ./links\` (or any create-link) under this URL — GET links
+**cannot mint tokens**.
+
 Unknown paths under this link return JSON \`{ "code": "not_found" }\` (never HTML,
-and the token is never echoed).
+and the token is never echoed). Attempted mint paths (\`./links\`) return
+\`405 link_create_not_supported\`.
 `;
 }
 
@@ -391,6 +404,8 @@ function docsErrorsAndAlso(): string {
 | \`unknown_node_type\` | Proposal uses a type not installed | Call \`./node-types\` / \`./palette/search\`; ask user to install via Manage palette |
 | \`node_type_not_found\` | Unknown type on \`./node-types/<type>\` | List types or search palette; ask user to install |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
+| \`link_create_not_supported\` | Attempted create/list/revoke under \`./links\` | Ask admin to mint via \`POST /mcp/api/v1/links\` — GET links cannot create tokens |
+| \`wrong_token_kind\` | Path token is rest/mcp, not get_link | Ask user for a get_link URL |
 
 All JSON responses use \`Cache-Control: no-store\`. Never put secrets in query
 strings you will paste publicly beyond this temporary link.
