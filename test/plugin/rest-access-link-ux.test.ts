@@ -189,16 +189,18 @@ describe('REST access-link UX', () => {
       kind: 'access-link',
       linkId: link.id,
       label: 'claude-session',
+      tokenKind: 'rest',
     });
     expect(typeof res.body.caller.expiresAt).toBe('string');
     expect(Array.isArray(res.body.caller.permissions)).toBe(true);
     expect(res.body.caller.permissions.length).toBeGreaterThan(0);
-    expect(res.body.caller.baseUrls).toMatchObject({
+    // rest token: omit rpc (mcp-only surface)
+    expect(res.body.caller.baseUrls).toEqual({
       api: '/mcp/api/v1',
-      rpc: '/mcp/rpc',
       openapi: '/mcp/api/v1/openapi.yaml',
       discovery: '/mcp/api/v1',
     });
+    expect(res.body.caller.baseUrls.rpc).toBeUndefined();
   });
 
   it('GET /status without auth still returns auth_required for admin page bootstrap', async () => {

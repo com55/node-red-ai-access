@@ -206,8 +206,12 @@ describe('buildProposalDiff', () => {
     });
     expect(added?.properties.some(p => p.key === 'x' && p.value === 140)).toBe(true);
     expect(added?.properties.some(p => p.key === 'y' && p.value === 220)).toBe(true);
-    expect(added?.keyFields.find(p => p.key === 'wires')?.value).toBe('sink');
-    expect(added?.properties.find(p => p.key === 'wires')?.value).toBe('sink');
+    expect(added?.keyFields.find(p => p.key === 'wires')?.value).toEqual([
+      { port: 0, to: [{ id: 'nOut', name: 'sink' }] },
+    ]);
+    expect(added?.properties.find(p => p.key === 'wires')?.value).toEqual([
+      { port: 0, to: [{ id: 'nOut', name: 'sink' }] },
+    ]);
   });
 
   it('includes line diffs for function func changes', () => {

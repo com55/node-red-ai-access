@@ -301,9 +301,31 @@ describe('AI-user findings', () => {
       expect(added?.properties.some(p => p.key === 'x' && p.value === 120)).toBe(true);
       expect(added?.properties.some(p => p.key === 'y' && p.value === 200)).toBe(true);
       const wiresProp = added?.properties.find(p => p.key === 'wires');
-      expect(wiresProp?.value).toBe('out');
+      expect(wiresProp?.value).toEqual([{ port: 0, to: [{ id: 'nDbg', name: 'out' }] }]);
       const wiresKey = added?.keyFields.find(p => p.key === 'wires');
-      expect(wiresKey?.value).toBe('out');
+      expect(wiresKey?.value).toEqual([{ port: 0, to: [{ id: 'nDbg', name: 'out' }] }]);
+    });
+
+    it('lists added nodes in flow/wiring order (not sorted by id)', () => {
+      const diff = buildProposalDiff(
+        proposal({
+          baseFlow: { id: 'tab-1', label: 'Main', nodes: [] },
+          payload: {
+            flowId: 'tab-1',
+            flow: {
+              id: 'tab-1',
+              label: 'Main',
+              nodes: [
+                { id: 'z-last', type: 'debug', name: 'end', wires: [] },
+                { id: 'a-first', type: 'inject', name: 'start', wires: [['z-last']] },
+              ],
+            },
+          },
+        }),
+        { rev: 'rev-1', flow: { id: 'tab-1', nodes: [] } },
+        { compareAgainst: 'base' }
+      );
+      expect(diff.added.map(n => n.id)).toEqual(['z-last', 'a-first']);
     });
   });
 

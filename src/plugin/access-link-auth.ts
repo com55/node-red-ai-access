@@ -65,17 +65,47 @@ function truncatedBearerHint(token: string): string | undefined {
   return undefined;
 }
 
+/** Where owners mint tokens — include in wrong_token_kind hints. */
+export const ACCESS_LINKS_MINT_HINT =
+  'ask the owner: Node-RED /mcp → Access links → create kind=rest/mcp (or get_link)';
+
+/**
+ * Ready-made sentence AIs can show the human when the token kind is wrong.
+ */
+export function whatToTellUserWrongTokenKind(expectedKind: AccessLinkKind): string {
+  if (expectedKind === 'get_link') {
+    return (
+      'Please open Node-RED → /mcp → Access links and create a get_link access URL, ' +
+      'then send me that /mcp/a/<token> link.'
+    );
+  }
+  return (
+    `Please open Node-RED → /mcp → Access links and create a kind=${expectedKind} token, ` +
+    'then send me the Bearer token (not a get_link path URL).'
+  );
+}
+
 export function wrongTokenKindHint(
   expectedKind: AccessLinkKind,
   actualKind: AccessLinkKind
 ): string {
+  const mint = ACCESS_LINKS_MINT_HINT;
   if (expectedKind === 'get_link') {
-    return `This URL requires a get_link token. This token is kind=${actualKind} — ask the user for a get_link access URL (/mcp/a/<token>/…).`;
+    return (
+      `This URL requires a get_link token. This token is kind=${actualKind} — ${mint} ` +
+      `for a get_link access URL (/mcp/a/<token>/…). What to tell the user: ${whatToTellUserWrongTokenKind('get_link')}`
+    );
   }
   if (expectedKind === 'rest') {
-    return `This REST endpoint requires a rest token. This token is kind=${actualKind} — ask the user for a REST Bearer token (kind=rest).`;
+    return (
+      `This REST endpoint requires a rest token. This token is kind=${actualKind} — ${mint}. ` +
+      `What to tell the user: ${whatToTellUserWrongTokenKind('rest')}`
+    );
   }
-  return `This MCP endpoint requires an mcp token. This token is kind=${actualKind} — ask the user for an MCP Bearer token (kind=mcp).`;
+  return (
+    `This MCP endpoint requires an mcp token. This token is kind=${actualKind} — ${mint}. ` +
+    `What to tell the user: ${whatToTellUserWrongTokenKind('mcp')}`
+  );
 }
 
 /**
@@ -93,6 +123,7 @@ export function sendWrongTokenKind(
     expectedKind,
     actualKind,
     hint: wrongTokenKindHint(expectedKind, actualKind),
+    tellUser: whatToTellUserWrongTokenKind(expectedKind),
   });
 }
 
