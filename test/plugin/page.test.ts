@@ -188,20 +188,33 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Dismiss closes/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/The flow also changed in/);
-    // Proposal id chip (last 6) + search + deep-link still clears to #proposals.
+    // Proposal id chip (first 8 hex after prop-) + search matches short/full id.
     expect(res.text).toMatch(/id="proposals-search"/);
-    expect(res.text).toMatch(/proposalIdChip|shortIdTail|data-copy-id/);
+    expect(res.text).toMatch(/proposalIdChip|proposalShortId|data-copy-id/);
     expect(res.text).toMatch(/proposalMatchesSearch/);
+    expect(res.text).toMatch(/first 8 hex|prop-/);
+    expect(res.text).toMatch(/idCompact|any substring|full id|short id/);
+    expect(res.text).toMatch(/cross-tab-hint|Switch to Decided|Switch to Pending/);
     expect(res.text).toMatch(/Copied proposal id/);
+    expect(res.text).toMatch(/efd159aa/);
     expect(res.text).toMatch(/focusProposalFromHash/);
     expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
-    // Live destructive proposals: typed DELETE confirm before deploy.
+    // Reject modal shows proposal title; destructive approve uses confirm + summary.
+    expect(res.text).toMatch(/reject-dialog-title/);
     expect(res.text).toMatch(/delete-confirm-dialog/);
+    expect(res.text).toMatch(/delete-confirm-proposal-title|delete-confirm-summary/);
     expect(res.text).toMatch(/isLargeDelete/);
+    expect(res.text).toMatch(/needsApproveConfirm/);
     expect(res.text).toMatch(/openDeleteConfirmDialog/);
     expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
     expect(res.text).toMatch(/diff\.baseRevStale/);
     expect(res.text).toMatch(/Type DELETE to confirm/);
+    expect(res.text).toMatch(/formatDiffActionSummary|Summary:/);
+    expect(res.text).toMatch(/toast-title|toast-link|View/);
+    expect(res.text).toMatch(/settleSearchAfterAction|Cleared search/);
+    expect(res.text).toMatch(
+      /other proposal(?:s)? are now out of date|notifySidebarPendingRefresh/
+    );
     // In-page confirm modal (revoke / dismiss) — no native window.confirm fallback.
     expect(res.text).toMatch(/id="confirm-dialog"/);
     expect(res.text).toMatch(/openConfirmDialog/);

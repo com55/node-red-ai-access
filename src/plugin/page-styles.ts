@@ -922,19 +922,58 @@ function pageStylesPartH(): string {
   z-index: 80;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  max-width: min(22rem, calc(100vw - 2rem));
+  gap: 0.55rem;
+  max-width: min(28rem, calc(100vw - 2rem));
 }
 .toast {
   background: var(--ink);
   color: #fff;
-  padding: 0.65rem 0.85rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  padding: 0.9rem 1.05rem;
+  border-radius: 10px;
+  font-size: 1rem;
+  line-height: 1.45;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.2);
+}
+.toast .toast-title { font-weight: 600; display: block; margin: 0 0 0.2rem; }
+.toast .toast-body { display: block; }
+.toast a.toast-link {
+  color: #fff;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  margin-left: 0.35rem;
 }
 .toast.ok { background: var(--ok); }
 .toast.error { background: var(--danger); }
+.dialog-proposal-title {
+  margin: 0 0 0.55rem;
+  font-weight: 600;
+  font-size: 1.02rem;
+  color: var(--ink);
+  word-break: break-word;
+}
+.cross-tab-hint {
+  margin: 0.75rem 0 0;
+  padding: 0.65rem 0.8rem;
+  background: var(--accent-soft);
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+.cross-tab-hint button {
+  margin-left: 0.35rem;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+  font-weight: 600;
+}
+.search-cleared-note {
+  margin: 0 0 0.65rem;
+  font-size: 0.92rem;
+}
 dialog {
   border: 1px solid var(--line);
   border-radius: 10px;

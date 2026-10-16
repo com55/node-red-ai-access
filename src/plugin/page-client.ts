@@ -89,16 +89,67 @@ function pageClientScriptPartA(): string {
     return path === '/status' || path.indexOf('/status?') === 0;
   }
 
-  function showToast(message, ok) {
+  /**
+   * Toast with optional proposal name + deep-link.
+   * opts: { title?, href?, linkLabel?, durationMs? }
+   */
+  function showToast(message, ok, opts) {
     var host = $('toast-host');
-    if (!host || !message) return;
+    if (!host || (!message && !(opts && opts.title))) return;
+    opts = opts || {};
     var el = document.createElement('div');
     el.className = 'toast ' + (ok ? 'ok' : 'error');
-    el.textContent = message;
+    if (opts.title) {
+      var titleEl = document.createElement('span');
+      titleEl.className = 'toast-title';
+      titleEl.textContent = String(opts.title);
+      el.appendChild(titleEl);
+    }
+    var body = document.createElement('span');
+    body.className = 'toast-body';
+    body.textContent = message || '';
+    if (opts.href) {
+      var link = document.createElement('a');
+      link.className = 'toast-link';
+      link.href = opts.href;
+      link.textContent = opts.linkLabel || 'View';
+      link.addEventListener('click', function (ev) {
+        // Stay in-app: set hash so focusProposalFromHash can run.
+        if (opts.href.indexOf('#proposal=') >= 0) {
+          ev.preventDefault();
+          location.hash = opts.href.replace(/^[^#]*/, '');
+          focusProposalFromHash();
+        }
+      });
+      body.appendChild(document.createTextNode(' '));
+      body.appendChild(link);
+    }
+    el.appendChild(body);
     host.appendChild(el);
+    var ms = opts.durationMs || 4800;
     setTimeout(function () {
       if (el.parentNode) el.parentNode.removeChild(el);
-    }, 3200);
+    }, ms);
+  }
+
+  function proposalToastTitle(p) {
+    if (!p) return '';
+    return titleForProposalCard(p) || p.title || 'Proposal';
+  }
+
+  function proposalViewHref(id) {
+    return '#proposal=' + encodeURIComponent(String(id || ''));
+  }
+
+  /** Notify the editor AI Access sidebar (if open) to refresh pending counts. */
+  function notifySidebarPendingRefresh() {
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        var ch = new BroadcastChannel('ai-access-pending');
+        ch.postMessage({ type: 'refresh-pending' });
+        ch.close();
+      }
+    } catch (e) { /* ignore */ }
   }
 
   function hoursLabel(seconds) {
@@ -293,21 +344,27 @@ function pageClientScriptPartAFormat(): string {
     if (!s) return '';
     return '<code class="id-short" title="' + esc(s) + '">' + esc(shortId(s, keep)) + '</code>';
   }
-  /** Last N chars of an id (default 6) for visible proposal labels. */
-  function shortIdTail(value, keep) {
+  /**
+   * Visible proposal short id: first 8 hex chars after the prop- prefix
+   * (e.g. prop-efd159aa… → efd159aa) so it matches the real id by eye.
+   */
+  function proposalShortId(value, keep) {
     var s = String(value == null ? '' : value);
-    var n = keep || 6;
+    var n = keep || 8;
     if (!s) return '';
-    if (s.length <= n) return s;
-    return s.slice(-n);
+    var body = s.indexOf('prop-') === 0 ? s.slice(5) : s;
+    var m = /^([0-9a-fA-F]+)/.exec(body);
+    var hex = m ? m[1] : body;
+    if (hex.length <= n) return hex;
+    return hex.slice(0, n);
   }
-  /** Copy-on-click chip showing the last 6 chars; full id in title + clipboard. */
+  /** Copy-on-click chip; shows proposalShortId, copies the full id. */
   function proposalIdChip(id) {
     var s = String(id == null ? '' : id);
     if (!s) return '';
     return '<button type="button" class="id-copy" data-copy-id="' + esc(s) +
       '" title="' + esc(s) + ' — click to copy">' +
-      '<code class="id-short">' + esc(shortIdTail(s, 6)) + '</code></button>';
+      '<code class="id-short">' + esc(proposalShortId(s, 8)) + '</code></button>';
   }
   function actorPlain(actor) {
     actor = actor || {};
@@ -1016,6 +1073,38 @@ function pageClientScriptPartB(): string {
     return removed / before > 0.5;
   }
 
+  /**
+   * Destructive enough to need an in-page confirm: any node deletes, or a
+   * cleared/replaced flow. Small add/modify-only edits stay one-click.
+   */
+  function needsApproveConfirm(diff) {
+    if (!diff || !diff.summary) return false;
+    var removed = Number(diff.summary.removed) || 0;
+    var before = Number(diff.summary.beforeNodeCount) || 0;
+    var after = Number(diff.summary.afterNodeCount) || 0;
+    if (removed > 0) return true;
+    if (before > 0 && after === 0) return true;
+    return false;
+  }
+
+  function formatDiffActionSummary(diff) {
+    var s = (diff && diff.summary) || {};
+    var parts = [];
+    var added = Number(s.added) || 0;
+    var modified = Number(s.modified) || 0;
+    var removed = Number(s.removed) || 0;
+    if (added) parts.push(added === 1 ? '1 add' : added + ' adds');
+    if (modified) parts.push(modified === 1 ? '1 change' : modified + ' changes');
+    if (removed) parts.push(removed === 1 ? '1 delete' : removed + ' deletes');
+    if (!parts.length) {
+      var before = Number(s.beforeNodeCount) || 0;
+      var after = Number(s.afterNodeCount) || 0;
+      if (before > 0 && after === 0) return 'Replaces or clears the flow (' + before + ' nodes removed).';
+      return 'Review this change before deploying.';
+    }
+    return 'Summary: ' + parts.join(' · ') + '.';
+  }
+
   function proposalIsStale(p) {
     if (!p || p.status !== 'pending') return false;
     if (p.baseRevStale === true) return true;
@@ -1598,7 +1687,7 @@ function pageClientScriptPartB2(): string {
         if (!fullId) return;
         var flash = $('proposals-flash');
         copyTextToClipboard(fullId).then(function () {
-          showFlash(flash, 'Copied proposal id ' + shortIdTail(fullId, 6), true);
+          showFlash(flash, 'Copied proposal id ' + proposalShortId(fullId, 8), true);
         }).catch(function () {
           showFlash(flash, 'Clipboard unavailable — id is ' + fullId, false);
         });
@@ -1893,16 +1982,56 @@ function pageClientScriptPartB2CardsList(): string {
   function proposalMatchesSearch(p) {
     var q = String(proposalsSearchQuery || '').trim().toLowerCase();
     if (!q) return true;
+    // Match full id, the visible short id (first 8 hex after prop-), or any substring.
     var id = String(p.id || '').toLowerCase();
+    var short = String(proposalShortId(p.id, 8) || '').toLowerCase();
+    var idCompact = id.replace(/[^a-z0-9]/g, '');
+    var qCompact = q.replace(/[^a-z0-9]/g, '');
     var title = String(titleForProposalCard(p) || '').toLowerCase();
     var stored = String(p.title || '').toLowerCase();
     var display = String(p.displayName || '').toLowerCase();
-    var tail = shortIdTail(id, 6).toLowerCase();
     return id.indexOf(q) >= 0 ||
+      (short && short.indexOf(q) >= 0) ||
+      (qCompact.length > 0 && idCompact.indexOf(qCompact) >= 0) ||
       title.indexOf(q) >= 0 ||
       stored.indexOf(q) >= 0 ||
-      display.indexOf(q) >= 0 ||
-      tail.indexOf(q) >= 0;
+      display.indexOf(q) >= 0;
+  }
+
+  function countSearchMatchesInFilter(filter) {
+    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
+    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    if (filter === 'decided') {
+      return decided.filter(proposalMatchesSearch).length;
+    }
+    return pending.filter(proposalMatchesSearch).length;
+  }
+
+  function renderCrossTabSearchHint(otherFilter, otherCount) {
+    if (!proposalsSearchQuery.trim() || otherCount <= 0) return '';
+    var label = otherFilter === 'decided' ? 'Decided' : 'Pending';
+    var matchWord = otherCount === 1 ? '1 match' : otherCount + ' matches';
+    return '<p class="cross-tab-hint" role="status">' +
+      esc(matchWord) + ' in ' + esc(label) +
+      ' <button type="button" class="cross-tab-switch" data-filter="' + esc(otherFilter) + '">' +
+      'Switch to ' + esc(label) + '</button></p>';
+  }
+
+  function bindCrossTabHint(list) {
+    if (!list) return;
+    list.querySelectorAll('.cross-tab-switch').forEach(function (btn) {
+      bindOnce(btn, 'click', function () {
+        var f = btn.getAttribute('data-filter');
+        setProposalsFilter(f === 'decided' ? 'decided' : 'pending');
+      });
+    });
+  }
+
+  function renderEmptyProposalsState(title, muted, extraHtml) {
+    return '<div class="empty-state"><p class="empty-title">' + esc(title) + '</p>' +
+      '<p class="muted">' + esc(muted) + '</p>' +
+      (extraHtml || '') +
+      '</div>';
   }
 
   function renderProposalsList() {
@@ -1914,8 +2043,10 @@ function pageClientScriptPartB2CardsList(): string {
     updatePendingBadges();
     if (filters) filters.hidden = cachedProposals.length === 0;
     if (!cachedProposals.length) {
-      list.innerHTML = '<div class="empty-state"><p class="empty-title">No proposals yet</p>' +
-        '<p class="muted">When an AI submits a change it will appear here for review.</p></div>';
+      list.innerHTML = renderEmptyProposalsState(
+        'No proposals yet',
+        'When an AI submits a change it will appear here for review.'
+      );
       return;
     }
     if (proposalsFilter === 'pending') {
@@ -1926,15 +2057,15 @@ function pageClientScriptPartB2CardsList(): string {
         return proposalIsStale(p) && proposalMatchesSearch(p);
       });
       if (!live.length && !stale.length) {
-        list.innerHTML = '<div class="empty-state"><p class="empty-title">' +
-          (proposalsSearchQuery.trim()
-            ? 'No matching proposals'
-            : 'No pending proposals') + '</p>' +
-          '<p class="muted">' +
-          (proposalsSearchQuery.trim()
+        var decidedMatches = countSearchMatchesInFilter('decided');
+        list.innerHTML = renderEmptyProposalsState(
+          proposalsSearchQuery.trim() ? 'No matching proposals' : 'No pending proposals',
+          proposalsSearchQuery.trim()
             ? 'Try a different title or id, or clear the search.'
-            : 'Switch the filter above to see other proposals.') +
-          '</p></div>';
+            : 'Switch the filter above to see other proposals.',
+          renderCrossTabSearchHint('decided', decidedMatches)
+        );
+        bindCrossTabHint(list);
         return;
       }
       disambiguatedTitleCache = buildDisambiguatedTitles(live.concat(stale));
@@ -1943,15 +2074,15 @@ function pageClientScriptPartB2CardsList(): string {
     } else {
       var matchedDecided = decided.filter(proposalMatchesSearch);
       if (!matchedDecided.length) {
-        list.innerHTML = '<div class="empty-state"><p class="empty-title">' +
-          (proposalsSearchQuery.trim()
-            ? 'No matching proposals'
-            : 'No decided proposals') + '</p>' +
-          '<p class="muted">' +
-          (proposalsSearchQuery.trim()
+        var pendingMatches = countSearchMatchesInFilter('pending');
+        list.innerHTML = renderEmptyProposalsState(
+          proposalsSearchQuery.trim() ? 'No matching proposals' : 'No decided proposals',
+          proposalsSearchQuery.trim()
             ? 'Try a different title or id, or clear the search.'
-            : 'Switch the filter above to see other proposals.') +
-          '</p></div>';
+            : 'Switch the filter above to see other proposals.',
+          renderCrossTabSearchHint('pending', pendingMatches)
+        );
+        bindCrossTabHint(list);
         return;
       }
       disambiguatedTitleCache = buildDisambiguatedTitles(matchedDecided);
@@ -1979,10 +2110,13 @@ function pageClientScriptPartB2Focus(): string {
     }
   }
 
-  async function loadProposals() {
+  async function loadProposals(opts) {
     if (!aiOn) return;
+    opts = opts || {};
     var flash = $('proposals-flash');
-    showFlash(flash, '', true);
+    if (!opts.skipRender && !opts.keepFlash) {
+      showFlash(flash, '', true);
+    }
     try {
       await refreshFlowLabels();
       var data = await api('/proposals');
@@ -1992,7 +2126,11 @@ function pageClientScriptPartB2Focus(): string {
         var label = p && p.flowLabel;
         if (id && label) cachedFlowLabels[id] = String(label);
       });
-      renderProposalsList();
+      if (!opts.skipRender) {
+        renderProposalsList();
+      } else {
+        updatePendingBadges();
+      }
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
     }
@@ -2251,54 +2389,163 @@ function pageClientScriptPartC(): string {
     pendingRejectId = id;
     var dialog = $('reject-dialog');
     var input = $('reject-reason-input');
+    var titleEl = $('reject-dialog-title');
+    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
+    if (titleEl) {
+      var t = proposalToastTitle(p);
+      titleEl.textContent = t ? '"' + t + '"' : '';
+      titleEl.hidden = !t;
+    }
     if (input) input.value = '';
     showInPageDialog(dialog);
   }
 
   function openDeleteConfirmDialog(id, deploymentType, diff) {
-    pendingApproveCtx = { id: id, deploymentType: deploymentType };
+    pendingApproveCtx = { id: id, deploymentType: deploymentType, requireDelete: isLargeDelete(diff) };
     var dialog = $('delete-confirm-dialog');
+    var heading = $('delete-confirm-heading');
+    var titleEl = $('delete-confirm-proposal-title');
     var msg = $('delete-confirm-msg');
+    var summaryEl = $('delete-confirm-summary');
+    var typeLabel = $('delete-confirm-type-label');
     var input = $('delete-confirm-input');
     var btn = $('delete-confirm-btn');
+    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var beforeN = (diff && diff.summary && diff.summary.beforeNodeCount) || 0;
     var removedN = (diff && diff.summary && diff.summary.removed) || 0;
-    if (msg) {
-      msg.textContent = 'This proposal deletes ' + removedN + ' of ' + beforeN +
-        ' nodes. Type DELETE to confirm approve & deploy.';
+    var large = isLargeDelete(diff);
+    if (heading) {
+      heading.textContent = large ? 'Confirm large deletion' : 'Confirm approve & deploy';
     }
-    if (input) input.value = '';
-    if (btn) btn.disabled = true;
+    if (titleEl) {
+      var t = proposalToastTitle(p);
+      titleEl.textContent = t ? '"' + t + '"' : '';
+      titleEl.hidden = !t;
+    }
+    if (msg) {
+      if (large) {
+        msg.textContent = 'This proposal deletes ' + removedN + ' of ' + beforeN +
+          ' nodes. Type DELETE to confirm approve & deploy.';
+        msg.className = 'danger-text';
+      } else if (removedN > 0) {
+        msg.textContent = 'This proposal deletes ' + removedN +
+          ' node' + (removedN === 1 ? '' : 's') + '. Confirm before deploying.';
+        msg.className = 'danger-text';
+      } else {
+        msg.textContent = 'This proposal replaces or clears the flow. Confirm before deploying.';
+        msg.className = 'danger-text';
+      }
+    }
+    if (summaryEl) {
+      summaryEl.textContent = formatDiffActionSummary(diff);
+    }
+    if (typeLabel) typeLabel.hidden = !large;
+    if (input) {
+      input.value = '';
+      input.hidden = !large;
+    }
+    if (btn) btn.disabled = !!large;
     showInPageDialog(dialog);
+  }
+
+  /**
+   * After approve/reject: keep search useful — switch to Decided if the card
+   * moved there, or clear an empty search with a short note.
+   */
+  function settleSearchAfterAction(actedId, actedStatus) {
+    var flash = $('proposals-flash');
+    var q = String(proposalsSearchQuery || '').trim();
+    if (!q) {
+      renderProposalsList();
+      return;
+    }
+    var acted = cachedProposals.filter(function (x) { return x.id === actedId; })[0];
+    var status = acted ? acted.status : actedStatus;
+    var currentMatches = countSearchMatchesInFilter(proposalsFilter);
+    if (currentMatches > 0) {
+      renderProposalsList();
+      return;
+    }
+    if (status && status !== 'pending' && proposalsFilter === 'pending') {
+      var decidedMatches = countSearchMatchesInFilter('decided');
+      if (decidedMatches > 0) {
+        setProposalsFilter('decided');
+        var prior = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
+        showFlash(
+          flash,
+          (prior ? prior + ' ' : '') + 'Showing the decided proposal for your search.',
+          true
+        );
+        return;
+      }
+    }
+    proposalsSearchQuery = '';
+    var searchEl = $('proposals-search');
+    if (searchEl) searchEl.value = '';
+    var priorClear = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
+    showFlash(
+      flash,
+      (priorClear ? priorClear + ' ' : '') + 'Cleared search — no matches left in this filter.',
+      true
+    );
+    renderProposalsList();
   }
 
   async function doApproveProposal(id, deploymentType) {
     var flash = $('proposals-flash');
+    var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
+    var toastTitle = proposalToastTitle(pBefore);
+    var expectedRev = pBefore && pBefore.expectedRev;
+    var peersBefore = expectedRev
+      ? cachedProposals.filter(function (x) {
+          return x.id !== id && x.status === 'pending' && x.expectedRev === expectedRev;
+        }).length
+      : 0;
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
         body: JSON.stringify({ deploymentType: deploymentType })
       });
+      var viewOpts = { title: toastTitle, href: proposalViewHref(id), linkLabel: 'View' };
       if (result.status === 'rejected') {
         var rejectMsg = friendlyReason(result.reason) || 'Proposal rejected (revision conflict).';
         showFlash(flash, rejectMsg, false);
-        showToast(rejectMsg, false);
+        showToast(rejectMsg, false, viewOpts);
       } else if (result.status === 'failed') {
         var failMsg = friendlyReason(result.reason) || 'Proposal failed.';
         showFlash(flash, failMsg, false);
-        showToast(failMsg, false);
+        showToast(failMsg, false, viewOpts);
       } else {
-        showFlash(flash, 'Proposal approved & deployed' +
-          (result.resultRev ? ' (' + result.resultRev + ')' : '') + '.', true);
-        showToast('Proposal approved & deployed.', true);
+        showFlash(flash, 'Approved & deployed' +
+          (result.resultRev ? ' (' + result.resultRev + ')' : '') +
+          (toastTitle ? ': ' + toastTitle : '') + '.', true);
+        showToast('Approved & deployed.', true, viewOpts);
       }
       delete proposalDiffCache[id];
-      loadProposals();
+      // Clear diff cache for peers that shared the rev — they are now out of date.
+      cachedProposals.forEach(function (peer) {
+        if (peer.id !== id && peer.status === 'pending' && peer.expectedRev === expectedRev) {
+          delete proposalDiffCache[peer.id];
+          peer.baseRevStale = true;
+        }
+      });
+      await loadProposals({ skipRender: true });
+      updatePendingBadges();
+      notifySidebarPendingRefresh();
+      if (result.status !== 'rejected' && result.status !== 'failed' && peersBefore > 0) {
+        var note = peersBefore === 1
+          ? '1 other proposal is now out of date'
+          : peersBefore + ' other proposals are now out of date';
+        var priorOk = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
+        showFlash(flash, (priorOk ? priorOk + ' ' : '') + note + '.', true);
+        showToast(note + '.', true);
+      }
+      settleSearchAfterAction(id, 'approved');
       loadLogs();
     } catch (e) {
       var errMsg = friendlyReason(e.message) || String(e);
       showFlash(flash, errMsg, false);
-      showToast(errMsg, false);
+      showToast(errMsg, false, toastTitle ? { title: toastTitle } : undefined);
     }
   }
 
@@ -2310,7 +2557,7 @@ function pageClientScriptPartC(): string {
       showToast('This proposal is out of date. Ask the AI to resubmit.', false);
       return;
     }
-    if (isLargeDelete(diff)) {
+    if (needsApproveConfirm(diff)) {
       openDeleteConfirmDialog(id, deploymentType, diff);
       return;
     }
@@ -2324,6 +2571,8 @@ function pageClientScriptPartC(): string {
       : 'Rejected by admin';
     var silent = options && options.silent;
     var dismissed = /^Dismissed/i.test(reason);
+    var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
+    var toastTitle = proposalToastTitle(pBefore);
     try {
       await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
@@ -2332,9 +2581,16 @@ function pageClientScriptPartC(): string {
       delete proposalDiffCache[id];
       if (!silent) {
         var okMsg = dismissed ? 'Proposal dismissed.' : 'Proposal rejected.';
-        showFlash(flash, okMsg, true);
-        showToast(okMsg, true);
-        loadProposals();
+        showFlash(flash, okMsg + (toastTitle ? ' — ' + toastTitle : ''), true);
+        showToast(okMsg, true, {
+          title: toastTitle,
+          href: proposalViewHref(id),
+          linkLabel: 'View'
+        });
+        await loadProposals({ skipRender: true });
+        updatePendingBadges();
+        notifySidebarPendingRefresh();
+        settleSearchAfterAction(id, 'rejected');
         loadLogs();
       }
     } catch (e) {
@@ -2493,8 +2749,8 @@ function pageClientScriptPartD(): string {
     }
 
     $('proposals-hint').textContent = canApprove
-      ? 'Review changes from your AI assistant. Approve & deploy makes them live; Reject leaves the flow unchanged; Dismiss closes out-of-date items.'
-      : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals.';
+      ? 'Review changes from your AI assistant. Each card shows a short id (first 8 hex after prop-; click to copy the full id). Approve & deploy makes them live; Reject leaves the flow unchanged; Dismiss closes out-of-date items.'
+      : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals. Short ids are the first 8 hex characters after prop- (click to copy the full id).';
 
     renderLinksManage();
   }
@@ -2559,15 +2815,23 @@ function pageClientScriptPartD(): string {
     var deleteBtn = $('delete-confirm-btn');
     if (deleteInput && deleteBtn) {
       deleteInput.addEventListener('input', function () {
-        deleteBtn.disabled = deleteInput.value !== 'DELETE';
+        if (pendingApproveCtx && pendingApproveCtx.requireDelete) {
+          deleteBtn.disabled = deleteInput.value !== 'DELETE';
+        } else {
+          deleteBtn.disabled = false;
+        }
       });
     }
     if (deleteForm) {
       deleteForm.addEventListener('submit', function (ev) {
         var submitter = ev.submitter || document.activeElement;
         var value = submitter && submitter.value ? submitter.value : '';
-        if (value === 'confirm' && pendingApproveCtx && deleteInput && deleteInput.value === 'DELETE') {
-          doApproveProposal(pendingApproveCtx.id, pendingApproveCtx.deploymentType);
+        if (value === 'confirm' && pendingApproveCtx) {
+          var requireDelete = !!pendingApproveCtx.requireDelete;
+          var typedOk = !requireDelete || (deleteInput && deleteInput.value === 'DELETE');
+          if (typedOk) {
+            doApproveProposal(pendingApproveCtx.id, pendingApproveCtx.deploymentType);
+          }
         }
         pendingApproveCtx = null;
       });
