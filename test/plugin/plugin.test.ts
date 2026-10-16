@@ -133,6 +133,17 @@ describe('AI Access plugin scaffold', () => {
       expect(res.text).toMatch(/\\\/admin|\/admin/);
     });
 
+    it('serves editor sidebar JS with no-store cache headers', async () => {
+      const { app } = createMockRed({ adminAuth: { type: 'credentials' } });
+      const res = await request(app).get('/mcp/editor/ai-access-sidebar.js');
+      expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toMatch(/no-store/);
+      expect(res.headers['x-ai-access-sidebar-version']).toBeTruthy();
+      expect(res.text).toMatch(/RED\.sidebar\.addTab/);
+      expect(res.text).toMatch(/Only changed nodes \(recommended\)/);
+      expect(res.text).not.toMatch(/ai-access-save/);
+    });
+
     it('returns 401 for unauthenticated GET /mcp/api/v1/status', async () => {
       const { app } = createMockRed({ adminAuth: { type: 'credentials' } });
 

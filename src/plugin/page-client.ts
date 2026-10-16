@@ -109,8 +109,27 @@ function pageClientScriptPartA(): string {
   }
 
   function fieldLabel(key) {
-    if (key === 'wires') return 'Connects to';
-    return key;
+    var labels = {
+      wires: 'Connects to',
+      func: 'Function code',
+      template: 'HTML template',
+      name: 'Name',
+      topic: 'Topic',
+      payload: 'Payload',
+      complete: 'Complete',
+      info: 'Info',
+      format: 'Format',
+      syntax: 'Syntax',
+      outputs: 'Outputs',
+      x: 'X',
+      y: 'Y'
+    };
+    return labels[key] || key;
+  }
+
+  function fieldLabelHtml(key) {
+    var friendly = fieldLabel(key);
+    return '<strong title="' + esc(key) + '">' + esc(friendly) + '</strong>';
   }
 
   async function api(path, options) {
@@ -273,11 +292,12 @@ function pageClientScriptPartAFormat(): string {
   function actorPlain(actor) {
     actor = actor || {};
     if (actor.kind === 'access-link') {
+      // Full hover text; short cell text is actorLabel ("AI (label)").
       if (actor.label) {
-        return 'AI link "' + String(actor.label) + '"' +
-          (actor.linkId ? ' (' + String(actor.linkId) + ')' : '');
+        return 'AI (' + String(actor.label) + ')' +
+          (actor.linkId ? ' · link ' + String(actor.linkId) : '');
       }
-      return 'AI link ' + String(actor.linkId || '');
+      return actor.linkId ? 'AI · link ' + String(actor.linkId) : 'AI';
     }
     if (actor.kind === 'admin') {
       return actor.username
@@ -290,10 +310,11 @@ function pageClientScriptPartAFormat(): string {
   function actorLabel(actor) {
     actor = actor || {};
     if (actor.kind === 'access-link') {
+      // Short cell text; full wording stays on the title/hover via actorPlain.
       if (actor.label) {
-        return 'AI link "' + esc(actor.label) + '"';
+        return 'AI (' + esc(actor.label) + ')';
       }
-      return 'AI link ' + tipId(actor.linkId || '', 8);
+      return 'AI';
     }
     if (actor.kind === 'admin') {
       return 'You (admin)';
@@ -437,13 +458,15 @@ function pageClientScriptPartAAudit(): string {
       var createdTtl = linkTtlFromDetails(d);
       return 'Access link created' +
         (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
-        (createdTtl ? ' · TTL ' + esc(createdTtl) : '');
+        (createdTtl ? ' · TTL ' + esc(createdTtl) : '') +
+        (d.expiresAt ? ' · expires ' + timeCell(d.expiresAt) : '');
     }
     if (action === 'link.revoked') {
       var revokedTtl = linkTtlFromDetails(d);
       return 'Access link revoked' +
         (d.label ? ' "' + esc(String(d.label)) + '"' : '') +
-        (revokedTtl ? ' · TTL ' + esc(revokedTtl) : '');
+        (revokedTtl ? ' · TTL ' + esc(revokedTtl) : '') +
+        (d.expiresAt ? ' · was set to expire ' + timeCell(d.expiresAt) : '');
     }
     var keys = Object.keys(d);
     if (!keys.length) return '<span class="muted">—</span>';
@@ -816,6 +839,52 @@ function pageClientScriptPartB(): string {
     return parts.length ? parts.join(' · ') : '0';
   }
 
+  // Keep in sync with shouldRefreshDisplayTitle / titleFromDiffSummary in proposal-present.ts.
+  function shouldRefreshDisplayTitle(storedTitle, removedCount) {
+    var t = String(storedTitle || '').trim();
+    if (!t) return true;
+    if (/^Update(\\s|$)/i.test(t)) return true;
+    if (removedCount > 0 && !/^Replace\\b/i.test(t)) return true;
+    return false;
+  }
+
+  function pluralNodes(n) {
+    return n === 1 ? 'node' : 'nodes';
+  }
+
+  function displayTitleForProposal(p, diff) {
+    var stored = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : '');
+    var flowLabel = flowLabelOf(p);
+    if (!diff || !diff.summary) {
+      return stored || (flowLabel ? 'Update ' + flowLabel : 'Proposal');
+    }
+    var sum = diff.summary;
+    var removed = Number(sum.removed) || 0;
+    var added = Number(sum.added) || 0;
+    var modified = Number(sum.modified) || 0;
+    if (!shouldRefreshDisplayTitle(stored, removed)) {
+      return stored;
+    }
+    var firstType = '';
+    if (diff.added && diff.added[0] && diff.added[0].type) {
+      firstType = String(diff.added[0].type);
+    }
+    if (removed > 0) {
+      var parts = ['deletes ' + removed + ' ' + pluralNodes(removed)];
+      if (added === 1 && firstType) parts.push('adds 1 ' + firstType);
+      else if (added > 0) parts.push('adds ' + added + ' ' + pluralNodes(added));
+      if (modified > 0) parts.push('edits ' + modified + ' ' + pluralNodes(modified));
+      return (flowLabel ? 'Replace ' + flowLabel : 'Replace flow') + ': ' + parts.join(', ');
+    }
+    var total = added + modified;
+    if (total === 0) return flowLabel ? 'Update ' + flowLabel : 'Update flow';
+    if (total === 1 && added === 1 && firstType) return 'Add ' + firstType + ' node';
+    if (total === 1 && modified === 1) {
+      return flowLabel ? 'Edit node in ' + flowLabel : 'Edit node';
+    }
+    return flowLabel ? total + ' changes in ' + flowLabel : total + ' changes';
+  }
+
   function countPendingBuckets() {
     var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
     var stale = 0;
@@ -972,7 +1041,7 @@ function pageClientScriptPartBDiffPresence(): string {
   }
 
   function renderPresenceProperty(p) {
-    var label = fieldLabel(p.key);
+    var labelHtml = fieldLabelHtml(p.key);
     if (p.kind === 'text') {
       var text = String(p.value == null ? '' : p.value);
       var previewToggle = '';
@@ -984,22 +1053,22 @@ function pageClientScriptPartBDiffPresence(): string {
         previewBlock = renderHtmlPreviewBlock(text);
       }
       if (isCollapsiblePresenceText(text)) {
-        return '<details class="presence-text"><summary><strong>' + esc(label) + '</strong>' +
+        return '<details class="presence-text"><summary>' + labelHtml +
           ' <span class="muted">(' + text.split('\\n').length + ' lines)</span></summary>' +
           '<div class="presence-text-toolbar">' + previewToggle + '</div>' +
           previewBlock +
           '<pre class="presence-pre">' + esc(text) + '</pre></details>';
       }
       // Short single-line fields (format, syntax, …) stay inline expanded.
-      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
+      return '<div class="prop-change">' + labelHtml + ': ' +
         '<code class="presence-inline">' + esc(text) + '</code></div>';
     }
     // Wires (and other readable strings) stay as plain text, not JSON-quoted.
     if (typeof p.value === 'string') {
-      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
+      return '<div class="prop-change">' + labelHtml + ': ' +
         '<code class="presence-inline">' + esc(p.value) + '</code></div>';
     }
-    return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
+    return '<div class="prop-change">' + labelHtml + ': ' +
       '<code class="presence-inline">' + esc(JSON.stringify(p.value)) + '</code></div>';
   }
 
@@ -1084,23 +1153,23 @@ function pageClientScriptPartBDiffView(): string {
   }
 
   function renderPropertyChange(ch, mode) {
-    var label = fieldLabel(ch.key);
+    var labelHtml = fieldLabelHtml(ch.key);
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
       var lineCount = textChangeLineCount(ch);
       if (isLargeTextChange(ch)) {
         var lineLabel = lineCount > 0 ? (lineCount + '-line change') : 'large text change';
         return '<div class="prop-change large-text-diff">' +
-          '<strong>' + esc(label) + '</strong> ' +
+          labelHtml + ' ' +
           '<details class="large-diff-details">' +
           '<summary class="large-diff-btn">Show ' + esc(lineLabel) + '</summary>' +
           body + '</details></div>';
       }
       // Short fields: no byte counts — the sentence/heading already frames the change.
-      return '<div class="prop-change"><strong>' + esc(label) + '</strong>' + body + '</div>';
+      return '<div class="prop-change">' + labelHtml + body + '</div>';
     }
     if (mode === 'split') {
-      return '<div class="prop-change"><strong>' + esc(label) + '</strong>' +
+      return '<div class="prop-change">' + labelHtml +
         '<div class="prop-change-scalar split">' +
         '<div class="scalar-side"><span class="side-label">Before</span>' +
         '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code></div>' +
@@ -1109,7 +1178,7 @@ function pageClientScriptPartBDiffView(): string {
         '<code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>' +
         '</div></div>';
     }
-      return '<div class="prop-change"><strong>' + esc(label) + '</strong>: ' +
+      return '<div class="prop-change">' + labelHtml + ': ' +
       '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
       ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
   }
@@ -1208,19 +1277,23 @@ function pageClientScriptPartB2(): string {
   return `
   function updatePendingBadges() {
     var counts = countPendingBuckets();
-    var badgeText = formatPendingBadgeText(counts.live, counts.stale);
+    var fullText = formatPendingBadgeText(counts.live, counts.stale);
     var badge = $('proposals-pending-badge');
     if (badge) {
-      badge.textContent = badgeText;
+      // Tab badge: to-review count only; full wording lives in the tooltip.
+      badge.textContent = String(counts.live);
       badge.hidden = counts.pending <= 0;
-      badge.title = badgeText;
+      badge.title = fullText;
     }
     var filterCount = $('filter-pending-count');
-    if (filterCount) filterCount.textContent = badgeText;
+    if (filterCount) filterCount.textContent = fullText;
     var decidedCount = $('filter-decided-count');
     if (decidedCount) decidedCount.textContent = String(counts.decided);
     var dashPending = $('dash-pending');
-    if (dashPending) dashPending.textContent = badgeText;
+    if (dashPending) {
+      dashPending.textContent = fullText;
+      dashPending.title = fullText;
+    }
   }
 
   function setProposalsFilter(next) {
@@ -1321,11 +1394,13 @@ function pageClientScriptPartB2Actions(): string {
       '<details class="advanced-block">' +
       '<summary>Deploy options</summary>' +
       '<label>Deploy type<select class="deploy-type" data-id="' + esc(p.id) + '">' +
-      '<option value="nodes"' + (defaultDeploy === 'nodes' ? ' selected' : '') + '>nodes</option>' +
-      '<option value="flows"' + (defaultDeploy === 'flows' ? ' selected' : '') + '>flows</option>' +
-      '<option value="full"' + (defaultDeploy === 'full' ? ' selected' : '') + '>full</option>' +
+      '<option value="nodes"' + (defaultDeploy === 'nodes' ? ' selected' : '') +
+      '>Only changed nodes (recommended)</option>' +
+      '<option value="flows"' + (defaultDeploy === 'flows' ? ' selected' : '') +
+      '>Changed flows</option>' +
+      '<option value="full"' + (defaultDeploy === 'full' ? ' selected' : '') +
+      '>Full redeploy</option>' +
       '</select></label>' +
-      '<p class="muted">nodes = only changed nodes restart, recommended</p>' +
       '<p class="full-deploy-warn" data-id="' + esc(p.id) + '"' +
       (defaultDeploy === 'full' ? '' : ' hidden') +
       '>Warning: full restarts the entire runtime.</p>' +
@@ -1391,13 +1466,13 @@ function pageClientScriptPartB2Cards(): string {
   }
 
   function renderProposalCard(p) {
-    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
+    var cached = proposalDiffCache[p.id];
+    var title = displayTitleForProposal(p, cached);
     var flowLabel = flowLabelOf(p);
     var createdBy = renderRequestedVia(p);
     var reason = p.reason
       ? '<p class="muted">Reason: ' + esc(friendlyReason(p.reason)) + '</p>'
       : '';
-    var cached = proposalDiffCache[p.id];
     var plain = cached ? plainDiffSentence(cached, flowLabel) : '';
     // Show for any large delete — including stale — so owners see the risk.
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
@@ -1411,7 +1486,7 @@ function pageClientScriptPartB2Cards(): string {
     return '<article class="proposal-detail" id="proposal-' + esc(p.id) +
       '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
       '<header class="proposal-card-head">' +
-      '<h3 class="proposal-heading">' + esc(title) + '</h3>' +
+      '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span> ' +
       '<span class="proposal-meta-line">' +
       (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
@@ -1434,9 +1509,9 @@ function pageClientScriptPartB2Cards(): string {
 function pageClientScriptPartB2CardsList(): string {
   return `
   function renderStaleItem(p) {
-    var title = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : 'Proposal');
-    var flowLabel = flowLabelOf(p);
     var cached = proposalDiffCache[p.id];
+    var title = displayTitleForProposal(p, cached);
+    var flowLabel = flowLabelOf(p);
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     var dismissBtn = canApprove
       ? '<button type="button" class="action secondary dismiss-stale-btn" data-id="' +
@@ -1446,7 +1521,9 @@ function pageClientScriptPartB2CardsList(): string {
       '" data-id="' + esc(p.id) + '" data-status="pending" data-stale="1">' +
       '<div class="stale-item-row">' +
       '<div class="stale-item-main">' +
-      '<strong class="proposal-heading">' + esc(title) + '</strong>' +
+      '<strong class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) +
+      '</strong>' +
+      '<span class="stale-reason muted">flow changed since</span>' +
       '<span class="proposal-meta-line">' +
       (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
       timeCell(p.createdAt) +
@@ -1671,6 +1748,12 @@ function pageClientScriptPartB2Apply(): string {
       }
     } else if (existingBanner) {
       existingBanner.parentNode.removeChild(existingBanner);
+    }
+
+    // Refresh heading from the live diff (legacy "Update …" / delete-leading titles).
+    var titleEl = document.querySelector('[data-title-for="' + id + '"]');
+    if (titleEl && p) {
+      titleEl.textContent = displayTitleForProposal(p, diff);
     }
     updatePendingBadges();
   }

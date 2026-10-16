@@ -20,6 +20,7 @@ import {
   requireStarPermission,
 } from './auth.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
+import { EDITOR_SIDEBAR_ASSET_VERSION, renderEditorSidebarJs } from './editor-sidebar.js';
 import { listFlowsHandler } from './flows-routes.js';
 import { registerGetLinkRoutes } from './get-link-routes.js';
 import { attachMcpJsonErrorHandlers } from './json-errors.js';
@@ -108,6 +109,20 @@ function registerMcpShellAndDiscovery(
   RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
   RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
   RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
+
+  // Editor sidebar assets — must not be cached across plugin upgrades.
+  // Companion ai-access.html is a thin loader with ?v= cache-bust.
+  RED.httpAdmin.get(
+    '/mcp/editor/ai-access-sidebar.js',
+    limiter,
+    (_req: AuthenticatedRequest, res: Response) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('X-AI-Access-Sidebar-Version', EDITOR_SIDEBAR_ASSET_VERSION);
+      res.type('application/javascript').status(200).send(renderEditorSidebarJs());
+    }
+  );
 }
 
 export function registerRoutes(
