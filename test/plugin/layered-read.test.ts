@@ -120,7 +120,7 @@ describe('parseLineRange', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(AiOpsValidationError);
       expect((e as AiOpsValidationError).code).toBe('invalid_line_range');
-      expect((e as AiOpsValidationError).message).toMatch(/reversed/i);
+      expect((e as AiOpsValidationError).message).toMatch(/end >= start|1-based inclusive/i);
     }
   });
 });

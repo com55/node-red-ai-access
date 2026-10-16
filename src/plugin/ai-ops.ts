@@ -3,12 +3,7 @@
  * Keeps business logic in one place — HTTP and MCP are thin adapters.
  */
 
-import {
-  AdapterUnavailableError,
-  FlowNotFoundError,
-  FlowRevisionConflictError,
-  PluginMisconfiguredError,
-} from '../runtime/errors.js';
+import { FlowRevisionConflictError } from '../runtime/errors.js';
 import { normalizeFlowTab } from '../runtime/flows-util.js';
 import type { FlowAdapter, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
@@ -16,6 +11,11 @@ import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../sto
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
+import {
+  mapErrorForChannel,
+  type ChannelErrorMapped,
+  type ErrorChannel,
+} from './channel-errors.js';
 import { throwValidationIssues, validateFlowTab } from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
@@ -396,54 +396,13 @@ export function getMyProposal(
   return presentProposal(proposal, presentOptions);
 }
 
-/** Map shared op errors to REST-style `{ statusCode, body }` for HTTP handlers. */
-export function aiOpsErrorToHttp(error: unknown): {
-  statusCode: number;
-  body: {
-    error: string;
-    code: string;
-    expectedRev?: string;
-    currentRev?: string;
-    matchCount?: number;
-    [key: string]: unknown;
-  };
-} | null {
-  if (error instanceof AiOpsValidationError) {
-    return {
-      statusCode: error.statusCode,
-      body: {
-        error: error.message,
-        code: error.code,
-        ...(error.details ?? {}),
-      },
-    };
-  }
-  if (error instanceof FlowRevisionConflictError) {
-    return {
-      statusCode: error.statusCode,
-      body: {
-        error: error.message,
-        code: error.code,
-        expectedRev: error.expectedRev,
-        currentRev: error.currentRev,
-      },
-    };
-  }
-  if (
-    error instanceof FlowNotFoundError ||
-    error instanceof ProposalNotFoundError ||
-    error instanceof StoragePayloadTooLargeError
-  ) {
-    return {
-      statusCode: error.statusCode,
-      body: { error: error.message, code: error.code },
-    };
-  }
-  if (error instanceof PluginMisconfiguredError || error instanceof AdapterUnavailableError) {
-    return {
-      statusCode: error.statusCode,
-      body: { error: error.message, code: error.code },
-    };
-  }
-  return null;
+/**
+ * Map thrown AI-ops errors to HTTP JSON. Prefer {@link mapErrorForChannel} when
+ * the caller knows the surface (GET / REST / MCP) so hints match the channel.
+ */
+export function aiOpsErrorToHttp(
+  error: unknown,
+  channel: ErrorChannel = 'rest'
+): ChannelErrorMapped | null {
+  return mapErrorForChannel(error, channel);
 }

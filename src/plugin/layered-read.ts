@@ -146,7 +146,7 @@ export async function findNodeInFlows(
     const configs = Array.isArray(tab.configs) ? tab.configs : [];
     const node = [...nodes, ...configs].find(n => n.id === nodeId);
     if (!node) {
-      throw new AiOpsValidationError('Node was not found in the given flow', 'node_not_found', {
+      throw new AiOpsValidationError('Node was not found', 'node_not_found', {
         statusCode: 404,
       });
     }
@@ -211,7 +211,7 @@ export function parseLineRange(
   const m = /^(\d+)(?:-(\d+))?$/.exec(raw.trim());
   if (!m) {
     throw new AiOpsValidationError(
-      'lines must be A or A-B (1-based inclusive)',
+      'lines must be A or A-B (1-based inclusive; end >= start)',
       'invalid_line_range'
     );
   }
@@ -219,13 +219,13 @@ export function parseLineRange(
   const end = m[2] !== undefined ? Number(m[2]) : start;
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1) {
     throw new AiOpsValidationError(
-      'lines must be A or A-B (1-based inclusive)',
+      'lines must be A or A-B (1-based inclusive; end >= start)',
       'invalid_line_range'
     );
   }
   if (end < start) {
     throw new AiOpsValidationError(
-      'lines range is reversed: end must be >= start (1-based inclusive)',
+      'lines must be A or A-B (1-based inclusive; end >= start)',
       'invalid_line_range'
     );
   }
@@ -442,7 +442,7 @@ export async function searchFlows(
   q: string,
   options: { flowId?: string; cap?: number } = {}
 ): Promise<SearchResult> {
-  if (!q || typeof q !== 'string') {
+  if (typeof q !== 'string' || !q.trim()) {
     throw new AiOpsValidationError('q query parameter is required', 'missing_query');
   }
   const cap =
