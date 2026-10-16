@@ -19,12 +19,14 @@ function pageClientScriptPartA(): string {
   var defaultDeploy = 'nodes';
   var accessToken = null;
   var proposalsFilter = 'pending';
+  var proposalsSearchQuery = '';
   var cachedProposals = [];
   var proposalDiffCache = {};
   var cachedLinksById = {};
   var cachedFlowLabels = {};
   var pendingRejectId = null;
   var pendingApproveCtx = null;
+  var pendingConfirmAction = null;
 
   function $(id) { return document.getElementById(id); }
   function showFlash(el, message, ok) {
@@ -290,6 +292,22 @@ function pageClientScriptPartAFormat(): string {
     var s = String(value == null ? '' : value);
     if (!s) return '';
     return '<code class="id-short" title="' + esc(s) + '">' + esc(shortId(s, keep)) + '</code>';
+  }
+  /** Last N chars of an id (default 6) for visible proposal labels. */
+  function shortIdTail(value, keep) {
+    var s = String(value == null ? '' : value);
+    var n = keep || 6;
+    if (!s) return '';
+    if (s.length <= n) return s;
+    return s.slice(-n);
+  }
+  /** Copy-on-click chip showing the last 6 chars; full id in title + clipboard. */
+  function proposalIdChip(id) {
+    var s = String(id == null ? '' : id);
+    if (!s) return '';
+    return '<button type="button" class="id-copy" data-copy-id="' + esc(s) +
+      '" title="' + esc(s) + ' — click to copy">' +
+      '<code class="id-short">' + esc(shortIdTail(s, 6)) + '</code></button>';
   }
   function actorPlain(actor) {
     actor = actor || {};
@@ -720,11 +738,18 @@ function pageClientScriptPartA2(): string {
     }
   }
 
-  async function revokeLink(id) {
+  function revokeLink(id) {
+    openConfirmDialog({
+      title: 'Revoke access link',
+      message: 'The AI will lose access immediately.',
+      confirmLabel: 'Revoke',
+      danger: true,
+      onConfirm: function () { doRevokeLink(id); }
+    });
+  }
+
+  async function doRevokeLink(id) {
     var flash = $('links-flash');
-    if (!window.confirm('Revoke this access link? The AI will lose access immediately.')) {
-      return;
-    }
     try {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
@@ -1431,6 +1456,20 @@ function pageClientScriptPartB2(): string {
   }
 
   function bindProposalActions(list) {
+    list.querySelectorAll('.id-copy').forEach(function (btn) {
+      bindOnce(btn, 'click', function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (ev && ev.preventDefault) ev.preventDefault();
+        var fullId = btn.getAttribute('data-copy-id') || '';
+        if (!fullId) return;
+        var flash = $('proposals-flash');
+        copyTextToClipboard(fullId).then(function () {
+          showFlash(flash, 'Copied proposal id ' + shortIdTail(fullId, 6), true);
+        }).catch(function () {
+          showFlash(flash, 'Clipboard unavailable — id is ' + fullId, false);
+        });
+      });
+    });
     list.querySelectorAll('.approve-btn').forEach(function (btn) {
       bindOnce(btn, 'click', function () {
         if (btn.disabled) return;
@@ -1444,7 +1483,16 @@ function pageClientScriptPartB2(): string {
     });
     list.querySelectorAll('.dismiss-stale-btn').forEach(function (btn) {
       bindOnce(btn, 'click', function () {
-        rejectProposal(btn.getAttribute('data-id'), 'Dismissed — ask the AI to resubmit');
+        var id = btn.getAttribute('data-id');
+        openConfirmDialog({
+          title: 'Dismiss proposal',
+          message: 'This closes the out-of-date item from your queue. The flow is unchanged.',
+          confirmLabel: 'Dismiss',
+          danger: true,
+          onConfirm: function () {
+            rejectProposal(id, 'Dismissed — ask the AI to resubmit');
+          }
+        });
       });
     });
     var dismissAll = list.querySelector('#dismiss-all-stale');
@@ -1523,15 +1571,23 @@ function pageClientScriptPartB2Actions(): string {
       '</details>';
   }
 
-  async function dismissAllStaleProposals() {
+  function dismissAllStaleProposals() {
     var staleIds = cachedProposals
       .filter(function (p) { return p.status === 'pending' && proposalIsStale(p); })
       .map(function (p) { return p.id; });
     if (!staleIds.length) return;
-    if (!window.confirm('Dismiss ' + staleIds.length +
-      ' out-of-date proposal' + (staleIds.length === 1 ? '' : 's') + '?')) {
-      return;
-    }
+    var n = staleIds.length;
+    openConfirmDialog({
+      title: 'Dismiss out-of-date proposals',
+      message: 'Dismiss ' + n + ' out-of-date proposal' + (n === 1 ? '' : 's') +
+        ' from your queue? The flow is unchanged.',
+      confirmLabel: n === 1 ? 'Dismiss' : 'Dismiss all',
+      danger: true,
+      onConfirm: function () { doDismissAllStaleProposals(staleIds); }
+    });
+  }
+
+  async function doDismissAllStaleProposals(staleIds) {
     var flash = $('proposals-flash');
     var failed = 0;
     for (var i = 0; i < staleIds.length; i += 1) {
@@ -1573,12 +1629,21 @@ function pageClientScriptPartB2Cards(): string {
       '<p class="muted">' + esc(proposalTechSummary(p)) + '</p>' +
       '<p class="muted proposal-rev-meta" data-rev-for="' + esc(p.id) + '">' +
       (cached
-        ? renderDiffRevMeta(cached) + ' · id ' + tipId(p.id, 12)
-        : 'expectedRev ' + tipId(p.expectedRev, 8) + ' · id ' + tipId(p.id, 12)) +
+        ? renderDiffRevMeta(cached) + ' · id ' + proposalIdChip(p.id)
+        : 'expectedRev ' + tipId(p.expectedRev, 8) + ' · id ' + proposalIdChip(p.id)) +
       '</p>' +
       '<details><summary>Raw payload</summary><pre>' +
       esc(JSON.stringify(p.payload, null, 2)) + '</pre></details>' +
       '</details>';
+  }
+
+  function renderProposalMetaLine(p) {
+    var flowLabel = flowLabelOf(p);
+    return '<span class="proposal-meta-line">' +
+      (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
+      timeCell(p.createdAt) +
+      ' · <span class="proposal-id-meta">id ' + proposalIdChip(p.id) + '</span>' +
+      '</span>';
   }
 
   function renderProposalCard(p) {
@@ -1604,10 +1669,7 @@ function pageClientScriptPartB2Cards(): string {
       '<header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span> ' +
-      '<span class="proposal-meta-line">' +
-      (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
-      timeCell(p.createdAt) +
-      '</span>' +
+      renderProposalMetaLine(p) +
       '</header>' +
       (createdBy ? createdBy + '<br/>' : '') +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
@@ -1627,7 +1689,6 @@ function pageClientScriptPartB2CardsList(): string {
   function renderStaleItem(p) {
     var cached = proposalDiffCache[p.id];
     var title = titleForProposalCard(p);
-    var flowLabel = flowLabelOf(p);
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     var dismissBtn = canApprove
       ? '<button type="button" class="action secondary dismiss-stale-btn" data-id="' +
@@ -1640,10 +1701,8 @@ function pageClientScriptPartB2CardsList(): string {
       '<strong class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) +
       '</strong>' +
       '<span class="stale-reason muted">Flow changed since this was submitted</span>' +
-      '<span class="proposal-meta-line">' +
-      (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
-      timeCell(p.createdAt) +
-      '</span></div>' +
+      renderProposalMetaLine(p) +
+      '</div>' +
       dismissBtn +
       '</div>' +
       deleteBanner +
@@ -1675,18 +1734,29 @@ function pageClientScriptPartB2CardsList(): string {
 
   function renderCompactProposal(p) {
     var title = titleForProposalCard(p);
-    var flowLabel = flowLabelOf(p);
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
       '" role="button" tabindex="0" aria-expanded="false">' +
       '<strong>' + esc(title) + '</strong>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' +
-      '<span class="proposal-meta-line">' +
-      (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
-      timeCell(p.createdAt) +
-      '</span>' +
+      renderProposalMetaLine(p) +
       '</div>' +
       '<div class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) +
       '" data-status="' + esc(p.status) + '" hidden></div>';
+  }
+
+  function proposalMatchesSearch(p) {
+    var q = String(proposalsSearchQuery || '').trim().toLowerCase();
+    if (!q) return true;
+    var id = String(p.id || '').toLowerCase();
+    var title = String(titleForProposalCard(p) || '').toLowerCase();
+    var stored = String(p.title || '').toLowerCase();
+    var display = String(p.displayName || '').toLowerCase();
+    var tail = shortIdTail(id, 6).toLowerCase();
+    return id.indexOf(q) >= 0 ||
+      title.indexOf(q) >= 0 ||
+      stored.indexOf(q) >= 0 ||
+      display.indexOf(q) >= 0 ||
+      tail.indexOf(q) >= 0;
   }
 
   function renderProposalsList() {
@@ -1703,24 +1773,43 @@ function pageClientScriptPartB2CardsList(): string {
       return;
     }
     if (proposalsFilter === 'pending') {
-      var live = pending.filter(function (p) { return !proposalIsStale(p); });
-      var stale = pending.filter(function (p) { return proposalIsStale(p); });
+      var live = pending.filter(function (p) {
+        return !proposalIsStale(p) && proposalMatchesSearch(p);
+      });
+      var stale = pending.filter(function (p) {
+        return proposalIsStale(p) && proposalMatchesSearch(p);
+      });
       if (!live.length && !stale.length) {
-        list.innerHTML = '<div class="empty-state"><p class="empty-title">No pending proposals</p>' +
-          '<p class="muted">Switch the filter above to see other proposals.</p></div>';
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">' +
+          (proposalsSearchQuery.trim()
+            ? 'No matching proposals'
+            : 'No pending proposals') + '</p>' +
+          '<p class="muted">' +
+          (proposalsSearchQuery.trim()
+            ? 'Try a different title or id, or clear the search.'
+            : 'Switch the filter above to see other proposals.') +
+          '</p></div>';
         return;
       }
       disambiguatedTitleCache = buildDisambiguatedTitles(live.concat(stale));
       list.innerHTML = live.map(renderProposalCard).join('') + renderStaleGroup(stale);
       live.concat(stale).forEach(function (p) { loadProposalDiff(p.id); });
     } else {
-      if (!decided.length) {
-        list.innerHTML = '<div class="empty-state"><p class="empty-title">No decided proposals</p>' +
-          '<p class="muted">Switch the filter above to see other proposals.</p></div>';
+      var matchedDecided = decided.filter(proposalMatchesSearch);
+      if (!matchedDecided.length) {
+        list.innerHTML = '<div class="empty-state"><p class="empty-title">' +
+          (proposalsSearchQuery.trim()
+            ? 'No matching proposals'
+            : 'No decided proposals') + '</p>' +
+          '<p class="muted">' +
+          (proposalsSearchQuery.trim()
+            ? 'Try a different title or id, or clear the search.'
+            : 'Switch the filter above to see other proposals.') +
+          '</p></div>';
         return;
       }
-      disambiguatedTitleCache = buildDisambiguatedTitles(decided);
-      list.innerHTML = decided.map(renderCompactProposal).join('');
+      disambiguatedTitleCache = buildDisambiguatedTitles(matchedDecided);
+      list.innerHTML = matchedDecided.map(renderCompactProposal).join('');
     }
     bindProposalActions(list);
     focusProposalFromHash();
@@ -1775,6 +1864,14 @@ function pageClientScriptPartB2Focus(): string {
     var id = readProposalHashId();
     if (!id) return false;
     selectTab('proposals', { skipHash: true });
+    var needsRerender = false;
+    // Clear search so a deep-linked card is not hidden by the filter box.
+    if (proposalsSearchQuery) {
+      proposalsSearchQuery = '';
+      var searchEl = $('proposals-search');
+      if (searchEl) searchEl.value = '';
+      needsRerender = true;
+    }
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     if (p && p.status !== 'pending' && proposalsFilter === 'pending') {
       proposalsFilter = 'decided';
@@ -1785,7 +1882,12 @@ function pageClientScriptPartB2Focus(): string {
           chip.setAttribute('aria-pressed', f === 'decided' ? 'true' : 'false');
         });
       }
+      needsRerender = true;
+    }
+    if (needsRerender) {
+      // Nested renderProposalsList → focusProposalFromHash finishes the deep link.
       renderProposalsList();
+      return !readProposalHashId();
     }
     var el = document.getElementById('proposal-' + id) ||
       document.querySelector('.proposal-detail[data-id="' + id + '"]');
@@ -1853,7 +1955,9 @@ function pageClientScriptPartB2Apply(): string {
     var revEl = document.querySelector('.proposal-rev-meta[data-rev-for="' + id + '"]');
     if (revEl) {
       revEl.innerHTML = renderDiffRevMeta(diff) +
-        (p ? ' · id ' + tipId(p.id, 12) : '');
+        (p ? ' · id ' + proposalIdChip(p.id) : '');
+      var listHost = $('proposals-list');
+      if (listHost) bindProposalActions(listHost);
     }
     var article = document.querySelector('.proposal-detail[data-id="' + id + '"]');
     if (!article) {
@@ -1925,17 +2029,75 @@ function pageClientScriptPartB2Apply(): string {
 function pageClientScriptPartC(): string {
   return `
 
+  function dialogFocusables(dialog) {
+    if (!dialog) return [];
+    var nodes = dialog.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), ' +
+      'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    var out = [];
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (!nodes[i].closest('[hidden]')) out.push(nodes[i]);
+    }
+    return out;
+  }
+
+  function trapDialogFocus(dialog, ev) {
+    if (!dialog || ev.key !== 'Tab') return;
+    var list = dialogFocusables(dialog);
+    if (!list.length) {
+      ev.preventDefault();
+      return;
+    }
+    var first = list[0];
+    var last = list[list.length - 1];
+    if (ev.shiftKey && document.activeElement === first) {
+      ev.preventDefault();
+      last.focus();
+    } else if (!ev.shiftKey && document.activeElement === last) {
+      ev.preventDefault();
+      first.focus();
+    }
+  }
+
+  function showInPageDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.showModal === 'function') {
+      if (!dialog.open) dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+    }
+    var focusables = dialogFocusables(dialog);
+    var prefer = dialog.querySelector('textarea, input:not([type="hidden"]), button.action:not(.secondary)');
+    if (prefer && !prefer.disabled) prefer.focus();
+    else if (focusables.length) focusables[0].focus();
+  }
+
+  function openConfirmDialog(opts) {
+    opts = opts || {};
+    pendingConfirmAction = typeof opts.onConfirm === 'function' ? opts.onConfirm : null;
+    var dialog = $('confirm-dialog');
+    var title = $('confirm-title');
+    var msg = $('confirm-message');
+    var btn = $('confirm-action-btn');
+    if (title) title.textContent = opts.title || 'Confirm';
+    if (msg) {
+      msg.textContent = opts.message || '';
+      msg.className = opts.danger ? 'danger-text' : 'muted';
+    }
+    if (btn) {
+      btn.textContent = opts.confirmLabel || 'Confirm';
+      btn.className = 'action' + (opts.danger ? ' danger' : '');
+    }
+    showInPageDialog(dialog);
+  }
+
   function openRejectDialog(id) {
     pendingRejectId = id;
     var dialog = $('reject-dialog');
     var input = $('reject-reason-input');
     if (input) input.value = '';
-    if (dialog && typeof dialog.showModal === 'function') {
-      dialog.showModal();
-    } else {
-      var reason = window.prompt('Reject reason (optional; the AI will see it):', '') || '';
-      rejectProposal(id, reason.trim() || 'Rejected by admin');
-    }
+    showInPageDialog(dialog);
   }
 
   function openDeleteConfirmDialog(id, deploymentType, diff) {
@@ -1952,11 +2114,7 @@ function pageClientScriptPartC(): string {
     }
     if (input) input.value = '';
     if (btn) btn.disabled = true;
-    if (dialog && typeof dialog.showModal === 'function') {
-      dialog.showModal();
-    } else if (window.confirm('Delete ' + removedN + ' of ' + beforeN + ' nodes? Continue?')) {
-      doApproveProposal(id, deploymentType);
-    }
+    showInPageDialog(dialog);
   }
 
   async function doApproveProposal(id, deploymentType) {
@@ -2141,8 +2299,12 @@ function pageClientScriptPartD(): string {
     $('status-ttl').textContent = hoursLabel(s.defaultLinkTtlSeconds || defaultTtl);
     $('status-maxlinks').textContent = String(s.maxActiveLinks);
     $('status-deploy').textContent = s.defaultDeploymentType;
-    var modeLabel = s.permission === '*' ? 'full access' : s.permission === 'read' ? 'read-only' : 'limited';
-    $('status-badge').textContent = modeLabel;
+    // Viewer-role chip: this is the human's Node-RED permission, not AI scope.
+    var modeLabel = s.permission === '*' ? "You're an admin" : s.permission === 'read' ? 'Read-only' : 'limited';
+    var badge = $('status-badge');
+    badge.textContent = modeLabel;
+    badge.title =
+      'This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.';
 
     var blurb = $('permissions-blurb');
     if (blurb) {
@@ -2187,7 +2349,37 @@ function pageClientScriptPartD(): string {
     updateStuck();
   }
 
+  function clearDialogPending(dialog) {
+    if (!dialog) return;
+    if (dialog.id === 'reject-dialog') pendingRejectId = null;
+    if (dialog.id === 'delete-confirm-dialog') pendingApproveCtx = null;
+    if (dialog.id === 'confirm-dialog') pendingConfirmAction = null;
+  }
+
+  function enhanceInPageDialog(dialog) {
+    if (!dialog || dialog.getAttribute('data-dialog-enhanced')) return;
+    dialog.setAttribute('data-dialog-enhanced', '1');
+    // Backdrop click cancels (native <dialog> only closes on Esc by default).
+    dialog.addEventListener('click', function (ev) {
+      if (ev.target === dialog) {
+        clearDialogPending(dialog);
+        dialog.close();
+      }
+    });
+    // Esc fires cancel before close — clear here so form submit is unaffected.
+    dialog.addEventListener('cancel', function () {
+      clearDialogPending(dialog);
+    });
+    dialog.addEventListener('keydown', function (ev) {
+      trapDialogFocus(dialog, ev);
+    });
+  }
+
   function setupDialogs() {
+    ['reject-dialog', 'delete-confirm-dialog', 'confirm-dialog'].forEach(function (id) {
+      enhanceInPageDialog($(id));
+    });
+
     var rejectForm = $('reject-form');
     if (rejectForm) {
       rejectForm.addEventListener('submit', function (ev) {
@@ -2217,6 +2409,16 @@ function pageClientScriptPartD(): string {
           doApproveProposal(pendingApproveCtx.id, pendingApproveCtx.deploymentType);
         }
         pendingApproveCtx = null;
+      });
+    }
+    var confirmForm = $('confirm-form');
+    if (confirmForm) {
+      confirmForm.addEventListener('submit', function (ev) {
+        var submitter = ev.submitter || document.activeElement;
+        var value = submitter && submitter.value ? submitter.value : '';
+        var action = pendingConfirmAction;
+        pendingConfirmAction = null;
+        if (value === 'confirm' && action) action();
       });
     }
   }
@@ -2284,6 +2486,13 @@ function pageClientScriptPartDBoot(): string {
       chip.addEventListener('click', function () {
         setProposalsFilter(chip.getAttribute('data-filter'));
       });
+    });
+  }
+  var proposalsSearch = $('proposals-search');
+  if (proposalsSearch) {
+    proposalsSearch.addEventListener('input', function () {
+      proposalsSearchQuery = String(proposalsSearch.value || '');
+      renderProposalsList();
     });
   }
 

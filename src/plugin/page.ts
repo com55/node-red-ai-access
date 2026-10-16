@@ -98,7 +98,8 @@ function renderMcpPageStatusSection(): string {
           <dt>Max active links</dt><dd id="status-maxlinks">—</dd>
           <dt>Default deploy</dt><dd id="status-deploy">—</dd>
         </dl>
-        <span class="badge" id="status-badge">loading</span>
+        <span class="badge" id="status-badge"
+          title="This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.">loading</span>
       </details>
       <div class="row" style="margin-top:1rem">
         <button type="button" class="action secondary" id="refresh-status">Refresh</button>
@@ -132,6 +133,9 @@ function renderMcpPageProposalsSection(): string {
         <button type="button" class="filter-chip" data-filter="decided" aria-pressed="false">
           Decided <span id="filter-decided-count">0</span>
         </button>
+        <input type="search" id="proposals-search" class="proposals-search"
+          placeholder="Search title or id…"
+          aria-label="Search proposals by title or id" autocomplete="off" />
       </div>
       <div id="proposals-flash" class="flash" hidden></div>
       <div id="proposals-list"><p class="muted">Loading…</p></div>
@@ -184,6 +188,17 @@ function renderMcpPageDialogs(): string {
         <div class="row dialog-actions">
           <button type="submit" value="cancel" class="action secondary">Cancel</button>
           <button type="submit" value="confirm" class="action danger" id="delete-confirm-btn" disabled>Approve &amp; deploy</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog" id="confirm-form">
+        <h3 id="confirm-title">Confirm</h3>
+        <p id="confirm-message" class="muted"></p>
+        <div class="row dialog-actions">
+          <button type="submit" value="cancel" class="action secondary">Cancel</button>
+          <button type="submit" value="confirm" class="action danger" id="confirm-action-btn">Confirm</button>
         </div>
       </form>
     </dialog>`;
