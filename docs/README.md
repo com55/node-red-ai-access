@@ -19,7 +19,7 @@ bodies. Use a **GET link** only as a fallback for headerless GET-only clients.
   schemas
 - [Error codes](./errors.md) — code, HTTP status, meaning, hint, channels
 - [OpenAPI 3.1](./api/openapi.yaml) — also served at
-  `GET /mcp/api/v1/openapi.yaml`
+  `GET /mcp/api/v1/openapi.yaml` (JSON: `GET /mcp/api/v1/openapi.json`)
 - Discovery guide — `GET /mcp/api/v1` (unauthenticated JSON index)
 
 Mint tokens on the admin page at `/mcp` → **Access links** (admin `*` only).

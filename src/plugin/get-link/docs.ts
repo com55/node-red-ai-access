@@ -45,7 +45,7 @@ from the Access links page (\`/mcp\` → Access links → create \`kind=rest\` o
 
 - REST: \`${rest}\` with \`Authorization: Bearer <rest-token>\` (**rest** kind —
   not this path token)
-- OpenAPI: \`${openapi}\`
+- OpenAPI: \`${openapi}\` (JSON: \`${openapi.replace(/\.yaml$/, '.json')}\`)
 - MCP Streamable HTTP: \`POST ${rpc}\` with \`Authorization: Bearer <mcp-token>\`
   (**mcp** kind — not this path token)
 
@@ -145,7 +145,8 @@ these docs).
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
 Submit responses include \`title\` (display title; \` in <flow>\` is appended
-when it does not name the flow), \`storedTitle\` (exactly as stored),
+when it does not name the flow), \`storedTitle\` (the title as saved: your title without the
+\` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
 \`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
 Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
@@ -489,6 +490,9 @@ function docsKnownIssues(): string {
 - **Rate limits are per token (and per IP).** Each access-link token has its own
   token bucket. Several tokens can each use the full per-token limit at the same
   time; the shared IP bucket still applies across them.
+- **\`RateLimit-*\` headers describe the per-token bucket** (default
+  \`RateLimit-Policy: 300;w=60\`) on token requests; requests without a token
+  report the per-IP bucket (\`600;w=60\`). Both are enforced.
 `;
 }
 

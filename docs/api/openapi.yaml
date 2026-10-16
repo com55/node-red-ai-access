@@ -96,7 +96,7 @@ info:
 
     Missing tokens return **401** `access_link_missing`; invalid/expired/revoked
     tokens return **401** `access_link_invalid`. Both tell you to ask the user
-    for a new link. OpenAPI: `GET /openapi.yaml`. MCP (optional):
+    for a new link. OpenAPI: `GET /openapi.yaml` (or `GET /openapi.json`). MCP (optional):
     `POST {httpAdminRoot}/mcp/rpc` with the same Bearer token.
 
     ## MCP JSON-RPC
@@ -196,6 +196,11 @@ info:
     - **Rate limits are per token (and per IP).** Each access-link token has its
       own token bucket. Several tokens can each use the full per-token limit at
       the same time; the shared IP bucket still applies across them.
+    - **`RateLimit-*` headers describe the per-token bucket** on requests that
+      carry a Bearer or path token (`RateLimit-Policy: 300;w=60` by default):
+      that is the bucket being consumed and normally the stricter one. Requests
+      without a token report the per-IP bucket (`600;w=60`). Both buckets are
+      enforced; either can return `429 rate_limited`.
 
   contact:
     name: com55
@@ -277,6 +282,8 @@ paths:
                             type: string
                   openapi:
                     type: string
+                  openapiJson:
+                    type: string
                   mcp:
                     type: string
                   apiBase:
@@ -322,6 +329,21 @@ paths:
             application/yaml:
               schema:
                 type: string
+
+  /openapi.json:
+    get:
+      tags: [Spec]
+      summary: OpenAPI document (JSON)
+      description: The same specification as `/openapi.yaml`, converted to JSON.
+      operationId: getOpenApiJson
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.1 JSON for this API
+          content:
+            application/json:
+              schema:
+                type: object
 
   /status:
     get:
@@ -2149,9 +2171,11 @@ components:
           type: string
           maxLength: 80
           description: |
-            The title exactly as stored at submit (the sanitized AI-supplied
-            title, or the auto-generated one), without the ` in <flowLabel>`
-            suffix. Present on every proposal response, including submit.
+            The title as saved. With an AI-supplied title this is that title
+            (sanitized) without the ` in <flowLabel>` suffix that `title` may
+            add. When no title was given it is the auto-generated title, which
+            may already contain the flow name. Present on every proposal
+            response, including submit.
         flowLabel:
           type: string
           description: |

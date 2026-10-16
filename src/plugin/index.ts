@@ -44,7 +44,7 @@ import {
   listNodeTypesHandler,
   searchPaletteHandler,
 } from './node-types-routes.js';
-import { openApiYamlHandler } from './openapi.js';
+import { openApiJsonHandler, openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import { liveFlowLabelsFromFlows, setRequestFlowLabels } from './proposal-present.js';
 import {
@@ -100,7 +100,8 @@ const PLUGIN_ID = 'com55-ai-access';
 /** Public shell + discovery (no authorization middleware — safe to extract). */
 function registerMcpShellAndDiscovery(
   RED: NodeRedPluginAPI,
-  limiter: ReturnType<typeof createAiAccessDualRateLimiters>['ip']
+  limiter: ReturnType<typeof createAiAccessDualRateLimiters>['ip'],
+  tokenLimiter: ReturnType<typeof createAiAccessDualRateLimiters>['token']
 ): void {
   // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
   // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
@@ -121,9 +122,12 @@ function registerMcpShellAndDiscovery(
       );
   });
 
-  RED.httpAdmin.get('/mcp/api/v1', limiter, discoveryIndexHandler(RED));
-  RED.httpAdmin.get('/mcp/api/v1/', limiter, discoveryIndexHandler(RED));
-  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, openApiYamlHandler());
+  // tokenLimiter after the IP limiter: when a Bearer token is present its
+  // per-token RateLimit-* headers replace the per-IP ones (both still enforced).
+  RED.httpAdmin.get('/mcp/api/v1', limiter, tokenLimiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/', limiter, tokenLimiter, discoveryIndexHandler(RED));
+  RED.httpAdmin.get('/mcp/api/v1/openapi.yaml', limiter, tokenLimiter, openApiYamlHandler());
+  RED.httpAdmin.get('/mcp/api/v1/openapi.json', limiter, tokenLimiter, openApiJsonHandler());
 
   // Editor sidebar assets — must not be cached across plugin upgrades.
   // Companion ai-access.html is a thin loader with ?v= cache-bust.
@@ -184,7 +188,7 @@ export function registerRoutes(
     rateLimiters: dualLimiters,
   });
 
-  registerMcpShellAndDiscovery(RED, limiter);
+  registerMcpShellAndDiscovery(RED, limiter, tokenLimiter);
 
   RED.httpAdmin.get(
     '/mcp/api/v1/status',
@@ -200,12 +204,14 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/settings',
     limiter,
+    tokenLimiter,
     requireAdminSession(RED, 'api'),
     asyncRoute(getSettingsHandler(RED, services.settingsStore))
   );
   RED.httpAdmin.put(
     '/mcp/api/v1/settings',
     limiter,
+    tokenLimiter,
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
     asyncRoute(putSettingsHandler(RED, services.settingsStore, services.linkStore))
@@ -213,6 +219,7 @@ export function registerRoutes(
 
   const linkGuards = [
     limiter,
+    tokenLimiter,
     requireAdminSession(RED, 'api'),
     requireAiFeatures(RED),
     requireStarPermission(RED),
@@ -345,6 +352,7 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/logs',
     limiter,
+    tokenLimiter,
     requireAdminSession(RED, 'api'),
     requireAiFeatures(RED),
     asyncRoute(listLogsHandler(services.auditLog, services.linkStore))

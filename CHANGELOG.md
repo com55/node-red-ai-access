@@ -33,6 +33,11 @@ Requires Node.js 20+.
 
 ### Fixed (pre-release review)
 
+- `RateLimit-*` headers on token requests report the per-token bucket
+  (`300;w=60` by default) on every route; requests without a token report the
+  per-IP bucket.
+- Spec also served as JSON at `GET /mcp/api/v1/openapi.json`.
+- Proposal responses include `storedTitle` (the title as saved).
 - `duplicate_node_id` checks the whole resulting flows file: the tab id, nodes
   on other tabs, config nodes, and subflows.
 - A single validation error returns its specific message at the top level.

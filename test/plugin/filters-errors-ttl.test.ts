@@ -11,6 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
@@ -960,5 +961,80 @@ describe('submit responses carry the stored title and flowLabel', () => {
     const res = await submitRest(app, rest.token, 'Fix Main greeting', 'x');
     expect(res.body.title).toBe('Fix Main greeting');
     expect(res.body.storedTitle).toBe('Fix Main greeting');
+  });
+});
+
+describe('RateLimit headers and openapi.json', () => {
+  let userDir: string;
+  beforeEach(() => {
+    userDir = mkdtempSync(join(tmpdir(), 'ai-access-rl-'));
+  });
+  afterEach(() => {
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    '/mcp/api/v1',
+    '/mcp/api/v1/openapi.yaml',
+    '/mcp/api/v1/openapi.json',
+    '/mcp/api/v1/status',
+    '/mcp/api/v1/proposals',
+    '/mcp/api/v1/logs',
+    '/mcp/api/v1/links',
+    '/mcp/api/v1/settings',
+  ])('token request to %s reports the per-token policy', async path => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const res = await request(app).get(path).set('Authorization', `Bearer ${rest.token}`);
+    expect(res.headers['ratelimit-policy']).toBe('300;w=60');
+    expect(res.headers['ratelimit-limit']).toBe('300');
+  });
+
+  it('GET-link and MCP requests report the per-token policy', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const link = linkStore.create({ kind: 'get_link' });
+    const g = await request(app).get(`/mcp/a/${link.token}/status`);
+    expect(g.headers['ratelimit-policy']).toBe('300;w=60');
+    const mcp = linkStore.create({ kind: 'mcp' });
+    const m = await request(app)
+      .post('/mcp/rpc')
+      .set('Authorization', `Bearer ${mcp.token}`)
+      .set('Accept', MCP_ACCEPT)
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(m.headers['ratelimit-policy']).toBe('300;w=60');
+  });
+
+  it('requests without a token report the per-IP policy', async () => {
+    const { app } = createApp(userDir);
+    const res = await request(app).get('/mcp/api/v1/openapi.yaml');
+    expect(res.headers['ratelimit-policy']).toBe('600;w=60');
+  });
+
+  it('serves openapi.json equal to the YAML spec, and discovery links it', async () => {
+    const { app } = createApp(userDir);
+    const json = await request(app).get('/mcp/api/v1/openapi.json');
+    expect(json.status).toBe(200);
+    expect(json.headers['content-type']).toMatch(/application\/json/);
+    const yamlText = readFileSync(join(__dirname, '../../docs/api/openapi.yaml'), 'utf8');
+    expect(json.body).toEqual(parseYaml(yamlText));
+    expect(json.body.paths['/openapi.json']).toBeDefined();
+    const disc = await request(app).get('/mcp/api/v1');
+    expect(disc.body.openapiJson).toBe('/mcp/api/v1/openapi.json');
+    expect((disc.body.endpoints as { path: string }[]).some(e => e.path === '/openapi.json')).toBe(
+      true
+    );
+  });
+
+  it('GET guide links the JSON spec and documents the header policy', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const link = linkStore.create({ kind: 'get_link' });
+    const docs = await request(app).get(`/mcp/a/${link.token}`);
+    expect(docs.text).toContain('/mcp/api/v1/openapi.json');
+    expect(docs.text).toContain('RateLimit-Policy: 300;w=60');
+  });
+
+  it('storedTitle wording explains the auto-generated case', () => {
+    const spec = readFileSync(join(__dirname, '../../docs/api/openapi.yaml'), 'utf8');
+    expect(spec).toMatch(/storedTitle:[\s\S]*?may already contain the flow name/);
   });
 });
