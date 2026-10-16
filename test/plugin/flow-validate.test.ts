@@ -246,9 +246,16 @@ describe('multi-error accumulation', () => {
       ]);
       expect.unreachable();
     } catch (e) {
-      const err = e as { code: string; details?: { errors?: unknown[] } };
-      expect(err.code).toBe('validation_failed');
+      const err = e as {
+        code: string;
+        message: string;
+        details?: { errors?: unknown[]; errorCount?: number };
+      };
+      // Primary code/message come from the first issue (not a generic batch label).
+      expect(err.code).toBe('invalid_wires');
+      expect(err.message).toBe('wires bad');
       expect(err.details?.errors).toHaveLength(2);
+      expect(err.details?.errorCount).toBe(2);
     }
   });
 });

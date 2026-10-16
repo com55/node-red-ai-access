@@ -29,9 +29,14 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
   if (!primary) {
     return;
   }
-  const code = issues.length === 1 ? primary.code : 'validation_failed';
-  const message = issues.length === 1 ? primary.error : `${issues.length} validation errors`;
+  // Always use the first issue's code/message as the main error (even in batches)
+  // so clients see e.g. invalid_wires / missing_node_type, not a generic summary.
+  const code = primary.code;
+  const message = primary.error;
   const details: Record<string, unknown> = { errors: issues };
+  if (issues.length > 1) {
+    details.errorCount = issues.length;
+  }
   for (const [k, v] of Object.entries(primary)) {
     if (k === 'code' || k === 'error' || k === 'errors' || k === 'statusCode') {
       continue;
@@ -40,9 +45,147 @@ export function throwValidationIssues(issues: ValidationIssue[]): void {
       details[k] = v;
     }
   }
-  const statusCode =
-    issues.length === 1 && typeof primary.statusCode === 'number' ? primary.statusCode : 400;
+  const statusCode = typeof primary.statusCode === 'number' ? primary.statusCode : 400;
   throw new AiOpsValidationError(message, code, { statusCode, details });
+}
+
+const IGNORE_TOUCH_KEYS = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
+
+function collectNodesMap(flow: Partial<FlowTab>): Map<string, FlowNode> {
+  const map = new Map<string, FlowNode>();
+  for (const list of [flow.nodes, flow.configs]) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list as unknown[]) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const node = entry as FlowNode;
+      if (typeof node.id === 'string') {
+        map.set(node.id, node);
+      }
+    }
+  }
+  return map;
+}
+
+function nodeContentChanged(prev: FlowNode, next: FlowNode): boolean {
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (IGNORE_TOUCH_KEYS.has(key)) continue;
+    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Node ids added or content-changed vs a base snapshot (for soft-warning scoping). */
+export function changedNodeIds(
+  baseFlow: Partial<FlowTab> | undefined,
+  afterFlow: Partial<FlowTab>
+): Set<string> {
+  const after = collectNodesMap(afterFlow);
+  if (!baseFlow) {
+    return new Set(after.keys());
+  }
+  const before = collectNodesMap(baseFlow);
+  const out = new Set<string>();
+  for (const [id, node] of after) {
+    const prev = before.get(id);
+    if (!prev || nodeContentChanged(prev, node)) {
+      out.add(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Shape checks for a full replace_flow tab (same bar as patch ops):
+ * string id + type on every node/config; wires shape; flow.id matches flowId;
+ * nodes/configs must be arrays when present.
+ */
+export function collectFullFlowShapeIssues(
+  flow: Partial<FlowTab> | Record<string, unknown>,
+  flowId: string
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const tab = flow as Record<string, unknown>;
+
+  if (typeof tab.id !== 'string' || tab.id.length === 0) {
+    issues.push({
+      code: 'missing_flow_id',
+      error: 'payload.flow.id is required and must match payload.flowId',
+    });
+  } else if (tab.id !== flowId) {
+    issues.push({
+      code: 'invalid_flow_id',
+      error: `payload.flow.id ('${tab.id}') must match payload.flowId ('${flowId}')`,
+    });
+  }
+
+  if (!('nodes' in tab)) {
+    issues.push({
+      code: 'invalid_nodes',
+      error: 'payload.flow.nodes must be an array (use [] to clear the tab intentionally)',
+    });
+  } else if (!Array.isArray(tab.nodes)) {
+    issues.push({
+      code: 'invalid_nodes',
+      error: 'payload.flow.nodes must be an array',
+    });
+  }
+
+  if ('configs' in tab && tab.configs !== undefined && !Array.isArray(tab.configs)) {
+    issues.push({
+      code: 'invalid_nodes',
+      error: 'payload.flow.configs must be an array',
+    });
+  }
+
+  const lists: { key: string; list: unknown[] }[] = [];
+  if (Array.isArray(tab.nodes)) {
+    lists.push({ key: 'nodes', list: tab.nodes as unknown[] });
+  }
+  if (Array.isArray(tab.configs)) {
+    lists.push({ key: 'configs', list: tab.configs as unknown[] });
+  }
+  for (const { key, list } of lists) {
+    for (let i = 0; i < list.length; i += 1) {
+      const raw: unknown = list[i];
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        issues.push({
+          code: 'invalid_node',
+          error: `payload.flow.${key}[${i}] must be an object`,
+        });
+        continue;
+      }
+      const node = raw as Record<string, unknown>;
+      if (typeof node.id !== 'string' || node.id.length === 0) {
+        issues.push({
+          code: 'missing_node_id',
+          error: `payload.flow.${key}[${i}] needs a non-empty string id`,
+        });
+      }
+      try {
+        requireNodeTypeName(node.type, 'node.type');
+      } catch (e) {
+        if (e instanceof AiOpsValidationError) {
+          issues.push({
+            code: e.code,
+            error: e.message,
+            ...(typeof node.id === 'string' ? { nodeId: node.id } : {}),
+          });
+        }
+      }
+      if ('wires' in node) {
+        assertValidWiresShape(
+          node.wires,
+          issues,
+          typeof node.id === 'string' ? node.id : undefined
+        );
+      }
+    }
+  }
+
+  return issues;
 }
 
 export function assertValidWiresShape(
@@ -156,21 +299,32 @@ export interface WireValidationResult {
   warnings: ValidationIssue[];
 }
 
+export interface WireValidationOptions {
+  /**
+   * When set, emit `unwired_node` / `incomplete_wires` only for these node ids
+   * (nodes the proposal adds or changes). Hard wire errors still cover all nodes.
+   */
+  softWarningNodeIds?: Set<string>;
+}
+
 /**
  * Hard errors: bad shape, excess ports vs outputs, missing wire targets.
  * Soft warnings: fewer ports than outputs, unwired nodes (outputs > 0, no links).
  */
 export async function collectWireValidation(
   nodes: FlowNode[],
-  adapter?: NodeTypesAdapter
+  adapter?: NodeTypesAdapter,
+  options: WireValidationOptions = {}
 ): Promise<WireValidationResult> {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
   const ids = new Set(nodes.map(n => n.id));
+  const softIds = options.softWarningNodeIds;
 
   for (const node of nodes) {
     const outputs = await resolveNodeOutputCount(node, adapter);
     const typeName = typeof node.type === 'string' ? node.type : 'node';
+    const softOk = !softIds || softIds.has(node.id);
 
     if ('wires' in node && node.wires !== undefined) {
       if (!assertValidWiresShape(node.wires, errors, node.id)) {
@@ -180,8 +334,10 @@ export async function collectWireValidation(
       if (outputs !== undefined) {
         const countIssue = wireCountIssue(node, outputs, wires);
         if (countIssue) {
+          // Distinguish excess-port cause for channel hints.
+          countIssue.cause = 'excess_ports';
           errors.push(countIssue);
-        } else if (wires.length < outputs) {
+        } else if (softOk && wires.length < outputs) {
           warnings.push({
             code: 'incomplete_wires',
             error: `${typeName} '${node.id}' declares ${outputs} outputs but wires has only ${wires.length} port(s)`,
@@ -198,13 +354,15 @@ export async function collectWireValidation(
               code: 'invalid_wires',
               error: `Wire target '${id}' on node '${node.id}' was not found in this flow (add the node in the same patch or use an existing id)`,
               nodeId: node.id,
+              cause: 'missing_target',
+              targetId: id,
             });
           }
         }
       }
     }
 
-    if (outputs !== undefined && nodeIsUnwired(node, outputs)) {
+    if (softOk && outputs !== undefined && nodeIsUnwired(node, outputs)) {
       warnings.push({
         code: 'unwired_node',
         error: `Node '${node.id}' (${typeName}) has ${outputs} output(s) but is not wired to anything yet`,
@@ -337,7 +495,12 @@ export function collectMissingConfigIssues(
 /** Validate a full flow tab (replace_flow): hard errors + soft warnings. */
 export async function validateFlowTab(
   flow: Partial<FlowTab> | FlowTab,
-  options: { flowId?: string; nodeTypes?: NodeTypesAdapter } = {}
+  options: {
+    flowId?: string;
+    nodeTypes?: NodeTypesAdapter;
+    /** When set, soft wire warnings only for nodes added/changed vs this base. */
+    baseFlow?: Partial<FlowTab>;
+  } = {}
 ): Promise<{ errors: ValidationIssue[]; warnings: ValidationIssue[] }> {
   const flowId = options.flowId ?? (typeof flow.id === 'string' ? flow.id : '');
   const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
@@ -347,11 +510,19 @@ export async function validateFlowTab(
   if (flowId) {
     errors.push(...collectZMismatchIssues(nodes, flowId));
   }
-  const wire = await collectWireValidation(nodes, options.nodeTypes);
+  const softWarningNodeIds = options.baseFlow ? changedNodeIds(options.baseFlow, flow) : undefined;
+  const wire = await collectWireValidation(nodes, options.nodeTypes, {
+    ...(softWarningNodeIds ? { softWarningNodeIds } : {}),
+  });
   errors.push(...wire.errors);
   warnings.push(...wire.warnings);
   if (options.nodeTypes) {
-    warnings.push(...(await collectConfigWarnings(nodes, configs, options.nodeTypes)));
+    const configWarnings = await collectConfigWarnings(nodes, configs, options.nodeTypes);
+    if (softWarningNodeIds) {
+      warnings.push(...configWarnings.filter(w => !w.nodeId || softWarningNodeIds.has(w.nodeId)));
+    } else {
+      warnings.push(...configWarnings);
+    }
   }
   return { errors, warnings };
 }
