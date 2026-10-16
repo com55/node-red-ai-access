@@ -20,6 +20,7 @@ import {
 } from './get-link/draft-handlers.js';
 import { DraftStore } from './get-link/draft-store.js';
 import {
+  getLinkMintNotSupportedHandler,
   getLinkNotFoundHandler,
   jsonError,
   requireGetLinkToken,
@@ -171,6 +172,12 @@ export function registerGetLinkRoutes(
   );
 
   registerGetLinkDraftRoutes(app, base, gate, draftStore, options, httpAdminRoot);
+
+  // GET links never mint tokens — reject any /links path under /mcp/a explicitly
+  // (405 JSON) so a half-wired create route cannot appear by accident.
+  const rejectMint = getLinkMintNotSupportedHandler();
+  app.all(`${base}/links`, rejectMint);
+  app.all(`${base}/links/:id`, rejectMint);
 
   // JSON 404 for unmatched /mcp/a/* paths — never echo the token (no HTML "Cannot GET").
   app.use('/mcp/a', getLinkNotFoundHandler());

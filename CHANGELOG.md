@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Phase 2C: GET `/mcp/a/<token>` cannot mint tokens — explicit **405**
+  `link_create_not_supported` on `/mcp/a/<token>/links`; OpenAPI documents
+  `AccessLinkKind`, `CreateLinkRequest.kind`, `wrong_token_kind` /
+  `invalid_link_kind`, and that get-link has no create-link operation; discovery
+  advertises admin-only `POST /links` mint and `getLink.canMintTokens: false`.
+
 ### Fixed
 
 - Access-link rate limits share one per-token bucket across GET

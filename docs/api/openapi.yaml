@@ -18,8 +18,14 @@ info:
     ### Self-contained GET link (no headers)
 
     Prefer this when the AI can only issue HTTP GET (no `Authorization` header,
-    no MCP). Creating a link returns `url` like
+    no MCP). An admin creates a **get_link** token via `POST /links` (this
+    OpenAPI document); the create response returns `url` like
     `http(s)://{host}{httpAdminRoot}/mcp/a/{token}` (default TTL **4h**).
+
+    **GET `/mcp/a/<token>/…` never mints tokens.** There is no link-create
+    operation under the get-link surface (no `POST …/links`). Attempted mint
+    paths return **405** `link_create_not_supported`. Only admins with `*`
+    may create tokens on `POST /mcp/api/v1/links`.
 
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
     2. `GET {url}/status`, `/flows`, …
@@ -103,15 +109,18 @@ info:
       `read` may view status, flows, proposals, and logs. Users with `*` may
       also manage access links and approve/reject proposals.
     - **Access-link Bearer token** — temporary token minted by an admin with
-      `*`. AI clients send `Authorization: Bearer <token>` to read flows and
-      submit proposals (REST and `/mcp/rpc`). Tokens are in-memory only (lost
-      on restart).
+      `*` via `POST /links` (never under `/mcp/a`). Each token has a
+      `kind` (`get_link` | `rest` | `mcp`) and only works on that surface.
+      AI clients send `Authorization: Bearer <token>` for **rest** (this API)
+      or **mcp** (`/mcp/rpc`). Tokens are in-memory only (lost on restart).
 
     When an access-link token is **missing**, AI-facing routes return **401**
     with `code: access_link_missing`. When the token is **invalid**, expired,
     revoked, or cleared by a restart, they return **401** with
     `code: access_link_invalid`. Both include `WWW-Authenticate: Bearer` and a
     message that tells the AI to ask the user for a new access link.
+    When the token kind does not match the surface, routes return **403**
+    with `code: wrong_token_kind` (`expectedKind` / `actualKind`).
 
     ## Admin page (`GET /mcp`)
 
@@ -160,6 +169,8 @@ paths:
       description: |
         Unauthenticated JSON index listing auth scheme, OpenAPI URL, MCP
         endpoint, and available REST paths. Intended for plain HTTP AI clients.
+        Advertises that token minting is admin `POST /links` only — not under
+        GET `/mcp/a/<token>`.
       operationId: getDiscoveryIndex
       security: []
       responses:
@@ -189,12 +200,44 @@ paths:
                         example: 'Authorization: Bearer <token>'
                       description:
                         type: string
+                      tokenKinds:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AccessLinkKind'
+                      mint:
+                        type: object
+                        description: Where admins create tokens (not under get-link)
+                        properties:
+                          path:
+                            type: string
+                            const: /links
+                          method:
+                            type: string
+                            const: POST
+                          auth:
+                            type: string
+                            const: admin
+                          note:
+                            type: string
                   openapi:
                     type: string
                   mcp:
                     type: string
                   apiBase:
                     type: string
+                  getLink:
+                    type: object
+                    description: |
+                      Self-contained GET surface metadata. `canMintTokens` is
+                      always false — no link-create under `/mcp/a`.
+                    properties:
+                      base:
+                        type: string
+                      canMintTokens:
+                        type: boolean
+                        const: false
+                      note:
+                        type: string
                   endpoints:
                     type: array
                     items:
@@ -327,10 +370,14 @@ paths:
       tags: [Access links]
       summary: Create an access link
       description: |
-        Requires full admin permission (`*`). The raw `token` is returned
-        **once** in this response (plus a self-contained `url` for GET-only
-        clients at `/mcp/a/<token>`). Default TTL is 14400 seconds (4h); max
-        active links defaults to 10 (`aiAccess.maxActiveLinks`).
+        Requires full admin permission (`*`). This is the **only** link-create
+        operation — GET `/mcp/a/<token>/…` has no mint/create-link route.
+        The raw `token` is returned **once** in this response. For
+        `kind=get_link`, a self-contained `url` is included for GET-only
+        clients at `/mcp/a/<token>`. For `rest` / `mcp`, `url` is omitted
+        (use the Bearer token on the matching surface). Default TTL is
+        14400 seconds (4h); max active links defaults to 10
+        (`aiAccess.maxActiveLinks`).
       operationId: createLink
       security:
         - AdminSession: []
@@ -348,7 +395,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessLinkCreated'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: |
+            Invalid body — including unknown `kind`
+            (`code: invalid_link_kind`).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InvalidLinkKindError'
+                  - $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1048,17 +1103,39 @@ components:
           schema:
             $ref: '#/components/schemas/VersionConflictError'
     Forbidden:
-      description: AI features disabled, or full (`*`) permission required
+      description: |
+        AI features disabled, full (`*`) permission required, or access-link
+        token kind mismatch (`code: wrong_token_kind` with `expectedKind` /
+        `actualKind`).
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            oneOf:
+              - $ref: '#/components/schemas/WrongTokenKindError'
+              - $ref: '#/components/schemas/Error'
+          examples:
+            wrongTokenKind:
+              value:
+                error: 'Access link kind mismatch: expected rest, got get_link'
+                code: wrong_token_kind
+                expectedKind: rest
+                actualKind: get_link
+                hint: 'This REST endpoint requires a rest token. This token is kind=get_link — ask the user for a REST Bearer token (kind=rest).'
     NotFound:
       description: Resource not found
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    LinkCreateNotSupported:
+      description: |
+        Attempted to create/list/revoke access links under the GET
+        `/mcp/a/<token>` surface (`code: link_create_not_supported`).
+        GET links cannot mint tokens — use admin `POST /links` instead.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LinkCreateNotSupportedError'
     PayloadTooLarge:
       description: Proposal JSON or audit append exceeds size cap
       content:
@@ -1081,6 +1158,52 @@ components:
           type: string
         code:
           type: string
+        hint:
+          type: string
+
+    WrongTokenKindError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [code, expectedKind, actualKind]
+          properties:
+            code:
+              type: string
+              const: wrong_token_kind
+            expectedKind:
+              $ref: '#/components/schemas/AccessLinkKind'
+            actualKind:
+              $ref: '#/components/schemas/AccessLinkKind'
+            hint:
+              type: string
+
+    InvalidLinkKindError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              const: invalid_link_kind
+            error:
+              type: string
+              example: "kind must be one of: 'get_link', 'rest', 'mcp'"
+
+    LinkCreateNotSupportedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              const: link_create_not_supported
+            error:
+              type: string
+              example: GET access links cannot create tokens
+            hint:
+              type: string
 
     NodeTypeListItem:
       type: object
@@ -1396,9 +1519,14 @@ components:
     AccessLinkKind:
       type: string
       enum: [get_link, rest, mcp]
-      description: >
-        Surface this token is minted for. get_link → `/mcp/a/<token>/…`;
-        rest → REST Bearer; mcp → `/mcp/rpc` Bearer. Default on create: get_link.
+      description: |
+        Surface this token is minted for (admin `POST /links` only):
+        - `get_link` → path token on `/mcp/a/<token>/…` (GET-only; **cannot**
+          create further tokens)
+        - `rest` → `Authorization: Bearer` on this REST API
+        - `mcp` → `Authorization: Bearer` on `/mcp/rpc`
+        Default on create when omitted: `get_link`. Wrong surface → **403**
+        `wrong_token_kind`.
 
     AccessLinkPublic:
       type: object
@@ -1433,7 +1561,8 @@ components:
               nullable: true
               description: >
                 Self-contained GET link (`http(s)://{host}{httpAdminRoot}/mcp/a/{token}`).
-                Present for kind=get_link; omitted for rest/mcp.
+                Present for kind=get_link; omitted for rest/mcp. The get-link
+                URL itself has no create-link operation.
 
     CreateLinkRequest:
       type: object
@@ -1446,7 +1575,9 @@ components:
           type: string
         kind:
           $ref: '#/components/schemas/AccessLinkKind'
-          description: Token surface (default get_link)
+          description: |
+            Token surface (default `get_link`). Unknown values return
+            **400** `invalid_link_kind`.
 
     FlowsSnapshot:
       type: object

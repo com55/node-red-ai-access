@@ -431,4 +431,75 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(String(res.body.hint ?? '')).toMatch(/flows/i);
     expect(String(res.body.hint ?? '')).not.toMatch(/re-read flows if rev is stale/i);
   });
+
+  it('GET-link surface has no POST /links mint; docs and OpenAPI say cannot mint', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ kind: 'get_link', label: 'no-mint' });
+    const before = linkStore.list().length;
+
+    const postLinks = await request(app)
+      .post(`/mcp/a/${link.token}/links`)
+      .send({ label: 'should-fail', kind: 'rest' });
+    expect(postLinks.status).toBe(405);
+    expect(postLinks.headers['content-type']).toMatch(/json/);
+    expect(postLinks.headers['cache-control']).toMatch(/no-store/);
+    expect(postLinks.body).toMatchObject({
+      code: 'link_create_not_supported',
+      error: 'GET access links cannot create tokens',
+    });
+    expect(String(postLinks.body.hint)).toMatch(/POST \/mcp\/api\/v1\/links/);
+    expect(JSON.stringify(postLinks.body)).not.toContain(link.token);
+
+    const postLinksId = await request(app)
+      .post(`/mcp/a/${link.token}/links/anything`)
+      .send({ label: 'nope' });
+    expect(postLinksId.status).toBe(405);
+    expect(postLinksId.body.code).toBe('link_create_not_supported');
+
+    const getLinks = await request(app).get(`/mcp/a/${link.token}/links`);
+    expect(getLinks.status).toBe(405);
+    expect(getLinks.body.code).toBe('link_create_not_supported');
+
+    const deleteLinks = await request(app).delete(`/mcp/a/${link.token}/links/${link.id}`);
+    expect(deleteLinks.status).toBe(405);
+    expect(deleteLinks.body.code).toBe('link_create_not_supported');
+
+    expect(linkStore.list()).toHaveLength(before);
+
+    const docs = await request(app).get(`/mcp/a/${link.token}`);
+    expect(docs.status).toBe(200);
+    expect(docs.text).toMatch(/cannot.*create access tokens|cannot mint tokens/i);
+    expect(docs.text).toMatch(/link_create_not_supported/);
+    expect(docs.text).toMatch(/POST \/mcp\/api\/v1\/links/);
+    expect(docs.text).toMatch(/no[\s*`]*POST \.\/links/i);
+    expect(docs.text).not.toMatch(/\|\s*`POST \.\/links/i);
+
+    const openapi = await request(app).get('/mcp/api/v1/openapi.yaml');
+    expect(openapi.status).toBe(200);
+    expect(openapi.text).toMatch(/AccessLinkKind/);
+    expect(openapi.text).toMatch(/enum:\s*\[get_link,\s*rest,\s*mcp\]/);
+    expect(openapi.text).toMatch(/CreateLinkRequest/);
+    expect(openapi.text).toMatch(/wrong_token_kind/);
+    expect(openapi.text).toMatch(/invalid_link_kind/);
+    expect(openapi.text).toMatch(/never mints tokens|no link-create operation/i);
+    expect(openapi.text).toMatch(/link_create_not_supported/);
+    // OpenAPI must not advertise a mint under the get-link path.
+    expect(openapi.text).not.toMatch(/\/mcp\/a\/\{token\}\/links/);
+    expect(openapi.text).not.toMatch(/operationId:\s*createLinkUnderGetAccess/);
+
+    const discovery = await request(app).get('/mcp/api/v1');
+    expect(discovery.status).toBe(200);
+    expect(discovery.body.getLink).toMatchObject({ canMintTokens: false });
+    expect(discovery.body.auth.mint).toMatchObject({
+      path: '/links',
+      method: 'POST',
+      auth: 'admin',
+    });
+    expect(discovery.body.auth.tokenKinds).toEqual(['get_link', 'rest', 'mcp']);
+    expect(String(discovery.body.auth.description)).toMatch(/cannot create tokens/i);
+    const mintUnderGet = (discovery.body.endpoints as { method: string; path: string }[]).some(
+      e => e.path.includes('/mcp/a') && e.path.includes('/links')
+    );
+    expect(mintUnderGet).toBe(false);
+  });
 });

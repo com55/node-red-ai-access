@@ -128,11 +128,23 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       scheme: 'Bearer',
       header: 'Authorization: Bearer <token>',
       description:
-        'Mint an access-link token on the /mcp admin page (Access links). Send it as Authorization: Bearer <token>. Missing or invalid tokens return 401 access_link_missing / access_link_invalid — ask the user for a new link.',
+        'An admin with * mints tokens on the /mcp Access links page (POST /links only — never under GET /mcp/a/<token>). Each token has kind get_link | rest | mcp and only works on that surface. Send rest/mcp tokens as Authorization: Bearer <token>. Missing/invalid → 401 access_link_missing / access_link_invalid; wrong kind → 403 wrong_token_kind. GET /mcp/a links cannot create tokens.',
+      tokenKinds: ['get_link', 'rest', 'mcp'],
+      mint: {
+        path: '/links',
+        method: 'POST',
+        auth: 'admin',
+        note: 'Admin * only. Not available under /mcp/a/<token>.',
+      },
     },
     openapi: `${api}/openapi.yaml`,
     mcp: rpc,
     apiBase: api,
+    getLink: {
+      base: '/mcp/a/<token>',
+      canMintTokens: false,
+      note: 'Self-contained GET surface for get_link tokens only. No POST /links equivalent.',
+    },
     endpoints,
   };
 }
