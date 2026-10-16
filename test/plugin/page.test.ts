@@ -157,9 +157,12 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/filter-decided-count/);
     expect(res.text).toMatch(/for troubleshooting/);
     expect(res.text).toMatch(/You're an admin/);
-    // Status chip is the viewer's Node-RED role — never "full access" (sounds like AI scope).
+    // Diagnostics "Your role" row — never a "full access" chip (sounds like AI scope).
     expect(res.text).not.toMatch(/full access|full-access/i);
-    expect(res.text).toMatch(/modeLabel = s\.permission === '\*' \? "You're an admin"/);
+    expect(res.text).not.toMatch(/id="status-badge"/);
+    expect(res.text).toMatch(/id="status-role"/);
+    expect(res.text).toMatch(/Your role/);
+    expect(res.text).toMatch(/Admin \(can approve & manage links\)/);
     expect(res.text).toMatch(/'Read-only'/);
     expect(res.text).toMatch(/This is your Node-RED permission/);
     expect(res.text).toMatch(/AI access links can only read/);

@@ -91,6 +91,9 @@ function renderMcpPageStatusSection(): string {
           <dt>Version</dt><dd id="status-version">—</dd>
           <dt>adminAuth</dt><dd id="status-adminauth">—</dd>
           <dt>AI features</dt><dd id="status-aifeatures">—</dd>
+          <dt>Your role</dt>
+          <dd id="status-role"
+            title="This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.">—</dd>
           <dt>Permission</dt><dd id="status-permission">—</dd>
           <dt>Caller</dt><dd id="status-caller">—</dd>
           <dt>Storage</dt><dd id="status-storage">—</dd>
@@ -98,8 +101,6 @@ function renderMcpPageStatusSection(): string {
           <dt>Max active links</dt><dd id="status-maxlinks">—</dd>
           <dt>Default deploy</dt><dd id="status-deploy">—</dd>
         </dl>
-        <span class="badge" id="status-badge"
-          title="This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.">loading</span>
       </details>
       <div class="row" style="margin-top:1rem">
         <button type="button" class="action secondary" id="refresh-status">Refresh</button>

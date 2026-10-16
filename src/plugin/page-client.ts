@@ -2299,12 +2299,18 @@ function pageClientScriptPartD(): string {
     $('status-ttl').textContent = hoursLabel(s.defaultLinkTtlSeconds || defaultTtl);
     $('status-maxlinks').textContent = String(s.maxActiveLinks);
     $('status-deploy').textContent = s.defaultDeploymentType;
-    // Viewer-role chip: this is the human's Node-RED permission, not AI scope.
-    var modeLabel = s.permission === '*' ? "You're an admin" : s.permission === 'read' ? 'Read-only' : 'limited';
-    var badge = $('status-badge');
-    badge.textContent = modeLabel;
-    badge.title =
-      'This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.';
+    // Diagnostics "Your role" row: human Node-RED permission, not AI scope.
+    var roleEl = $('status-role');
+    if (roleEl) {
+      var roleLabel = s.permission === '*'
+        ? 'Admin (can approve & manage links)'
+        : s.permission === 'read'
+          ? 'Read-only'
+          : (s.permission ? String(s.permission) : 'limited');
+      roleEl.textContent = roleLabel;
+      roleEl.title =
+        'This is your Node-RED permission. AI access links can only read flows and propose changes — they cannot deploy.';
+    }
 
     var blurb = $('permissions-blurb');
     if (blurb) {
