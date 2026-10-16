@@ -26,6 +26,66 @@ export function escapeForDocs(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+function docsAlsoAvailable(rest: string, openapi: string, rpc: string): string {
+  return `## Also available (prefer when your client can send headers)
+
+**Prefer MCP or REST Bearer** whenever the AI client can send custom headers and
+JSON bodies — no URL length limits and no chunked drafts. Use this **GET link
+only as a fallback** for headerless GET-only clients.
+
+- REST: \`${rest}\` with \`Authorization: Bearer <token>\`
+- OpenAPI: \`${openapi}\`
+- MCP Streamable HTTP: \`POST ${rpc}\` with the same Bearer token
+
+### MCP client config snippets
+
+Replace placeholders — never paste real personal URLs into shared docs.
+
+**Claude Desktop** (\`claude_desktop_config.json\` → \`mcpServers\`):
+
+\`\`\`json
+{
+  "mcpServers": {
+    "node-red-ai-access": {
+      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "headers": {
+        "Authorization": "Bearer aia_…"
+      }
+    }
+  }
+}
+\`\`\`
+
+**Cursor** (\`mcp.json\` style):
+
+\`\`\`json
+{
+  "mcpServers": {
+    "node-red-ai-access": {
+      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "headers": {
+        "Authorization": "Bearer aia_…"
+      }
+    }
+  }
+}
+\`\`\`
+
+**ChatGPT connectors / custom GPT:** use Streamable HTTP URL
+\`https://YOUR-NODE-RED/mcp/rpc\` and set Authorization Bearer \`aia_…\`.
+
+**Generic Streamable HTTP** (curl):
+
+\`\`\`bash
+curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
+  -H "Authorization: Bearer aia_…" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+\`\`\`
+`;
+}
+
 function docsIntro(label: string, expires: string): string {
   return `# Node-RED AI Access — self-contained link${label}
 
@@ -44,9 +104,10 @@ these docs).
 
 ## What you can do
 
-1. Read status, flows, and your own proposals (JSON).
+1. Read status, flows, installed **node-types**, and your own proposals (JSON).
 2. Submit a **pending proposal** (does **not** deploy by itself).
 3. For large content (e.g. HTML in a \`template\` node), use **chunked drafts**.
+4. Search the public palette catalogue (**recommend only** — never installs).
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
 Submit responses include \`title\`, \`displayName\` (\`title ·\` **server-local**
@@ -54,8 +115,11 @@ datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute whe
 Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
 \`displayName\` + \`reviewUrl\` — not the raw id.**
+`;
+}
 
-## Step-by-step workflow
+function docsWorkflow(): string {
+  return `## Step-by-step workflow
 
 1. \`GET ./status\` — confirm the link works; note \`caller.expiresAt\`.
 2. \`GET ./flows\` — list tabs + current \`rev\`.
@@ -99,6 +163,22 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 If another pending proposal shares the same flow + rev, the propose/draft
 response includes \`siblingsOnSameRev\` and a warning — approve order may
 conflict; prefer one pending change per rev.
+
+## Node types and palette (read-only)
+
+Before proposing unfamiliar nodes:
+
+1. \`GET ./node-types?q=<text>\` — list installed palette types (filter optional;
+   results capped; may include \`truncated\` / \`total\`).
+2. \`GET ./node-types/<type>\` — detail (properties/defaults, inputs/outputs,
+   requiredConfigNodeTypes, short help). \`404 node_type_not_found\` when unknown.
+3. \`GET ./palette/search?q=<text>\` — search the public Node-RED catalogue.
+   **Recommend only** — ask the user to install via **Manage palette**, then
+   recheck \`./node-types\`. This API **never installs** packages.
+
+Submit/propose with an unknown \`node.type\` returns \`400 unknown_node_type\`
+with \`nearest\` suggestions — call node-types / palette search and ask the user
+to install the module, then retry.
 `;
 }
 
@@ -115,6 +195,9 @@ function docsUrlTable(): string {
 | One node | \`GET ./nodes/<id>\` |
 | One field (optional lines) | \`GET ./nodes/<id>/field/<name>?lines=A-B\` |
 | Text search | \`GET ./search?q=&flow=\` |
+| List node types | \`GET ./node-types?q=\` |
+| One node type | \`GET ./node-types/<type>\` |
+| Palette search (recommend only) | \`GET ./palette/search?q=\` |
 | My proposals | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
@@ -281,7 +364,7 @@ still see a readable change on \`/mcp\`.
 `;
 }
 
-function docsErrorsAndAlso(rest: string, openapi: string, rpc: string): string {
+function docsErrorsAndAlso(): string {
   return `## Error codes (JSON unless docs)
 
 | Code | Meaning | Next step |
@@ -296,16 +379,12 @@ function docsErrorsAndAlso(rest: string, openapi: string, rpc: string): string {
 | \`draft_hash_mismatch\` / \`missing_chunks\` | Draft incomplete | Fix seqs / sha256 |
 | \`payload_too_large\` | Over decoded size cap | Shrink content or use last-resort paste |
 | \`rate_limited\` | Too many calls (per IP or per token) | Wait \`retryAfter\` seconds (\`Retry-After\` header) |
+| \`unknown_node_type\` | Proposal uses a type not installed | Call \`./node-types\` / \`./palette/search\`; ask user to install via Manage palette |
+| \`node_type_not_found\` | Unknown type on \`./node-types/<type>\` | List types or search palette; ask user to install |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
 
 All JSON responses use \`Cache-Control: no-store\`. Never put secrets in query
 strings you will paste publicly beyond this temporary link.
-
-## Also available (if your client can send headers)
-
-- REST: \`${rest}\` with \`Authorization: Bearer <token>\`
-- OpenAPI: \`${openapi}\`
-- MCP Streamable HTTP: \`POST ${rpc}\`
 `;
 }
 
@@ -319,10 +398,12 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
 
   return [
     docsIntro(label, expires),
+    docsAlsoAvailable(rest, openapi, rpc),
+    docsWorkflow(),
     docsUrlTable(),
     docsProposeExamples(),
     docsDrafts(),
     docsLastResortPaste(),
-    docsErrorsAndAlso(rest, openapi, rpc),
+    docsErrorsAndAlso(),
   ].join('\n');
 }

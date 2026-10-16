@@ -33,6 +33,12 @@ import {
   getNodeHandler,
   searchFlowsHandler,
 } from './layered-read-routes.js';
+import {
+  getNodeTypeHandler,
+  listNodeTypesHandler,
+  searchPaletteHandler,
+} from './node-types-routes.js';
+import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
   parseIncludeQuery,
@@ -49,6 +55,9 @@ export interface RegisterGetLinkRoutesOptions {
   proposalStore: ProposalStore;
   auditLog: AuditLog;
   flowAdapter: FlowAdapter;
+  nodeTypesAdapter: NodeTypesAdapter;
+  catalogueFetcher?: CatalogueFetcher;
+  catalogueUrl?: string;
   draftStore?: DraftStore;
   /** Optional dual rate-limit stack override (tests). */
   rateLimiters?: ReturnType<typeof createAiAccessDualRateLimiters>;
@@ -128,6 +137,24 @@ export function registerGetLinkRoutes(
     void searchFlowsHandler(options.flowAdapter)(req, res);
   });
 
+  const nodeTypeOpts = {
+    nodeTypes: options.nodeTypesAdapter,
+    ...(options.catalogueFetcher ? { catalogueFetcher: options.catalogueFetcher } : {}),
+    ...(options.catalogueUrl ? { catalogueUrl: options.catalogueUrl } : {}),
+  };
+  app.get(`${base}/node-types`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void listNodeTypesHandler(nodeTypeOpts)(req, res);
+  });
+  app.get(`${base}/node-types/:type`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void getNodeTypeHandler(nodeTypeOpts)(req, res);
+  });
+  app.get(`${base}/palette/search`, ...gate, (req: AuthenticatedRequest, res: Response) => {
+    setNoStore(res);
+    void searchPaletteHandler(nodeTypeOpts)(req, res);
+  });
+
   const httpAdminRoot = RED.settings.httpAdminRoot;
   registerGetLinkProposalRoutes(app, base, gate, options, httpAdminRoot);
 
@@ -138,7 +165,8 @@ export function registerGetLinkRoutes(
       options.proposalStore,
       options.auditLog,
       options.flowAdapter,
-      httpAdminRoot
+      httpAdminRoot,
+      options.nodeTypesAdapter
     )
   );
 
@@ -278,7 +306,8 @@ function registerGetLinkDraftRoutes(
       options.proposalStore,
       options.auditLog,
       options.flowAdapter,
-      httpAdminRoot
+      httpAdminRoot,
+      options.nodeTypesAdapter
     )
   );
 }

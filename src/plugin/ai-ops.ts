@@ -16,6 +16,7 @@ import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../sto
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
+import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   autoGenerateProposalTitle,
   buildProposalDisplayName,
@@ -173,7 +174,8 @@ async function materializePayloadFromNodes(
   adapter: FlowAdapter,
   expectedRev: string,
   payload: Record<string, unknown>,
-  topLevelNodes: unknown
+  topLevelNodes: unknown,
+  nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<{ flowId: string; flow: FlowTab }> {
   const { applyFlowNodeOps, interpretPatch } = await import('./get-link/flow-patch.js');
   const nodes = Array.isArray(payload.nodes)
@@ -193,7 +195,9 @@ async function materializePayloadFromNodes(
   if (interpreted.kind !== 'nodes') {
     throw new AiOpsValidationError('payload.nodes must be node ops', 'invalid_patch');
   }
-  const patched = await applyFlowNodeOps(adapter, interpreted.flowId, interpreted.ops);
+  const patched = await applyFlowNodeOps(adapter, interpreted.flowId, interpreted.ops, {
+    ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
+  });
   if (patched.expectedRev !== expectedRev) {
     throw new FlowRevisionConflictError(expectedRev, patched.expectedRev, 'submit_proposal');
   }
@@ -205,7 +209,8 @@ async function resolveReplaceFlowPayload(
   adapter: FlowAdapter,
   expectedRev: string,
   payloadObj: Record<string, unknown>,
-  topLevelNodes: unknown
+  topLevelNodes: unknown,
+  nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<{ flowId: string; flow: object }> {
   let flowId = payloadObj.flowId;
   let flow = payloadObj.flow;
@@ -217,7 +222,8 @@ async function resolveReplaceFlowPayload(
       adapter,
       expectedRev,
       payloadObj,
-      topLevelNodes
+      topLevelNodes,
+      nodeTypesAdapter
     );
     flowId = materialized.flowId;
     flow = materialized.flow;
@@ -254,7 +260,8 @@ export async function submitReplaceFlowProposal(
   accessLink: AccessLinkAuthInfo,
   body: SubmitReplaceFlowInput,
   adapter: FlowAdapter,
-  presentOptions: PresentProposalOptions = {}
+  presentOptions: PresentProposalOptions = {},
+  nodeTypesAdapter?: NodeTypesAdapter
 ): Promise<PresentedProposal> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
@@ -270,7 +277,13 @@ export async function submitReplaceFlowProposal(
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
   }
   const payloadObj = payload as Record<string, unknown>;
-  const resolved = await resolveReplaceFlowPayload(adapter, expectedRev, payloadObj, body.nodes);
+  const resolved = await resolveReplaceFlowPayload(
+    adapter,
+    expectedRev,
+    payloadObj,
+    body.nodes,
+    nodeTypesAdapter
+  );
   const { safeExpectedRev, safeFlowId } = assertSafeRevAndFlowId(expectedRev, resolved.flowId);
   const flow = resolved.flow;
 
@@ -285,6 +298,10 @@ export async function submitReplaceFlowProposal(
   }
 
   const safeFlow = sanitizeFlowTab(flow) as Partial<FlowTab>;
+
+  if (nodeTypesAdapter) {
+    await assertKnownNodeTypes(nodeTypesAdapter, safeFlow);
+  }
 
   const current = await adapter.getFlows();
   if (current.rev !== safeExpectedRev) {

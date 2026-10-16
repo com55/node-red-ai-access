@@ -16,6 +16,7 @@ import {
   siblingsOnSameRev,
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
+import type { NodeTypesAdapter } from '../node-types.js';
 import {
   parseIncludeQuery,
   presentOptionsFor,
@@ -431,7 +432,8 @@ export function getLinkDraftSubmitHandler(
   proposalStore: ProposalStore,
   auditLog: AuditLog,
   flowAdapter: FlowAdapter,
-  httpAdminRoot?: string
+  httpAdminRoot?: string,
+  nodeTypesAdapter?: NodeTypesAdapter
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (rejectOversizedGetUrl(req, res)) return;
@@ -493,7 +495,9 @@ export function getLinkDraftSubmitHandler(
             nodes: interpreted.flow.nodes ?? [],
           };
         } else {
-          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops);
+          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops, {
+            ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
+          });
           if (patched.expectedRev !== draft.expectedRev) {
             res.status(409).json({
               error: 'Flow revision mismatch',
@@ -524,7 +528,8 @@ export function getLinkDraftSubmitHandler(
           ...(title ? { title } : {}),
         },
         flowAdapter,
-        presentOpts
+        presentOpts,
+        nodeTypesAdapter
       );
 
       draftStore.markSubmitted(draftId, req.accessLink.id, proposal.id);

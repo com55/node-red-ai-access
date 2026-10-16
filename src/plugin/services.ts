@@ -16,6 +16,12 @@ import { ProposalStore } from '../storage/proposals.js';
 import { SettingsStore } from '../storage/settings-store.js';
 
 import { createConfiguredLinkStore } from './links.js';
+import {
+  createNodeTypesAdapter,
+  createStaticNodeTypesAdapter,
+  type CatalogueFetcher,
+  type NodeTypesAdapter,
+} from './node-types.js';
 import { ProposalService } from './proposal-service.js';
 import { bindSettingsStore, isAdminAuthEnabled, resolveAiAccessSettings } from './settings.js';
 import type { NodeRedPluginAPI } from './types.js';
@@ -36,12 +42,19 @@ export interface PluginServices {
   proposalStore: ProposalStore;
   auditLog: AuditLog;
   flowAdapter: FlowAdapter;
+  nodeTypesAdapter: NodeTypesAdapter;
   proposalService: ProposalService;
   settingsStore: SettingsStore;
+  /** Optional catalogue fetcher override (unit tests). */
+  catalogueFetcher?: CatalogueFetcher;
+  catalogueUrl?: string;
 }
 
 export interface CreatePluginServicesOptions {
   flowAdapter?: FlowAdapter;
+  nodeTypesAdapter?: NodeTypesAdapter;
+  catalogueFetcher?: CatalogueFetcher;
+  catalogueUrl?: string;
   linkStore?: AccessLinkStore;
   settingsStore?: SettingsStore;
   /** When false, do not bind the process-wide settings store (tests). Default true. */
@@ -99,6 +112,23 @@ export function createPluginServices(
       flowAdapter = misconfiguredAdapter(message);
     }
   }
+  let nodeTypesAdapter: NodeTypesAdapter;
+  if (options.nodeTypesAdapter) {
+    nodeTypesAdapter = options.nodeTypesAdapter;
+  } else if (options.flowAdapter) {
+    // Injected flow adapter ⇒ unit-test path: use a static common-type set so
+    // write validation works without hitting Admin /nodes or the network.
+    nodeTypesAdapter = createStaticNodeTypesAdapter();
+  } else {
+    try {
+      nodeTypesAdapter = createNodeTypesAdapter({ baseUrl: localAdminBaseUrl(RED) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      RED.log?.warn?.(`AI Access node-types adapter unavailable: ${message}`);
+      nodeTypesAdapter = createStaticNodeTypesAdapter([]);
+    }
+  }
+
   const proposalService = new ProposalService(
     proposalStore,
     auditLog,
@@ -111,7 +141,10 @@ export function createPluginServices(
     proposalStore,
     auditLog,
     flowAdapter,
+    nodeTypesAdapter,
     proposalService,
     settingsStore,
+    ...(options.catalogueFetcher ? { catalogueFetcher: options.catalogueFetcher } : {}),
+    ...(options.catalogueUrl ? { catalogueUrl: options.catalogueUrl } : {}),
   };
 }

@@ -33,6 +33,7 @@ import {
   submitReplaceFlowProposal,
 } from './ai-ops.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
+import type { NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
   parseIncludeQuery,
@@ -56,7 +57,8 @@ export function createProposalHandler(
   store: ProposalStore,
   audit: AuditLog,
   adapter: FlowAdapter,
-  httpAdminRoot?: string
+  httpAdminRoot?: string,
+  nodeTypesAdapter?: NodeTypesAdapter
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.accessLink) {
@@ -80,7 +82,8 @@ export function createProposalHandler(
           title?: unknown;
         },
         adapter,
-        presentOpts
+        presentOpts,
+        nodeTypesAdapter
       );
       const siblings = siblingsOnSameRev(store, proposal);
       res.status(201).json({
