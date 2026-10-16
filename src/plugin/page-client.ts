@@ -405,6 +405,7 @@ function pageClientScriptPartAFormat(): string {
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
+      'proposal.withdrawn': 'Withdrawn',
       'link.created': 'Link created',
       'link.revoked': 'Link revoked'
     };
@@ -422,6 +423,7 @@ function pageClientScriptPartAFormat(): string {
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
+      'proposal.withdrawn': 'Withdrawn',
       'link.created': 'Link created',
       'link.revoked': 'Link revoked'
     };
@@ -555,6 +557,11 @@ function pageClientScriptPartAAudit(): string {
       var failReason = friendlyReason(d.reason);
       return 'Failed' + (prop ? ' ' + prop : '') +
         (failReason ? ': ' + esc(failReason) : '');
+    }
+    if (action === 'proposal.withdrawn') {
+      var withdrawReason = friendlyReason(d.reason);
+      return 'Withdrawn' + (prop ? ' ' + prop : '') +
+        (withdrawReason ? ': ' + esc(withdrawReason) : '');
     }
     if (action === 'link.created') {
       var created = resolveLinkDetails(d);

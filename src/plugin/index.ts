@@ -53,6 +53,7 @@ import {
   getProposalHandler,
   listProposalsHandler,
   rejectProposalHandler,
+  withdrawProposalHandler,
 } from './proposals-routes.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute } from './route-errors.js';
@@ -302,6 +303,14 @@ export function registerRoutes(
     ...linkGuards,
     requireJsonContentType('rest'),
     asyncRoute(rejectProposalHandler(services.proposalService, httpAdminRoot))
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/withdraw',
+    limiter,
+    tokenLimiter,
+    requireJsonContentType('rest'),
+    requireAccessLink(RED, services.linkStore, 'rest'),
+    asyncRoute(withdrawProposalHandler(services.proposalStore, services.auditLog, httpAdminRoot))
   );
 
   const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore, 'mcp')];

@@ -9,8 +9,8 @@ import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import {
   aiOpsErrorToHttp,
-  siblingWarningFields,
-  siblingsOnSameRev,
+  conflictWarningFields,
+  findConflictingProposals,
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
 import { channelErrorHint } from '../channel-errors.js';
@@ -356,14 +356,21 @@ export function getLinkProposeHandler(
         presentOpts,
         nodeTypesAdapter
       );
-      const presented = presentProposalForApi(proposal, { ...presentOpts, include });
-      const siblings = siblingsOnSameRev(proposalStore, proposal);
+      const presented = {
+        ...presentProposalForApi(proposal, { ...presentOpts, include }),
+        mine: true,
+      };
+      const conflicts = findConflictingProposals(
+        proposalStore,
+        proposalStore.get(proposal.id),
+        req.accessLink.id
+      );
       const warnings = proposal.warnings;
       res.status(201).json({
         ok: true,
         proposal: presented,
         ...(summary ? { summary } : {}),
-        ...siblingWarningFields(siblings),
+        ...conflictWarningFields(conflicts),
         ...(warnings && warnings.length > 0 ? { warnings } : {}),
         hint:
           `Waiting for human approval. Tell the user about "${presented.displayName}" ` +

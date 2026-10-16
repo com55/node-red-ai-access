@@ -102,6 +102,11 @@ curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
 function docsIntro(label: string, expires: string): string {
   return `# Node-RED AI Access — self-contained GET link (get_link)${label}
 
+**Git mental model:** a proposal is like a pull request. Human approve = merge;
+reject = close; withdraw = you close your own PR. If \`rev\`/\`expectedRev\` does
+not match, treat it as a conflict: re-read the flow, rebase the edit, and
+resubmit. Every access link can see all proposals (\`mine: true|false\`).
+
 **Which channel to use:** prefer **MCP** (\`/mcp/rpc\` + mcp Bearer) or **REST**
 (\`/mcp/api/v1\` + rest Bearer) when your client can send headers and JSON —
 use this **GET link** only as a fallback for headerless GET-only clients.
@@ -176,19 +181,25 @@ GET ./propose?flow=<flowId>&rev=<rev>&node=<nodeId>&set.<prop>=<urlencoded>&titl
 GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 \`\`\`
 
-7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved or rejected.
-   Cite \`displayName\` + \`reviewUrl\` from the response when updating the user.
+7. Poll \`GET ./proposals\` / \`./proposals/<id>\` until approved, rejected, or
+   withdrawn. Every token can list/read **all** proposals; each item has
+   \`mine:true|false\`. Filter with \`?mine=true\`. Cite \`displayName\` +
+   \`reviewUrl\` when updating the user.
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
    with a summary sentence; pending+stale may include \`vsCurrent\`.
+9. Withdraw your own pending proposal:
+   \`GET ./proposals/<id>/withdraw?reason=<text>\` (status becomes \`withdrawn\`,
+   not \`rejected\`).
 
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.
 
-If another pending proposal shares the same flow + rev, the propose/draft
-response includes \`siblingsOnSameRev\` and a warning — approve order may
-conflict; prefer one pending change per rev.
+On submit and on read of a pending proposal, the response may include
+\`conflictingProposals\` (any token's pending work on the same flow) with
+\`overlappingNodeIds\` / \`overlappingFields\` when detectable — treat like a
+git conflict warning; prefer one pending change per flow when possible.
 
 ## Node types and palette (read-only)
 
@@ -226,9 +237,10 @@ function docsUrlTable(): string {
 | List node types | \`GET ./node-types?q=\` |
 | One node type | \`GET ./node-types/<type>\` (\`?help=0\` omits help) |
 | Palette search (recommend only) | \`GET ./palette/search?q=\` |
-| My proposals | \`GET ./proposals\` |
+| All proposals (\`?mine=true\` = own only) | \`GET ./proposals\` |
 | One proposal | \`GET ./proposals/<id>\` |
 | Proposal diff | \`GET ./proposals/<id>/diff\` |
+| Withdraw own pending | \`GET ./proposals/<id>/withdraw?reason=\` |
 | Propose (query) | \`GET ./propose?…\` |
 | Draft start | \`GET ./draft/new?flow=&rev=&node=&field=&title=\` |
 | Draft chunk | \`GET ./draft/<draftId>/append?seq=N&data=<base64url>\` |
@@ -396,6 +408,65 @@ still see a readable change on \`/mcp\`.
 `;
 }
 
+function docsRestNodesPayload(): string {
+  return `## Size cap and REST/MCP nodes payload shapes
+
+The proposal JSON cap is **${MAX_PROPOSAL_JSON_BYTES} bytes**
+(\`MAX_PROPOSAL_JSON_BYTES\` / ~1.5MB) on **every** channel: GET propose/drafts,
+REST \`POST /proposals\`, and MCP \`submit_proposal\`. Oversized bodies return
+\`413 payload_too_large\` (never truncated).
+
+### Canonical REST/MCP nodes ops (preferred)
+
+Send \`type: "replace_flow"\`, top-level \`expectedRev\`, and
+\`payload: { flowId, nodes: [...] }\` (no \`payload.flow\`). The server loads
+the live tab at \`expectedRev\` and applies ops in order.
+
+Supported ops:
+
+| op | Required fields |
+| --- | --- |
+| \`replace_text\` | \`node\`, \`field\`, \`find\`, \`replace\` (\`occurrence\` 1-based optional) |
+| \`set\` | \`id\` + \`set\` object, **or** \`op:"set"\` + \`id\` + properties |
+| \`add\` | \`node\` object with \`id\` + \`type\` |
+| \`remove\` | \`id\` |
+
+Example (canonical):
+
+\`\`\`json
+{
+  "type": "replace_flow",
+  "expectedRev": "<rev>",
+  "payload": {
+    "flowId": "tab1",
+    "nodes": [
+      {
+        "op": "replace_text",
+        "node": "n1",
+        "field": "template",
+        "find": "Hello",
+        "replace": "Hi"
+      }
+    ]
+  }
+}
+\`\`\`
+
+**Alternative (also accepted):** top-level \`nodes\` array as an alias for
+\`payload.nodes\` (same op shapes). Full-tab replace remains supported via
+\`payload.flow\` (from \`GET ./flows/<id>\` / REST \`GET /flows/{id}\`).
+`;
+}
+
+function docsKnownIssues(): string {
+  return `## Known issues
+
+- **Rate limits are per token (and per IP).** Each access-link token has its own
+  token bucket. Several tokens can each use the full per-token limit at the same
+  time; the shared IP bucket still applies across them.
+`;
+}
+
 function docsErrorsAndAlso(): string {
   return `## Error codes (JSON unless docs)
 
@@ -409,8 +480,10 @@ function docsErrorsAndAlso(): string {
 | \`ambiguous_match\` | \`replace_text\` find matched more than once | Pass \`occurrence\` (1-based) or a unique find |
 | \`chunk_conflict\` | Same seq, different data | Re-send identical data or new draft |
 | \`draft_hash_mismatch\` / \`missing_chunks\` | Draft incomplete | Fix seqs / sha256 |
-| \`payload_too_large\` | Over decoded size cap | Shrink content or use last-resort paste |
+| \`payload_too_large\` | Over decoded size cap (${MAX_PROPOSAL_JSON_BYTES} bytes on every channel) | Shrink content or use last-resort paste |
 | \`rate_limited\` | Too many calls (per IP or per token) | Wait \`retryAfter\` seconds (\`Retry-After\` header) |
+| \`proposal_not_owned\` | Withdraw of another link's proposal | Only the creating token can withdraw |
+| \`proposal_not_pending\` | Withdraw/decide on non-pending | Only pending proposals can be withdrawn |
 | \`unknown_node_type\` | Proposal uses a type not installed | Call \`./node-types\` / \`./palette/search\`; ask user to install via Manage palette |
 | \`node_type_not_found\` | Unknown type on \`./node-types/<type>\` | List types or search palette; ask user to install |
 | \`not_found\` | Unknown path under this link | Re-read these docs |
@@ -436,8 +509,10 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
     docsWorkflow(),
     docsUrlTable(),
     docsProposeExamples(),
+    docsRestNodesPayload(),
     docsDrafts(),
     docsLastResortPaste(),
+    docsKnownIssues(),
     docsErrorsAndAlso(),
   ].join('\n');
 }

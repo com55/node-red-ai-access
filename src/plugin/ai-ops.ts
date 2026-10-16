@@ -7,7 +7,14 @@ import { FlowRevisionConflictError } from '../runtime/errors.js';
 import { normalizeFlowTab } from '../runtime/flows-util.js';
 import type { FlowAdapter, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
-import { ProposalNotFoundError, type Proposal, type ProposalStore } from '../storage/proposals.js';
+import {
+  ProposalNotFoundError,
+  ProposalNotOwnedError,
+  ProposalNotPendingError,
+  type Proposal,
+  type ProposalDecisionBy,
+  type ProposalStore,
+} from '../storage/proposals.js';
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
@@ -19,76 +26,222 @@ import {
 import { throwValidationIssues, validateFlowTab } from './flow-validate.js';
 import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
+  conflictWarningFields,
+  findConflictingProposals,
+  type ConflictingProposalRef,
+  type ConflictingProposalsResult,
+} from './proposal-conflicts.js';
+import {
   autoGenerateProposalTitle,
-  buildProposalDisplayName,
   presentProposal,
-  resolveProposalTitle,
+  presentProposalForApi,
   sanitizeProposalTitle,
   type PresentedProposal,
+  type PresentedProposalApi,
+  type PresentProposalApiOptions,
   type PresentProposalOptions,
 } from './proposal-present.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
 export { MAX_PROPOSAL_JSON_BYTES };
 export type { PresentedProposal, PresentProposalOptions };
+export type { ConflictingProposalRef, ConflictingProposalsResult };
+export { conflictWarningFields, findConflictingProposals };
 
-export interface SiblingProposalRef {
-  id: string;
-  title: string;
-  displayName: string;
-}
-
-export interface SiblingsOnSameRevResult {
-  /** Pending siblings from the **same** access link only (ids/titles safe to share). */
-  siblingsOnSameRev: SiblingProposalRef[];
-  /** Count of pending siblings from other links (ids not exposed). */
-  otherLinkSiblingCount: number;
-}
+/** @deprecated Prefer {@link findConflictingProposals} — same-link-only view removed. */
+export type SiblingProposalRef = ConflictingProposalRef;
+/** @deprecated Prefer {@link ConflictingProposalsResult}. */
+export type SiblingsOnSameRevResult = ConflictingProposalsResult;
 
 /**
- * Other pending proposals on the same flowId + expectedRev.
- * Only same-link proposals are listed; other links increment `otherLinkSiblingCount`.
+ * Pending proposals on the same flow (any access link) that may conflict.
+ * @deprecated Prefer {@link findConflictingProposals}.
  */
 export function siblingsOnSameRev(
   store: ProposalStore,
-  proposal: Proposal
-): SiblingsOnSameRevResult {
-  const siblingsOnSameRev: SiblingProposalRef[] = [];
-  let otherLinkSiblingCount = 0;
-  for (const p of store.list()) {
-    if (
-      p.id === proposal.id ||
-      p.status !== 'pending' ||
-      p.expectedRev !== proposal.expectedRev ||
-      p.payload.flowId !== proposal.payload.flowId
-    ) {
-      continue;
-    }
-    if (p.createdBy.linkId === proposal.createdBy.linkId) {
-      const title = resolveProposalTitle(p);
-      siblingsOnSameRev.push({
-        id: p.id,
-        title,
-        displayName: buildProposalDisplayName(title, p.createdAt),
-      });
-    } else {
-      otherLinkSiblingCount += 1;
-    }
-  }
-  return { siblingsOnSameRev, otherLinkSiblingCount };
+  proposal: Proposal,
+  callerLinkId?: string
+): ConflictingProposalsResult {
+  return findConflictingProposals(store, proposal, callerLinkId);
 }
 
-/** Spread sibling warning fields onto a JSON response (omit empty array / zero count). */
-export function siblingWarningFields(result: SiblingsOnSameRevResult): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (result.siblingsOnSameRev.length > 0) {
-    out.siblingsOnSameRev = result.siblingsOnSameRev;
+/** @deprecated Prefer {@link conflictWarningFields}. */
+export function siblingWarningFields(result: ConflictingProposalsResult): Record<string, unknown> {
+  return conflictWarningFields(result);
+}
+
+export { ProposalNotOwnedError };
+
+/** Presented proposal plus ownership flag for the calling access link. */
+export type PresentedProposalWithMine = PresentedProposal & { mine: boolean };
+export type PresentedProposalApiWithMine = PresentedProposalApi & { mine: boolean };
+
+function isMineProposal(proposal: Proposal, accessLink: AccessLinkAuthInfo): boolean {
+  return proposal.createdBy.linkId === accessLink.id;
+}
+
+export interface ListProposalsFilter {
+  /** When true, only proposals created by this access link. */
+  mine?: boolean;
+}
+
+/**
+ * List proposals visible to an access link. Every token sees **all** proposals;
+ * each item is marked `mine: true|false`. Pass `filter.mine: true` to limit to own.
+ */
+export function listAccessibleProposals(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo,
+  presentOptions: PresentProposalOptions = {},
+  filter: ListProposalsFilter = {}
+): PresentedProposalWithMine[] {
+  const linkId = filter.mine === true ? accessLink.id : undefined;
+  return store.list(linkId ? { linkId } : undefined).map(p => ({
+    ...presentProposal(p, presentOptions),
+    mine: isMineProposal(p, accessLink),
+  }));
+}
+
+/**
+ * @deprecated Prefer {@link listAccessibleProposals}. Kept as the MCP tool name
+ * `list_my_proposals`; now returns all proposals with `mine` flags (use filter).
+ */
+export function listMyProposals(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo,
+  presentOptions: PresentProposalOptions = {},
+  filter: ListProposalsFilter = {}
+): PresentedProposalWithMine[] {
+  return listAccessibleProposals(store, accessLink, presentOptions, filter);
+}
+
+/**
+ * Get any proposal by id (all tokens can read). Marks `mine` for the caller.
+ */
+export function getAccessibleProposal(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo,
+  id: string,
+  presentOptions: PresentProposalOptions = {}
+): PresentedProposalWithMine {
+  if (!id) {
+    throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
   }
-  if (result.otherLinkSiblingCount > 0) {
-    out.otherLinkSiblingCount = result.otherLinkSiblingCount;
+  const proposal = store.get(id);
+  return {
+    ...presentProposal(proposal, presentOptions),
+    mine: isMineProposal(proposal, accessLink),
+  };
+}
+
+/**
+ * @deprecated Prefer {@link getAccessibleProposal} (no longer 404s for others' proposals).
+ */
+export function getMyProposal(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo,
+  id: string,
+  presentOptions: PresentProposalOptions = {}
+): PresentedProposalWithMine {
+  return getAccessibleProposal(store, accessLink, id, presentOptions);
+}
+
+function accessLinkActor(accessLink: AccessLinkAuthInfo): ProposalDecisionBy {
+  const actor: ProposalDecisionBy = { kind: 'access-link', linkId: accessLink.id };
+  if (typeof accessLink.label === 'string' && accessLink.label) {
+    actor.label = accessLink.label;
   }
-  if (result.siblingsOnSameRev.length > 0 || result.otherLinkSiblingCount > 0) {
-    out.warning = 'Other pending proposals share this flow revision — approve order may conflict.';
+  return actor;
+}
+
+/**
+ * Withdraw a pending proposal owned by this access link. Status becomes
+ * `withdrawn` (separate from admin `rejected`).
+ */
+export function withdrawMyProposal(
+  store: ProposalStore,
+  audit: AuditLog,
+  accessLink: AccessLinkAuthInfo,
+  id: string,
+  reason: unknown,
+  presentOptions: PresentProposalOptions = {}
+): PresentedProposalWithMine {
+  if (!id) {
+    throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
+  }
+  let proposal: Proposal;
+  try {
+    proposal = store.get(id);
+  } catch (error) {
+    if (error instanceof ProposalNotFoundError) throw error;
+    throw error;
+  }
+  if (!isMineProposal(proposal, accessLink)) {
+    throw new ProposalNotOwnedError(id);
+  }
+  if (proposal.status !== 'pending') {
+    throw new ProposalNotPendingError(id, proposal.status);
+  }
+  const cleaned =
+    typeof reason === 'string' && reason.trim()
+      ? reason.replace(/\0/g, '').trim().slice(0, 2_000)
+      : 'Withdrawn by access link';
+  const actor = accessLinkActor(accessLink);
+  const withdrawn = store.markWithdrawn(id, actor, cleaned);
+  const presented = presentProposal(withdrawn, presentOptions);
+  const flowLabel = presented.flowLabel || undefined;
+  audit.append('proposal.withdrawn', actor, {
+    proposalId: withdrawn.id,
+    flowId: withdrawn.payload.flowId,
+    title: presented.title,
+    displayName: presented.displayName,
+    reason: cleaned,
+    ...(flowLabel ? { flowLabel } : {}),
+  });
+  return { ...presented, mine: true };
+}
+
+/** Attach conflict warning fields for a pending proposal on read/submit. */
+export function conflictsForProposal(
+  store: ProposalStore,
+  proposal: Proposal | PresentedProposal | PresentedProposalApi,
+  callerLinkId?: string
+): Record<string, unknown> {
+  if (proposal.status !== 'pending') {
+    return {};
+  }
+  // Prefer store record when we only have a presented view.
+  let raw: Proposal;
+  try {
+    raw = store.get(proposal.id);
+  } catch {
+    return {};
+  }
+  return conflictWarningFields(findConflictingProposals(store, raw, callerLinkId));
+}
+
+/** Lean API present + mine (+ optional conflicts for pending). */
+export function presentAccessibleProposalForApi(
+  store: ProposalStore,
+  accessLink: AccessLinkAuthInfo,
+  proposal: Proposal | PresentedProposalWithMine,
+  apiOptions: PresentProposalApiOptions = {},
+  options: { includeConflicts?: boolean } = {}
+): PresentedProposalApiWithMine & Record<string, unknown> {
+  const presented =
+    'mine' in proposal
+      ? proposal
+      : {
+          ...presentProposal(proposal, apiOptions),
+          mine: isMineProposal(proposal, accessLink),
+        };
+  const lean = presentProposalForApi(presented, apiOptions);
+  const out: PresentedProposalApiWithMine & Record<string, unknown> = {
+    ...lean,
+    mine: presented.mine,
+  };
+  if (options.includeConflicts !== false && lean.status === 'pending') {
+    Object.assign(out, conflictsForProposal(store, lean, accessLink.id));
   }
   return out;
 }
@@ -370,30 +523,6 @@ export async function submitReplaceFlowProposal(
   });
 
   return presented;
-}
-
-export function listMyProposals(
-  store: ProposalStore,
-  accessLink: AccessLinkAuthInfo,
-  presentOptions: PresentProposalOptions = {}
-): PresentedProposal[] {
-  return store.list({ linkId: accessLink.id }).map(p => presentProposal(p, presentOptions));
-}
-
-export function getMyProposal(
-  store: ProposalStore,
-  accessLink: AccessLinkAuthInfo,
-  id: string,
-  presentOptions: PresentProposalOptions = {}
-): PresentedProposal {
-  if (!id) {
-    throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
-  }
-  const proposal = store.get(id);
-  if (proposal.createdBy.linkId !== accessLink.id) {
-    throw new ProposalNotFoundError(id);
-  }
-  return presentProposal(proposal, presentOptions);
 }
 
 /**

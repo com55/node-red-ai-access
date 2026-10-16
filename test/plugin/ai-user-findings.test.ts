@@ -600,8 +600,8 @@ describe('AI-user findings', () => {
     });
   });
 
-  describe('11. siblingsOnSameRev on propose', () => {
-    it('includes siblingsOnSameRev warning when another pending shares rev', async () => {
+  describe('11. conflictingProposals on propose', () => {
+    it('includes conflictingProposals when another pending shares the flow', async () => {
       const { app, linkStore } = createApp({ userDir });
       const link = linkStore.create({ label: 'f11' });
 
@@ -614,17 +614,19 @@ describe('AI-user findings', () => {
         `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Two&title=second`
       );
       expect(second.status).toBe(201);
-      expect(second.body.siblingsOnSameRev).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: first.body.proposal.id })])
+      expect(second.body.conflictingProposals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: first.body.proposal.id, mine: true }),
+        ])
       );
       expect(second.body.otherLinkSiblingCount).toBeUndefined();
-      expect(String(second.body.warning)).toMatch(/approve order|same flow revision/i);
+      expect(String(second.body.warning)).toMatch(/conflict|same flow/i);
 
       const docs = await request(app).get(`/mcp/a/${link.token}`);
-      expect(docs.text).toMatch(/siblingsOnSameRev/);
+      expect(docs.text).toMatch(/conflictingProposals/);
     });
 
-    it('counts other-link siblings without exposing their ids', async () => {
+    it('exposes other-link conflicting proposal ids (visibility decision)', async () => {
       const { app, linkStore } = createApp({ userDir });
       const linkA = linkStore.create({ label: 'f11a' });
       const linkB = linkStore.create({ label: 'f11b' });
@@ -638,10 +640,17 @@ describe('AI-user findings', () => {
         `/mcp/a/${linkB.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=B&title=from-b`
       );
       expect(fromB.status).toBe(201);
-      expect(fromB.body.siblingsOnSameRev).toBeUndefined();
-      expect(fromB.body.otherLinkSiblingCount).toBe(1);
-      expect(String(fromB.body.warning)).toMatch(/approve order|same flow revision/i);
-      expect(JSON.stringify(fromB.body)).not.toContain(fromA.body.proposal.id);
+      expect(fromB.body.conflictingProposals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: fromA.body.proposal.id,
+            mine: false,
+            overlappingNodeIds: expect.arrayContaining(['n1']),
+          }),
+        ])
+      );
+      expect(fromB.body.otherLinkSiblingCount).toBeUndefined();
+      expect(String(fromB.body.warning)).toMatch(/conflict|same flow/i);
     });
   });
 

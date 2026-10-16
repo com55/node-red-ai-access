@@ -151,10 +151,11 @@ describe('AI flow surface (access-link Bearer)', () => {
       createdBy: { kind: 'access-link', linkId: link.id },
     });
 
-    const mine = await request(app).get('/mcp/api/v1/proposals').set(auth);
+    const mine = await request(app).get('/mcp/api/v1/proposals?mine=true').set(auth);
     expect(mine.status).toBe(200);
     expect(mine.body.proposals).toHaveLength(1);
     expect(mine.body.proposals[0].id).toBe(created.body.id);
+    expect(mine.body.proposals[0].mine).toBe(true);
 
     const got = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}`).set(auth);
     expect(got.status).toBe(200);

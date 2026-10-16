@@ -12,8 +12,8 @@ import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
 import {
   aiOpsErrorToHttp,
-  siblingWarningFields,
-  siblingsOnSameRev,
+  conflictWarningFields,
+  findConflictingProposals,
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
 import type { NodeTypesAdapter } from '../node-types.js';
@@ -538,14 +538,21 @@ export function getLinkDraftSubmitHandler(
       );
 
       draftStore.markSubmitted(draftId, req.accessLink.id, proposal.id);
-      const presented = presentProposalForApi(proposal, { ...presentOpts, include });
-      const siblings = siblingsOnSameRev(proposalStore, proposal);
+      const presented = {
+        ...presentProposalForApi(proposal, { ...presentOpts, include }),
+        mine: true,
+      };
+      const conflicts = findConflictingProposals(
+        proposalStore,
+        proposalStore.get(proposal.id),
+        req.accessLink.id
+      );
 
       res.status(201).json({
         ok: true,
         proposal: presented,
         sha256: createHash('sha256').update(Buffer.from(assembled, 'utf8')).digest('hex'),
-        ...siblingWarningFields(siblings),
+        ...conflictWarningFields(conflicts),
         hint:
           `Waiting for human approval. Tell the user about "${presented.displayName}" ` +
           `(${presented.reviewUrl}). Poll GET …/proposals/<id> for status.`,
