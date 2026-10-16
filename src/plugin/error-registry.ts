@@ -324,7 +324,7 @@ export function registryHint(code: string): string | undefined {
 }
 
 function cell(text: string): string {
-  return text.replace(/\|/g, '\\|');
+  return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 }
 
 function table(specs: readonly ErrorCodeSpec[], statusHeader: string): string {

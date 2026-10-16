@@ -135,23 +135,20 @@ export const LIST_FILTER_ALLOWED: Readonly<Record<'status' | 'limit' | 'offset' 
     mine: 'true, false, 1, 0',
   };
 
-/** Build the shared `400 invalid_filter` error for one list parameter. */
+/**
+ * Build the shared `400 invalid_filter` error for one list parameter.
+ * The raw input is deliberately not echoed back (only constant text).
+ */
 export function invalidFilterError(
   parameter: keyof typeof LIST_FILTER_ALLOWED,
-  received: unknown
+  _received?: unknown
 ): AiOpsValidationError {
   const allowed = LIST_FILTER_ALLOWED[parameter];
-  const shown = typeof received === 'string' ? received : String(JSON.stringify(received));
   return new AiOpsValidationError(
-    `Invalid ${parameter} filter: '${shown}'. Allowed: ${allowed}`,
+    `Invalid ${parameter} filter. Allowed: ${allowed}`,
     'invalid_filter',
     {
-      details: {
-        parameter,
-        allowed,
-        received: shown,
-        hint: `Pass ${parameter} as ${allowed}, or omit it.`,
-      },
+      details: { parameter, allowed, hint: `Pass ${parameter} as ${allowed}, or omit it.` },
     }
   );
 }

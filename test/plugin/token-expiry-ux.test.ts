@@ -16,7 +16,10 @@ import {
   MAX_TTL_SECONDS_GET_LINK,
   MAX_TTL_SECONDS_REST_MCP,
 } from '../../src/access/index.js';
-import { ACCESS_LINK_EXPIRED_CODE } from '../../src/plugin/access-link-auth.js';
+import {
+  ACCESS_LINK_EXPIRED_CODE,
+  accessLinksPagePath,
+} from '../../src/plugin/access-link-auth.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import { minutesRemainingUntil, secondsRemainingUntil } from '../../src/plugin/status.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
@@ -216,6 +219,13 @@ describe('token expiry UX', () => {
     expect(res.body.caller.minutesRemaining).toBe(1);
     expect(res.body.caller.secondsRemaining).toBeGreaterThan(0);
     expect(res.body.caller.secondsRemaining).toBeLessThanOrEqual(20);
+  });
+
+  it('accessLinksPagePath respects httpAdminRoot', () => {
+    expect(accessLinksPagePath(undefined)).toBe('/mcp#links');
+    expect(accessLinksPagePath('/')).toBe('/mcp#links');
+    expect(accessLinksPagePath('/admin/')).toBe('/admin/mcp#links');
+    expect(accessLinksPagePath('/admin')).toBe('/admin/mcp#links');
   });
 
   it('minutesRemainingUntil rounds up (never 0 while valid) and never goes negative', () => {

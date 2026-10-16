@@ -66,7 +66,10 @@ function sendUnauthorized(
 
 /** Admin path of the `/mcp` page's Access links section (respects httpAdminRoot). */
 export function accessLinksPagePath(httpAdminRoot: string | undefined): string {
-  const root = !httpAdminRoot || httpAdminRoot === '/' ? '' : httpAdminRoot.replace(/\/+$/, '');
+  let root = httpAdminRoot ?? '';
+  while (root.endsWith('/')) {
+    root = root.slice(0, -1);
+  }
   return `${root}/mcp#links`;
 }
 
