@@ -261,6 +261,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'get_node_type',
         'search_palette',
         'submit_proposal',
+        'list_proposals',
         'list_my_proposals',
         'get_proposal',
       ])
@@ -291,6 +292,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'list_flows',
         'list_my_proposals',
         'list_node_types',
+        'list_proposals',
         'search_flows',
         'search_palette',
         'submit_proposal',

@@ -14,6 +14,7 @@ import {
   getAccessibleProposal,
   listAccessibleProposals,
   listFlows,
+  parseListProposalsQuery,
   presentAccessibleProposalForApi,
   withdrawMyProposal,
 } from './ai-ops.js';
@@ -259,17 +260,18 @@ function registerGetLinkProposalRoutes(
       }
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
       const include = resolveIncludeFromQuery(req.query);
-      const mineOnly = req.query.mine === 'true' || req.query.mine === '1';
-      const list = listAccessibleProposals(options.proposalStore, link, presentOpts, {
-        ...(mineOnly ? { mine: true } : {}),
-      });
+      const listFilter = parseListProposalsQuery(req.query);
+      const page = listAccessibleProposals(options.proposalStore, link, presentOpts, listFilter);
       res.json({
-        proposals: list.map(p =>
+        proposals: page.proposals.map(p =>
           presentAccessibleProposalForApi(options.proposalStore, link, p, {
             ...presentOpts,
             include,
           })
         ),
+        total: page.total,
+        ...(page.limit !== null ? { limit: page.limit } : {}),
+        ...(page.offset > 0 || page.limit !== null ? { offset: page.offset } : {}),
       });
     })
   );

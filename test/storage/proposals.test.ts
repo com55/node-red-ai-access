@@ -66,6 +66,10 @@ describe('ProposalStore + ProposalService', () => {
     expect(store.get(created.id).baseFlow).toMatchObject({ label: 'Old' });
     expect(store.list()).toHaveLength(1);
     expect(store.list({ linkId: 'other' })).toHaveLength(0);
+    expect(store.list({ status: 'pending' })).toHaveLength(1);
+    expect(store.list({ status: 'approved' })).toHaveLength(0);
+    expect(store.list({ flowId: 'tab-1' })).toHaveLength(1);
+    expect(store.list({ flowId: 'other-tab' })).toHaveLength(0);
   });
 
   it('approve calls the adapter and marks approved with audit', async () => {

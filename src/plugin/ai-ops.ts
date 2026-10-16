@@ -13,6 +13,7 @@ import {
   ProposalNotPendingError,
   type Proposal,
   type ProposalDecisionBy,
+  type ProposalStatus,
   type ProposalStore,
 } from '../storage/proposals.js';
 import { assertSafeSegment, sanitizeFlowTab } from '../storage/safe.js';
@@ -84,30 +85,141 @@ function isMineProposal(proposal: Proposal, accessLink: AccessLinkAuthInfo): boo
   return proposal.createdBy.linkId === accessLink.id;
 }
 
+/** Max page size for proposal list endpoints (REST / GET / MCP). */
+export const LIST_PROPOSALS_MAX_LIMIT = 200;
+
 export interface ListProposalsFilter {
   /** When true, only proposals created by this access link. */
   mine?: boolean;
+  /** Filter by proposal status. */
+  status?: ProposalStatus;
+  /** Filter by payload.flowId. */
+  flowId?: string;
+  /** Page size (1…{@link LIST_PROPOSALS_MAX_LIMIT}). Omit to return all matches. */
+  limit?: number;
+  /** Skip this many filtered results (default 0). */
+  offset?: number;
+}
+
+export interface ListProposalsPage {
+  proposals: PresentedProposalWithMine[];
+  /** Count after filters, before limit/offset. */
+  total: number;
+  /** Effective page size, or `null` when unbounded. */
+  limit: number | null;
+  offset: number;
+}
+
+const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'approved',
+  'rejected',
+  'failed',
+  'withdrawn',
+]);
+
+export function isProposalStatus(value: unknown): value is ProposalStatus {
+  return typeof value === 'string' && PROPOSAL_STATUSES.has(value);
+}
+
+/**
+ * Parse shared list-query fields from REST/GET `req.query` (or similar).
+ * Invalid `status` is ignored. `limit`/`offset` are clamped; omit `limit` for all.
+ */
+export function parseListProposalsQuery(query: {
+  mine?: unknown;
+  status?: unknown;
+  flowId?: unknown;
+  flow_id?: unknown;
+  flow?: unknown;
+  limit?: unknown;
+  offset?: unknown;
+}): ListProposalsFilter {
+  const filter: ListProposalsFilter = {};
+  const mineRaw = query.mine;
+  if (mineRaw === 'true' || mineRaw === '1' || mineRaw === true) {
+    filter.mine = true;
+  }
+  const statusRaw = query.status;
+  if (typeof statusRaw === 'string' && isProposalStatus(statusRaw)) {
+    filter.status = statusRaw;
+  }
+  const flowRaw = query.flowId ?? query.flow_id ?? query.flow;
+  if (typeof flowRaw === 'string' && flowRaw.length > 0) {
+    filter.flowId = flowRaw;
+  }
+  const limitRaw = query.limit;
+  if (limitRaw !== undefined && limitRaw !== null && limitRaw !== '') {
+    const n = typeof limitRaw === 'number' ? limitRaw : Number(limitRaw);
+    if (Number.isFinite(n) && n > 0) {
+      filter.limit = Math.min(Math.floor(n), LIST_PROPOSALS_MAX_LIMIT);
+    }
+  }
+  const offsetRaw = query.offset;
+  if (offsetRaw !== undefined && offsetRaw !== null && offsetRaw !== '') {
+    const n = typeof offsetRaw === 'number' ? offsetRaw : Number(offsetRaw);
+    if (Number.isFinite(n) && n >= 0) {
+      filter.offset = Math.floor(n);
+    }
+  }
+  return filter;
+}
+
+function applyListPagination<T>(
+  items: T[],
+  filter: ListProposalsFilter
+): {
+  items: T[];
+  total: number;
+  limit: number | null;
+  offset: number;
+} {
+  const total = items.length;
+  const offset = filter.offset !== undefined && filter.offset > 0 ? filter.offset : 0;
+  if (filter.limit === undefined) {
+    return { items: offset > 0 ? items.slice(offset) : items, total, limit: null, offset };
+  }
+  const limit = Math.min(Math.max(1, filter.limit), LIST_PROPOSALS_MAX_LIMIT);
+  return { items: items.slice(offset, offset + limit), total, limit, offset };
 }
 
 /**
  * List proposals visible to an access link. Every token sees **all** proposals;
  * each item is marked `mine: true|false`. Pass `filter.mine: true` to limit to own.
+ * Supports `status`, `flowId`, and `limit`/`offset` pagination (`total` is pre-page).
  */
 export function listAccessibleProposals(
   store: ProposalStore,
   accessLink: AccessLinkAuthInfo,
   presentOptions: PresentProposalOptions = {},
   filter: ListProposalsFilter = {}
-): PresentedProposalWithMine[] {
+): ListProposalsPage {
   const linkId = filter.mine === true ? accessLink.id : undefined;
-  return store.list(linkId ? { linkId } : undefined).map(p => ({
+  const storeFilter: { linkId?: string; status?: ProposalStatus; flowId?: string } = {};
+  if (linkId) {
+    storeFilter.linkId = linkId;
+  }
+  if (filter.status) {
+    storeFilter.status = filter.status;
+  }
+  if (filter.flowId) {
+    storeFilter.flowId = filter.flowId;
+  }
+  const presented = store.list(storeFilter).map(p => ({
     ...presentProposal(p, presentOptions),
     mine: isMineProposal(p, accessLink),
   }));
+  const page = applyListPagination(presented, filter);
+  return {
+    proposals: page.items,
+    total: page.total,
+    limit: page.limit,
+    offset: page.offset,
+  };
 }
 
 /**
- * @deprecated Prefer {@link listAccessibleProposals}. Kept as the MCP tool name
+ * @deprecated Prefer {@link listAccessibleProposals}. Kept for the MCP tool alias
  * `list_my_proposals`; now returns all proposals with `mine` flags (use filter).
  */
 export function listMyProposals(
@@ -115,7 +227,7 @@ export function listMyProposals(
   accessLink: AccessLinkAuthInfo,
   presentOptions: PresentProposalOptions = {},
   filter: ListProposalsFilter = {}
-): PresentedProposalWithMine[] {
+): ListProposalsPage {
   return listAccessibleProposals(store, accessLink, presentOptions, filter);
 }
 
