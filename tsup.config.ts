@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,10 +44,8 @@ export default defineConfig({
     options.packages = 'external';
   },
   async onSuccess() {
-    const from = join(repoRoot, 'docs', 'api', 'openapi.yaml');
-    const toDir = join(repoRoot, 'dist');
-    mkdirSync(toDir, { recursive: true });
-    copyFileSync(from, join(toDir, 'openapi.yaml'));
+    // The OpenAPI spec ships once, from docs/api/openapi.yaml; drop any stale dist copy.
+    rmSync(join(repoRoot, 'dist', 'openapi.yaml'), { force: true });
 
     // Regenerate companion HTML so ?v= always matches package.json (no hand-typed dup).
     // Use createRequire only — a dynamic import('./dist/plugin.cjs') is resolved by

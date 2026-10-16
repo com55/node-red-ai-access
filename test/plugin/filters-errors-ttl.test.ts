@@ -667,18 +667,16 @@ describe('PR #74 follow-ups: whole-file ids, multi-status, messages, hints, mine
     }
   });
 
-  it('package ships docs/errors.md, mcp-tools.md, mcp-clients.md; no maps; openapi once', () => {
+  it('package ships the whole docs/ folder (incl. README and api/openapi.yaml); no maps', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8')) as {
       files: string[];
       engines: { node: string };
       keywords: string[];
       scripts: Record<string, string>;
     };
-    for (const f of ['docs/errors.md', 'docs/mcp-tools.md', 'docs/mcp-clients.md']) {
-      expect(pkg.files).toContain(f);
-    }
+    expect(pkg.files).toContain('docs');
     expect(pkg.files).toContain('!dist/**/*.map');
-    expect(pkg.files).not.toContain('docs/api/openapi.yaml');
+    expect(pkg.files.some(f => f.startsWith('!docs'))).toBe(false);
     expect(pkg.engines.node).toBe('>=20.0.0');
     expect(pkg.keywords).toEqual(expect.arrayContaining(['node-red', 'mcp', 'ai']));
     expect(pkg.scripts.prepublishOnly).toMatch(/quality.*test.*build:prod/);
@@ -697,5 +695,61 @@ describe('MCP SDK validateToolInput override', () => {
     const fake = {} as unknown as McpServer;
     expect(() => installMcpArgumentErrorMapping(fake)).not.toThrow();
     expect((fake as unknown as { validateToolInput?: unknown }).validateToolInput).toBeUndefined();
+  });
+});
+
+describe('status filter messages and packaging follow-ups', () => {
+  let userDir: string;
+  beforeEach(() => {
+    userDir = mkdtempSync(join(tmpdir(), 'ai-access-status-msg-'));
+  });
+  afterEach(() => {
+    rmSync(userDir, { recursive: true, force: true });
+  });
+
+  it('MCP invalid status array uses the same message as REST/GET', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const getLink = linkStore.create({ kind: 'get_link' });
+    const mcp = linkStore.create({ kind: 'mcp' });
+    const r = await request(app)
+      .get('/mcp/api/v1/proposals?status=pending&status=bogus')
+      .set('Authorization', `Bearer ${rest.token}`);
+    const g = await request(app).get(`/mcp/a/${getLink.token}/proposals?status=pending,bogus`);
+    const m = await callTool(app, mcp.token, 'list_proposals', { status: ['pending', 'bogus'] });
+    expect(r.body.error).not.toMatch(/at most once/);
+    expect(m.json.error).toBe(r.body.error);
+    expect(g.body.error).toBe(r.body.error);
+    expect(m.json.hint).toBe(r.body.hint);
+  });
+
+  it('single-value filters keep the "at most once" message when repeated', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const r = await request(app)
+      .get('/mcp/api/v1/proposals?offset=0&offset=1')
+      .set('Authorization', `Bearer ${rest.token}`);
+    expect(r.body).toMatchObject({ code: 'invalid_filter', parameter: 'offset' });
+    expect(r.body.error).toMatch(/at most once/);
+  });
+
+  it('MCP status [] (and "") means no status filter', async () => {
+    const { app, linkStore } = createApp(userDir);
+    const rest = linkStore.create({ kind: 'rest' });
+    const mcp = linkStore.create({ kind: 'mcp' });
+    expect((await submitRest(app, rest.token, 'a')).status).toBe(201);
+    const all = await callTool(app, mcp.token, 'list_proposals', {});
+    for (const status of [[], '']) {
+      const out = await callTool(app, mcp.token, 'list_proposals', { status });
+      expect(out.isError).toBe(false);
+      expect(out.json.total).toBe(all.json.total);
+    }
+  });
+
+  it('OpenAPI is resolved from docs/api (single copy, no dist duplicate)', async () => {
+    const { resolveOpenApiYamlPath } = await import('../../src/plugin/openapi.js');
+    expect(resolveOpenApiYamlPath()?.replace(/\\/g, '/')).toMatch(/docs\/api\/openapi\.yaml$/);
+    const tsup = readFileSync(join(__dirname, '../../tsup.config.ts'), 'utf8');
+    expect(tsup).not.toMatch(/copyFileSync/);
   });
 });

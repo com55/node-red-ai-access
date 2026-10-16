@@ -158,7 +158,8 @@ export function invalidFilterError(
   received?: unknown
 ): AiOpsValidationError {
   const allowed = LIST_FILTER_ALLOWED[parameter];
-  const repeated = Array.isArray(received);
+  // status is multi-valued: an invalid member uses the plain message on every channel.
+  const repeated = parameter !== 'status' && Array.isArray(received);
   return new AiOpsValidationError(
     repeated
       ? `Invalid ${parameter} filter: pass it at most once (multiple values are not supported). Allowed: ${allowed}`

@@ -18,13 +18,14 @@ function moduleDir(): string {
 }
 
 /**
- * Resolve the OpenAPI YAML from dist (packaged) or the repo docs tree (dev/tests).
+ * Resolve the single OpenAPI YAML copy in docs/api (packaged and in the repo).
  */
 export function resolveOpenApiYamlPath(): string | null {
   const here = moduleDir();
   const candidates = [
-    join(here, 'openapi.yaml'),
-    join(here, '..', 'openapi.yaml'),
+    // Packaged: dist/plugin.cjs -> ../docs/api/openapi.yaml
+    join(here, '..', 'docs', 'api', 'openapi.yaml'),
+    // Source (dev/tests): src/plugin/openapi.ts -> ../../docs/api/openapi.yaml
     join(here, '..', '..', 'docs', 'api', 'openapi.yaml'),
     join(process.cwd(), 'docs', 'api', 'openapi.yaml'),
   ];

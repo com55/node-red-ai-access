@@ -26,8 +26,10 @@ Requires Node.js 20+.
 - `@modelcontextprotocol/sdk` raised to `^1.31.0`.
 - Published package is a minified production build without source maps;
   `prepublishOnly` runs quality checks, tests, and the production build. The
-  OpenAPI spec ships once (`dist/openapi.yaml`); `docs/errors.md`,
-  `docs/mcp-tools.md`, and `docs/mcp-clients.md` are included.
+  whole `docs/` folder ships; the OpenAPI spec exists once
+  (`docs/api/openapi.yaml`) and is served at `GET /mcp/api/v1/openapi.yaml`.
+- MCP `list_proposals` `status: []` (or `""`) means no status filter; an invalid
+  status member returns the same `invalid_filter` message on every channel.
 
 ### Fixed (pre-release review)
 

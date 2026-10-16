@@ -568,7 +568,8 @@ function registerListProposalsTools(
       .optional()
       .describe(
         'Filter by proposal status: one value, an array, or a comma-separated string ' +
-          '(pending, approved, rejected, failed, withdrawn, expired, superseded)'
+          '(pending, approved, rejected, failed, withdrawn, expired, superseded). ' +
+          'An empty array or empty string means no status filter.'
       ),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
     limit: z

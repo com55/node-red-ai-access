@@ -24,10 +24,7 @@
   "files": [
     "dist",
     "!dist/**/*.map",
-    "docs/errors.md",
-    "docs/mcp-tools.md",
-    "docs/mcp-clients.md",
-    "!docs/README.md",
+    "docs",
     "ai-access.cjs",
     "ai-access.html",
     "README.md",

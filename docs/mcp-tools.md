@@ -84,7 +84,7 @@ Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this 
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded) |
+| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `list_node_types`
 
@@ -105,7 +105,7 @@ List proposals visible to this access link (all proposals by default). Each item
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded) |
+| `status` | no | unknown | Filter by proposal status: one value, an array, or a comma-separated string (pending, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
 
 ## `search_flows`
 
