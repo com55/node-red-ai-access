@@ -865,6 +865,8 @@ paths:
           $ref: '#/components/responses/VersionConflict'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /proposals/{id}:
     get:
@@ -980,6 +982,8 @@ paths:
                 $ref: '#/components/schemas/Error'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /proposals/{id}/reject:
     post:
@@ -1020,6 +1024,8 @@ paths:
                 $ref: '#/components/schemas/Error'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /proposals/{id}/withdraw:
     post:
@@ -1066,6 +1072,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /logs:
     get:
@@ -1229,6 +1237,21 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/PayloadTooLargeError'
+    UnsupportedMediaType:
+      description: |
+        Request body Content-Type is not `application/json`
+        (`code: unsupported_media_type`). Send
+        `Content-Type: application/json` with a JSON body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notJson:
+              value:
+                error: 'Content-Type must be application/json'
+                code: unsupported_media_type
+                hint: 'Send Content-Type: application/json with a JSON body.'
     BadGateway:
       description: Upstream Node-RED runtime/Admin API failure
       content:

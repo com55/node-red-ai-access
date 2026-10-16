@@ -101,6 +101,9 @@ function interceptNeedsPermissionUnauthorized(
   res.end = ((...args: unknown[]) => {
     if (active && res.statusCode === 401 && !res.headersSent) {
       active = false;
+      // Drop any Content-Length computed for the original body (e.g. Express
+      // res.json) before we replace it — otherwise clients see trailing junk.
+      res.removeHeader('Content-Length');
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       if (wwwAuthenticate) {
         res.setHeader('WWW-Authenticate', wwwAuthenticate);
@@ -265,34 +268,10 @@ function truncatedTokenHint(token: string): string | undefined {
 
 export type AccessLinkValidator = (token: string) => AccessLinkAuthInfo | null;
 
-function continueAsAdminSession(
-  RED: NodeRedPluginAPI,
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): void {
-  requireAdminSession(RED, 'api')(req, res, (err?: unknown) => {
-    if (err) {
-      next(err as Error);
-      return;
-    }
-    if (!isAdminAuthEnabled(RED.settings)) {
-      next();
-      return;
-    }
-    if (!resolvePermission(req)) {
-      res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
-      return;
-    }
-    next();
-  });
-}
-
 /**
- * Like continueAsAdminSession, but when admin auth fails, return
- * `access_link_missing` (with Bearer WWW-Authenticate for AI clients) instead
- * of passport's `auth_required` / realm="Users". Successful admin sessions
- * (cookie or editor Bearer) still proceed.
+ * When admin auth fails, return `access_link_missing` (with Bearer
+ * WWW-Authenticate for AI clients) instead of passport's `auth_required` /
+ * realm="Users". Successful admin sessions (cookie or editor Bearer) still proceed.
  */
 function continueAsAdminSessionOrAccessLinkMissing(
   RED: NodeRedPluginAPI,
@@ -322,6 +301,10 @@ function continueAsAdminSessionOrAccessLinkMissing(
     restoreEnd();
     if (err) {
       next(err as Error);
+      return;
+    }
+    // Passport may already have ended the response via the interceptor.
+    if (res.headersSent) {
       return;
     }
     if (!req.user || !resolvePermission(req)) {
@@ -416,9 +399,12 @@ export function requireAdminReadOrAccessLink(
 
 /**
  * Admin session (page bootstrap) or a valid access-link Bearer.
- * Missing/invalid non-link tokens keep `auth_required` for the /mcp UI.
+ * Missing/invalid tokens return `access_link_missing` (not passport
+ * `auth_required` / realm="Users") so AI clients get actionable guidance.
  * Unknown `aia_` tokens return `access_link_invalid`.
  * Access-link Bearers must be `rest` (default) for this admin/API dual gate.
+ *
+ * The /mcp page treats any 401 on `/status` as the sign-in gate.
  */
 export function requireAdminSessionOrAccessLink(
   RED: NodeRedPluginAPI,
@@ -434,6 +420,6 @@ export function requireAdminSessionOrAccessLink(
     if (access === 'invalid' || access === 'wrong_kind') {
       return;
     }
-    continueAsAdminSession(RED, req, res, next);
+    continueAsAdminSessionOrAccessLinkMissing(RED, req, res, next);
   };
 }

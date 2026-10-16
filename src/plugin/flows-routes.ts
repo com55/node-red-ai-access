@@ -25,8 +25,6 @@ export function listFlowsHandler(adapter: FlowAdapter) {
   };
 }
 
-const FLOW_NOT_FOUND_HINT = 'Use an id from GET /flows (or GET ./flows on an access link).';
-
 export function getFlowHandler(adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const flowId = req.params.id;
@@ -37,12 +35,9 @@ export function getFlowHandler(adapter: FlowAdapter) {
     try {
       res.json(await getFlow(adapter, flowId));
     } catch (error) {
-      const mapped = aiOpsErrorToHttp(error);
+      const mapped = aiOpsErrorToHttp(error, 'rest');
       if (mapped) {
-        res.status(mapped.statusCode).json({
-          ...mapped.body,
-          ...(mapped.body.code === 'flow_not_found' ? { hint: FLOW_NOT_FOUND_HINT } : {}),
-        });
+        res.status(mapped.statusCode).json(mapped.body);
         return;
       }
       const message = error instanceof Error ? error.message : String(error);

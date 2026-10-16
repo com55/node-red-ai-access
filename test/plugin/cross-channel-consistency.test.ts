@@ -123,6 +123,24 @@ describe('cross-channel consistency', () => {
     expect(get).toMatch(/GET/);
   });
 
+  it('flow_not_found GET hint uses ./flows only; invalid_wires hints differ by cause', () => {
+    const getFlow = channelErrorHint('flow_not_found', 'get') ?? '';
+    expect(getFlow).toMatch(/GET \.\/flows/);
+    expect(getFlow).not.toMatch(/GET \/flows(?!\.)/);
+
+    const missing = channelErrorHint('invalid_wires', 'rest', { cause: 'missing_target' }) ?? '';
+    const excess = channelErrorHint('invalid_wires', 'rest', { cause: 'excess_ports' }) ?? '';
+    expect(missing).toMatch(/target|exist/i);
+    expect(excess).toMatch(/port|output/i);
+    expect(missing).not.toEqual(excess);
+
+    const mcpMissing = channelErrorHint('invalid_wires', 'mcp', { cause: 'missing_target' }) ?? '';
+    expect(mcpMissing).not.toMatch(/GET\s|\/flows|\.\//);
+
+    expect(channelErrorHint('proposal_not_found', 'rest')).toBeTruthy();
+    expect(channelErrorHint('proposal_not_found', 'mcp')).toMatch(/list_/);
+  });
+
   it('POST /proposals without token returns access_link_missing', async () => {
     const { app } = createApp(userDir);
     const res = await request(app)

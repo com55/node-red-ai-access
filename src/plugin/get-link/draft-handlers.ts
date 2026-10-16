@@ -16,6 +16,7 @@ import {
   findConflictingProposals,
   submitReplaceFlowProposal,
 } from '../ai-ops.js';
+import { channelErrorHint } from '../channel-errors.js';
 import type { NodeTypesAdapter } from '../node-types.js';
 import {
   parseIncludeQuery,
@@ -257,7 +258,7 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
           mapped.body.error,
           mapped.body.code,
           mapped.body.code === 'flow_not_found'
-            ? 'Use an id from GET ./flows'
+            ? (channelErrorHint('flow_not_found', 'get') ?? 'Use an id from GET ./flows')
             : draftErrorHint(mapped.body.code)
         );
         return;

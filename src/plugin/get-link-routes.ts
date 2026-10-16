@@ -147,7 +147,7 @@ export function registerGetLinkRoutes(
     ...gate,
     asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
-      await getFlowOrSummaryHandler(options.flowAdapter)(req, res);
+      await getFlowOrSummaryHandler(options.flowAdapter, 'get')(req, res);
     })
   );
   app.get(
@@ -155,7 +155,7 @@ export function registerGetLinkRoutes(
     ...gate,
     asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
-      await getNodeHandler(options.flowAdapter)(req, res);
+      await getNodeHandler(options.flowAdapter, 'get')(req, res);
     })
   );
   app.get(
@@ -163,7 +163,7 @@ export function registerGetLinkRoutes(
     ...gate,
     asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
-      await getNodeFieldHandler(options.flowAdapter)(req, res);
+      await getNodeFieldHandler(options.flowAdapter, 'get')(req, res);
     })
   );
   app.get(
@@ -171,7 +171,7 @@ export function registerGetLinkRoutes(
     ...gate,
     asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
-      await searchFlowsHandler(options.flowAdapter)(req, res);
+      await searchFlowsHandler(options.flowAdapter, 'get')(req, res);
     })
   );
 

@@ -179,6 +179,8 @@ describe('AI-user findings', () => {
       expect(getLink.status).toBe(404);
       expect(getLink.body.code).toBe('flow_not_found');
       expect(String(getLink.body.hint)).toMatch(/GET \.\/flows/);
+      // GET-link must not point at the Admin API absolute path.
+      expect(String(getLink.body.hint)).not.toMatch(/GET \/flows(?!\.)/);
       expect(getLink.body).not.toMatchObject({ code: 'upstream_error' });
 
       const rest = await request(app)
@@ -186,7 +188,8 @@ describe('AI-user findings', () => {
         .set('Authorization', `Bearer ${restToken.token}`);
       expect(rest.status).toBe(404);
       expect(rest.body.code).toBe('flow_not_found');
-      expect(String(rest.body.hint)).toMatch(/GET \/flows|GET \.\/flows/);
+      expect(String(rest.body.hint)).toMatch(/GET \/flows/);
+      expect(String(rest.body.hint)).not.toMatch(/\.\//);
     });
   });
 
@@ -582,7 +585,7 @@ describe('AI-user findings', () => {
   });
 
   describe('10. truncated token 401 hint', () => {
-    it('mentions truncation for short/garbled tokens (REST + GET-link)', async () => {
+    it('mentions truncation for short/garbled tokens (REST + GET-link + MCP)', async () => {
       const { app } = createApp({ userDir, passportStyle401: true });
 
       const rest = await request(app).get('/mcp/api/v1/flows').set('Authorization', 'Bearer bog');
@@ -597,6 +600,18 @@ describe('AI-user findings', () => {
       expect(getLink.body.code).toBe(ACCESS_LINK_INVALID_CODE);
       expect(String(getLink.body.hint)).toMatch(/truncated/i);
       expect(String(getLink.body.hint)).toMatch(/\/mcp\/a\//);
+
+      // MCP Bearer uses the same requireAccessLink helper — never mention URLs.
+      const mcp = await request(app)
+        .post('/mcp/rpc')
+        .set('Authorization', 'Bearer bog')
+        .set('Content-Type', 'application/json')
+        .send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+      expect(mcp.status).toBe(401);
+      expect(mcp.body.code).toBe(ACCESS_LINK_INVALID_CODE);
+      expect(String(mcp.body.hint)).toMatch(/truncated/i);
+      expect(String(mcp.body.hint)).not.toMatch(/\/mcp\/a\/|https?:\/\//i);
+      expect(String(mcp.body.error)).not.toMatch(/\/mcp\/a\/|https?:\/\//i);
     });
   });
 
