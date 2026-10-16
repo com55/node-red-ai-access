@@ -18,6 +18,7 @@ import {
   withdrawMyProposal,
 } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
+import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
 import {
@@ -360,10 +361,18 @@ function registerGetLinkWithdrawRoute(
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error, 'get');
         if (mapped) {
-          res.status(mapped.statusCode).json(mapped.body);
+          // Fixed strings only — never echo exception text (CodeQL XSS / HTML).
+          const code = mapped.body.code;
+          jsonError(
+            res,
+            mapped.statusCode,
+            CANONICAL_ERROR_TEXT[code] ?? 'Request failed',
+            code,
+            channelErrorHint(code, 'get')
+          );
           return;
         }
-        sendCaughtRouteError(res, error);
+        jsonError(res, 500, 'Internal server error', 'internal_error');
         return;
       }
     })

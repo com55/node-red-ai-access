@@ -54,6 +54,7 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   proposal_not_owned: 'Proposal was not created by this access link',
   proposal_not_pending: 'Proposal is not pending',
   unsupported_media_type: 'Content-Type must be application/json',
+  internal_error: 'Internal server error',
 };
 
 /** Channel-specific hint for a known error code (undefined when none). */

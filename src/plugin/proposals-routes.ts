@@ -34,6 +34,7 @@ import {
   submitReplaceFlowProposal,
   withdrawMyProposal,
 } from './ai-ops.js';
+import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
 import { computeProposalDiff } from './proposal-diff.js';
@@ -47,6 +48,27 @@ import {
 import type { ProposalService } from './proposal-service.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import type { AuthenticatedRequest } from './types.js';
+
+/** JSON + nosniff — never put raw exception text in the body (CodeQL XSS). */
+function sendSafeJsonError(
+  res: Response,
+  statusCode: number,
+  code: string,
+  extras: Record<string, unknown> = {}
+): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const body: Record<string, unknown> = {
+    error: CANONICAL_ERROR_TEXT[code] ?? 'Request failed',
+    code,
+    ...extras,
+  };
+  const hint = channelErrorHint(code, 'rest');
+  if (hint && typeof body.hint !== 'string') {
+    body.hint = hint;
+  }
+  res.status(statusCode).json(body);
+}
 
 function adminActor(req: AuthenticatedRequest) {
   const actor: { kind: 'admin'; username?: string } = { kind: 'admin' };
@@ -324,10 +346,11 @@ export function withdrawProposalHandler(
     } catch (error) {
       const mapped = aiOpsErrorToHttp(error, 'rest');
       if (mapped) {
-        res.status(mapped.statusCode).json(mapped.body);
+        // Rebuild from code only — never echo exception message as HTML-tainted text.
+        sendSafeJsonError(res, mapped.statusCode, mapped.body.code);
         return;
       }
-      sendCaughtRouteError(res, error);
+      sendSafeJsonError(res, 500, 'internal_error');
       return;
     }
   };

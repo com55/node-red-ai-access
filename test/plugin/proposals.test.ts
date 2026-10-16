@@ -319,7 +319,7 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(listed.body.proposals[0].flowLabel).not.toBe('tab-1');
   });
 
-  it('read admin can list all proposals; access link only sees its own', async () => {
+  it('read admin and access links can list all proposals; mine flags ownership', async () => {
     const { app, linkStore } = createApp({
       userDir,
       authenticate: asUser('read', 'guest'),
@@ -348,8 +348,22 @@ describe('proposals / flows / logs HTTP API', () => {
       .get('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${a.token}`);
     expect(asLink.status).toBe(200);
-    expect(asLink.body.proposals).toHaveLength(1);
-    expect(asLink.body.proposals[0].createdBy.linkId).toBe(a.id);
+    expect(asLink.body.proposals).toHaveLength(2);
+    const mines = Object.fromEntries(
+      asLink.body.proposals.map((p: { createdBy: { linkId: string }; mine: boolean }) => [
+        p.createdBy.linkId,
+        p.mine,
+      ])
+    );
+    expect(mines[a.id]).toBe(true);
+    expect(mines[b.id]).toBe(false);
+
+    const onlyMine = await request(app)
+      .get('/mcp/api/v1/proposals?mine=true')
+      .set('Authorization', `Bearer ${a.token}`);
+    expect(onlyMine.body.proposals).toHaveLength(1);
+    expect(onlyMine.body.proposals[0].createdBy.linkId).toBe(a.id);
+    expect(onlyMine.body.proposals[0].mine).toBe(true);
 
     const asAdmin = await request(app).get('/mcp/api/v1/proposals');
     expect(asAdmin.status).toBe(200);
@@ -545,11 +559,13 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(asLink.status).toBe(200);
     expect(asLink.body.proposalId).toBe(created.body.id);
 
+    // Any access link can read diffs (visibility decision); ownership is mine on get/list.
     const other = linkStore.create({ kind: 'rest', label: 'other' });
-    const denied = await request(app)
+    const otherDiff = await request(app)
       .get(`/mcp/api/v1/proposals/${created.body.id}/diff`)
       .set('Authorization', `Bearer ${other.token}`);
-    expect(denied.status).toBe(404);
+    expect(otherDiff.status).toBe(200);
+    expect(otherDiff.body.proposalId).toBe(created.body.id);
   });
 
   it('GET /proposals/:id/diff sets baseRevStale only while pending', async () => {
