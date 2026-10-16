@@ -116,21 +116,21 @@ export function registerRoutes(
 ): void {
   // Keep `limiter` / `tokenLimiter` as locals so CodeQL missing-rate-limiting
   // can see authorization routes are rate-limited.
-  const { ip: limiter, token: tokenLimiter } = createAiAccessDualRateLimiters(
-    RED.settings.aiAccess ?? null
-  );
+  const dualLimiters = createAiAccessDualRateLimiters(RED.settings.aiAccess ?? null);
+  const { ip: limiter, token: tokenLimiter } = dualLimiters;
   const services = createPluginServices(RED, {
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
   });
 
   // Self-contained GET access links for headerless HTTP clients (`/mcp/a/<token>/…`).
+  // Reuse the same IP+token limiter instances as REST/MCP so one token shares one bucket.
   registerGetLinkRoutes(RED, {
     linkStore: services.linkStore,
     proposalStore: services.proposalStore,
     auditLog: services.auditLog,
     flowAdapter: services.flowAdapter,
-    rateLimit: RED.settings.aiAccess ?? {},
+    rateLimiters: dualLimiters,
   });
 
   registerMcpShellAndDiscovery(RED, limiter);

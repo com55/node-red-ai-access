@@ -83,22 +83,29 @@ describe('resolveRateLimitConfig', () => {
 });
 
 describe('accessTokenRateLimitKey', () => {
-  it('prefers accessLink id, then path token, then Bearer', () => {
-    expect(
-      accessTokenRateLimitKey({
-        accessLink: { id: 'link-1' },
-      } as never)
-    ).toBe('token:link:link-1');
-    expect(accessTokenRateLimitKey({ params: { token: 'aia_abc' } } as never)).toBe(
-      'token:path:aia_abc'
+  it('uses the same key for path token and Bearer so GET/REST/MCP share a bucket', () => {
+    const token = 'aia_deadbeef0123456789abcdef';
+    expect(accessTokenRateLimitKey({ params: { token } } as never)).toBe(
+      `token:${token.slice(0, 48)}`
     );
     expect(
       accessTokenRateLimitKey({
         params: {},
-        get: () => 'Bearer aia_deadbeef0123456789',
+        get: () => `Bearer ${token}`,
         headers: {},
       } as never)
-    ).toMatch(/^token:bearer:aia_deadbeef/);
+    ).toBe(`token:${token.slice(0, 48)}`);
+  });
+
+  it('falls back to accessLink id when no raw token is on the request', () => {
+    expect(
+      accessTokenRateLimitKey({
+        params: {},
+        get: () => undefined,
+        headers: {},
+        accessLink: { id: 'link-1' },
+      } as never)
+    ).toBe('token:link:link-1');
     expect(
       accessTokenRateLimitKey({ params: {}, get: () => undefined, headers: {} } as never)
     ).toBe(null);
@@ -202,5 +209,29 @@ describe('/mcp rate limiting integration', () => {
     const limited = await request(app).get(url);
     expect(limited.status).toBe(429);
     expect(limited.body.code).toBe('rate_limited');
+  });
+
+  it('shares one per-token bucket across GET link and REST Bearer', async () => {
+    const { app, linkStore } = createApp({
+      userDir,
+      adminAuth: false,
+      aiAccess: {
+        allowWithoutAdminAuth: true,
+        rateLimitWindowMs: 60_000,
+        rateLimitMaxPerIp: 1000,
+        rateLimitMaxPerToken: 2,
+      },
+    });
+    const created = linkStore.create({ label: 'shared-bucket' });
+    const getUrl = `/mcp/a/${created.token}/status`;
+    expect((await request(app).get(getUrl)).status).toBe(200);
+    expect((await request(app).get(getUrl)).status).toBe(200);
+    // Same token via Bearer on REST must hit the shared bucket (not a fresh one).
+    const rest = await request(app)
+      .get('/mcp/api/v1/status')
+      .set('Authorization', `Bearer ${created.token}`);
+    expect(rest.status).toBe(429);
+    expect(rest.body).toMatchObject({ code: 'rate_limited' });
+    expect(rest.headers['retry-after']).toBeDefined();
   });
 });

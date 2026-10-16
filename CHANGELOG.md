@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Access-link rate limits share one per-token bucket across GET
+  `/mcp/a/<token>`, REST Bearer, and MCP (same limiter instances + unified token
+  key).
+- Layered-read JSON responses always set `X-Content-Type-Options: nosniff` and
+  never echo path/query/exception text into error bodies (CodeQL XSS / HTML).
+
 ### Changed
 
 - `/mcp` human-UX pass: status dashboard (AI on, active links, pending count,

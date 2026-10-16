@@ -91,25 +91,28 @@ function clientIpKey(req: Request): string {
 }
 
 /**
- * Prefer validated access-link id; else path `:token` / Bearer `aia_…`.
+ * Shared per-token key across GET `/mcp/a/<token>`, REST Bearer, and MCP.
+ * Prefer the raw token (path or Authorization) so the same link hits one bucket
+ * regardless of surface. Fall back to validated `accessLink.id` only when the
+ * raw token is not on the request.
  * Keys use a short prefix of the token (not logged elsewhere).
  */
 export function accessTokenRateLimitKey(req: Request): string | null {
-  const authReq = req as AuthenticatedRequest;
-  if (authReq.accessLink?.id) {
-    return `token:link:${authReq.accessLink.id}`;
-  }
   const pathToken = req.params.token;
   if (typeof pathToken === 'string' && pathToken.length > 0) {
-    return `token:path:${pathToken.slice(0, 48)}`;
+    return `token:${pathToken.slice(0, 48)}`;
   }
   const header = req.get('authorization') ?? req.headers.authorization;
   if (typeof header === 'string') {
     const m = /^Bearer\s+(\S+)/i.exec(header.trim());
     const raw = m?.[1];
     if (raw && (raw.startsWith('aia_') || raw.length >= 24)) {
-      return `token:bearer:${raw.slice(0, 48)}`;
+      return `token:${raw.slice(0, 48)}`;
     }
+  }
+  const authReq = req as AuthenticatedRequest;
+  if (authReq.accessLink?.id) {
+    return `token:link:${authReq.accessLink.id}`;
   }
   return null;
 }

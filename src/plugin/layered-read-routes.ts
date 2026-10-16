@@ -1,5 +1,9 @@
 /**
  * HTTP handlers for layered reads (REST + shared with GET-link wrappers).
+ *
+ * All responses are JSON with X-Content-Type-Options: nosniff. Error text is
+ * always a fixed string from SAFE_ERROR_TEXT — never path/query/exception text —
+ * so browsers cannot reinterpret these bodies as HTML (CodeQL XSS / exception-as-HTML).
  */
 
 import type { Response } from 'express';
@@ -35,6 +39,13 @@ function safeErrorText(code: string): string {
   return SAFE_ERROR_TEXT[code] ?? 'Request failed';
 }
 
+/** JSON response with nosniff — never treat as HTML. */
+function sendJson(res: Response, statusCode: number, body: unknown): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.status(statusCode).json(body);
+}
+
 function sendMappedError(res: Response, error: unknown, notFoundHint?: string): boolean {
   const mapped = aiOpsErrorToHttp(error);
   if (!mapped) {
@@ -63,12 +74,12 @@ function sendMappedError(res: Response, error: unknown, notFoundHint?: string): 
   if (hint) {
     body.hint = hint;
   }
-  res.status(mapped.statusCode).json(body);
+  sendJson(res, mapped.statusCode, body);
   return true;
 }
 
 function sendUpstreamError(res: Response): void {
-  res.status(502).json({
+  sendJson(res, 502, {
     error: safeErrorText('upstream_error'),
     code: 'upstream_error',
   });
@@ -79,7 +90,7 @@ export function getFlowOrSummaryHandler(adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const flowId = req.params.id;
     if (typeof flowId !== 'string' || flowId.length === 0) {
-      res.status(400).json({
+      sendJson(res, 400, {
         error: safeErrorText('missing_flow_id'),
         code: 'missing_flow_id',
       });
@@ -88,10 +99,10 @@ export function getFlowOrSummaryHandler(adapter: FlowAdapter) {
     const summary = isTruthyQueryFlag(queryString(req.query, 'summary'));
     try {
       if (summary) {
-        res.json(await getFlowSummary(adapter, flowId));
+        sendJson(res, 200, await getFlowSummary(adapter, flowId));
         return;
       }
-      res.json(await getFlow(adapter, flowId));
+      sendJson(res, 200, await getFlow(adapter, flowId));
     } catch (error) {
       if (
         sendMappedError(res, error, 'Use an id from GET /flows (or GET ./flows on an access link).')
@@ -107,7 +118,7 @@ export function getNodeHandler(adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const nodeId = req.params.id;
     if (typeof nodeId !== 'string' || !nodeId) {
-      res.status(400).json({
+      sendJson(res, 400, {
         error: safeErrorText('missing_node_id'),
         code: 'missing_node_id',
       });
@@ -115,7 +126,7 @@ export function getNodeHandler(adapter: FlowAdapter) {
     }
     const flowId = queryString(req.query, 'flow');
     try {
-      res.json(await getNodeById(adapter, nodeId, flowId));
+      sendJson(res, 200, await getNodeById(adapter, nodeId, flowId));
     } catch (error) {
       if (sendMappedError(res, error, 'Call GET …/flows/<id>?summary=1 or …/search?q=…')) {
         return;
@@ -130,14 +141,14 @@ export function getNodeFieldHandler(adapter: FlowAdapter) {
     const nodeId = req.params.id;
     const field = req.params.name;
     if (typeof nodeId !== 'string' || !nodeId) {
-      res.status(400).json({
+      sendJson(res, 400, {
         error: safeErrorText('missing_node_id'),
         code: 'missing_node_id',
       });
       return;
     }
     if (typeof field !== 'string' || !field) {
-      res.status(400).json({
+      sendJson(res, 400, {
         error: safeErrorText('missing_field'),
         code: 'missing_field',
       });
@@ -146,7 +157,9 @@ export function getNodeFieldHandler(adapter: FlowAdapter) {
     const flowId = queryString(req.query, 'flow');
     const lines = queryString(req.query, 'lines');
     try {
-      res.json(
+      sendJson(
+        res,
+        200,
         await getNodeField(adapter, nodeId, field, {
           ...(flowId ? { flowId } : {}),
           ...(lines ? { lines } : {}),
@@ -165,7 +178,7 @@ export function searchFlowsHandler(adapter: FlowAdapter) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const q = queryString(req.query, 'q');
     if (!q) {
-      res.status(400).json({
+      sendJson(res, 400, {
         error: safeErrorText('missing_query'),
         code: 'missing_query',
         hint: 'Example: GET …/search?q=TODO&flow=tab1',
@@ -174,7 +187,7 @@ export function searchFlowsHandler(adapter: FlowAdapter) {
     }
     const flowId = queryString(req.query, 'flow');
     try {
-      res.json(await searchFlows(adapter, q, flowId ? { flowId } : {}));
+      sendJson(res, 200, await searchFlows(adapter, q, flowId ? { flowId } : {}));
     } catch (error) {
       if (sendMappedError(res, error)) {
         return;
