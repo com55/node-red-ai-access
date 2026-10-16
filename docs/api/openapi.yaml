@@ -105,7 +105,8 @@ info:
     with the same access-link Bearer token. Tools mirror the AI-facing REST
     operations (`get_status`, `list_flows`, `get_flow` with optional `summary`,
     `get_node`, `get_node_field`, `search_flows`, `list_node_types`,
-    `get_node_type`, `search_palette`, `submit_proposal`, `list_my_proposals`,
+    `get_node_type`, `search_palette`, `submit_proposal`, `list_proposals`
+    (alias `list_my_proposals`),
     `get_proposal`, `get_proposal_diff`). Approve/reject/link management stay on
     this REST API and the `/mcp` admin page. This OpenAPI document covers the
     REST surface only.
@@ -152,8 +153,10 @@ info:
     ## Proposal visibility and conflicts
 
     Every access-link token can **list and read all proposals**. Each item
-    includes `mine: true|false` for the caller. Filter with `?mine=true`
-    (REST/GET) or MCP `list_my_proposals` with `mine: true`.
+    includes `mine: true|false` for the caller. Filter with `?mine=true`,
+    `?status=`, and/or `?flowId=` (REST/GET), or MCP `list_proposals` with the
+    same fields. Paginate with `limit`/`offset` (response includes `total`;
+    max `limit` is 200). MCP keeps `list_my_proposals` as an alias.
 
     On submit and on read of a **pending** proposal, responses may include
     `conflictingProposals` (pending work on the same flow from any token) with
@@ -784,9 +787,11 @@ paths:
       summary: List proposals
       description: |
         Admins see all proposals. Access-link clients also see **all** proposals,
-        each marked `mine: true|false`. Pass `?mine=true` to list only proposals
-        created by this access link. Pending items may include
-        `conflictingProposals`.
+        each marked `mine: true|false`. Filter with `?mine=true` (own only),
+        `?status=` (`pending`|`approved`|`rejected`|`failed`|`withdrawn`), and/or
+        `?flowId=`. Paginate with `?limit=` (1–200) and `?offset=`; responses
+        always include `total` (count after filters, before pagination). Pending
+        items may include `conflictingProposals` on get/submit (not on list).
       operationId: listProposals
       security:
         - AccessLinkBearer: []
@@ -798,6 +803,34 @@ paths:
           schema:
             type: boolean
           description: When true (access-link only), return only this token's proposals
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ProposalStatus'
+          description: Filter by proposal status
+        - name: flowId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by payload.flowId
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+          description: Page size. Omit to return all matching proposals.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Skip this many filtered results
         - $ref: '#/components/parameters/ProposalInclude'
         - $ref: '#/components/parameters/ProposalIncludePayload'
       responses:
@@ -807,12 +840,21 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [proposals]
+                required: [proposals, total]
                 properties:
                   proposals:
                     type: array
                     items:
                       $ref: '#/components/schemas/Proposal'
+                  total:
+                    type: integer
+                    description: Count after filters, before limit/offset
+                  limit:
+                    type: integer
+                    description: Echo of requested limit when pagination is used
+                  offset:
+                    type: integer
+                    description: Echo of offset when pagination is used
         '401':
           $ref: '#/components/responses/AccessLinkUnauthorized'
         '403':

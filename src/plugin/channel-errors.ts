@@ -167,7 +167,7 @@ function hintFor(
     case 'proposal_not_found':
       return pickChannel(
         channel,
-        'Call list_my_proposals and use an id from that response.',
+        'Call list_proposals and use an id from that response.',
         'List proposals and use an id from that response.',
         'List proposals and use an id from that response.'
       );

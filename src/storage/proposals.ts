@@ -324,7 +324,7 @@ export class ProposalStore {
     return JSON.parse(readFileSync(path, 'utf8')) as Proposal;
   }
 
-  list(filter?: { linkId?: string }): Proposal[] {
+  list(filter?: { linkId?: string; status?: ProposalStatus; flowId?: string }): Proposal[] {
     if (!existsSync(this.paths.proposals)) {
       return [];
     }
@@ -340,6 +340,12 @@ export class ProposalStore {
           readFileSync(resolveUnderDir(this.paths.proposals, base), 'utf8')
         ) as Proposal;
         if (filter?.linkId && proposal.createdBy.linkId !== filter.linkId) {
+          continue;
+        }
+        if (filter?.status && proposal.status !== filter.status) {
+          continue;
+        }
+        if (filter?.flowId && proposal.payload.flowId !== filter.flowId) {
           continue;
         }
         proposals.push(proposal);
