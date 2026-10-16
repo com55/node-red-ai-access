@@ -323,11 +323,12 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(submit?.description).toMatch(/nodes\[\]/);
     expect(submit?.description).toMatch(/413/);
     expect(submit?.description).toMatch(/get_flow|list_flows/);
-    // type + expectedRev + payload required in the tool schema.
-    expect(submit.inputSchema?.required).toEqual(
-      expect.arrayContaining(['type', 'expectedRev', 'payload'])
-    );
+    // type + payload required in the tool schema; expectedRev is optional in
+    // Zod so a missing rev yields friendly missing_expected_rev (not raw Zod).
+    expect(submit.inputSchema?.required).toEqual(expect.arrayContaining(['type', 'payload']));
+    expect(submit.inputSchema?.required ?? []).not.toContain('expectedRev');
     expect(submit.inputSchema?.properties?.expectedRev).toBeTruthy();
+    expect(submit.inputSchema?.properties?.expected_rev).toBeTruthy();
     expect(submit?.description).not.toMatch(/Prefer MCP\/REST/i);
     // flow.nodes is optional (replace_text / nodes ops can omit a full tab).
     expect(submit.inputSchema?.properties?.payload?.properties?.flow?.properties?.nodes?.type).toBe(
