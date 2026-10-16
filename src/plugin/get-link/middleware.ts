@@ -10,6 +10,7 @@ import {
   ACCESS_LINK_INVALID_MESSAGE,
   ACCESS_LINK_MISSING_CODE,
   ACCESS_LINK_MISSING_MESSAGE,
+  sendWrongTokenKind,
 } from '../access-link-auth.js';
 import { MAX_GET_ACCESS_URL_BYTES, redactAccessLinkTokenInPath } from '../access-path.js';
 import { createGetLinkRateLimiter } from '../rate-limit.js';
@@ -96,6 +97,11 @@ export function requireGetLinkToken(RED: NodeRedPluginAPI, store: AccessLinkStor
         code: ACCESS_LINK_INVALID_CODE,
         hint: truncated,
       });
+      return;
+    }
+
+    if (link.kind !== 'get_link') {
+      sendWrongTokenKind(res, 'get_link', link.kind);
       return;
     }
 

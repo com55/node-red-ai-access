@@ -177,7 +177,7 @@ describe('REST access-link UX', () => {
 
   it('GET /status accepts access-link Bearer and returns caller info', async () => {
     const { app, linkStore } = createApp({ userDir, passportStyle401: true });
-    const link = linkStore.create({ label: 'claude-session', ttlSeconds: 3600 });
+    const link = linkStore.create({ kind: 'rest', label: 'claude-session', ttlSeconds: 3600 });
 
     const res = await request(app)
       .get('/mcp/api/v1/status')
@@ -210,7 +210,7 @@ describe('REST access-link UX', () => {
 
   it('GET /flows/:id always includes flow.type (defaults to tab)', async () => {
     const { app, linkStore } = createApp({ userDir, authenticate: asUser('*') });
-    const link = linkStore.create({ label: 'type-check' });
+    const link = linkStore.create({ kind: 'rest', label: 'type-check' });
 
     const res = await request(app)
       .get('/mcp/api/v1/flows/tab-1')

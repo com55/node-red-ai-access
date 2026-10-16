@@ -172,9 +172,10 @@ describe('AI-user findings', () => {
   describe('1. unknown flow id → 404 flow_not_found', () => {
     it('GET-link and REST return 404 with hint', async () => {
       const { app, linkStore } = createApp({ userDir, passportStyle401: true });
-      const link = linkStore.create({ label: 'f1' });
+      const getLinkToken = linkStore.create({ kind: 'get_link', label: 'f1-get' });
+      const restToken = linkStore.create({ kind: 'rest', label: 'f1-rest' });
 
-      const getLink = await request(app).get(`/mcp/a/${link.token}/flows/missing-tab`);
+      const getLink = await request(app).get(`/mcp/a/${getLinkToken.token}/flows/missing-tab`);
       expect(getLink.status).toBe(404);
       expect(getLink.body.code).toBe('flow_not_found');
       expect(String(getLink.body.hint)).toMatch(/GET \.\/flows/);
@@ -182,7 +183,7 @@ describe('AI-user findings', () => {
 
       const rest = await request(app)
         .get('/mcp/api/v1/flows/missing-tab')
-        .set('Authorization', `Bearer ${link.token}`);
+        .set('Authorization', `Bearer ${restToken.token}`);
       expect(rest.status).toBe(404);
       expect(rest.body.code).toBe('flow_not_found');
       expect(String(rest.body.hint)).toMatch(/GET \/flows|GET \.\/flows/);
@@ -409,12 +410,13 @@ describe('AI-user findings', () => {
 
     it('GET diff defaults to summary and accepts format=full', async () => {
       const { app, linkStore } = createApp({ userDir });
-      const link = linkStore.create({ label: 'f7' });
+      const link = linkStore.create({ kind: 'rest', label: 'f7' });
+      const auth = { Authorization: `Bearer ${link.token}` };
       const pad = Array.from({ length: 30 }, (_, i) => `keep-${i}`).join('\n');
       const after = `${pad}\nnew\n${pad}`;
       const created = await request(app)
         .post('/mcp/api/v1/proposals')
-        .set('Authorization', `Bearer ${link.token}`)
+        .set(auth)
         .send({
           type: 'replace_flow',
           expectedRev: 'rev-1',
@@ -440,7 +442,7 @@ describe('AI-user findings', () => {
       expect(created.status).toBe(201);
       const id = created.body.id as string;
 
-      const def = await request(app).get(`/mcp/a/${link.token}/proposals/${id}/diff`);
+      const def = await request(app).get(`/mcp/api/v1/proposals/${id}/diff`).set(auth);
       expect(def.status).toBe(200);
       expect(def.body.format).toBe('summary');
       const textChange = (def.body.modified ?? [])
@@ -455,7 +457,7 @@ describe('AI-user findings', () => {
       expect(textChange.before).toBeUndefined();
       expect(textChange.after).toBeUndefined();
 
-      const full = await request(app).get(`/mcp/a/${link.token}/proposals/${id}/diff?format=full`);
+      const full = await request(app).get(`/mcp/api/v1/proposals/${id}/diff?format=full`).set(auth);
       expect(full.status).toBe(200);
       expect(full.body.format).toBe('full');
       const fullText = (full.body.modified ?? [])
@@ -723,21 +725,44 @@ describe('AI-user findings', () => {
 
     it('GET diff returns invalid_diff_format for unknown format', async () => {
       const { app, linkStore } = createApp({ userDir });
-      const link = linkStore.create({ label: 'f11-fmt' });
-      const created = await request(app).get(
-        `/mcp/a/${link.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Fmt&title=fmt`
-      );
-      expect(created.status).toBe(201);
-      const id = created.body.proposal.id as string;
+      const getLink = linkStore.create({ kind: 'get_link', label: 'f11-fmt-get' });
+      const restLink = linkStore.create({ kind: 'rest', label: 'f11-fmt-rest' });
 
-      const bad = await request(app).get(`/mcp/a/${link.token}/proposals/${id}/diff?format=bogus`);
+      const createdGet = await request(app).get(
+        `/mcp/a/${getLink.token}/propose?flow=tab-1&rev=rev-1&node=n1&set.name=Fmt&title=fmt`
+      );
+      expect(createdGet.status).toBe(201);
+      const getId = createdGet.body.proposal.id as string;
+
+      const bad = await request(app).get(
+        `/mcp/a/${getLink.token}/proposals/${getId}/diff?format=bogus`
+      );
       expect(bad.status).toBe(400);
       expect(bad.body.code).toBe('invalid_diff_format');
       expect(String(bad.body.hint ?? bad.body.error)).toMatch(/summary|full/i);
 
+      const createdRest = await request(app)
+        .post('/mcp/api/v1/proposals')
+        .set('Authorization', `Bearer ${restLink.token}`)
+        .send({
+          type: 'replace_flow',
+          expectedRev: 'rev-1',
+          title: 'fmt-rest',
+          payload: {
+            flowId: 'tab-1',
+            flow: {
+              id: 'tab-1',
+              type: 'tab',
+              nodes: [{ id: 'n1', type: 'inject', z: 'tab-1', name: 'FmtRest', wires: [[]] }],
+            },
+          },
+        });
+      expect(createdRest.status).toBe(201);
+      const restId = createdRest.body.id as string;
+
       const rest = await request(app)
-        .get(`/mcp/api/v1/proposals/${id}/diff?format=nope`)
-        .set('Authorization', `Bearer ${link.token}`);
+        .get(`/mcp/api/v1/proposals/${restId}/diff?format=nope`)
+        .set('Authorization', `Bearer ${restLink.token}`);
       expect(rest.status).toBe(400);
       expect(rest.body.code).toBe('invalid_diff_format');
     });

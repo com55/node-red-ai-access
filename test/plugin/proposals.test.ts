@@ -139,7 +139,7 @@ describe('proposals / flows / logs HTTP API', () => {
         updateFlow,
       },
     });
-    const createdLink = linkStore.create({ label: 'deploy-type' });
+    const createdLink = linkStore.create({ kind: 'rest', label: 'deploy-type' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${createdLink.token}`)
@@ -178,7 +178,7 @@ describe('proposals / flows / logs HTTP API', () => {
       },
     });
 
-    const link = linkStore.create({ label: 'agent' });
+    const link = linkStore.create({ kind: 'rest', label: 'agent' });
 
     const flows = await request(app)
       .get('/mcp/api/v1/flows')
@@ -273,7 +273,7 @@ describe('proposals / flows / logs HTTP API', () => {
         updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-next' }),
       },
     });
-    const link = linkStore.create({ label: 'agent' });
+    const link = linkStore.create({ kind: 'rest', label: 'agent' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -324,8 +324,8 @@ describe('proposals / flows / logs HTTP API', () => {
       userDir,
       authenticate: asUser('read', 'guest'),
     });
-    const a = linkStore.create({ label: 'a' });
-    const b = linkStore.create({ label: 'b' });
+    const a = linkStore.create({ kind: 'rest', label: 'a' });
+    const b = linkStore.create({ kind: 'rest', label: 'b' });
 
     await request(app)
       .post('/mcp/api/v1/proposals')
@@ -361,7 +361,7 @@ describe('proposals / flows / logs HTTP API', () => {
       userDir,
       authenticate: asUser('read', 'guest'),
     });
-    const link = linkStore.create();
+    const link = linkStore.create({ kind: 'rest' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -392,7 +392,7 @@ describe('proposals / flows / logs HTTP API', () => {
         updateFlow,
       },
     });
-    const link = linkStore.create();
+    const link = linkStore.create({ kind: 'rest' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -422,7 +422,7 @@ describe('proposals / flows / logs HTTP API', () => {
         updateFlow: () => Promise.reject(new FlowRevisionConflictError('r', 'new')),
       },
     });
-    const link = linkStore.create();
+    const link = linkStore.create({ kind: 'rest' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -465,7 +465,7 @@ describe('proposals / flows / logs HTTP API', () => {
         updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),
       },
     });
-    const link = linkStore.create({ label: 'diff-agent' });
+    const link = linkStore.create({ kind: 'rest', label: 'diff-agent' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals?include=payload,baseFlow')
       .set('Authorization', `Bearer ${link.token}`)
@@ -545,7 +545,7 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(asLink.status).toBe(200);
     expect(asLink.body.proposalId).toBe(created.body.id);
 
-    const other = linkStore.create({ label: 'other' });
+    const other = linkStore.create({ kind: 'rest', label: 'other' });
     const denied = await request(app)
       .get(`/mcp/api/v1/proposals/${created.body.id}/diff`)
       .set('Authorization', `Bearer ${other.token}`);
@@ -569,7 +569,7 @@ describe('proposals / flows / logs HTTP API', () => {
       authenticate: asUser('*', 'admin'),
       adapter,
     });
-    const link = linkStore.create();
+    const link = linkStore.create({ kind: 'rest' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -602,7 +602,7 @@ describe('proposals / flows / logs HTTP API', () => {
       userDir,
       authenticate: asUser('*', 'admin'),
     });
-    const link = linkStore.create();
+    const link = linkStore.create({ kind: 'rest' });
     const created = await request(app)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)

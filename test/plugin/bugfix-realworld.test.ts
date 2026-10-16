@@ -135,7 +135,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
 
   it('POST /proposals rejects oversized payload with 413 (never stores truncated tab)', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'ai' });
+    const link = linkStore.create({ kind: 'rest', label: 'ai' });
     const bigNodes = Array.from({ length: 40 }, (_, i) => ({
       id: `n${i}`,
       type: 'function',
@@ -167,7 +167,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
 
   it('rejects stale expectedRev at submit time with 409', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'ai' });
+    const link = linkStore.create({ kind: 'rest', label: 'ai' });
 
     const res = await request(app)
       .post('/mcp/api/v1/proposals')
@@ -192,7 +192,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
 
   it('accepts expected_rev as alias for expectedRev when rev matches', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'ai' });
+    const link = linkStore.create({ kind: 'rest', label: 'ai' });
 
     const res = await request(app)
       .post('/mcp/api/v1/proposals?include=payload')
@@ -238,7 +238,7 @@ describe('bugfix: proposal size + expectedRev + auth codes', () => {
 
   it('get_status /status reports permission:null and caller.access-link for AI tokens', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'claude' });
+    const link = linkStore.create({ kind: 'rest', label: 'claude' });
 
     const status = await request(app)
       .get('/mcp/api/v1/status')

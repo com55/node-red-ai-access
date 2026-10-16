@@ -131,8 +131,11 @@ export interface NodeRedPluginAPI {
   };
 }
 
+export type AccessLinkKind = 'get_link' | 'rest' | 'mcp';
+
 export interface AccessLinkAuthInfo {
   id: string;
+  kind: AccessLinkKind;
   label?: string;
   createdAt: string;
   expiresAt: string;

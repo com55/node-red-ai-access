@@ -112,7 +112,7 @@ describe('AI flow surface (access-link Bearer)', () => {
 
   it('lets an AI client read flows, get a tab, and submit replace_flow', async () => {
     const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'claude' });
+    const link = linkStore.create({ kind: 'rest', label: 'claude' });
     const auth = { Authorization: `Bearer ${link.token}` };
 
     const list = await request(app).get('/mcp/api/v1/flows').set(auth);
@@ -193,7 +193,7 @@ describe('AI flow surface (access-link Bearer)', () => {
     expect(create.body.error).toBe(ACCESS_LINK_INVALID_MESSAGE);
     expect(create.body.code).toBe(ACCESS_LINK_INVALID_CODE);
 
-    const created = linkStore.create({ label: 'temp' });
+    const created = linkStore.create({ kind: 'rest', label: 'temp' });
     linkStore.revoke(created.id);
     const revoked = await request(app)
       .get('/mcp/api/v1/flows')

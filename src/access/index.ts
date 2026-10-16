@@ -7,9 +7,15 @@ export {
   AccessLinkNotFoundError,
   AccessLinkValidationError,
 } from './errors.js';
-export { AccessLinkStore } from './link-store.js';
+export {
+  ACCESS_LINK_KINDS,
+  AccessLinkStore,
+  isAccessLinkKind,
+  resolveAccessLinkKind,
+} from './link-store.js';
 export type {
   AccessLinkCreated,
+  AccessLinkKind,
   AccessLinkPublic,
   AccessLinkRecord,
   AccessLinkStoreOptions,

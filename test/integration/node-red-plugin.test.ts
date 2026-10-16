@@ -237,7 +237,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('list_flows via access link uses in-process runtime (not 502 Unauthorized)', async () => {
-    const link = linkStore.create({ label: 'integration' });
+    const link = linkStore.create({ kind: 'rest', label: 'integration' });
     const flows = await request(RED.httpAdmin)
       .get('/mcp/api/v1/flows')
       .set('Authorization', `Bearer ${link.token}`);
@@ -247,7 +247,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('rejects stale expectedRev at submit', async () => {
-    const link = linkStore.create({ label: 'submit-tests' });
+    const link = linkStore.create({ kind: 'rest', label: 'submit-tests' });
     const stale = await request(RED.httpAdmin)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
@@ -269,7 +269,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('malformed JSON on /mcp/rpc returns JSON-RPC -32700 (not HTML from body-parser)', async () => {
-    const link = linkStore.create({ label: 'parse-rpc' });
+    const link = linkStore.create({ kind: 'mcp', label: 'parse-rpc' });
     const res = await request(RED.httpAdmin)
       .post('/mcp/rpc')
       .set('Authorization', `Bearer ${link.token}`)
@@ -286,7 +286,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('malformed JSON on REST /proposals and /links returns invalid_json (not HTML)', async () => {
-    const link = linkStore.create({ label: 'parse-rest' });
+    const link = linkStore.create({ kind: 'rest', label: 'parse-rest' });
 
     const proposals = await request(RED.httpAdmin)
       .post('/mcp/api/v1/proposals')
@@ -310,7 +310,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('get_flow includes type:tab even when Node-RED omits type', async () => {
-    const link = linkStore.create({ label: 'get-flow-type' });
+    const link = linkStore.create({ kind: 'rest', label: 'get-flow-type' });
     const res = await request(RED.httpAdmin)
       .get('/mcp/api/v1/flows/tab1')
       .set('Authorization', `Bearer ${link.token}`);
@@ -340,7 +340,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('GET /status accepts access-link Bearer with caller info', async () => {
-    const link = linkStore.create({ label: 'status-link', ttlSeconds: 7200 });
+    const link = linkStore.create({ kind: 'rest', label: 'status-link', ttlSeconds: 7200 });
     const res = await request(RED.httpAdmin)
       .get('/mcp/api/v1/status')
       .set('Authorization', `Bearer ${link.token}`);
@@ -500,7 +500,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   it.each(['nodes', 'flows', 'full'] as const)(
     'approve replace_flow with deploymentType=%s deploys nested get_flow shape',
     async deploymentType => {
-      const link = linkStore.create({ label: `approve-${deploymentType}` });
+      const link = linkStore.create({ kind: 'rest', label: `approve-${deploymentType}` });
 
       const snapshot = await request(RED.httpAdmin)
         .get('/mcp/api/v1/flows/tab1')
@@ -597,7 +597,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   );
 
   it('stale expectedRev at approve marks proposal rejected (not failed)', async () => {
-    const link = linkStore.create({ label: 'stale-approve' });
+    const link = linkStore.create({ kind: 'rest', label: 'stale-approve' });
 
     const snap = await request(RED.httpAdmin)
       .get('/mcp/api/v1/flows/tab1')
