@@ -36,6 +36,7 @@ import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
+import { expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
 import { sendCaughtRouteError } from './route-errors.js';
@@ -50,6 +51,14 @@ function pluginVersion(): string {
     return __AI_ACCESS_VERSION__;
   }
   return '0.0.0';
+}
+
+async function tryLiveRev(adapter: PluginServices['flowAdapter']): Promise<string | undefined> {
+  try {
+    return (await listFlows(adapter)).rev;
+  } catch {
+    return undefined;
+  }
 }
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
@@ -423,6 +432,9 @@ function registerProposalTools(
           }),
           mine: true,
         };
+        expireStalePendingProposals(services.proposalStore, proposal.expectedRev, {
+          flowId: proposal.payload.flowId,
+        });
         const conflicts = conflictWarningFields(
           findConflictingProposals(
             services.proposalStore,
@@ -438,6 +450,7 @@ function registerProposalTools(
   );
 
   registerProposalQueryTools(server, services, accessLink, presentOpts);
+  registerProposalActionTools(server, services, accessLink, presentOpts);
 }
 
 function registerListProposalsTools(
@@ -449,7 +462,7 @@ function registerListProposalsTools(
   const listProposalsInputSchema = {
     mine: z.boolean().optional().describe('When true, only proposals created by this access link'),
     status: z
-      .enum(['pending', 'approved', 'rejected', 'failed', 'withdrawn'])
+      .enum(['pending', 'approved', 'rejected', 'failed', 'withdrawn', 'expired', 'superseded'])
       .optional()
       .describe('Filter by proposal status'),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
@@ -472,9 +485,17 @@ function registerListProposalsTools(
       .describe('When true, include payload and baseFlow on each proposal'),
   };
 
-  const listProposalsHandler = (args: {
+  const listProposalsHandler = async (args: {
     mine?: boolean | undefined;
-    status?: 'pending' | 'approved' | 'rejected' | 'failed' | 'withdrawn' | undefined;
+    status?:
+      | 'pending'
+      | 'approved'
+      | 'rejected'
+      | 'failed'
+      | 'withdrawn'
+      | 'expired'
+      | 'superseded'
+      | undefined;
     flowId?: string | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
@@ -482,6 +503,10 @@ function registerListProposalsTools(
   }) => {
     try {
       const include = includeSetFromPayloadFlag(args.include_payload);
+      const liveRev = await tryLiveRev(services.flowAdapter);
+      if (liveRev) {
+        expireStalePendingProposals(services.proposalStore, liveRev);
+      }
       const filter: ListProposalsFilter = {};
       if (args.mine === true) {
         filter.mine = true;
@@ -501,10 +526,13 @@ function registerListProposalsTools(
       const page = listAccessibleProposals(services.proposalStore, accessLink, presentOpts, filter);
       return jsonResult({
         proposals: page.proposals.map(p =>
-          presentAccessibleProposalForApi(services.proposalStore, accessLink, p, {
-            ...presentOpts,
-            include,
-          })
+          presentAccessibleProposalForApi(
+            services.proposalStore,
+            accessLink,
+            p,
+            { ...presentOpts, include },
+            { includeConflicts: false }
+          )
         ),
         total: page.total,
         ...(page.limit !== null ? { limit: page.limit } : {}),
@@ -563,21 +591,35 @@ function registerProposalQueryTools(
         include_payload: z.boolean().optional().describe('When true, include payload and baseFlow'),
       },
     },
-    ({ id, include_payload }) => {
+    async ({ id, include_payload }) => {
       try {
+        const liveRev = await tryLiveRev(services.flowAdapter);
         const proposal = getAccessibleProposal(services.proposalStore, accessLink, id, presentOpts);
         return jsonResult(
-          presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, {
-            ...presentOpts,
-            include: includeSetFromPayloadFlag(include_payload),
-          })
+          presentAccessibleProposalForApi(
+            services.proposalStore,
+            accessLink,
+            proposal,
+            {
+              ...presentOpts,
+              include: includeSetFromPayloadFlag(include_payload),
+            },
+            { ...(liveRev ? { liveRev } : {}) }
+          )
         );
       } catch (error) {
         return jsonError(error);
       }
     }
   );
+}
 
+function registerProposalActionTools(
+  server: McpServer,
+  services: PluginServices,
+  accessLink: NonNullable<AuthenticatedRequest['accessLink']>,
+  presentOpts: ReturnType<typeof presentOptionsFor>
+): void {
   server.registerTool(
     'get_proposal_diff',
     {

@@ -39,6 +39,7 @@ import {
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
+import { expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
   resolveIncludeFromQuery,
@@ -115,6 +116,10 @@ export function createProposalHandler(
         presentOpts,
         nodeTypesAdapter
       );
+      // expectedRev matched live at submit — expire any older pending on this flow.
+      expireStalePendingProposals(store, proposal.expectedRev, {
+        flowId: proposal.payload.flowId,
+      });
       const conflicts = findConflictingProposals(store, store.get(proposal.id), req.accessLink.id);
       const warnings = proposal.warnings;
       res.status(201).json({
@@ -170,14 +175,21 @@ export function listProposalsHandler(
     const include = resolveIncludeFromQuery(req.query);
     const listFilter = parseListProposalsQuery(req.query);
 
+    if (liveRev) {
+      expireStalePendingProposals(store, liveRev);
+    }
+
     const accessLink = req.accessLink;
     if (accessLink) {
       const page = listAccessibleProposals(store, accessLink, presentOpts, listFilter);
       const proposals = page.proposals.map(p => {
-        const lean = presentAccessibleProposalForApi(store, accessLink, p, {
-          ...presentOpts,
-          include,
-        });
+        const lean = presentAccessibleProposalForApi(
+          store,
+          accessLink,
+          p,
+          { ...presentOpts, include },
+          { includeConflicts: false }
+        );
         if (lean.status !== 'pending' || liveRev === undefined) {
           return lean;
         }
@@ -223,8 +235,12 @@ export function listProposalsHandler(
   };
 }
 
-export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string) {
-  return (req: AuthenticatedRequest, res: Response): void => {
+export function getProposalHandler(
+  store: ProposalStore,
+  httpAdminRoot?: string,
+  adapter?: FlowAdapter
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       res.status(400).json({ error: 'Missing proposal id' });
@@ -232,16 +248,30 @@ export function getProposalHandler(store: ProposalStore, httpAdminRoot?: string)
     }
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
     const include = resolveIncludeFromQuery(req.query);
+    let liveRev: string | undefined;
+    if (adapter) {
+      try {
+        liveRev = (await adapter.getFlows()).rev;
+      } catch {
+        // Conflicts still work without liveRev; expiry is best-effort.
+      }
+    }
     try {
       if (req.accessLink) {
         const presented = getAccessibleProposal(store, req.accessLink, id, presentOpts);
         res.json(
-          presentAccessibleProposalForApi(store, req.accessLink, presented, {
-            ...presentOpts,
-            include,
-          })
+          presentAccessibleProposalForApi(
+            store,
+            req.accessLink,
+            presented,
+            { ...presentOpts, include },
+            { ...(liveRev ? { liveRev } : {}) }
+          )
         );
         return;
+      }
+      if (liveRev) {
+        expireStalePendingProposals(store, liveRev);
       }
       res.json(presentProposalForApi(store.get(id), { ...presentOpts, include }));
     } catch (error) {

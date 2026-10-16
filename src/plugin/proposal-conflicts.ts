@@ -1,6 +1,6 @@
 /**
  * Cross-token conflict detection for pending proposals on the same flow.
- * Like a git conflict check: any pending sibling (any access link) can conflict.
+ * Like a git conflict check: same-rev peers or truly overlapping edits.
  */
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
@@ -27,6 +27,11 @@ export interface ConflictingProposalRef {
 
 export interface ConflictingProposalsResult {
   conflictingProposals: ConflictingProposalRef[];
+  /**
+   * Pending same-flow peers on a different expectedRev with no node overlap.
+   * Not listed in `conflictingProposals` — count only.
+   */
+  staleOnOlderRev?: number;
 }
 
 function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
@@ -108,9 +113,70 @@ function overlapBetween(
   return { nodeIds, fields };
 }
 
+const EXPIRED_REASON =
+  'Proposal expired: the live flow revision moved past expectedRev. Re-read the flow and resubmit.';
+
 /**
- * Pending proposals on the same flowId (any token / expectedRev) that may
- * conflict with `proposal` when approved. Excludes `proposal` itself.
+ * Auto-close pending proposals whose expectedRev no longer matches `liveRev`
+ * (they can no longer be approved). Returns how many were closed.
+ */
+export function expireStalePendingProposals(
+  store: ProposalStore,
+  liveRev: string,
+  options: { flowId?: string } = {}
+): number {
+  let closed = 0;
+  for (const proposal of store.list()) {
+    if (proposal.status !== 'pending') continue;
+    if (options.flowId && proposal.payload.flowId !== options.flowId) continue;
+    if (proposal.expectedRev === liveRev) continue;
+    try {
+      store.markClosed(proposal.id, 'expired', EXPIRED_REASON);
+      closed += 1;
+    } catch {
+      // Race: already decided — skip.
+    }
+  }
+  return closed;
+}
+
+/**
+ * After a successful approve, mark other pending proposals on the same flow
+ * as `superseded` (they can no longer be approved against the new rev).
+ */
+export function supersedePendingOnFlow(
+  store: ProposalStore,
+  flowId: string,
+  approvedId: string,
+  approvedRev: string
+): number {
+  const reason =
+    `Superseded by approved proposal ${approvedId} (resultRev ${approvedRev}). ` +
+    'Re-read the flow and resubmit if still needed.';
+  let closed = 0;
+  for (const proposal of store.list()) {
+    if (
+      proposal.id === approvedId ||
+      proposal.status !== 'pending' ||
+      proposal.payload.flowId !== flowId
+    ) {
+      continue;
+    }
+    try {
+      store.markClosed(proposal.id, 'superseded', reason);
+      closed += 1;
+    } catch {
+      // Race: already decided — skip.
+    }
+  }
+  return closed;
+}
+
+/**
+ * Pending proposals on the same flowId that may conflict when approved.
+ * Includes same-`expectedRev` peers and peers with true node/field overlap.
+ * Other pending peers on a different rev (no overlap) contribute only to
+ * `staleOnOlderRev`. Closed proposals are never conflicts.
  */
 export function findConflictingProposals(
   store: ProposalStore,
@@ -119,6 +185,7 @@ export function findConflictingProposals(
 ): ConflictingProposalsResult {
   const selfTouches = computeProposalTouches(proposal);
   const conflictingProposals: ConflictingProposalRef[] = [];
+  let staleOnOlderRev = 0;
 
   for (const other of store.list()) {
     if (
@@ -133,6 +200,14 @@ export function findConflictingProposals(
       ? other.createdBy.linkId === callerLinkId
       : other.createdBy.linkId === proposal.createdBy.linkId;
     const overlap = overlapBetween(selfTouches, computeProposalTouches(other));
+    const sameRev = other.expectedRev === proposal.expectedRev;
+    const trulyOverlapping = overlap.nodeIds.length > 0;
+
+    if (!sameRev && !trulyOverlapping) {
+      staleOnOlderRev += 1;
+      continue;
+    }
+
     const ref: ConflictingProposalRef = {
       id: other.id,
       title,
@@ -148,17 +223,23 @@ export function findConflictingProposals(
     conflictingProposals.push(ref);
   }
 
-  return { conflictingProposals };
+  const result: ConflictingProposalsResult = { conflictingProposals };
+  if (staleOnOlderRev > 0) {
+    result.staleOnOlderRev = staleOnOlderRev;
+  }
+  return result;
 }
 
 /** Spread conflict warning fields onto a JSON response (omit when empty). */
 export function conflictWarningFields(result: ConflictingProposalsResult): Record<string, unknown> {
-  if (result.conflictingProposals.length === 0) {
-    return {};
+  const out: Record<string, unknown> = {};
+  if (result.conflictingProposals.length > 0) {
+    out.conflictingProposals = result.conflictingProposals;
+    out.warning =
+      'Other pending proposals touch the same flow — approve order may conflict (like a git merge).';
   }
-  return {
-    conflictingProposals: result.conflictingProposals,
-    warning:
-      'Other pending proposals touch the same flow — approve order may conflict (like a git merge).',
-  };
+  if (result.staleOnOlderRev !== undefined && result.staleOnOlderRev > 0) {
+    out.staleOnOlderRev = result.staleOnOlderRev;
+  }
+  return out;
 }

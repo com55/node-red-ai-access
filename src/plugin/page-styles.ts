@@ -1040,6 +1040,8 @@ dialog h3 { margin: 0 0 0.4rem; }
 .status-pill.rejected { background: #f4efe6; color: #6a4a14; }
 .status-pill.failed { background: #fdeceb; color: var(--danger); }
 .status-pill.withdrawn { background: #eef0f3; color: #4a5564; }
+.status-pill.expired { background: #f3ebe0; color: #8a5a00; }
+.status-pill.superseded { background: #ebe4f5; color: #5b3d8a; }
 .debug-toggle {
   flex-direction: row;
   align-items: center;

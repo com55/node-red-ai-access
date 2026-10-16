@@ -53,6 +53,7 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   proposal_not_found: 'Proposal was not found',
   proposal_not_owned: 'Proposal was not created by this access link',
   proposal_not_pending: 'Proposal is not pending',
+  confirm_required: 'Withdraw over GET requires confirm=1',
   unsupported_media_type: 'Content-Type must be application/json',
   upstream_error: 'Upstream request failed',
   internal_error: 'Internal server error',
@@ -175,6 +176,8 @@ function hintFor(
       return 'Only the access link that created a pending proposal can withdraw it.';
     case 'proposal_not_pending':
       return 'Only pending proposals can be withdrawn or decided.';
+    case 'confirm_required':
+      return 'Add confirm=1 to the withdraw URL (required so link prefetchers cannot withdraw).';
     case 'invalid_wires':
       return invalidWiresHint(channel, context.cause);
     case 'node_type_not_found':

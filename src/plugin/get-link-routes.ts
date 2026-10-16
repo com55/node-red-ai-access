@@ -49,6 +49,7 @@ import {
   searchPaletteHandler,
 } from './node-types-routes.js';
 import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
+import { expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { resolveIncludeFromQuery, presentOptionsFor } from './proposal-present.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
@@ -251,7 +252,7 @@ function registerGetLinkProposalRoutes(
   app.get(
     `${base}/proposals`,
     ...gate,
-    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
       const link = req.accessLink;
       if (!link) {
@@ -261,13 +262,25 @@ function registerGetLinkProposalRoutes(
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
       const include = resolveIncludeFromQuery(req.query);
       const listFilter = parseListProposalsQuery(req.query);
+      let liveRev: string | undefined;
+      try {
+        liveRev = (await listFlows(options.flowAdapter)).rev;
+      } catch {
+        // Expiry is best-effort when live rev is unavailable.
+      }
+      if (liveRev) {
+        expireStalePendingProposals(options.proposalStore, liveRev);
+      }
       const page = listAccessibleProposals(options.proposalStore, link, presentOpts, listFilter);
       res.json({
         proposals: page.proposals.map(p =>
-          presentAccessibleProposalForApi(options.proposalStore, link, p, {
-            ...presentOpts,
-            include,
-          })
+          presentAccessibleProposalForApi(
+            options.proposalStore,
+            link,
+            p,
+            { ...presentOpts, include },
+            { includeConflicts: false }
+          )
         ),
         total: page.total,
         ...(page.limit !== null ? { limit: page.limit } : {}),
@@ -279,7 +292,7 @@ function registerGetLinkProposalRoutes(
   app.get(
     `${base}/proposals/:id`,
     ...gate,
-    asyncRoute((req: AuthenticatedRequest, res: Response) => {
+    asyncRoute(async (req: AuthenticatedRequest, res: Response) => {
       setNoStore(res);
       const id = req.params.id;
       const link = req.accessLink;
@@ -294,12 +307,21 @@ function registerGetLinkProposalRoutes(
       try {
         const presentOpts = presentOptionsFor(req, httpAdminRoot);
         const include = resolveIncludeFromQuery(req.query);
+        let liveRev: string | undefined;
+        try {
+          liveRev = (await listFlows(options.flowAdapter)).rev;
+        } catch {
+          // ignore
+        }
         const presented = getAccessibleProposal(options.proposalStore, link, id, presentOpts);
         res.json(
-          presentAccessibleProposalForApi(options.proposalStore, link, presented, {
-            ...presentOpts,
-            include,
-          })
+          presentAccessibleProposalForApi(
+            options.proposalStore,
+            link,
+            presented,
+            { ...presentOpts, include },
+            { ...(liveRev ? { liveRev } : {}) }
+          )
         );
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error, 'get');
@@ -340,6 +362,17 @@ function registerGetLinkWithdrawRoute(
       }
       if (!link) {
         jsonError(res, 401, 'Access link required', 'access_link_missing');
+        return;
+      }
+      const confirm = req.query.confirm;
+      if (confirm !== '1' && confirm !== 'true') {
+        jsonError(
+          res,
+          400,
+          'Withdraw over GET requires confirm=1',
+          'confirm_required',
+          channelErrorHint('confirm_required', 'get')
+        );
         return;
       }
       const reason = typeof req.query.reason === 'string' ? req.query.reason : undefined;

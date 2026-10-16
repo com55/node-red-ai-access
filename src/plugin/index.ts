@@ -269,7 +269,7 @@ export function registerRoutes(
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id',
     ...sharedRead,
-    asyncRoute(getProposalHandler(services.proposalStore, httpAdminRoot))
+    asyncRoute(getProposalHandler(services.proposalStore, httpAdminRoot, services.flowAdapter))
   );
   RED.httpAdmin.get(
     '/mcp/api/v1/proposals/:id/diff',

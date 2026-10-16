@@ -158,16 +158,23 @@ info:
     same fields. Paginate with `limit`/`offset` (response includes `total`;
     max `limit` is 200). MCP keeps `list_my_proposals` as an alias.
 
-    On submit and on read of a **pending** proposal, responses may include
-    `conflictingProposals` (pending work on the same flow from any token) with
-    optional `overlappingNodeIds` / `overlappingFields` — treat like a git
-    conflict warning.
+    On submit and on **get** of a **pending** proposal, responses may include
+    `conflictingProposals` (same-`expectedRev` peers or true node/field overlaps)
+    with optional `overlappingNodeIds` / `overlappingFields`, plus
+    `staleOnOlderRev` (count of other pending peers on a different rev with no
+    overlap). List endpoints omit `conflictingProposals`.
+
+    Pending proposals whose `expectedRev` no longer matches the live flow rev
+    are auto-closed as `expired`. When a proposal is approved, other pending
+    proposals on the same flow become `superseded`. Closed proposals are never
+    conflicts.
 
     ## Withdraw
 
     The creating access link may withdraw its own pending proposal
-    (`POST /proposals/{id}/withdraw`, GET `…/proposals/{id}/withdraw`, or MCP
-    `withdraw_proposal`). Status becomes `withdrawn` (separate from admin
+    (`POST /proposals/{id}/withdraw`, GET `…/proposals/{id}/withdraw?confirm=1`,
+    or MCP `withdraw_proposal`). GET withdraw requires `confirm=1` so prefetchers
+    cannot trigger it. Status becomes `withdrawn` (separate from admin
     `rejected`).
 
     ## Known issues
@@ -1933,7 +1940,7 @@ components:
 
     ProposalStatus:
       type: string
-      enum: [pending, approved, rejected, failed, withdrawn]
+      enum: [pending, approved, rejected, failed, withdrawn, expired, superseded]
 
     Proposal:
       type: object

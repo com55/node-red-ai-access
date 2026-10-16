@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- Auto-close stale pending proposals: `expired` (live rev moved) and
+  `superseded` (another proposal on the same flow was approved).
+- Conflict trim: `conflictingProposals` lists same-rev or overlapping peers
+  only; other older-rev peers appear as `staleOnOlderRev` count. List items omit
+  `conflictingProposals`.
+- GET withdraw requires `confirm=1` (prefetch-safe).
 - Proposal list pagination and filters on GET/REST/MCP: `status`, `flowId`,
   `limit`/`offset` (response `total`; max limit 200). MCP tool renamed to
   `list_proposals` (`list_my_proposals` kept as alias).
@@ -20,8 +26,8 @@ and this project adheres to
   optional `overlappingNodeIds` / `overlappingFields` (replaces private
   `otherLinkSiblingCount`).
 - Withdraw own pending proposals (`withdrawn` status): GET
-  `…/proposals/<id>/withdraw`, REST `POST /proposals/{id}/withdraw`, MCP
-  `withdraw_proposal` (+ `/mcp` pill + audit `proposal.withdrawn`).
+  `…/proposals/<id>/withdraw?confirm=1`, REST `POST /proposals/{id}/withdraw`,
+  MCP `withdraw_proposal` (+ `/mcp` pill + audit `proposal.withdrawn`).
 - Docs: Known issues (per-token rate limits stack), 1.5MB cap on every channel,
   canonical REST/MCP `payload.nodes` op shapes.
 - Phase 2C: GET `/mcp/a/<token>` cannot mint tokens — explicit **405**
