@@ -331,8 +331,10 @@ function registerProposalTools(
         'node, field, find, replace, occurrence? }] } — find must be unique unless occurrence ' +
         '(1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. ' +
         'Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). ' +
-        'Inputs: type="replace_flow", expectedRev (required; expected_rev alias accepted), ' +
-        'optional title (≤80 chars), payload: { flowId, flow? } and/or payload.nodes / top-level nodes. ' +
+        'Inputs (all top-level, next to each other): type="replace_flow", ' +
+        'expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), ' +
+        'optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. ' +
+        'Do not nest expectedRev inside payload. ' +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
@@ -347,7 +349,10 @@ function registerProposalTools(
         expectedRev: z
           .string()
           .min(1)
-          .describe('Current flow revision from get_flow/list_flows (required)'),
+          .optional()
+          .describe(
+            'Top-level current flow revision from get_flow/list_flows (required; sit next to type and payload, not inside payload)'
+          ),
         expected_rev: z
           .string()
           .min(1)
@@ -401,7 +406,10 @@ function registerProposalTools(
           accessLink,
           {
             ...args,
-            expectedRev: args.expectedRev || args.expected_rev,
+            expectedRev:
+              typeof args.expectedRev === 'string' && args.expectedRev.length > 0
+                ? args.expectedRev
+                : args.expected_rev,
           },
           services.flowAdapter,
           presentOpts,

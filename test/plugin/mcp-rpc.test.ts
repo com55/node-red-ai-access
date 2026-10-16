@@ -315,13 +315,15 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
       };
     };
     expect(submit?.description).toMatch(/expectedRev/);
+    expect(submit?.description).toMatch(/top-level|next to type and payload/i);
+    expect(submit?.description).toMatch(/Do not nest expectedRev inside payload/);
     expect(submit?.description).toMatch(/nested get_flow|get_flow/i);
     expect(submit?.description).toMatch(/nodes\[\]/);
     expect(submit?.description).toMatch(/413/);
     expect(submit?.description).toMatch(/get_flow|list_flows/);
-    expect(submit.inputSchema?.required).toEqual(
-      expect.arrayContaining(['type', 'expectedRev', 'payload'])
-    );
+    // type + payload required; expectedRev validated in-handler with a clear field name.
+    expect(submit.inputSchema?.required).toEqual(expect.arrayContaining(['type', 'payload']));
+    expect(submit.inputSchema?.properties?.expectedRev).toBeTruthy();
     // flow.nodes is optional (replace_text / nodes ops can omit a full tab).
     expect(submit.inputSchema?.properties?.payload?.properties?.flow?.properties?.nodes?.type).toBe(
       'array'
@@ -409,6 +411,29 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     const got = await callTool(app, link.token, 'get_proposal', { id: proposal.id });
     const gotJson = parseToolJson(got.result) as { id: string };
     expect(gotJson.id).toBe(proposal.id);
+  });
+
+  it('submit_proposal names expectedRev when it is missing', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ kind: 'mcp', label: 'bot' });
+    const submitted = await callTool(app, link.token, 'submit_proposal', {
+      type: 'replace_flow',
+      payload: {
+        flowId: 'tab-1',
+        flow: {
+          id: 'tab-1',
+          type: 'tab',
+          label: 'Main',
+          nodes: [{ id: 'n1', type: 'inject', z: 'tab-1' }],
+        },
+      },
+    });
+    expect(submitted.status).toBe(200);
+    expect(submitted.result?.isError).toBe(true);
+    const content = submitted.result?.content as { type: string; text: string }[] | undefined;
+    const text = content?.[0]?.text ?? '';
+    expect(text).toMatch(/expectedRev/);
+    expect(text).toMatch(/required/i);
   });
 
   it('parity: MCP submit_proposal matches REST POST /proposals', async () => {

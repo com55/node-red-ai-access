@@ -271,7 +271,10 @@ export async function submitReplaceFlowProposal(
     throw new AiOpsValidationError("type must be 'replace_flow'", 'invalid_proposal_type');
   }
   if (!expectedRev) {
-    throw new AiOpsValidationError('expectedRev is required', 'missing_expected_rev');
+    throw new AiOpsValidationError(
+      'expectedRev is required (top-level field next to type and payload)',
+      'missing_expected_rev'
+    );
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
