@@ -471,7 +471,8 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(docs.text).toMatch(/cannot.*create access tokens|cannot mint tokens/i);
     expect(docs.text).toMatch(/link_create_not_supported/);
     expect(docs.text).toMatch(/POST \/mcp\/api\/v1\/links/);
-    expect(docs.text).not.toMatch(/POST \.\/links/);
+    expect(docs.text).toMatch(/no[\s*`]*POST \.\/links/i);
+    expect(docs.text).not.toMatch(/\|\s*`POST \.\/links/i);
 
     const openapi = await request(app).get('/mcp/api/v1/openapi.yaml');
     expect(openapi.status).toBe(200);
