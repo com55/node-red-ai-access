@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   aiCorsMiddleware,
+  canonicalOrigin,
   CORS_ALLOWED_HEADERS,
   installAiCorsMiddleware,
   normalizeCorsOrigins,
@@ -119,6 +120,44 @@ describe('AI-facing CORS', () => {
     expect(pre.status).toBe(204);
     expect(pre.headers['access-control-allow-origin']).toBe('https://app.example');
     expect(pre.headers['access-control-allow-headers']).toBe(CORS_ALLOWED_HEADERS);
+  });
+
+  it('matches origins case-insensitively and echoes the configured canonical origin', async () => {
+    const app = nodeRedLikeApp(['https://App.Example']);
+    const res = await request(app).get('/mcp/api/v1/status').set('Origin', 'HTTPS://APP.EXAMPLE');
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example');
+    const pre = await request(app)
+      .options('/mcp/rpc')
+      .set('Origin', 'https://APP.example:443')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(pre.headers['access-control-allow-origin']).toBe('https://app.example');
+  });
+
+  it('rejects malformed origins', async () => {
+    const app = nodeRedLikeApp(['https://app.example']);
+    for (const bad of [
+      'null',
+      'https://app.example/path',
+      'app.example',
+      'https://u@app.example',
+    ]) {
+      const res = await request(app).get('/mcp/api/v1/status').set('Origin', bad);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    }
+    expect(canonicalOrigin('HTTPS://APP.EXAMPLE')).toBe('https://app.example');
+    expect(canonicalOrigin('http://a.example:80')).toBe('http://a.example');
+    expect(canonicalOrigin('https://a.example/')).toBeUndefined();
+    expect(canonicalOrigin('ftp://a.example')).toBeUndefined();
+  });
+
+  it('exposes WWW-Authenticate and RateLimit headers', async () => {
+    const res = await request(nodeRedLikeApp(['https://app.example']))
+      .get('/mcp/api/v1/status')
+      .set('Origin', 'https://app.example');
+    const exposed = String(res.headers['access-control-expose-headers']);
+    for (const h of ['WWW-Authenticate', 'RateLimit-Policy', 'RateLimit', 'Retry-After']) {
+      expect(exposed.split(', ')).toContain(h);
+    }
   });
 
   it('normalizeCorsOrigins keeps valid http(s) origins only', () => {

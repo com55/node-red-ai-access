@@ -68,6 +68,11 @@ export function normalizePublicBaseUrl(value: unknown): string | undefined {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
+/** Configured public base URL (normalized), or undefined when unset. */
+export function getConfiguredPublicBaseUrl(): string | undefined {
+  return configuredPublicBaseUrl;
+}
+
 /** Bind (or clear) the explicit public base URL used for absolute URLs. */
 export function bindPublicBaseUrl(value: unknown): void {
   configuredPublicBaseUrl = normalizePublicBaseUrl(value);

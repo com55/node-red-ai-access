@@ -97,6 +97,9 @@ Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
 3. Otherwise the request `Host` header and the connection protocol are used;
    `X-Forwarded-*` headers are ignored so clients cannot spoof link origins.
 
+When `publicBaseUrl` is set, the MCP client snippets in the GET-link guide use
+it instead of the `https://YOUR-NODE-RED` placeholder.
+
 Behind a TLS-terminating proxy (for example Cloudflare) with neither option set,
 links therefore start with `http://`.
 
@@ -115,7 +118,10 @@ required). For a listed `Origin` the response echoes it in
 `Access-Control-Allow-Origin` with `Vary: Origin`, and `OPTIONS` preflight
 returns `204` with allowed methods (`GET, POST, DELETE, OPTIONS`) and headers
 (`Authorization`, `Content-Type`, `Accept`, `Mcp-Session-Id`,
-`Mcp-Protocol-Version`, `Last-Event-ID`). Other origins get no CORS headers.
+`Mcp-Protocol-Version`, `Last-Event-ID`). Origins match case-insensitively and
+the configured origin is echoed; malformed origins are rejected. Exposed headers
+include `Mcp-Session-Id`, `WWW-Authenticate`, `Retry-After`, and the
+`RateLimit*` headers. Other origins get no CORS headers.
 
 ### Settings precedence
 

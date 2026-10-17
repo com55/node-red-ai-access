@@ -9,6 +9,7 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import type { ProposalStore } from '../storage/proposals.js';
 
+import { getConfiguredPublicBaseUrl } from './access-path.js';
 import {
   aiOpsErrorToHttp,
   getAccessibleProposal,
@@ -110,6 +111,7 @@ export function registerGetLinkRoutes(
         openapiPath: `${restBase}/openapi.yaml`,
         restApiBase: restBase,
         mcpRpcPath: mcpRpcPath(RED.settings.httpAdminRoot),
+        publicBaseUrl: getConfiguredPublicBaseUrl(),
       });
       res.status(200).type('text/markdown; charset=utf-8').send(md);
     })

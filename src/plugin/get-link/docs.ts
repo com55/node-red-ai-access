@@ -13,6 +13,8 @@ import type { AccessLinkAuthInfo } from '../types.js';
 export interface GetLinkDocsContext {
   link: AccessLinkAuthInfo;
   openapiPath: string;
+  /** Configured `aiAccess.publicBaseUrl`; replaces the snippet placeholder when set. */
+  publicBaseUrl?: string | undefined;
   restApiBase: string;
   mcpRpcPath: string;
 }
@@ -27,7 +29,15 @@ export function escapeForDocs(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function docsAlsoAvailable(rest: string, openapi: string, rpc: string): string {
+/** Placeholder MCP URL in client snippets when no `publicBaseUrl` is configured. */
+export const DEFAULT_RPC_URL_PLACEHOLDER = 'https://YOUR-NODE-RED/mcp/rpc';
+
+function docsAlsoAvailable(
+  rest: string,
+  openapi: string,
+  rpc: string,
+  rpcUrl: string = DEFAULT_RPC_URL_PLACEHOLDER
+): string {
   return `## Also available (prefer when your client can send headers)
 
 **Prefer MCP or REST** whenever the AI client can send custom headers and JSON
@@ -60,7 +70,7 @@ Use an **mcp** token from the owner (not the get_link path token).
 {
   "mcpServers": {
     "node-red-ai-access": {
-      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "url": "${rpcUrl}",
       "headers": {
         "Authorization": "Bearer aia_…"
       }
@@ -75,7 +85,7 @@ Use an **mcp** token from the owner (not the get_link path token).
 {
   "mcpServers": {
     "node-red-ai-access": {
-      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "url": "${rpcUrl}",
       "headers": {
         "Authorization": "Bearer aia_…"
       }
@@ -85,13 +95,13 @@ Use an **mcp** token from the owner (not the get_link path token).
 \`\`\`
 
 **ChatGPT connectors / custom GPT:** use Streamable HTTP URL
-\`https://YOUR-NODE-RED/mcp/rpc\` and set Authorization Bearer \`aia_…\`
+\`${rpcUrl}\` and set Authorization Bearer \`aia_…\`
 (an **mcp** token).
 
 **Generic Streamable HTTP** (curl):
 
 \`\`\`bash
-curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
+curl -sS -X POST "${rpcUrl}" \\
   -H "Authorization: Bearer aia_…" \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
@@ -513,7 +523,7 @@ strings you will paste publicly beyond this temporary link.
 }
 
 export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
-  const { link, openapiPath, restApiBase, mcpRpcPath } = ctx;
+  const { link, openapiPath, restApiBase, mcpRpcPath, publicBaseUrl } = ctx;
   const expires = escapeForDocs(link.expiresAt);
   const label = link.label ? ` (${escapeForDocs(link.label)})` : '';
   const openapi = escapeForDocs(openapiPath);
@@ -522,7 +532,12 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
 
   return [
     docsIntro(label, expires),
-    docsAlsoAvailable(rest, openapi, rpc),
+    docsAlsoAvailable(
+      rest,
+      openapi,
+      rpc,
+      publicBaseUrl ? escapeForDocs(`${publicBaseUrl}${mcpRpcPath}`) : DEFAULT_RPC_URL_PLACEHOLDER
+    ),
     docsWorkflow(),
     docsUrlTable(),
     docsProposeExamples(),

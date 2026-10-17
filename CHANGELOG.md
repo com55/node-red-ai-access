@@ -15,10 +15,15 @@ and this project adheres to
   `GET /mcp/api/v1/openapi.json`.
 - Optional `aiAccess.corsAllowedOrigins` setting (settings.js): list of browser
   origins allowed to call the AI-facing endpoints cross-origin, with
-  `Vary: Origin` and `OPTIONS` preflight support.
+  `Vary: Origin` and `OPTIONS` preflight support. Origins match
+  case-insensitively and the configured canonical origin is echoed; malformed
+  origins are rejected. `WWW-Authenticate`, `Retry-After`, and the `RateLimit*`
+  headers are exposed to allowed origins.
 - Optional `aiAccess.publicBaseUrl` setting (settings.js) that sets the public
   base URL for absolute links (access-link `url`, proposal `reviewUrl`,
-  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`.
+  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`. When set, the MCP
+  client snippets in the GET-link guide use it instead of the
+  `https://YOUR-NODE-RED` placeholder.
 
 ### Changed
 

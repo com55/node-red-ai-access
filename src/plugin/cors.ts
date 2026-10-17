@@ -18,7 +18,7 @@ export const CORS_ALLOWED_METHODS = 'GET, POST, DELETE, OPTIONS';
 export const CORS_ALLOWED_HEADERS =
   'Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID';
 export const CORS_EXPOSED_HEADERS =
-  'Mcp-Session-Id, Retry-After, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset';
+  'Mcp-Session-Id, WWW-Authenticate, Retry-After, RateLimit, RateLimit-Policy, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset';
 export const CORS_MAX_AGE_SECONDS = 600;
 
 /**
@@ -40,6 +40,25 @@ export function normalizeCorsOrigins(value: unknown): string[] {
     }
   }
   return [...out];
+}
+
+/**
+ * Canonical `scheme://host[:port]` (lower-case, default port dropped) for an
+ * Origin header value. Malformed values, `null`, and values carrying a path,
+ * query, fragment, or credentials return undefined.
+ */
+export function canonicalOrigin(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+  if (url.username || url.password || url.search || url.hash) return undefined;
+  if (url.pathname !== '/' || /^[a-z][a-z0-9+.-]*:\/\/[^/]*\//i.test(value)) return undefined;
+  return url.origin.toLowerCase();
 }
 
 function appendVary(res: Response, value: string): void {
@@ -78,9 +97,12 @@ export function aiCorsMiddleware(getAllowedOrigins: () => string[]) {
       return originalSetHeader(name, value);
     }) as Response['setHeader'];
 
-    const origin = req.get('origin');
-    const allowed =
-      typeof origin === 'string' && getAllowedOrigins().includes(origin.toLowerCase());
+    const requestOrigin = canonicalOrigin(req.get('origin'));
+    const origin =
+      requestOrigin === undefined
+        ? undefined
+        : getAllowedOrigins().find(entry => entry === requestOrigin);
+    const allowed = origin !== undefined;
 
     appendVary(res, 'Origin');
     if (!allowed) {
