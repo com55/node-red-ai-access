@@ -60,6 +60,8 @@ export interface AiAccessStatusCallerBaseUrls {
   rpc: string;
   /** OpenAPI YAML URL. */
   openapi: string;
+  /** OpenAPI JSON URL (same spec as `openapi`). */
+  openapiJson: string;
   /** Unauthenticated JSON discovery index. */
   discovery: string;
 }

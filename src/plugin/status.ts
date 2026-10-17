@@ -49,7 +49,7 @@ export function minutesRemainingUntil(expiresAt: string, nowMs = Date.now()): nu
 
 /**
  * Only include baseUrls this token kind can call.
- * get_link uses path URLs (not listed here); rest → api/openapi/discovery; mcp → rpc (+ discovery).
+ * get_link uses path URLs (not listed here); rest → api/openapi/openapiJson/discovery; mcp → rpc (+ discovery).
  */
 export function baseUrlsForTokenKind(
   kind: AccessLinkKind,
@@ -58,8 +58,9 @@ export function baseUrlsForTokenKind(
   const api = mcpApiBase(httpAdminRoot);
   const rpc = mcpRpcPath(httpAdminRoot);
   const openapi = `${api}/openapi.yaml`;
+  const openapiJson = `${api}/openapi.json`;
   if (kind === 'rest') {
-    return { api, openapi, discovery: api };
+    return { api, openapi, openapiJson, discovery: api };
   }
   if (kind === 'mcp') {
     return { rpc, discovery: api };

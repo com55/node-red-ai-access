@@ -181,7 +181,7 @@ export function getLinkMintNotSupportedHandler() {
   return (req: Request, res: Response): void => {
     redactTokenFromRequestUrl(req);
     setNoStore(res);
-    res.status(405).json({
+    res.status(403).json({
       error: 'GET access links cannot create tokens',
       code: LINK_CREATE_NOT_SUPPORTED_CODE,
       hint: 'Ask an admin with * permission to mint tokens via POST /mcp/api/v1/links on the /mcp Access links page. This get_link URL cannot create, list, or revoke tokens.',

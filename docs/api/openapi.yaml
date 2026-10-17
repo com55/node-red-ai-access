@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Node-RED AI Access Plugin API
-  version: 0.1.0
+  version: 0.1.1
   summary: Temporary, owner-approved Node-RED access for AI clients
   description: |
     REST surface exposed by the `@com55/node-red-ai-access` Node-RED plugin
@@ -30,7 +30,7 @@ info:
 
     **GET `/mcp/a/<token>/…` never mints tokens.** There is no link-create
     operation under the get-link surface (no `POST …/links`). Attempted mint
-    paths return **405** `link_create_not_supported`. Only admins with `*`
+    paths return **403** `link_create_not_supported`. Only admins with `*`
     may create tokens on `POST /mcp/api/v1/links`.
 
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits).
@@ -1426,7 +1426,7 @@ components:
         - `invalid_ttl` (400): `ttlSeconds` is zero, negative, not a number, or over the cap for the kind
         - `access_link_limit` (409): Too many active links
         - `access_link_not_found` (404): Unknown link id on revoke
-        - `link_create_not_supported` (405): Attempted mint under a GET link
+        - `link_create_not_supported` (403): Attempted mint under a GET link
         - `rate_limited` (429): Per-IP or per-token limit
         - `payload_too_large` (413): Body / proposal over ~1.5MB
         - `invalid_json` (400): Malformed JSON body
@@ -1859,13 +1859,15 @@ components:
                     proposals:create, proposals:read-own)
                 baseUrls:
                   type: object
-                  required: [api, rpc, openapi, discovery]
+                  required: [api, rpc, openapi, openapiJson, discovery]
                   properties:
                     api:
                       type: string
                     rpc:
                       type: string
                     openapi:
+                      type: string
+                    openapiJson:
                       type: string
                     discovery:
                       type: string

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-17
+
+### Added
+
+- `/status` (REST and MCP `get_status`) now includes `openapiJson` in
+  `caller.baseUrls` for `rest` tokens, pointing at the served
+  `GET /mcp/api/v1/openapi.json`.
+
+### Changed
+
+- Attempts to create, list, or revoke access links under a GET access link
+  (`/mcp/a/<token>/links`) now return **403** `link_create_not_supported`
+  instead of 405. Error registry, `docs/errors.md`, OpenAPI, and get-link docs
+  updated.
+
 ## [0.1.0] - 2026-10-16
 
 First public release of **Node-RED AI Access**: an admin-gated Node-RED 4 plugin
@@ -316,4 +331,5 @@ Requires Node.js 20+.
   auth, 413 limits) served at `GET /mcp/api/v1/openapi.yaml`; README install,
   config, `/mcp` usage, and AI quickstart.
 
+[0.1.1]: https://github.com/com55/node-red-ai-access/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/com55/node-red-ai-access/releases/tag/v0.1.0

@@ -139,7 +139,7 @@ these docs).
 - **Create / mint tokens** — this GET link **cannot** create access tokens.
   There is no \`./links\` create operation under \`/mcp/a/<token>\`. Only a human
   admin with \`*\` may mint tokens via \`POST /mcp/api/v1/links\` on the \`/mcp\`
-  Access links page. Attempts under this URL return \`405 link_create_not_supported\`.
+  Access links page. Attempts under this URL return \`403 link_create_not_supported\`.
 - Approve or reject proposals (human on \`/mcp\` only).
 - Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
 
@@ -277,7 +277,7 @@ There is **no** \`POST ./links\` (or any create-link) under this URL — GET lin
 
 Unknown paths under this link return JSON \`{ "code": "not_found" }\` (never HTML,
 and the token is never echoed). Attempted mint paths (\`./links\`) return
-\`405 link_create_not_supported\`.
+\`403 link_create_not_supported\`.
 `;
 }
 

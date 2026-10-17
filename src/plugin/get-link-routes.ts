@@ -228,7 +228,7 @@ export function registerGetLinkRoutes(
   registerGetLinkDraftRoutes(app, base, gate, draftStore, options, httpAdminRoot);
 
   // GET links never mint tokens — reject any /links path under /mcp/a explicitly
-  // (405 JSON) so a half-wired create route cannot appear by accident.
+  // (403 JSON) so a half-wired create route cannot appear by accident.
   const rejectMint = getLinkMintNotSupportedHandler();
   app.all(`${base}/links`, rejectMint);
   app.all(`${base}/links/:id`, rejectMint);

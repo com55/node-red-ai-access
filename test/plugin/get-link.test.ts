@@ -445,7 +445,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const postLinks = await request(app)
       .post(`/mcp/a/${link.token}/links`)
       .send({ label: 'should-fail', kind: 'rest' });
-    expect(postLinks.status).toBe(405);
+    expect(postLinks.status).toBe(403);
     expect(postLinks.headers['content-type']).toMatch(/json/);
     expect(postLinks.headers['cache-control']).toMatch(/no-store/);
     expect(postLinks.body).toMatchObject({
@@ -458,15 +458,15 @@ describe('GET /mcp/a/<token> access links', () => {
     const postLinksId = await request(app)
       .post(`/mcp/a/${link.token}/links/anything`)
       .send({ label: 'nope' });
-    expect(postLinksId.status).toBe(405);
+    expect(postLinksId.status).toBe(403);
     expect(postLinksId.body.code).toBe('link_create_not_supported');
 
     const getLinks = await request(app).get(`/mcp/a/${link.token}/links`);
-    expect(getLinks.status).toBe(405);
+    expect(getLinks.status).toBe(403);
     expect(getLinks.body.code).toBe('link_create_not_supported');
 
     const deleteLinks = await request(app).delete(`/mcp/a/${link.token}/links/${link.id}`);
-    expect(deleteLinks.status).toBe(405);
+    expect(deleteLinks.status).toBe(403);
     expect(deleteLinks.body.code).toBe('link_create_not_supported');
 
     expect(linkStore.list()).toHaveLength(before);
