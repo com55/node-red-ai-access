@@ -20,6 +20,7 @@ import {
   requireStarPermission,
 } from './auth.js';
 import { requireJsonContentType } from './content-type.js';
+import { aiCorsMiddleware, installAiCorsMiddleware, normalizeCorsOrigins } from './cors.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
 import { EDITOR_SIDEBAR_ASSET_VERSION, renderEditorSidebarJs } from './editor-sidebar.js';
 import { listFlowsHandler } from './flows-routes.js';
@@ -159,6 +160,13 @@ export function registerRoutes(
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
   });
+
+  // AI-facing CORS: no headers by default; echo allow-listed origins only.
+  const corsOrigins = normalizeCorsOrigins(RED.settings.aiAccess?.corsAllowedOrigins);
+  installAiCorsMiddleware(
+    RED.httpAdmin,
+    aiCorsMiddleware(() => corsOrigins)
+  );
 
   // Resolve live flow labels once per proposal-related request so every channel
   // (REST, GET link, MCP) and endpoint (list, get, submit, …) presents the same

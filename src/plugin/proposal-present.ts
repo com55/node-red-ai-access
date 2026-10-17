@@ -404,6 +404,14 @@ export function ensureTitleIncludesFlowName(title: string, flowLabel: string): s
   if (t.includes(label)) {
     return t;
   }
+  // A title capped at PROPOSAL_TITLE_MAX may end with a truncated ` in <label…>`.
+  const idx = t.lastIndexOf(' in ');
+  if (idx >= 0) {
+    const tail = t.slice(idx + 4);
+    if (tail.length > 0 && label.startsWith(tail)) {
+      return t;
+    }
+  }
   return `${t} in ${label}`;
 }
 

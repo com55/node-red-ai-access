@@ -150,13 +150,41 @@ describe('GET /mcp/a/<token> access links', () => {
     void app;
   });
 
+  it('guide MCP snippets use the validated request origin', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'snippet' });
+    const res = await request(app).get(`/mcp/a/${link.token}`).set('Host', 'nr.example:1880');
+    expect(res.text).toContain('"url": "http://nr.example:1880/mcp/rpc"');
+    expect(res.text).not.toContain('YOUR-NODE-RED');
+  });
+
+  it('supports ?format=md for the guide', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'fmt-md' });
+    const res = await request(app)
+      .get(`/mcp/a/${link.token}?format=md`)
+      .set('X-Test-Raw-Accept', '1');
+    expect(res.headers['content-type']).toBe('text/markdown; charset=utf-8');
+  });
+
+  it('keeps ?format=summary|full working on the GET-link diff alongside format=json', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'fmt-diff' });
+    const res = await request(app)
+      .get(`/mcp/a/${link.token}/proposals/prop-missing/diff?format=json`)
+      .set('X-Test-Raw-Accept', '1');
+    expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.body.code).not.toBe('invalid_diff_format');
+  });
+
   it('serves markdown docs and JSON status/flows with Cache-Control: no-store', async () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ label: 'docs' });
 
     const docs = await request(app).get(`/mcp/a/${link.token}`);
     expect(docs.status).toBe(200);
-    expect(docs.headers['content-type']).toMatch(/markdown/);
+    expect(docs.headers['content-type']).toBe('text/markdown; charset=utf-8');
+    expect(docs.headers.vary).toMatch(/Accept/);
     expect(docs.headers['cache-control']).toMatch(/no-store/);
     expect(docs.text).toMatch(/human owner[\s*]*must approve/i);
     expect(docs.text).toMatch(/\./);
@@ -172,7 +200,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const workflowIdx = docs.text.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);
     expect(alsoIdx).toBeLessThan(workflowIdx);
-    expect(docs.text).toMatch(/YOUR-NODE-RED\/mcp\/rpc/);
+    expect(docs.text).toMatch(/"url": "http:\/\/127\.0\.0\.1:\d+\/mcp\/rpc"/);
     expect(docs.text).toMatch(/\.\/node-types/);
     expect(docs.text).toMatch(/palette\/search/);
     expect(docs.text).toMatch(/Manage palette/);
@@ -188,6 +216,7 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(status.body.caller.tokenKind).toBe('get_link');
     expect(status.body.caller.baseUrls.api).toBeUndefined();
     expect(status.body.caller.baseUrls.rpc).toBeUndefined();
+    expect(status.body).not.toHaveProperty('storageDir');
 
     const flows = await request(app).get(`/mcp/a/${link.token}/flows`);
     expect(flows.status).toBe(200);
@@ -445,7 +474,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const postLinks = await request(app)
       .post(`/mcp/a/${link.token}/links`)
       .send({ label: 'should-fail', kind: 'rest' });
-    expect(postLinks.status).toBe(405);
+    expect(postLinks.status).toBe(403);
     expect(postLinks.headers['content-type']).toMatch(/json/);
     expect(postLinks.headers['cache-control']).toMatch(/no-store/);
     expect(postLinks.body).toMatchObject({
@@ -458,15 +487,15 @@ describe('GET /mcp/a/<token> access links', () => {
     const postLinksId = await request(app)
       .post(`/mcp/a/${link.token}/links/anything`)
       .send({ label: 'nope' });
-    expect(postLinksId.status).toBe(405);
+    expect(postLinksId.status).toBe(403);
     expect(postLinksId.body.code).toBe('link_create_not_supported');
 
     const getLinks = await request(app).get(`/mcp/a/${link.token}/links`);
-    expect(getLinks.status).toBe(405);
+    expect(getLinks.status).toBe(403);
     expect(getLinks.body.code).toBe('link_create_not_supported');
 
     const deleteLinks = await request(app).delete(`/mcp/a/${link.token}/links/${link.id}`);
-    expect(deleteLinks.status).toBe(405);
+    expect(deleteLinks.status).toBe(403);
     expect(deleteLinks.body.code).toBe('link_create_not_supported');
 
     expect(linkStore.list()).toHaveLength(before);

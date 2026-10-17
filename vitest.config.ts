@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   define: {
-    __AI_ACCESS_VERSION__: JSON.stringify('0.1.0'),
+    __AI_ACCESS_VERSION__: JSON.stringify('0.1.1'),
   },
   test: {
     include: ['src/**/*.test.{js,ts}', 'test/**/*.test.{js,ts}'],

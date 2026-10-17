@@ -1319,6 +1319,11 @@ function pageClientScriptPartB(): string {
     var label = String(flowLabel || '').trim();
     if (!label || !t) return t;
     if (t.indexOf(label) >= 0) return t;
+    var idx = t.lastIndexOf(' in ');
+    if (idx >= 0) {
+      var tail = t.slice(idx + 4);
+      if (tail.length > 0 && label.indexOf(tail) === 0) return t;
+    }
     return t + ' in ' + label;
   }
 

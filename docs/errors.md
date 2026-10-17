@@ -25,7 +25,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `invalid_ttl` | 400 | `ttlSeconds` is zero, negative, not a number, or over the cap for the kind | ttlSeconds must be a positive number of seconds within the cap for the token kind: get_link ≤ 86400 (24h); rest and mcp ≤ 2592000 (30 days). | admin |
 | `access_link_limit` | 409 | Too many active links | Revoke an existing link first | admin |
 | `access_link_not_found` | 404 | Unknown link id on revoke | List links and use an existing id | admin |
-| `link_create_not_supported` | 405 | Attempted mint under a GET link | Admin mints via `POST /mcp/api/v1/links` only | GET |
+| `link_create_not_supported` | 403 | Attempted mint under a GET link | Admin mints via `POST /mcp/api/v1/links` only | GET |
 | `rate_limited` | 429 | Per-IP or per-token limit | Wait `retryAfter` / `Retry-After` | GET, REST, MCP |
 | `payload_too_large` | 413 | Body / proposal over ~1.5MB | Shrink content | GET, REST, MCP |
 | `invalid_json` | 400 | Malformed JSON body | Fix Content-Type / body | REST, MCP |

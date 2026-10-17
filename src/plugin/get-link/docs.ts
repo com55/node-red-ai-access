@@ -13,6 +13,11 @@ import type { AccessLinkAuthInfo } from '../types.js';
 export interface GetLinkDocsContext {
   link: AccessLinkAuthInfo;
   openapiPath: string;
+  /**
+   * Public origin (configured `publicBaseUrl`, else validated request origin);
+   * replaces the snippet placeholder when known.
+   */
+  publicOrigin?: string | undefined;
   restApiBase: string;
   mcpRpcPath: string;
 }
@@ -27,7 +32,15 @@ export function escapeForDocs(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function docsAlsoAvailable(rest: string, openapi: string, rpc: string): string {
+/** Placeholder MCP URL in client snippets when the public origin is unknown. */
+export const DEFAULT_RPC_URL_PLACEHOLDER = 'https://YOUR-NODE-RED/mcp/rpc';
+
+function docsAlsoAvailable(
+  rest: string,
+  openapi: string,
+  rpc: string,
+  rpcUrl: string = DEFAULT_RPC_URL_PLACEHOLDER
+): string {
   return `## Also available (prefer when your client can send headers)
 
 **Prefer MCP or REST** whenever the AI client can send custom headers and JSON
@@ -60,7 +73,7 @@ Use an **mcp** token from the owner (not the get_link path token).
 {
   "mcpServers": {
     "node-red-ai-access": {
-      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "url": "${rpcUrl}",
       "headers": {
         "Authorization": "Bearer aia_…"
       }
@@ -75,7 +88,7 @@ Use an **mcp** token from the owner (not the get_link path token).
 {
   "mcpServers": {
     "node-red-ai-access": {
-      "url": "https://YOUR-NODE-RED/mcp/rpc",
+      "url": "${rpcUrl}",
       "headers": {
         "Authorization": "Bearer aia_…"
       }
@@ -85,13 +98,13 @@ Use an **mcp** token from the owner (not the get_link path token).
 \`\`\`
 
 **ChatGPT connectors / custom GPT:** use Streamable HTTP URL
-\`https://YOUR-NODE-RED/mcp/rpc\` and set Authorization Bearer \`aia_…\`
+\`${rpcUrl}\` and set Authorization Bearer \`aia_…\`
 (an **mcp** token).
 
 **Generic Streamable HTTP** (curl):
 
 \`\`\`bash
-curl -sS -X POST "https://YOUR-NODE-RED/mcp/rpc" \\
+curl -sS -X POST "${rpcUrl}" \\
   -H "Authorization: Bearer aia_…" \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
@@ -119,6 +132,15 @@ A **human owner** must approve every flow change before it is deployed.
 All paths below are **relative to this link URL** (the address you used to open
 these docs).
 
+## Response content type
+
+Responses on GET links default to HTML so web fetchers used by AI chat apps
+accept them: a minimal page with the same text escaped in one \`<pre>\`.
+Request the raw type via Accept or ?format= (\`Accept: text/markdown\` or
+\`?format=md\` for this guide; \`Accept: application/json\` or \`?format=json\`
+for JSON; \`Accept: text/plain\` for raw text). Status codes and data are the
+same either way.
+
 ## Expiry
 
 - Link expires at: **${expires}** (ISO-8601); \`GET ./status\` also reports
@@ -139,7 +161,7 @@ these docs).
 - **Create / mint tokens** — this GET link **cannot** create access tokens.
   There is no \`./links\` create operation under \`/mcp/a/<token>\`. Only a human
   admin with \`*\` may mint tokens via \`POST /mcp/api/v1/links\` on the \`/mcp\`
-  Access links page. Attempts under this URL return \`405 link_create_not_supported\`.
+  Access links page. Attempts under this URL return \`403 link_create_not_supported\`.
 - Approve or reject proposals (human on \`/mcp\` only).
 - Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
 
@@ -217,7 +239,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
    with a summary sentence; pending+stale may include \`vsCurrent\`.
 9. Withdraw your own pending proposal:
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
-   not \`rejected\`).
+   not \`rejected\`). Only the link that created a proposal can withdraw it;
+   others get \`403 proposal_not_owned\`.
 
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.
@@ -277,7 +300,7 @@ There is **no** \`POST ./links\` (or any create-link) under this URL — GET lin
 
 Unknown paths under this link return JSON \`{ "code": "not_found" }\` (never HTML,
 and the token is never echoed). Attempted mint paths (\`./links\`) return
-\`405 link_create_not_supported\`.
+\`403 link_create_not_supported\`.
 `;
 }
 
@@ -507,7 +530,7 @@ strings you will paste publicly beyond this temporary link.
 }
 
 export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
-  const { link, openapiPath, restApiBase, mcpRpcPath } = ctx;
+  const { link, openapiPath, restApiBase, mcpRpcPath, publicOrigin } = ctx;
   const expires = escapeForDocs(link.expiresAt);
   const label = link.label ? ` (${escapeForDocs(link.label)})` : '';
   const openapi = escapeForDocs(openapiPath);
@@ -516,7 +539,12 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
 
   return [
     docsIntro(label, expires),
-    docsAlsoAvailable(rest, openapi, rpc),
+    docsAlsoAvailable(
+      rest,
+      openapi,
+      rpc,
+      publicOrigin ? escapeForDocs(`${publicOrigin}${mcpRpcPath}`) : DEFAULT_RPC_URL_PLACEHOLDER
+    ),
     docsWorkflow(),
     docsUrlTable(),
     docsProposeExamples(),

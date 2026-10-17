@@ -358,6 +358,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
     expect(statusJson.aiFeaturesEnabled).toBe(true);
     expect(statusJson.permission).toBeNull();
     expect(statusJson.caller).toMatchObject({ kind: 'access-link', linkId: link.id });
+    expect(statusJson).not.toHaveProperty('storageDir');
 
     const flows = await callTool(app, link.token, 'list_flows');
     expect(flows.status).toBe(200);

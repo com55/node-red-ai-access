@@ -110,7 +110,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   ),
   e(
     'link_create_not_supported',
-    405,
+    403,
     'Attempted mint under a GET link',
     'Admin mints via `POST /mcp/api/v1/links` only',
     GET_ONLY

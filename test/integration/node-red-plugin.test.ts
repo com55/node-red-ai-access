@@ -357,6 +357,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(res.body.caller.baseUrls).toEqual({
       api: '/mcp/api/v1',
       openapi: '/mcp/api/v1/openapi.yaml',
+      openapiJson: '/mcp/api/v1/openapi.json',
       discovery: '/mcp/api/v1',
     });
   });
@@ -394,7 +395,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
 
     const docs = await request(RED.httpAdmin).get(`/mcp/a/${token}`);
     expect(docs.status).toBe(200);
-    expect(docs.headers['content-type']).toMatch(/markdown/);
+    expect(docs.headers['content-type']).toBe('text/markdown; charset=utf-8');
     expect(docs.headers['cache-control']).toMatch(/no-store/);
     expect(docs.text).toMatch(/pending proposal/i);
 

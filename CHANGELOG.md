@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-17
+
+### Added
+
+- `/status` (REST and MCP `get_status`) now includes `openapiJson` in
+  `caller.baseUrls` for `rest` tokens, pointing at the served
+  `GET /mcp/api/v1/openapi.json`.
+- Optional `aiAccess.corsAllowedOrigins` setting (settings.js): list of browser
+  origins allowed to call the AI-facing endpoints cross-origin, with
+  `Vary: Origin` and `OPTIONS` preflight support. Origins match
+  case-insensitively and the configured canonical origin is echoed; malformed
+  origins are rejected. `WWW-Authenticate`, `Retry-After`, and the `RateLimit*`
+  headers are exposed to allowed origins.
+- Optional `aiAccess.publicBaseUrl` setting (settings.js) that sets the public
+  base URL for absolute links (access-link `url`, proposal `reviewUrl`,
+  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`.
+- The MCP client snippets in the GET-link guide use the public origin
+  (`publicBaseUrl`, else the validated request origin) instead of the
+  `https://YOUR-NODE-RED` placeholder, which remains only when the origin cannot
+  be determined.
+
+### Changed
+
+- **Behavior change:** every response on the GET access-link channel
+  (`/mcp/a/<token>/*`), including the markdown guide and JSON success and error
+  bodies, now defaults to `Content-Type: text/html; charset=utf-8`, because some
+  AI web fetchers only read `text/html`. The HTML is a minimal document with the
+  same markdown or pretty-printed JSON, fully escaped in one `<pre>`, with safe
+  relative `./…` links linkified (no scripts, no external resources). Status
+  codes and data are unchanged. The previous representation is returned when
+  `Accept` explicitly lists `text/markdown` or `application/json`, or
+  `?format=md` / `?format=json` is set; an explicit `Accept: text/plain` returns
+  the raw text as `text/plain`. All `/mcp/a/*` responses carry `Vary: Accept`,
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+  `X-Robots-Tag: noindex, nofollow`, and `X-Content-Type-Options: nosniff`; HTML
+  adds a restrictive `Content-Security-Policy`. REST and MCP are unchanged.
+- **Behavior change:** the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`,
+  `/mcp/rpc`) no longer send `Access-Control-Allow-Origin: *` (inherited from
+  Node-RED's admin app). No CORS headers are sent unless the request `Origin` is
+  listed in `aiAccess.corsAllowedOrigins`. Only browser-based callers are
+  affected; server-side clients are not.
+- Attempts to create, list, or revoke access links under a GET access link
+  (`/mcp/a/<token>/links`) now return **403** `link_create_not_supported`
+  instead of 405. Error registry, `docs/errors.md`, OpenAPI, and get-link docs
+  updated.
+- `/status` (GET link, REST, and MCP `get_status`) no longer includes
+  `storageDir` for access-link callers; it remains in admin-session responses
+  (shown on the `/mcp` page).
+
+### Fixed
+
+- Proposal titles no longer repeat the flow name when a long `<title> in <flow>`
+  was capped at 80 characters.
+- GET-link HTML no longer linkifies template paths such as `./nodes/<id>`.
+
+- **Security:** absolute URLs no longer copy unvalidated `X-Forwarded-Proto` /
+  `X-Forwarded-Host` (or `Host`) values. The scheme must be exactly `http` or
+  `https` (else the connection scheme is used); hosts must be a DNS name, IPv4,
+  or bracketed IPv6 literal with an optional port 1-65535, with no userinfo,
+  path, query, fragment, or whitespace. Invalid forwarded hosts fall back to
+  `Host`; an invalid `Host` falls back to a relative path.
+
+- Absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`) used
+  `http://` behind a TLS-terminating proxy. With Express `trust proxy` enabled
+  the first `X-Forwarded-Proto` value is now used explicitly; without it, set
+  `aiAccess.publicBaseUrl`. Forwarded headers stay ignored when `trust proxy` is
+  off.
+
 ## [0.1.0] - 2026-10-16
 
 First public release of **Node-RED AI Access**: an admin-gated Node-RED 4 plugin
@@ -316,4 +384,5 @@ Requires Node.js 20+.
   auth, 413 limits) served at `GET /mcp/api/v1/openapi.yaml`; README install,
   config, `/mcp` usage, and AI quickstart.
 
+[0.1.1]: https://github.com/com55/node-red-ai-access/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/com55/node-red-ai-access/releases/tag/v0.1.0

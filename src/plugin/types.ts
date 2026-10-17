@@ -38,6 +38,18 @@ export interface AiAccessSettings {
    * Max requests per access-link token per window (default: 300).
    */
   rateLimitMaxPerToken?: number;
+  /**
+   * Explicit public base URL (e.g. `https://nodered.example.com`) used for
+   * absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`).
+   * Overrides `Host` / `X-Forwarded-*`. settings.js only.
+   */
+  publicBaseUrl?: string;
+  /**
+   * Browser origins allowed to call the AI-facing endpoints (`/mcp/a`,
+   * `/mcp/api`, `/mcp/rpc`) cross-origin, e.g. `['https://app.example.com']`.
+   * Default: none (no CORS headers). settings.js only.
+   */
+  corsAllowedOrigins?: string[];
 }
 
 export type AiAccessPermission = 'read' | '*';
@@ -60,6 +72,8 @@ export interface AiAccessStatusCallerBaseUrls {
   rpc: string;
   /** OpenAPI YAML URL. */
   openapi: string;
+  /** OpenAPI JSON URL (same spec as `openapi`). */
+  openapiJson: string;
   /** Unauthenticated JSON discovery index. */
   discovery: string;
 }
@@ -105,7 +119,7 @@ export interface AiAccessStatus {
    */
   permission: AiAccessPermission | null;
   capabilities: AiAccessCapabilities;
-  storageDir: string;
+  storageDir?: string;
   /** Effective default access-link TTL (seconds). */
   defaultLinkTtlSeconds: number;
   /** Effective max concurrent active access links. */

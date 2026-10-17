@@ -265,6 +265,7 @@ describe('status tokenKind + wrong_token_kind hint', () => {
     expect(baseUrlsForTokenKind('rest', '/')).toEqual({
       api: '/mcp/api/v1',
       openapi: '/mcp/api/v1/openapi.yaml',
+      openapiJson: '/mcp/api/v1/openapi.json',
       discovery: '/mcp/api/v1',
     });
     expect(baseUrlsForTokenKind('mcp', '/')).toEqual({

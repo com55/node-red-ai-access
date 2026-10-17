@@ -9,6 +9,7 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import type { ProposalStore } from '../storage/proposals.js';
 
+import { requestPublicOrigin } from './access-path.js';
 import {
   aiOpsErrorToHttp,
   getAccessibleProposal,
@@ -21,6 +22,7 @@ import {
 } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
+import { getLinkContentNegotiation } from './content-type.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
 import {
@@ -86,6 +88,10 @@ export function registerGetLinkRoutes(
   // IP first (always), then token auth, then per-token bucket.
   const gate = [dual.ip, requireGetLinkToken(RED, options.linkStore), dual.token];
 
+  // Every response under /mcp/a defaults to text/plain (markdown + JSON bodies
+  // unchanged); `Accept` or `?format=md|json` opts in to the real type.
+  app.use('/mcp/a', getLinkContentNegotiation());
+
   app.get(
     base,
     ...gate,
@@ -105,6 +111,7 @@ export function registerGetLinkRoutes(
         openapiPath: `${restBase}/openapi.yaml`,
         restApiBase: restBase,
         mcpRpcPath: mcpRpcPath(RED.settings.httpAdminRoot),
+        publicOrigin: requestPublicOrigin(req),
       });
       res.status(200).type('text/markdown; charset=utf-8').send(md);
     })
@@ -228,7 +235,7 @@ export function registerGetLinkRoutes(
   registerGetLinkDraftRoutes(app, base, gate, draftStore, options, httpAdminRoot);
 
   // GET links never mint tokens — reject any /links path under /mcp/a explicitly
-  // (405 JSON) so a half-wired create route cannot appear by accident.
+  // (403 JSON) so a half-wired create route cannot appear by accident.
   const rejectMint = getLinkMintNotSupportedHandler();
   app.all(`${base}/links`, rejectMint);
   app.all(`${base}/links/:id`, rejectMint);
@@ -443,7 +450,11 @@ function registerGetLinkDiffRoute(
           id,
           presentOptionsFor(req, httpAdminRoot)
         );
-        const resolved = resolveDiffFormat(queryString(req.query, 'format'));
+        // `format=json|md` is the channel's response-type opt-in, not a diff format.
+        const rawFormat = queryString(req.query, 'format');
+        const resolved = resolveDiffFormat(
+          rawFormat === 'json' || rawFormat === 'md' ? undefined : rawFormat
+        );
         if (!resolved.ok) {
           jsonError(
             res,

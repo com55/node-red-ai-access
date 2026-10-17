@@ -74,9 +74,58 @@ module.exports = {
     rateLimitWindowMs: 60000,
     rateLimitMaxPerIp: 600,
     rateLimitMaxPerToken: 300,
+    // Public base URL for absolute links (access-link url, reviewUrl,
+    // accessLinksUrl). Set this behind a TLS-terminating proxy (default: unset)
+    // publicBaseUrl: 'https://nodered.example.com',
+    // Browser origins allowed to call /mcp/a, /mcp/api, and /mcp/rpc
+    // cross-origin (default: none — no CORS headers are sent)
+    // corsAllowedOrigins: ['https://app.example.com'],
   },
 };
 ```
+
+### Absolute URLs behind a reverse proxy
+
+Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
+`token_expired`) are absolute URLs built by one shared helper:
+
+1. `aiAccess.publicBaseUrl`, when set, is used as-is (scheme, host, and an
+   optional path prefix). It is read from `settings.js` only.
+2. Otherwise, when Express `trust proxy` is enabled (for example
+   `httpServerOptions: { 'trust proxy': true }`), the first `X-Forwarded-Proto`
+   and `X-Forwarded-Host` values are used.
+3. Otherwise the request `Host` header and the connection protocol are used;
+   `X-Forwarded-*` headers are ignored so clients cannot spoof link origins.
+
+Forwarded and `Host` values are validated: the scheme must be `http` or `https`
+(else the connection scheme is used) and the host must be a DNS name, IPv4, or
+bracketed IPv6 literal with an optional port. An invalid forwarded host falls
+back to `Host`; an invalid `Host` yields relative paths. The MCP client snippets
+in the GET-link guide use the same origin, and show a `https://YOUR-NODE-RED`
+placeholder only when no origin can be determined.
+
+Behind a TLS-terminating proxy (for example Cloudflare) with neither option set,
+links therefore start with `http://`.
+
+### CORS
+
+CORS only affects code running in a browser (a web page calling the plugin from
+another origin). Server-side AI fetchers and agents (for example Gemini,
+ChatGPT, or an MCP client running outside a browser) ignore CORS and are not
+affected by this setting.
+
+By default the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`, `/mcp/rpc`) send
+**no** CORS headers, overriding Node-RED's built-in
+`Access-Control-Allow-Origin: *` for those paths. To allow a browser app, list
+its origin in `aiAccess.corsAllowedOrigins` (`settings.js` only, restart
+required). For a listed `Origin` the response echoes it in
+`Access-Control-Allow-Origin` with `Vary: Origin`, and `OPTIONS` preflight
+returns `204` with allowed methods (`GET, POST, DELETE, OPTIONS`) and headers
+(`Authorization`, `Content-Type`, `Accept`, `Mcp-Session-Id`,
+`Mcp-Protocol-Version`, `Last-Event-ID`). Origins match case-insensitively and
+the configured origin is echoed; malformed origins are rejected. Exposed headers
+include `Mcp-Session-Id`, `WWW-Authenticate`, `Retry-After`, and the
+`RateLimit*` headers. Other origins get no CORS headers.
 
 ### Settings precedence
 
@@ -215,6 +264,21 @@ errors mark it **failed**. Reject never mutates flows.
    `nodes:[{op:'add'|'remove'|'set',...}]` (or a full `replace_flow` document).
    Field drafts validate node/field at `draft/new`. Unknown `/mcp/a/*` paths
    return JSON `not_found` without echoing the token.
+
+   Responses on GET links default to HTML, because some AI web fetchers only
+   read `text/html`. The HTML is a minimal document (no scripts or external
+   resources) holding the same markdown or pretty-printed JSON, fully escaped in
+   one `<pre>`, with relative `./…` links clickable. Request the real type via
+   Accept or `?format=`: `Accept: text/markdown` or `?format=md` for the guide,
+   `Accept: application/json` or `?format=json` for JSON. An explicit
+   `Accept: text/plain` returns the same raw text as `text/plain`. No Accept,
+   `*/*`, `text/html`, or browser-style lists get HTML. Status codes and data
+   are unchanged; every response carries `Vary: Accept`,
+   `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+   `X-Robots-Tag: noindex, nofollow`, and `X-Content-Type-Options: nosniff`, and
+   HTML adds a restrictive `Content-Security-Policy`. REST and MCP endpoints are
+   not affected.
+
 3. Changes become **pending proposals**; a human approves on `/mcp`. JSON
    responses use `Cache-Control: no-store`.
 
