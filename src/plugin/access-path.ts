@@ -36,8 +36,8 @@ export function isTrustProxyEnabled(req: Request): boolean {
   return Boolean(req.app.get('trust proxy'));
 }
 
-function firstForwardedHost(req: Request): string | undefined {
-  const forwarded = req.get('x-forwarded-host');
+function firstForwardedValue(req: Request, header: string): string | undefined {
+  const forwarded = req.get(header);
   if (typeof forwarded !== 'string' || forwarded.length === 0) {
     return undefined;
   }
@@ -45,19 +45,62 @@ function firstForwardedHost(req: Request): string | undefined {
   return first && first.length > 0 ? first : undefined;
 }
 
+/** Explicit public base URL from `settings.aiAccess.publicBaseUrl` (normalized). */
+let configuredPublicBaseUrl: string | undefined;
+
+/**
+ * Normalize a configured public base URL: must be absolute http(s); trailing
+ * slashes, query and fragment are dropped. Returns undefined when invalid/empty.
+ */
+export function normalizePublicBaseUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined;
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return undefined;
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
+/** Bind (or clear) the explicit public base URL used for absolute URLs. */
+export function bindPublicBaseUrl(value: unknown): void {
+  configuredPublicBaseUrl = normalizePublicBaseUrl(value);
+}
+
 /**
  * Public origin (`https://host[:port]`) for absolute URLs.
- * Uses `X-Forwarded-Host` / `req.protocol` (which honors `X-Forwarded-Proto`)
- * only when Express `trust proxy` is set; otherwise uses `Host` + socket proto.
+ *
+ * 1. `settings.aiAccess.publicBaseUrl` when configured (overrides everything).
+ * 2. When Express `trust proxy` is set: first `X-Forwarded-Proto` /
+ *    `X-Forwarded-Host` value (falling back to `req.protocol` / `Host`).
+ * 3. Otherwise `Host` + socket protocol — `X-Forwarded-*` is ignored so an
+ *    untrusted client cannot spoof link origins.
+ *
  * Returns undefined when no Host is available.
  */
 export function requestPublicOrigin(req: Request): string | undefined {
+  if (configuredPublicBaseUrl) {
+    return configuredPublicBaseUrl;
+  }
   const trust = isTrustProxyEnabled(req);
-  const host = trust ? (firstForwardedHost(req) ?? req.get('host')) : req.get('host');
+  const host = trust
+    ? (firstForwardedValue(req, 'x-forwarded-host') ?? req.get('host'))
+    : req.get('host');
   if (!host) {
     return undefined;
   }
-  return `${req.protocol}://${host}`;
+  const forwardedProto = trust
+    ? firstForwardedValue(req, 'x-forwarded-proto')?.toLowerCase()
+    : undefined;
+  const protocol =
+    forwardedProto === 'http' || forwardedProto === 'https' ? forwardedProto : req.protocol;
+  return `${protocol}://${host}`;
 }
 
 /** Join origin + path, or return path alone when origin is unknown. */
@@ -69,7 +112,7 @@ export function absolutizePath(req: Request, path: string): string {
 /**
  * Build a shareable absolute URL for an access link from the creating request.
  * Falls back to a root-relative path when Host is unavailable.
- * Honors `X-Forwarded-*` only when Express `trust proxy` is enabled.
+ * Honors `publicBaseUrl`, then `X-Forwarded-*` only when Express `trust proxy` is enabled.
  */
 export function buildAccessLinkUrl(
   req: Request,

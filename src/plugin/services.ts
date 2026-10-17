@@ -15,6 +15,7 @@ import { ensureAiAccessDirs, resolveAiAccessPaths } from '../storage/paths.js';
 import { ProposalStore } from '../storage/proposals.js';
 import { SettingsStore } from '../storage/settings-store.js';
 
+import { bindPublicBaseUrl } from './access-path.js';
 import { createConfiguredLinkStore } from './links.js';
 import {
   createNodeTypesAdapter,
@@ -83,6 +84,8 @@ export function createPluginServices(
   if (options.bindSettings !== false) {
     bindSettingsStore(settingsStore);
   }
+
+  bindPublicBaseUrl(RED.settings.aiAccess?.publicBaseUrl);
 
   const linkStore = options.linkStore ?? createConfiguredLinkStore(RED);
   linkStore.configureDefaults({

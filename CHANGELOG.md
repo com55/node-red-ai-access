@@ -13,6 +13,9 @@ and this project adheres to
 - `/status` (REST and MCP `get_status`) now includes `openapiJson` in
   `caller.baseUrls` for `rest` tokens, pointing at the served
   `GET /mcp/api/v1/openapi.json`.
+- Optional `aiAccess.publicBaseUrl` setting (settings.js) that sets the public
+  base URL for absolute links (access-link `url`, proposal `reviewUrl`,
+  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`.
 
 ### Changed
 
@@ -20,6 +23,14 @@ and this project adheres to
   (`/mcp/a/<token>/links`) now return **403** `link_create_not_supported`
   instead of 405. Error registry, `docs/errors.md`, OpenAPI, and get-link docs
   updated.
+
+### Fixed
+
+- Absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`) used
+  `http://` behind a TLS-terminating proxy. With Express `trust proxy` enabled
+  the first `X-Forwarded-Proto` value is now used explicitly; without it, set
+  `aiAccess.publicBaseUrl`. Forwarded headers stay ignored when `trust proxy` is
+  off.
 
 ## [0.1.0] - 2026-10-16
 

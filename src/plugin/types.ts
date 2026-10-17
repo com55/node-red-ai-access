@@ -38,6 +38,12 @@ export interface AiAccessSettings {
    * Max requests per access-link token per window (default: 300).
    */
   rateLimitMaxPerToken?: number;
+  /**
+   * Explicit public base URL (e.g. `https://nodered.example.com`) used for
+   * absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`).
+   * Overrides `Host` / `X-Forwarded-*`. settings.js only.
+   */
+  publicBaseUrl?: string;
 }
 
 export type AiAccessPermission = 'read' | '*';

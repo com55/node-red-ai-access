@@ -74,9 +74,28 @@ module.exports = {
     rateLimitWindowMs: 60000,
     rateLimitMaxPerIp: 600,
     rateLimitMaxPerToken: 300,
+    // Public base URL for absolute links (access-link url, reviewUrl,
+    // accessLinksUrl). Set this behind a TLS-terminating proxy (default: unset)
+    // publicBaseUrl: 'https://nodered.example.com',
   },
 };
 ```
+
+### Absolute URLs behind a reverse proxy
+
+Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
+`token_expired`) are absolute URLs built by one shared helper:
+
+1. `aiAccess.publicBaseUrl`, when set, is used as-is (scheme, host, and an
+   optional path prefix). It is read from `settings.js` only.
+2. Otherwise, when Express `trust proxy` is enabled (for example
+   `httpServerOptions: { 'trust proxy': true }`), the first `X-Forwarded-Proto`
+   and `X-Forwarded-Host` values are used.
+3. Otherwise the request `Host` header and the connection protocol are used;
+   `X-Forwarded-*` headers are ignored so clients cannot spoof link origins.
+
+Behind a TLS-terminating proxy (for example Cloudflare) with neither option set,
+links therefore start with `http://`.
 
 ### Settings precedence
 
