@@ -68,44 +68,103 @@ export function normalizePublicBaseUrl(value: unknown): string | undefined {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
-/** Configured public base URL (normalized), or undefined when unset. */
-export function getConfiguredPublicBaseUrl(): string | undefined {
-  return configuredPublicBaseUrl;
-}
-
 /** Bind (or clear) the explicit public base URL used for absolute URLs. */
 export function bindPublicBaseUrl(value: unknown): void {
   configuredPublicBaseUrl = normalizePublicBaseUrl(value);
+}
+
+const DNS_LABEL = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?';
+const HOSTNAME_RE = new RegExp(`^${DNS_LABEL}(?:\\.${DNS_LABEL})*$`);
+const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+const IPV6_LITERAL_RE = /^\[[0-9A-Fa-f:.]+\]$/;
+
+/**
+ * Strictly validate a `host[:port]` value (Host / X-Forwarded-Host).
+ * Accepts a DNS hostname (≤253 chars), IPv4, or a bracketed IPv6 literal, each
+ * with an optional port 1-65535. Anything else (userinfo, path, query,
+ * fragment, whitespace, other characters) is rejected.
+ */
+export function isValidHostHeader(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 260) return false;
+  let host: string;
+  let port: string | undefined;
+  const v6 = /^(\[[^\]]*\])(?::(\d+))?$/.exec(value);
+  if (v6) {
+    host = v6[1]!;
+    port = v6[2];
+    if (!IPV6_LITERAL_RE.test(host)) return false;
+    try {
+      new URL(`http://${host}/`);
+    } catch {
+      return false;
+    }
+  } else {
+    const m = /^([^:]+)(?::(\d+))?$/.exec(value);
+    if (!m) return false;
+    host = m[1]!;
+    port = m[2];
+    if (host.length > 253) return false;
+    if (!IPV4_RE.test(host) && !HOSTNAME_RE.test(host)) return false;
+  }
+  if (port !== undefined) {
+    if (!/^\d{1,5}$/.test(port)) return false;
+    const n = Number(port);
+    if (n < 1 || n > 65535) return false;
+  }
+  return true;
+}
+
+/** `http` | `https` from a header value (case-insensitive, trimmed), else undefined. */
+function validScheme(value: string | undefined): 'http' | 'https' | undefined {
+  const v = value?.trim().toLowerCase();
+  return v === 'http' || v === 'https' ? v : undefined;
+}
+
+/** Scheme of the actual connection (ignores X-Forwarded-Proto). */
+function connectionScheme(req: Request): 'http' | 'https' {
+  const socket = req.socket as { encrypted?: boolean } | undefined;
+  if (socket?.encrypted) return 'https';
+  // Fallback for mocked requests without a socket.
+  return socket ? 'http' : (validScheme(req.protocol) ?? 'http');
 }
 
 /**
  * Public origin (`https://host[:port]`) for absolute URLs.
  *
  * 1. `settings.aiAccess.publicBaseUrl` when configured (overrides everything).
- * 2. When Express `trust proxy` is set: first `X-Forwarded-Proto` /
- *    `X-Forwarded-Host` value (falling back to `req.protocol` / `Host`).
- * 3. Otherwise `Host` + socket protocol — `X-Forwarded-*` is ignored so an
+ * 2. When Express `trust proxy` is set: the first `X-Forwarded-Proto` value if
+ *    it is exactly http/https, else the connection scheme; the first
+ *    `X-Forwarded-Host` value if it passes {@link isValidHostHeader}, else
+ *    `Host`.
+ * 3. Otherwise `Host` + connection scheme — `X-Forwarded-*` is ignored so an
  *    untrusted client cannot spoof link origins.
  *
- * Returns undefined when no Host is available.
+ * `Host` is validated the same way. Returns undefined (callers fall back to a
+ * relative path) when no valid host is available.
  */
 export function requestPublicOrigin(req: Request): string | undefined {
   if (configuredPublicBaseUrl) {
     return configuredPublicBaseUrl;
   }
   const trust = isTrustProxyEnabled(req);
-  const host = trust
-    ? (firstForwardedValue(req, 'x-forwarded-host') ?? req.get('host'))
-    : req.get('host');
+  const forwardedHost = trust ? firstForwardedValue(req, 'x-forwarded-host') : undefined;
+  const hostHeader = req.get('host')?.trim();
+  const host = isValidHostHeader(forwardedHost)
+    ? forwardedHost
+    : isValidHostHeader(hostHeader)
+      ? hostHeader
+      : undefined;
   if (!host) {
     return undefined;
   }
-  const forwardedProto = trust
-    ? firstForwardedValue(req, 'x-forwarded-proto')?.toLowerCase()
-    : undefined;
-  const protocol =
-    forwardedProto === 'http' || forwardedProto === 'https' ? forwardedProto : req.protocol;
-  return `${protocol}://${host}`;
+  const scheme =
+    (trust ? validScheme(firstForwardedValue(req, 'x-forwarded-proto')) : undefined) ??
+    connectionScheme(req);
+  try {
+    return new URL(`${scheme}://${host}`).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Join origin + path, or return path alone when origin is unknown. */

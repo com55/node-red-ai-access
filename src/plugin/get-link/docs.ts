@@ -13,8 +13,11 @@ import type { AccessLinkAuthInfo } from '../types.js';
 export interface GetLinkDocsContext {
   link: AccessLinkAuthInfo;
   openapiPath: string;
-  /** Configured `aiAccess.publicBaseUrl`; replaces the snippet placeholder when set. */
-  publicBaseUrl?: string | undefined;
+  /**
+   * Public origin (configured `publicBaseUrl`, else validated request origin);
+   * replaces the snippet placeholder when known.
+   */
+  publicOrigin?: string | undefined;
   restApiBase: string;
   mcpRpcPath: string;
 }
@@ -29,7 +32,7 @@ export function escapeForDocs(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-/** Placeholder MCP URL in client snippets when no `publicBaseUrl` is configured. */
+/** Placeholder MCP URL in client snippets when the public origin is unknown. */
 export const DEFAULT_RPC_URL_PLACEHOLDER = 'https://YOUR-NODE-RED/mcp/rpc';
 
 function docsAlsoAvailable(
@@ -523,7 +526,7 @@ strings you will paste publicly beyond this temporary link.
 }
 
 export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
-  const { link, openapiPath, restApiBase, mcpRpcPath, publicBaseUrl } = ctx;
+  const { link, openapiPath, restApiBase, mcpRpcPath, publicOrigin } = ctx;
   const expires = escapeForDocs(link.expiresAt);
   const label = link.label ? ` (${escapeForDocs(link.label)})` : '';
   const openapi = escapeForDocs(openapiPath);
@@ -536,7 +539,7 @@ export function renderGetLinkDocs(ctx: GetLinkDocsContext): string {
       rest,
       openapi,
       rpc,
-      publicBaseUrl ? escapeForDocs(`${publicBaseUrl}${mcpRpcPath}`) : DEFAULT_RPC_URL_PLACEHOLDER
+      publicOrigin ? escapeForDocs(`${publicOrigin}${mcpRpcPath}`) : DEFAULT_RPC_URL_PLACEHOLDER
     ),
     docsWorkflow(),
     docsUrlTable(),

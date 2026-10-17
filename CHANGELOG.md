@@ -21,9 +21,11 @@ and this project adheres to
   headers are exposed to allowed origins.
 - Optional `aiAccess.publicBaseUrl` setting (settings.js) that sets the public
   base URL for absolute links (access-link `url`, proposal `reviewUrl`,
-  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`. When set, the MCP
-  client snippets in the GET-link guide use it instead of the
-  `https://YOUR-NODE-RED` placeholder.
+  `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`.
+- The MCP client snippets in the GET-link guide use the public origin
+  (`publicBaseUrl`, else the validated request origin) instead of the
+  `https://YOUR-NODE-RED` placeholder, which remains only when the origin cannot
+  be determined.
 
 ### Changed
 
@@ -48,6 +50,13 @@ and this project adheres to
   (shown on the `/mcp` page).
 
 ### Fixed
+
+- **Security:** absolute URLs no longer copy unvalidated `X-Forwarded-Proto` /
+  `X-Forwarded-Host` (or `Host`) values. The scheme must be exactly `http` or
+  `https` (else the connection scheme is used); hosts must be a DNS name, IPv4,
+  or bracketed IPv6 literal with an optional port 1-65535, with no userinfo,
+  path, query, fragment, or whitespace. Invalid forwarded hosts fall back to
+  `Host`; an invalid `Host` falls back to a relative path.
 
 - Absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`) used
   `http://` behind a TLS-terminating proxy. With Express `trust proxy` enabled

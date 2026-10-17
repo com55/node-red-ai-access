@@ -97,8 +97,12 @@ Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
 3. Otherwise the request `Host` header and the connection protocol are used;
    `X-Forwarded-*` headers are ignored so clients cannot spoof link origins.
 
-When `publicBaseUrl` is set, the MCP client snippets in the GET-link guide use
-it instead of the `https://YOUR-NODE-RED` placeholder.
+Forwarded and `Host` values are validated: the scheme must be `http` or `https`
+(else the connection scheme is used) and the host must be a DNS name, IPv4, or
+bracketed IPv6 literal with an optional port. An invalid forwarded host falls
+back to `Host`; an invalid `Host` yields relative paths. The MCP client snippets
+in the GET-link guide use the same origin, and show a `https://YOUR-NODE-RED`
+placeholder only when no origin can be determined.
 
 Behind a TLS-terminating proxy (for example Cloudflare) with neither option set,
 links therefore start with `http://`.

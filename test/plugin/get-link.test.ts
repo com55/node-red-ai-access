@@ -174,6 +174,14 @@ describe('GET /mcp/a/<token> access links', () => {
     }
   });
 
+  it('guide MCP snippets use the validated request origin', async () => {
+    const { app, linkStore } = createApp({ userDir });
+    const link = linkStore.create({ label: 'snippet' });
+    const res = await request(app).get(`/mcp/a/${link.token}`).set('Host', 'nr.example:1880');
+    expect(res.text).toContain('"url": "http://nr.example:1880/mcp/rpc"');
+    expect(res.text).not.toContain('YOUR-NODE-RED');
+  });
+
   it('supports ?format=md for the guide', async () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ label: 'fmt-md' });
@@ -267,7 +275,7 @@ describe('GET /mcp/a/<token> access links', () => {
     const workflowIdx = docs.text.indexOf('## Step-by-step workflow');
     expect(alsoIdx).toBeGreaterThan(0);
     expect(alsoIdx).toBeLessThan(workflowIdx);
-    expect(docs.text).toMatch(/YOUR-NODE-RED\/mcp\/rpc/);
+    expect(docs.text).toMatch(/"url": "http:\/\/127\.0\.0\.1:\d+\/mcp\/rpc"/);
     expect(docs.text).toMatch(/\.\/node-types/);
     expect(docs.text).toMatch(/palette\/search/);
     expect(docs.text).toMatch(/Manage palette/);

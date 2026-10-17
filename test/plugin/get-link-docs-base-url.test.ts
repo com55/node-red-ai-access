@@ -18,15 +18,15 @@ const base = {
 };
 
 describe('GET-link guide MCP URL in client snippets', () => {
-  it('keeps the placeholder when publicBaseUrl is not configured', () => {
+  it('keeps the placeholder when the public origin is unknown', () => {
     const md = renderGetLinkDocs(base);
     expect(md).toContain(DEFAULT_RPC_URL_PLACEHOLDER);
   });
 
-  it('uses publicBaseUrl + MCP path when configured', () => {
+  it('uses the public origin + MCP path when known', () => {
     const md = renderGetLinkDocs({
       ...base,
-      publicBaseUrl: 'https://nr.example',
+      publicOrigin: 'https://nr.example',
       mcpRpcPath: '/admin/mcp/rpc',
     });
     expect(md).not.toContain('YOUR-NODE-RED');
