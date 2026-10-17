@@ -89,6 +89,38 @@ describe('AI-facing CORS', () => {
     expect(pre.headers['access-control-allow-methods']).toBeUndefined();
   });
 
+  it('installs on the parent app when the plugin app is mounted after core CORS', async () => {
+    const parent = express();
+    parent.use((req: Request, res: Response, next: NextFunction) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+      next();
+    });
+    const runtime = express();
+    parent.use(runtime);
+    runtime.get('/mcp/api/v1/status', (_req, res) => res.json({ ok: true }));
+    const origins = normalizeCorsOrigins(['https://app.example']);
+    installAiCorsMiddleware(
+      runtime,
+      aiCorsMiddleware(() => origins)
+    );
+
+    const plain = await request(parent)
+      .get('/mcp/api/v1/status')
+      .set('Origin', 'https://x.example');
+    expect(plain.headers['access-control-allow-origin']).toBeUndefined();
+    const pre = await request(parent)
+      .options('/mcp/api/v1/status')
+      .set('Origin', 'https://app.example')
+      .set('Access-Control-Request-Method', 'GET');
+    expect(pre.status).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe('https://app.example');
+    expect(pre.headers['access-control-allow-headers']).toBe(CORS_ALLOWED_HEADERS);
+  });
+
   it('normalizeCorsOrigins keeps valid http(s) origins only', () => {
     expect(
       normalizeCorsOrigins(['https://a.example/path', '*', 'ftp://x', 'nope', 'http://b:8080'])

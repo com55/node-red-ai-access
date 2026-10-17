@@ -66,6 +66,9 @@ export function aiCorsMiddleware(getAllowedOrigins: () => string[]) {
     }
 
     // Drop CORS headers set by other middleware (Node-RED core sends `*`).
+    for (const name of res.getHeaderNames()) {
+      if (name.startsWith('access-control-')) res.removeHeader(name);
+    }
     const originalSetHeader = res.setHeader.bind(res);
     let owned = false;
     res.setHeader = ((name: string, value: number | string | readonly string[]) => {
@@ -109,16 +112,21 @@ interface RouterLike {
 }
 
 /**
- * Register the middleware on `app` and move it to the front of the router
- * stack so it runs before Node-RED's built-in `cors({ origin: '*' })`.
- * Express 4 keeps the router on `app._router`, Express 5 on `app.router`.
+ * Register the middleware so it runs before Node-RED's built-in
+ * `cors({ origin: '*' })`. Plugins receive the runtime admin app, which
+ * Node-RED mounts inside the editor-api admin app *after* that CORS handler,
+ * so the middleware goes on the parent app (when mounted) and is moved to the
+ * front of its router stack. Express 4 keeps the router on `app._router`,
+ * Express 5 on `app.router`.
  */
 export function installAiCorsMiddleware(
   app: { use: (fn: ReturnType<typeof aiCorsMiddleware>) => unknown },
   middleware: ReturnType<typeof aiCorsMiddleware>
 ): void {
-  app.use(middleware);
-  const holder = app as unknown as { _router?: RouterLike; router?: RouterLike };
+  const parent = (app as unknown as { parent?: typeof app }).parent;
+  const target = parent && typeof parent.use === 'function' ? parent : app;
+  target.use(middleware);
+  const holder = target as unknown as { _router?: RouterLike; router?: RouterLike };
   const router = holder._router ?? holder.router;
   const stack = router?.stack;
   if (!Array.isArray(stack) || stack.length < 2) return;
