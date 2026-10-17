@@ -34,10 +34,12 @@ info:
     may create tokens on `POST /mcp/api/v1/links`.
 
     1. `GET {url}` — markdown docs (workflow, exact paths, errors, limits),
-       served as `text/plain; charset=utf-8` unless `Accept` explicitly asks
-       for `text/markdown` or `?format=md` is set. JSON responses under
-       `/mcp/a/<token>` are likewise `text/plain` unless `Accept` lists
-       `application/json` or `?format=json` is set (`Vary: Accept`).
+       served by default as `text/html; charset=utf-8` (the same text escaped in
+       a `<pre>`), because some AI web fetchers only read HTML. Every response
+       under `/mcp/a/<token>` follows the same rule: `Accept: text/markdown`
+       or `application/json`, or `?format=md` / `?format=json`, return the
+       raw representation; `Accept: text/plain` returns the raw text as
+       `text/plain` (`Vary: Accept`).
     2. `GET {url}/status`, `/flows`, …
     3. Layered read (prefer before loading whole tabs):
        `GET {url}/flows/{id}?summary=1` → `GET {url}/search?q=&flow=` →

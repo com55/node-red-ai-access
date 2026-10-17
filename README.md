@@ -265,12 +265,19 @@ errors mark it **failed**. Reject never mutates flows.
    Field drafts validate node/field at `draft/new`. Unknown `/mcp/a/*` paths
    return JSON `not_found` without echoing the token.
 
-   Responses on GET links default to text/plain so web readers used by AI chat
-   apps accept them; request the real type via Accept or ?format=
-   (`Accept: text/markdown` or `?format=md` for the guide,
-   `Accept: application/json` or `?format=json` for JSON). A bare `*/*` Accept
-   gets `text/plain`. Bodies and status codes are unchanged; responses carry
-   `Vary: Accept`. REST and MCP endpoints are not affected.
+   Responses on GET links default to HTML, because some AI web fetchers only
+   read `text/html`. The HTML is a minimal document (no scripts or external
+   resources) holding the same markdown or pretty-printed JSON, fully escaped in
+   one `<pre>`, with relative `./…` links clickable. Request the real type via
+   Accept or `?format=`: `Accept: text/markdown` or `?format=md` for the guide,
+   `Accept: application/json` or `?format=json` for JSON. An explicit
+   `Accept: text/plain` returns the same raw text as `text/plain`. No Accept,
+   `*/*`, `text/html`, or browser-style lists get HTML. Status codes and data
+   are unchanged; every response carries `Vary: Accept`,
+   `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+   `X-Robots-Tag: noindex, nofollow`, and `X-Content-Type-Options: nosniff`, and
+   HTML adds a restrictive `Content-Security-Policy`. REST and MCP endpoints are
+   not affected.
 
 3. Changes become **pending proposals**; a human approves on `/mcp`. JSON
    responses use `Cache-Control: no-store`.

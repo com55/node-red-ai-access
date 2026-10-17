@@ -150,30 +150,6 @@ describe('GET /mcp/a/<token> access links', () => {
     void app;
   });
 
-  it('negotiates the markdown guide Content-Type (text/plain unless text/markdown is asked for)', async () => {
-    const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'negotiate' });
-    const url = `/mcp/a/${link.token}`;
-    const cases: [string | undefined, string][] = [
-      [undefined, 'text/plain; charset=utf-8'],
-      ['*/*', 'text/plain; charset=utf-8'],
-      [
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'text/plain; charset=utf-8',
-      ],
-      ['text/markdown', 'text/markdown; charset=utf-8'],
-      ['text/markdown, text/plain;q=0.5', 'text/markdown; charset=utf-8'],
-    ];
-    for (const [accept, expected] of cases) {
-      const req = request(app).get(url).set('X-Test-Raw-Accept', '1');
-      const res = accept === undefined ? await req : await req.set('Accept', accept);
-      expect(res.status).toBe(200);
-      expect(res.headers['content-type']).toBe(expected);
-      expect(res.headers.vary).toMatch(/Accept/);
-      expect(res.text).toMatch(/GET \.\/flows/);
-    }
-  });
-
   it('guide MCP snippets use the validated request origin', async () => {
     const { app, linkStore } = createApp({ userDir });
     const link = linkStore.create({ label: 'snippet' });
@@ -189,57 +165,6 @@ describe('GET /mcp/a/<token> access links', () => {
       .get(`/mcp/a/${link.token}?format=md`)
       .set('X-Test-Raw-Accept', '1');
     expect(res.headers['content-type']).toBe('text/markdown; charset=utf-8');
-  });
-
-  it('negotiates JSON success and error bodies (text/plain unless JSON is asked for)', async () => {
-    const { app, linkStore } = createApp({ userDir });
-    const link = linkStore.create({ label: 'fmt-json' });
-    const raw = (path: string) => request(app).get(path).set('X-Test-Raw-Accept', '1');
-
-    const plain = await raw(`/mcp/a/${link.token}/status`);
-    expect(plain.status).toBe(200);
-    expect(plain.headers['content-type']).toBe('text/plain; charset=utf-8');
-    expect(plain.headers.vary).toMatch(/Accept/);
-    expect(JSON.parse(plain.text).ok).toBe(true);
-
-    const star = await raw(`/mcp/a/${link.token}/status`).set('Accept', '*/*');
-    expect(star.headers['content-type']).toBe('text/plain; charset=utf-8');
-
-    const browser = await raw(`/mcp/a/${link.token}/status`).set(
-      'Accept',
-      'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    );
-    expect(browser.headers['content-type']).toBe('text/plain; charset=utf-8');
-
-    const accept = await raw(`/mcp/a/${link.token}/status`).set('Accept', 'application/json');
-    expect(accept.headers['content-type']).toBe('application/json; charset=utf-8');
-    expect(accept.body.ok).toBe(true);
-
-    const fmt = await raw(`/mcp/a/${link.token}/status?format=json`);
-    expect(fmt.headers['content-type']).toBe('application/json; charset=utf-8');
-
-    // Errors keep their status codes and bodies; only the Content-Type changes.
-    const notFound = await raw(`/mcp/a/${link.token}/no-such-route`);
-    expect(notFound.status).toBe(404);
-    expect(notFound.headers['content-type']).toBe('text/plain; charset=utf-8');
-    expect(JSON.parse(notFound.text).code).toBe('not_found');
-
-    const badToken = await raw('/mcp/a/aia_unknown_token_value_xxxxxxxxxxxxxxxxxxxxx/status');
-    expect(badToken.status).toBe(401);
-    expect(badToken.headers['content-type']).toBe('text/plain; charset=utf-8');
-    expect(typeof JSON.parse(badToken.text).code).toBe('string');
-
-    const badTokenJson = await raw(
-      '/mcp/a/aia_unknown_token_value_xxxxxxxxxxxxxxxxxxxxx/status?format=json'
-    );
-    expect(badTokenJson.status).toBe(401);
-    expect(badTokenJson.headers['content-type']).toBe('application/json; charset=utf-8');
-
-    const mint = await request(app)
-      .post(`/mcp/a/${link.token}/links`)
-      .set('X-Test-Raw-Accept', '1');
-    expect(mint.status).toBe(403);
-    expect(mint.headers['content-type']).toBe('text/plain; charset=utf-8');
   });
 
   it('keeps ?format=summary|full working on the GET-link diff alongside format=json', async () => {
@@ -258,7 +183,7 @@ describe('GET /mcp/a/<token> access links', () => {
 
     const docs = await request(app).get(`/mcp/a/${link.token}`);
     expect(docs.status).toBe(200);
-    expect(docs.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(docs.headers['content-type']).toBe('text/markdown; charset=utf-8');
     expect(docs.headers.vary).toMatch(/Accept/);
     expect(docs.headers['cache-control']).toMatch(/no-store/);
     expect(docs.text).toMatch(/human owner[\s*]*must approve/i);

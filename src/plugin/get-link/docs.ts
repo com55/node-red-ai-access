@@ -134,9 +134,12 @@ these docs).
 
 ## Response content type
 
-Responses on GET links default to text/plain so web readers used by AI chat apps accept them; request the real type via Accept or ?format=
-(\`Accept: text/markdown\` or \`?format=md\` for this guide; \`Accept: application/json\`
-or \`?format=json\` for JSON). Bodies and status codes are the same either way.
+Responses on GET links default to HTML so web fetchers used by AI chat apps
+accept them: a minimal page with the same text escaped in one \`<pre>\`.
+Request the raw type via Accept or ?format= (\`Accept: text/markdown\` or
+\`?format=md\` for this guide; \`Accept: application/json\` or \`?format=json\`
+for JSON; \`Accept: text/plain\` for raw text). Status codes and data are the
+same either way.
 
 ## Expiry
 
