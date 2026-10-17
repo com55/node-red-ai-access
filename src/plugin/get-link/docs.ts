@@ -239,7 +239,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
    with a summary sentence; pending+stale may include \`vsCurrent\`.
 9. Withdraw your own pending proposal:
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
-   not \`rejected\`).
+   not \`rejected\`). Only the link that created a proposal can withdraw it;
+   others get \`403 proposal_not_owned\`.
 
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.

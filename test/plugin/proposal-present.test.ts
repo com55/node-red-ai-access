@@ -12,6 +12,7 @@ import {
   buildProposalReviewPath,
   buildProposalReviewUrl,
   buildReplaceFlowTitle,
+  ensureTitleIncludesFlowName,
   formatProposalSubmittedAt,
   formatUtcOffset,
   parseIncludeQuery,
@@ -398,5 +399,32 @@ describe('presentProposalForApi', () => {
     });
     expect(full.payload?.flowId).toBe('tab1');
     expect(full.baseFlow?.nodes).toHaveLength(1);
+  });
+});
+
+describe('ensureTitleIncludesFlowName with long labels', () => {
+  const label = 'Test Flow With A Very Long Name Used For Title Truncation Purposes Only Here';
+
+  it('does not append the flow suffix twice after the title was capped', () => {
+    const full = `Rename tab in ${label}`;
+    expect(full.length).toBeGreaterThan(80);
+    const stored = sanitizeProposalTitle(full)!;
+    expect(stored.length).toBe(80);
+    expect(ensureTitleIncludesFlowName(stored, label)).toBe(stored);
+    expect(ensureTitleIncludesFlowName(stored, label).split(' in ')).toHaveLength(2);
+  });
+
+  it('still appends the suffix when the title does not mention the flow', () => {
+    expect(ensureTitleIncludesFlowName('Rename tab', label)).toBe(`Rename tab in ${label}`);
+    expect(ensureTitleIncludesFlowName('Move in place', 'Main')).toBe('Move in place in Main');
+  });
+
+  it('resolveProposalTitle shows the capped stored title once', () => {
+    const proposal = baseProposal({
+      title: `Rename tab in ${label}`,
+      flowLabel: label,
+    });
+    const title = resolveProposalTitle(proposal);
+    expect(title.match(/ in /g)).toHaveLength(1);
   });
 });

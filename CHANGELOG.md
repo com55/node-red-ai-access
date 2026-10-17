@@ -57,6 +57,10 @@ and this project adheres to
 
 ### Fixed
 
+- Proposal titles no longer repeat the flow name when a long `<title> in <flow>`
+  was capped at 80 characters.
+- GET-link HTML no longer linkifies template paths such as `./nodes/<id>`.
+
 - **Security:** absolute URLs no longer copy unvalidated `X-Forwarded-Proto` /
   `X-Forwarded-Host` (or `Host`) values. The scheme must be exactly `http` or
   `https` (else the connection scheme is used); hosts must be a DNS name, IPv4,

@@ -102,7 +102,11 @@ export const RELATIVE_LINK_RE =
 
 /** Wrap safe relative links (no `..` segments) in anchors. Input must be escaped. */
 export function linkifyEscaped(escaped: string): string {
-  return escaped.replace(RELATIVE_LINK_RE, match => {
+  return escaped.replace(RELATIVE_LINK_RE, (match: string, offset: number) => {
+    // Skip templates such as `./nodes/<id>` (escaped `&lt;` right after).
+    if (escaped.startsWith('&lt;', offset + match.length)) {
+      return match;
+    }
     // Drop trailing sentence punctuation from the link.
     const link = match.replace(/[.]+$/, '');
     const rest = match.slice(link.length);
@@ -116,13 +120,11 @@ export function linkifyEscaped(escaped: string): string {
 /** Minimal standalone HTML document with the text in one escaped `<pre>`. */
 export function renderGetLinkHtml(text: string, baseHref?: string): string {
   const base = baseHref ? `<base href="${escapeHtml(baseHref)}">` : '';
-  return (
-    '<!doctype html>\n<html><head><meta charset="utf-8">' +
-    base +
-    '<title>Node-RED AI Access</title></head><body><pre>' +
-    linkifyEscaped(escapeHtml(text)) +
-    '</pre></body></html>\n'
-  );
+  return `<!doctype html>\n<html><head><meta charset="utf-8">${
+    base
+  }<title>Node-RED AI Access</title></head><body><pre>${linkifyEscaped(
+    escapeHtml(text)
+  )}</pre></body></html>\n`;
 }
 
 /** `/…/mcp/a/<token>/` base path from the original URL (safe token chars only). */

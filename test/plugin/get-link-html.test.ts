@@ -256,7 +256,7 @@ describe('GET-link HTML representation', () => {
     const t = `/mcp/a/${link.token}`;
     const res = await raw(app, t);
     expect(res.text).toContain(`<base href="${t}/">`);
-    const hrefs = [...res.text.matchAll(/<a href="([^"]+)">/g)].map(m => m[1] as string);
+    const hrefs = [...res.text.matchAll(/<a href="([^"]+)">/g)].map(m => m[1]!);
     expect(hrefs).toContain('./status');
     expect(hrefs).toContain('./flows');
     for (const href of hrefs) {
@@ -286,6 +286,10 @@ describe('linkify / escaping helpers', () => {
     }
     const attr = linkifyEscaped(escapeHtml('./foo"onmouseover=alert(1)'));
     expect(attr).toBe('<a href="./foo">./foo</a>&quot;onmouseover=alert(1)');
+    expect(
+      linkifyEscaped(escapeHtml('GET ./nodes/<id> and ./draft/<draftId>/append'))
+    ).not.toContain('<a ');
+    expect(linkifyEscaped(escapeHtml('./status then <x>'))).toContain('<a href="./status">');
     expect(linkifyEscaped('see ./status.')).toBe('see <a href="./status">./status</a>.');
     expect(linkifyEscaped('GET ./flows?summary=1 now')).toContain(
       '<a href="./flows?summary=1">./flows?summary=1</a>'
