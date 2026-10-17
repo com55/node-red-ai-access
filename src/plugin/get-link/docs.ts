@@ -119,6 +119,12 @@ A **human owner** must approve every flow change before it is deployed.
 All paths below are **relative to this link URL** (the address you used to open
 these docs).
 
+## Response content type
+
+Responses on GET links default to text/plain so web readers used by AI chat apps accept them; request the real type via Accept or ?format=
+(\`Accept: text/markdown\` or \`?format=md\` for this guide; \`Accept: application/json\`
+or \`?format=json\` for JSON). Bodies and status codes are the same either way.
+
 ## Expiry
 
 - Link expires at: **${expires}** (ISO-8601); \`GET ./status\` also reports

@@ -21,6 +21,7 @@ import {
 } from './ai-ops.js';
 import { mcpApiBase, mcpRpcPath } from './auth.js';
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
+import { getLinkContentNegotiation } from './content-type.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { renderGetLinkDocs } from './get-link/docs.js';
 import {
@@ -85,6 +86,10 @@ export function registerGetLinkRoutes(
   const base = '/mcp/a/:token';
   // IP first (always), then token auth, then per-token bucket.
   const gate = [dual.ip, requireGetLinkToken(RED, options.linkStore), dual.token];
+
+  // Every response under /mcp/a defaults to text/plain (markdown + JSON bodies
+  // unchanged); `Accept` or `?format=md|json` opts in to the real type.
+  app.use('/mcp/a', getLinkContentNegotiation());
 
   app.get(
     base,
@@ -443,7 +448,11 @@ function registerGetLinkDiffRoute(
           id,
           presentOptionsFor(req, httpAdminRoot)
         );
-        const resolved = resolveDiffFormat(queryString(req.query, 'format'));
+        // `format=json|md` is the channel's response-type opt-in, not a diff format.
+        const rawFormat = queryString(req.query, 'format');
+        const resolved = resolveDiffFormat(
+          rawFormat === 'json' || rawFormat === 'md' ? undefined : rawFormat
+        );
         if (!resolved.ok) {
           jsonError(
             res,

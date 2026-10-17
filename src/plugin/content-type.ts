@@ -48,3 +48,53 @@ export function requireJsonContentType(channel: ErrorChannel = 'rest') {
     res.status(mapped.statusCode).json(mapped.body);
   };
 }
+
+const TEXT_PLAIN = 'text/plain; charset=utf-8';
+
+function formatParam(req: Request): string | undefined {
+  const value = req.query?.format;
+  return typeof value === 'string' ? value.toLowerCase() : undefined;
+}
+
+/**
+ * Negotiated Content-Type for a GET-link response whose real type is
+ * `text/markdown` or `application/json`. Defaults to `text/plain` (some AI web
+ * readers reject other types); the real type is used only when `?format=`
+ * asks for it or `Accept` explicitly prefers it over text/plain — a bare
+ * wildcard Accept yields text/plain.
+ */
+export function negotiateGetLinkContentType(req: Request, realType: string): string {
+  const mime = realType.split(';')[0]?.trim().toLowerCase() ?? '';
+  if (mime === 'text/markdown') {
+    return formatParam(req) === 'md' ||
+      req.accepts(['text/plain', 'text/markdown']) === 'text/markdown'
+      ? 'text/markdown; charset=utf-8'
+      : TEXT_PLAIN;
+  }
+  if (mime === 'application/json') {
+    return formatParam(req) === 'json' ||
+      req.accepts(['text/plain', 'application/json']) === 'application/json'
+      ? 'application/json; charset=utf-8'
+      : TEXT_PLAIN;
+  }
+  return realType;
+}
+
+/**
+ * GET-link channel middleware: rewrites `text/markdown` / `application/json`
+ * Content-Type headers per {@link negotiateGetLinkContentType} and adds
+ * `Vary: Accept`. Bodies and status codes are untouched.
+ */
+export function getLinkContentNegotiation() {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    res.vary('Accept');
+    const originalSetHeader = res.setHeader.bind(res);
+    res.setHeader = ((name: string, value: number | string | readonly string[]) => {
+      if (name.toLowerCase() === 'content-type' && typeof value === 'string') {
+        return originalSetHeader(name, negotiateGetLinkContentType(req, value));
+      }
+      return originalSetHeader(name, value);
+    }) as Response['setHeader'];
+    next();
+  };
+}

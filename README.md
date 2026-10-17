@@ -254,6 +254,14 @@ errors mark it **failed**. Reject never mutates flows.
    `nodes:[{op:'add'|'remove'|'set',...}]` (or a full `replace_flow` document).
    Field drafts validate node/field at `draft/new`. Unknown `/mcp/a/*` paths
    return JSON `not_found` without echoing the token.
+
+   Responses on GET links default to text/plain so web readers used by AI chat
+   apps accept them; request the real type via Accept or ?format=
+   (`Accept: text/markdown` or `?format=md` for the guide,
+   `Accept: application/json` or `?format=json` for JSON). A bare `*/*` Accept
+   gets `text/plain`. Bodies and status codes are unchanged; responses carry
+   `Vary: Accept`. REST and MCP endpoints are not affected.
+
 3. Changes become **pending proposals**; a human approves on `/mcp`. JSON
    responses use `Cache-Control: no-store`.
 

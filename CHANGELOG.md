@@ -22,6 +22,13 @@ and this project adheres to
 
 ### Changed
 
+- **Behavior change:** every response on the GET access-link channel
+  (`/mcp/a/<token>/*`), including the markdown guide and JSON success and error
+  bodies, now defaults to `Content-Type: text/plain; charset=utf-8` with an
+  unchanged body and status, because some AI web readers reject `text/markdown`.
+  The real type (`text/markdown` or `application/json`) is returned only when
+  `Accept` explicitly lists it or `?format=md` / `?format=json` is set;
+  responses carry `Vary: Accept`. REST and MCP are unchanged.
 - **Behavior change:** the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`,
   `/mcp/rpc`) no longer send `Access-Control-Allow-Origin: *` (inherited from
   Node-RED's admin app). No CORS headers are sent unless the request `Origin` is
