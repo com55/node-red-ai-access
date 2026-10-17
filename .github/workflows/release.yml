@@ -65,11 +65,12 @@ jobs:
       - name: Quality
         run: yarn quality
 
-      - name: Test
-        run: yarn test
-
+      # Build before testing: some tests check the built dist/plugin.cjs.
       - name: Production build
         run: yarn build:prod
+
+      - name: Test
+        run: yarn test
 
       - name: Pack tarball
         run: |

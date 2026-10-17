@@ -1,8 +1,8 @@
 # Releasing
 
 Releases are published by the `Release` workflow
-(`.github/workflows/release.yml`). Pushing a `v*` tag runs quality checks, tests
-and the production build. It then publishes the package to npm and creates or
+(`.github/workflows/release.yml`). Pushing a `v*` tag runs quality checks, the
+production build and tests. It then publishes the package to npm and creates or
 updates the GitHub release for that tag, with the CHANGELOG section as notes and
 the `npm pack` tarball attached.
 
