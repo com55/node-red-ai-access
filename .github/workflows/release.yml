@@ -86,7 +86,8 @@ jobs:
             echo "$PACKAGE_NAME@$VERSION is already on npm; skipping publish."
             exit 0
           fi
-          tarball="$(ls release/*.tgz)"
+          # "./" stops npm from reading release/x.tgz as a GitHub user/repo shorthand.
+          tarball="$(ls ./release/*.tgz)"
           if [ -n "$NPM_TOKEN" ]; then
             echo "Publishing with the NPM_TOKEN secret (first-publish fallback)."
             NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish "$tarball" --access public --provenance
@@ -112,7 +113,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tarball="$(ls release/*.tgz)"
+          tarball="$(ls ./release/*.tgz)"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
             gh release upload "$TAG" "$tarball" --clobber
