@@ -86,7 +86,6 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
       allowWithoutAdminAuth: access.allowWithoutAdminAuth,
       permission: null,
       capabilities: { view: true, manageLinks: false, approveProposals: false },
-      storageDir: getStorageDir(RED.settings),
       defaultLinkTtlSeconds: aiSettings.defaultLinkTtlSeconds,
       maxActiveLinks: aiSettings.maxActiveLinks,
       defaultDeploymentType: aiSettings.defaultDeploymentType,

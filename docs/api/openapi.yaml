@@ -1777,7 +1777,6 @@ components:
         - allowWithoutAdminAuth
         - permission
         - capabilities
-        - storageDir
         - defaultLinkTtlSeconds
         - maxActiveLinks
         - defaultDeploymentType
@@ -1807,6 +1806,9 @@ components:
           $ref: '#/components/schemas/Capabilities'
         storageDir:
           type: string
+          description: |
+            Server-side plugin storage directory. Admin sessions only; omitted
+            for access-link (AI token) callers.
         defaultLinkTtlSeconds:
           type: integer
         maxActiveLinks:

@@ -44,6 +44,12 @@ export interface AiAccessSettings {
    * Overrides `Host` / `X-Forwarded-*`. settings.js only.
    */
   publicBaseUrl?: string;
+  /**
+   * Browser origins allowed to call the AI-facing endpoints (`/mcp/a`,
+   * `/mcp/api`, `/mcp/rpc`) cross-origin, e.g. `['https://app.example.com']`.
+   * Default: none (no CORS headers). settings.js only.
+   */
+  corsAllowedOrigins?: string[];
 }
 
 export type AiAccessPermission = 'read' | '*';
@@ -113,7 +119,7 @@ export interface AiAccessStatus {
    */
   permission: AiAccessPermission | null;
   capabilities: AiAccessCapabilities;
-  storageDir: string;
+  storageDir?: string;
   /** Effective default access-link TTL (seconds). */
   defaultLinkTtlSeconds: number;
   /** Effective max concurrent active access links. */

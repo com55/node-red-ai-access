@@ -13,16 +13,27 @@ and this project adheres to
 - `/status` (REST and MCP `get_status`) now includes `openapiJson` in
   `caller.baseUrls` for `rest` tokens, pointing at the served
   `GET /mcp/api/v1/openapi.json`.
+- Optional `aiAccess.corsAllowedOrigins` setting (settings.js): list of browser
+  origins allowed to call the AI-facing endpoints cross-origin, with
+  `Vary: Origin` and `OPTIONS` preflight support.
 - Optional `aiAccess.publicBaseUrl` setting (settings.js) that sets the public
   base URL for absolute links (access-link `url`, proposal `reviewUrl`,
   `accessLinksUrl`), overriding `Host` and `X-Forwarded-*`.
 
 ### Changed
 
+- **Behavior change:** the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`,
+  `/mcp/rpc`) no longer send `Access-Control-Allow-Origin: *` (inherited from
+  Node-RED's admin app). No CORS headers are sent unless the request `Origin` is
+  listed in `aiAccess.corsAllowedOrigins`. Only browser-based callers are
+  affected; server-side clients are not.
 - Attempts to create, list, or revoke access links under a GET access link
   (`/mcp/a/<token>/links`) now return **403** `link_create_not_supported`
   instead of 405. Error registry, `docs/errors.md`, OpenAPI, and get-link docs
   updated.
+- `/status` (GET link, REST, and MCP `get_status`) no longer includes
+  `storageDir` for access-link callers; it remains in admin-session responses
+  (shown on the `/mcp` page).
 
 ### Fixed
 

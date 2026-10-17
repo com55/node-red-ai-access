@@ -77,6 +77,9 @@ module.exports = {
     // Public base URL for absolute links (access-link url, reviewUrl,
     // accessLinksUrl). Set this behind a TLS-terminating proxy (default: unset)
     // publicBaseUrl: 'https://nodered.example.com',
+    // Browser origins allowed to call /mcp/a, /mcp/api, and /mcp/rpc
+    // cross-origin (default: none — no CORS headers are sent)
+    // corsAllowedOrigins: ['https://app.example.com'],
   },
 };
 ```
@@ -96,6 +99,23 @@ Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
 
 Behind a TLS-terminating proxy (for example Cloudflare) with neither option set,
 links therefore start with `http://`.
+
+### CORS
+
+CORS only affects code running in a browser (a web page calling the plugin from
+another origin). Server-side AI fetchers and agents (for example Gemini,
+ChatGPT, or an MCP client running outside a browser) ignore CORS and are not
+affected by this setting.
+
+By default the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`, `/mcp/rpc`) send
+**no** CORS headers, overriding Node-RED's built-in
+`Access-Control-Allow-Origin: *` for those paths. To allow a browser app, list
+its origin in `aiAccess.corsAllowedOrigins` (`settings.js` only, restart
+required). For a listed `Origin` the response echoes it in
+`Access-Control-Allow-Origin` with `Vary: Origin`, and `OPTIONS` preflight
+returns `204` with allowed methods (`GET, POST, DELETE, OPTIONS`) and headers
+(`Authorization`, `Content-Type`, `Accept`, `Mcp-Session-Id`,
+`Mcp-Protocol-Version`, `Last-Event-ID`). Other origins get no CORS headers.
 
 ### Settings precedence
 

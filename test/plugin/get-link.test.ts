@@ -188,6 +188,7 @@ describe('GET /mcp/a/<token> access links', () => {
     expect(status.body.caller.tokenKind).toBe('get_link');
     expect(status.body.caller.baseUrls.api).toBeUndefined();
     expect(status.body.caller.baseUrls.rpc).toBeUndefined();
+    expect(status.body).not.toHaveProperty('storageDir');
 
     const flows = await request(app).get(`/mcp/a/${link.token}/flows`);
     expect(flows.status).toBe(200);

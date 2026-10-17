@@ -195,6 +195,7 @@ describe('REST access-link UX', () => {
     expect(Array.isArray(res.body.caller.permissions)).toBe(true);
     expect(res.body.caller.permissions.length).toBeGreaterThan(0);
     // rest token: omit rpc (mcp-only surface)
+    expect(res.body).not.toHaveProperty('storageDir');
     expect(res.body.caller.baseUrls).toEqual({
       api: '/mcp/api/v1',
       openapi: '/mcp/api/v1/openapi.yaml',
