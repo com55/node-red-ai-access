@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   EDITOR_SIDEBAR_ASSET_VERSION,
@@ -32,6 +32,7 @@ function createFakeJQuery() {
     htmlContent: string;
     attrs: Record<string, string>;
     children: El[];
+    parent?: El;
     props: Record<string, unknown>;
     handlers: Record<string, ((...args: unknown[]) => void)[]>;
   }
@@ -61,7 +62,10 @@ function createFakeJQuery() {
         }
         for (const el of els) {
           el.attrs[name] = value;
-          if (name === 'id') el.id = value;
+          if (name === 'id') {
+            el.id = value;
+            registry.set(value, el);
+          }
           if (name === 'class') el.className = value;
         }
         return api;
@@ -79,9 +83,28 @@ function createFakeJQuery() {
       appendTo(parent: { elements?: El[] }) {
         const target = parent?.elements?.[0];
         if (target) {
-          for (const el of els) target.children.push(el);
+          for (const el of els) {
+            target.children.push(el);
+            el.parent = target;
+          }
         }
         return api;
+      },
+      parent() {
+        return wrap(els.flatMap(el => (el.parent ? [el.parent] : [])));
+      },
+      closest(selector: string) {
+        const matches: El[] = [];
+        for (const el of els) {
+          let current: El | undefined = el;
+          while (current && !current.className?.split(/\s+/).includes(selector.slice(1)))
+            current = current.parent;
+          if (current) matches.push(current);
+        }
+        return wrap(matches);
+      },
+      find(selector: string) {
+        return wrap(selector.split(',').flatMap(part => $(part.trim()).elements));
       },
       append(child: { elements?: El[] } | string) {
         if (typeof child === 'string') return api;
@@ -96,7 +119,11 @@ function createFakeJQuery() {
         for (const el of els) el.props[name] = value;
         return api;
       },
-      toggle() {
+      toggle(visible?: boolean) {
+        for (const el of els) el.props.visible = visible;
+        return api;
+      },
+      show() {
         return api;
       },
       toggleClass(name: string, on?: boolean) {
@@ -310,4 +337,114 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(js).toMatch(/removeClass\('ok error'\)/);
     expect(js).not.toMatch(/#ai-access-flash \{[^}]*position:\s*absolute/);
   });
+  it.each([true, false])(
+    'renders field locks and read-only controls (canEdit=%s)',
+    async canEdit => {
+      vi.useFakeTimers();
+      try {
+        const $ = createFakeJQuery();
+        let load!: () => void;
+        const settings = {
+          enabled: true,
+          allowWithoutAdminAuth: false,
+          defaultLinkTtlSeconds: 7200,
+          defaultDeploymentType: 'flows',
+          maxActiveLinks: 9,
+          publicBaseUrl: 'https://locked.example',
+          corsAllowedOrigins: ['https://browser.example'],
+          rateLimitWindowMs: 60000,
+          rateLimitMaxPerIp: 600,
+          rateLimitMaxPerToken: 300,
+        };
+        const data = {
+          canEdit,
+          adminAuthEnabled: true,
+          settings,
+          trustProxy: 'loopback',
+          sources: {
+            publicBaseUrl: 'settings.js',
+            defaultDeploymentType: 'settings.js',
+            defaultLinkTtlSeconds: 'settings.js',
+          },
+        };
+        const fetcher = vi.fn(async (url: string, _options?: unknown) => ({
+          ok: true,
+          text: async () =>
+            JSON.stringify(
+              url.endsWith('/check-public-url')
+                ? { ok: true, status: 200, message: 'Discovery endpoint is reachable' }
+                : url.endsWith('/proposals')
+                  ? { proposals: [] }
+                  : data
+            ),
+        }));
+        runInNewContext(renderEditorSidebarJs(), {
+          window: { setTimeout },
+          setTimeout,
+          clearTimeout,
+          $,
+          fetch: fetcher,
+          localStorage: { getItem: () => null },
+          document: {
+            getElementById: () => null,
+            createElement: () => ({}),
+            head: {
+              appendChild() {
+                return undefined;
+              },
+            },
+          },
+          RED: {
+            settings: {},
+            actions: {
+              add() {
+                return undefined;
+              },
+            },
+            sidebar: {
+              addTab(options: { onchange: () => void }) {
+                load = options.onchange;
+              },
+              show() {
+                return undefined;
+              },
+            },
+          },
+        });
+        load();
+        await vi.advanceTimersByTimeAsync(0);
+        expect($('#ai-access-public-url').elements[0]!.props).toMatchObject({
+          value: 'https://locked.example',
+          disabled: true,
+        });
+        expect($('#ai-access-lock-public-url').elements[0]!.props.visible).toBe(true);
+        expect($('#ai-access-rate-ip').elements[0]!.props.disabled).toBe(!canEdit);
+        expect($('#ai-access-cors').elements[0]!.props.value).toBe('https://browser.example');
+        expect($('#ai-access-trust-proxy').elements[0]!.textContent).toBe('loopback');
+        expect($('#ai-access-check-public-url').elements[0]!.props.disabled).toBe(!canEdit);
+        expect($('#ai-access-ttl').elements[0]!.props.value).toBe(2);
+        if (canEdit) {
+          $('#ai-access-check-public-url').elements[0]!.handlers.click![0]!();
+          await vi.advanceTimersByTimeAsync(0);
+          expect($('#ai-access-check-result').elements[0]!.textContent).toContain(
+            'OK: Discovery endpoint is reachable (HTTP 200)'
+          );
+          $('#ai-access-rate-ip').elements[0]!.props.value = 20;
+          $('#ai-access-rate-ip').elements[0]!.handlers.change![0]!();
+          await vi.advanceTimersByTimeAsync(400);
+          const put = fetcher.mock.calls.find(
+            call => (call[1] as { method?: string } | undefined)?.method === 'PUT'
+          );
+          expect(put).toBeDefined();
+          const payload = JSON.parse((put![1] as { body: string }).body);
+          expect(payload.rateLimitMaxPerIp).toBe(20);
+          expect(payload).not.toHaveProperty('publicBaseUrl');
+          expect(payload).not.toHaveProperty('defaultDeploymentType');
+          expect(payload).not.toHaveProperty('defaultLinkTtlSeconds');
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
 });

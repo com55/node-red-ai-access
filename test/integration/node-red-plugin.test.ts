@@ -474,26 +474,25 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     expect(got.body.canEdit).toBe(true);
     expect(got.body.adminAuthEnabled).toBe(true);
     expect(got.body.settings.enabled).toBe(true);
-    expect(got.body.precedence[0]).toBe('disk');
+    expect(got.body.precedence[0]).toBe('settings.js');
 
     const put = await request(RED.httpAdmin).put('/mcp/api/v1/settings').set(auth).send({
       defaultDeploymentType: 'full',
       defaultLinkTtlSeconds: 7200,
     });
     expect(put.status).toBe(200);
-    expect(put.body.settings.defaultDeploymentType).toBe('full');
+    expect(put.body.settings.defaultDeploymentType).toBe('nodes');
     expect(put.body.settings.defaultLinkTtlSeconds).toBe(7200);
-    expect(put.body.sources.defaultDeploymentType).toBe('disk');
+    expect(put.body.sources.defaultDeploymentType).toBe('settings.js');
 
-    const settingsFile = join(userDir, '.ai-access', 'settings.json');
-    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({
-      defaultDeploymentType: 'full',
+    const settingsFile = join(userDir, '.ai-access', 'config.json');
+    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toEqual({
       defaultLinkTtlSeconds: 7200,
     });
 
     const status = await request(RED.httpAdmin).get('/mcp/api/v1/status').set(auth);
     expect(status.status).toBe(200);
-    expect(status.body.defaultDeploymentType).toBe('full');
+    expect(status.body.defaultDeploymentType).toBe('nodes');
     expect(status.body.defaultLinkTtlSeconds).toBe(7200);
     expect(status.body.aiAccessEnabled).toBe(true);
   });
