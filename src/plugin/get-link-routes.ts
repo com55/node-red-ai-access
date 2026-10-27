@@ -70,7 +70,7 @@ export interface RegisterGetLinkRoutesOptions {
   catalogueUrl?: string;
   draftStore?: DraftStore;
   /** Optional dual rate-limit stack override (tests). */
-  rateLimiters?: ReturnType<typeof createAiAccessDualRateLimiters>;
+  rateLimiters?: { ip: import('express').RequestHandler; token: import('express').RequestHandler };
   /** Optional limits from `aiAccess` settings or test overrides. */
   rateLimit?: AiAccessSettings;
 }

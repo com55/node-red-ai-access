@@ -20,7 +20,7 @@ import {
   requireStarPermission,
 } from './auth.js';
 import { requireJsonContentType } from './content-type.js';
-import { aiCorsMiddleware, installAiCorsMiddleware, normalizeCorsOrigins } from './cors.js';
+import { aiCorsMiddleware, installAiCorsMiddleware } from './cors.js';
 import { discoveryIndexHandler, mcpApiNotFoundHandler } from './discovery.js';
 import { EDITOR_SIDEBAR_ASSET_VERSION, renderEditorSidebarJs } from './editor-sidebar.js';
 import { listFlowsHandler } from './flows-routes.js';
@@ -57,10 +57,14 @@ import {
   rejectProposalHandler,
   withdrawProposalHandler,
 } from './proposals-routes.js';
-import { createAiAccessDualRateLimiters } from './rate-limit.js';
+import { createLiveAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute } from './route-errors.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
-import { getSettingsHandler, putSettingsHandler } from './settings-routes.js';
+import {
+  checkPublicUrlHandler,
+  getSettingsHandler,
+  putSettingsHandler,
+} from './settings-routes.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -101,8 +105,8 @@ const PLUGIN_ID = 'com55-ai-access';
 /** Public shell + discovery (no authorization middleware — safe to extract). */
 function registerMcpShellAndDiscovery(
   RED: NodeRedPluginAPI,
-  limiter: ReturnType<typeof createAiAccessDualRateLimiters>['ip'],
-  tokenLimiter: ReturnType<typeof createAiAccessDualRateLimiters>['token']
+  limiter: ReturnType<typeof createLiveAiAccessDualRateLimiters>['ip'],
+  tokenLimiter: ReturnType<typeof createLiveAiAccessDualRateLimiters>['token']
 ): void {
   // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
   // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
@@ -154,18 +158,20 @@ export function registerRoutes(
 ): void {
   // Keep `limiter` / `tokenLimiter` as locals so CodeQL missing-rate-limiting
   // can see authorization routes are rate-limited.
-  const dualLimiters = createAiAccessDualRateLimiters(RED.settings.aiAccess ?? null);
-  const { ip: limiter, token: tokenLimiter } = dualLimiters;
   const services = createPluginServices(RED, {
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
   });
 
+  const dualLimiters = createLiveAiAccessDualRateLimiters(() =>
+    services.settingsStore.getEffective()
+  );
+  const { ip: limiter, token: tokenLimiter } = dualLimiters;
+
   // AI-facing CORS: no headers by default; echo allow-listed origins only.
-  const corsOrigins = normalizeCorsOrigins(RED.settings.aiAccess?.corsAllowedOrigins);
   installAiCorsMiddleware(
     RED.httpAdmin,
-    aiCorsMiddleware(() => corsOrigins)
+    aiCorsMiddleware(() => services.settingsStore.getEffective().corsAllowedOrigins)
   );
 
   // Resolve live flow labels once per proposal-related request so every channel
@@ -223,6 +229,15 @@ export function registerRoutes(
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
     asyncRoute(putSettingsHandler(RED, services.settingsStore, services.linkStore))
+  );
+
+  RED.httpAdmin.post(
+    '/mcp/api/v1/settings/check-public-url',
+    limiter,
+    tokenLimiter,
+    requireAdminSession(RED, 'api'),
+    requireStarPermission(RED),
+    asyncRoute(checkPublicUrlHandler(RED))
   );
 
   const linkGuards = [

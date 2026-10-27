@@ -90,8 +90,10 @@ module.exports = {
 Access-link `url`, proposal `reviewUrl`, and `accessLinksUrl` (in
 `token_expired`) are absolute URLs built by one shared helper:
 
-1. `aiAccess.publicBaseUrl`, when set, is used as-is (scheme, host, and an
-   optional path prefix). It is read from `settings.js` only.
+1. Effective `aiAccess.publicBaseUrl`, when set, overrides the request origin.
+   The sidebar/settings API accepts an HTTPS origin without a path, query,
+   fragment, or credentials (HTTP localhost / loopback is allowed for
+   development). An empty value uses the request origin.
 2. Otherwise, when Express `trust proxy` is enabled (for example
    `httpServerOptions: { 'trust proxy': true }`), the first `X-Forwarded-Proto`
    and `X-Forwarded-Host` values are used.
@@ -118,34 +120,51 @@ affected by this setting.
 By default the AI-facing endpoints (`/mcp/a/*`, `/mcp/api/*`, `/mcp/rpc`) send
 **no** CORS headers, overriding Node-RED's built-in
 `Access-Control-Allow-Origin: *` for those paths. To allow a browser app, list
-its origin in `aiAccess.corsAllowedOrigins` (`settings.js` only, restart
-required). For a listed `Origin` the response echoes it in
-`Access-Control-Allow-Origin` with `Vary: Origin`, and `OPTIONS` preflight
-returns `204` with allowed methods (`GET, POST, DELETE, OPTIONS`) and headers
-(`Authorization`, `Content-Type`, `Accept`, `Mcp-Session-Id`,
-`Mcp-Protocol-Version`, `Last-Event-ID`). Origins match case-insensitively and
-the configured origin is echoed; malformed origins are rejected. Exposed headers
-include `Mcp-Session-Id`, `WWW-Authenticate`, `Retry-After`, and the
-`RateLimit*` headers. Other origins get no CORS headers.
+its origin in `aiAccess.corsAllowedOrigins` via the AI Access sidebar or
+settings API. Changes apply immediately. The API rejects any invalid origin in
+the supplied list (including paths, credentials, queries, and fragments). For a
+listed `Origin` the response echoes it in `Access-Control-Allow-Origin` with
+`Vary: Origin`, and `OPTIONS` preflight returns `204` with allowed methods
+(`GET, POST, DELETE, OPTIONS`) and headers (`Authorization`, `Content-Type`,
+`Accept`, `Mcp-Session-Id`, `Mcp-Protocol-Version`, `Last-Event-ID`). Origins
+match case-insensitively and the configured origin is echoed; malformed origins
+are rejected. Exposed headers include `Mcp-Session-Id`, `WWW-Authenticate`,
+`Retry-After`, and the `RateLimit*` headers. Other origins get no CORS headers.
 
 ### Settings precedence
 
 Effective values are resolved **without restart** in this order (highest wins):
 
-1. **Disk** — `<userDir>/.ai-access/settings.json` (editor sidebar **AI Access**
+1. **`settings.js`** — keys present in the `aiAccess` block are locked
+2. **Disk** — `<userDir>/.ai-access/config.json` (editor sidebar **AI Access**
    tab, or `PUT /mcp/api/v1/settings`)
-2. **`settings.js`** — `aiAccess` block (install / bootstrap defaults)
 3. **Built-in defaults** — as documented above
 
-Only keys present on disk override; omitted keys fall through to `settings.js`,
-then defaults. The editor right-hand sidebar tab (**AI Access**, next to
-Information / Help / Debug / Configuration nodes / Context Data) lets `*` admins
-change enable/disable, default deploy type, and default access-link TTL; `read`
-users see the same values read-only. A button opens the `/mcp` page. When
+This is a breaking precedence change in 0.2.0: settings.js now wins over disk.
+Legacy `settings.json` is read when `config.json` is absent; the next save
+writes `config.json`. Locked fields show a lock indicator and disabled input.
+PUT ignores locked keys while applying unlocked ones; GET and PUT return
+per-field `sources` (`settings.js`, `disk`, or `default`) and the precedence
+order.
+
+The editor right-hand sidebar tab (**AI Access**, next to Information / Help /
+Debug / Configuration nodes / Context Data) lets `*` admins change
+enable/disable, default deploy type, access-link TTL, maximum active links,
+Public URL, CORS origins, and the three rate limits. `read` users see the same
+values read-only. Express's effective `trust proxy` setting is displayed
+read-only. Public URL, CORS, and rate limits apply immediately; changing limits
+starts fresh rate-limit buckets. A button opens the `/mcp` page. When
 `adminAuth` is off, the tab exposes the `allowWithoutAdminAuth` opt-in with a
 clear local-only warning.
 
-Storage lives under **`<userDir>/.ai-access`** (`settings.json`,
+Public URL **Check** uses `POST /mcp/api/v1/settings/check-public-url` and
+requires `*` permission because it performs an outbound request. It validates
+the form URL, fetches only `{publicBaseUrl}{httpAdminRoot}/mcp/api/v1`
+(discovery), times out after 5 seconds, and never follows redirects. The result
+reports the HTTP status or a connection/timeout error; it does not save the
+form.
+
+Storage lives under **`<userDir>/.ai-access`** (`config.json`,
 `proposals/*.json`, and append-only `logs/audit.jsonl`). Directories use mode
 `0700`, files `0600`. Proposal JSON is capped at **1_500_000 bytes**; oversized
 proposal JSON or audit lines return HTTP **413** with `code: payload_too_large`

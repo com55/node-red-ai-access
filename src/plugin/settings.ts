@@ -37,23 +37,9 @@ export function resolveAiAccessSettings(
   settings: NodeRedPluginSettings
 ): EffectiveAiAccessSettings {
   if (activeStore) {
-    const effective = activeStore.getEffective();
-    return {
-      enabled: effective.enabled,
-      allowWithoutAdminAuth: effective.allowWithoutAdminAuth,
-      defaultLinkTtlSeconds: effective.defaultLinkTtlSeconds,
-      defaultDeploymentType: effective.defaultDeploymentType,
-      maxActiveLinks: effective.maxActiveLinks,
-    };
+    return activeStore.getEffective();
   }
-  const merged = mergeAiAccessSettings(settingsJsPartial(settings.aiAccess), {});
-  return {
-    enabled: merged.enabled,
-    allowWithoutAdminAuth: merged.allowWithoutAdminAuth,
-    defaultLinkTtlSeconds: merged.defaultLinkTtlSeconds,
-    defaultDeploymentType: merged.defaultDeploymentType,
-    maxActiveLinks: merged.maxActiveLinks,
-  };
+  return mergeAiAccessSettings(settingsJsPartial(settings.aiAccess), {});
 }
 
 export function resolveAiAccessSettingsWithMeta(

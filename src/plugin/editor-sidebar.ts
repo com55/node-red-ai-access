@@ -69,6 +69,17 @@ function editorSidebarStyles(): string {
   align-items: flex-start;
   padding: 5px 0 2px;
 }
+#red-ui-sidebar-ai-access .ai-access-public-url-controls {
+  display: flex;
+  gap: 6px;
+}
+#red-ui-sidebar-ai-access .ai-access-public-url-controls input {
+  flex: 1;
+  min-width: 0;
+}
+#red-ui-sidebar-ai-access .ai-access-public-url-controls button {
+  flex: 0 0 auto;
+}
 #red-ui-sidebar-ai-access .ai-access-actions {
   margin-top: 12px;
   display: flex;
@@ -179,6 +190,13 @@ function editorSidebarScriptPartA(): string {
     var CAN_EDIT = false;
     var ADMIN_AUTH = true;
     var LAST = null;
+    var FIELD_IDS = {
+      enabled: 'enabled', allowWithoutAdminAuth: 'allow-without',
+      defaultLinkTtlSeconds: 'ttl', defaultDeploymentType: 'deploy',
+      maxActiveLinks: 'max-links', publicBaseUrl: 'public-url',
+      corsAllowedOrigins: 'cors', rateLimitWindowMs: 'rate-window',
+      rateLimitMaxPerIp: 'rate-ip', rateLimitMaxPerToken: 'rate-token'
+    };
 
     function authHeaders() {
       var headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
@@ -272,7 +290,7 @@ function editorSidebarScriptPartA(): string {
     function hoursFromSeconds(seconds) {
       var s = Number(seconds);
       if (!Number.isFinite(s) || s <= 0) return 4;
-      return Math.max(1, Math.round(s / 3600));
+      return s / 3600;
     }
 
     function selectedTtlHours() {
@@ -285,7 +303,7 @@ function editorSidebarScriptPartA(): string {
 
     function setTtlHours(hours) {
       var h = Number(hours);
-      if ([1, 4, 24].indexOf(h) < 0) h = 4;
+      if (!Number.isFinite(h) || h <= 0) h = 4;
       $('#ai-access-ttl').val(h);
       $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').each(function () {
         var btn = $(this);
@@ -313,6 +331,18 @@ function editorSidebarScriptPartA(): string {
       $('#' + CONTENT_ID + ' input, #' + CONTENT_ID + ' select').prop('disabled', readonly);
       $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').prop('disabled', readonly);
       $('#ai-access-readonly-note').toggle(readonly);
+      ['maxActiveLinks', 'publicBaseUrl', 'rateLimitWindowMs', 'rateLimitMaxPerIp', 'rateLimitMaxPerToken'].forEach(function (key) {
+        $('#ai-access-' + FIELD_IDS[key]).val(s[key] == null ? '' : s[key]);
+      });
+      $('#ai-access-cors').val((s.corsAllowedOrigins || []).join(', '));
+      $('#ai-access-trust-proxy').text(String(data.trustProxy));
+      Object.keys(FIELD_IDS).forEach(function (key) {
+        var locked = data.sources && data.sources[key] === 'settings.js';
+        $('#ai-access-' + FIELD_IDS[key]).prop('disabled', readonly || locked);
+        $('#ai-access-lock-' + FIELD_IDS[key]).toggle(!!locked);
+      });
+      $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').prop('disabled', readonly || (data.sources && data.sources.defaultLinkTtlSeconds === 'settings.js'));
+      $('#ai-access-check-public-url').prop('disabled', readonly);
     }
 
     function formatPendingBadge(live, stale) {
@@ -396,7 +426,16 @@ function editorSidebarScriptPartA(): string {
         allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
         defaultLinkTtlSeconds: Math.max(1, Math.floor(selectedTtlHours() * 3600)),
         defaultDeploymentType: $('#ai-access-deploy').val(),
+        maxActiveLinks: Number($('#ai-access-max-links').val()),
+        publicBaseUrl: String($('#ai-access-public-url').val()).trim(),
+        corsAllowedOrigins: String($('#ai-access-cors').val()).split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+        rateLimitWindowMs: Number($('#ai-access-rate-window').val()),
+        rateLimitMaxPerIp: Number($('#ai-access-rate-ip').val()),
+        rateLimitMaxPerToken: Number($('#ai-access-rate-token').val()),
       };
+      Object.keys(payload).forEach(function (key) {
+        if (LAST && LAST.sources && LAST.sources[key] === 'settings.js') delete payload[key];
+      });
       saving = true;
       api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
         .then(function (data) {
@@ -518,7 +557,44 @@ function editorSidebarScriptPartB(): string {
       });
       $('<input id="ai-access-ttl" type="hidden" value="4">').appendTo(row);
 
-      $('#ai-access-enabled, #ai-access-allow-without, #ai-access-deploy').on(
+      [
+        ['max-links', 'Maximum active links', 'number'],
+        ['public-url', 'Public URL (HTTPS origin)', 'text'],
+        ['cors', 'CORS allowed origins (comma separated)', 'text'],
+        ['rate-window', 'Rate limit window (ms)', 'number'],
+        ['rate-ip', 'Requests per IP per window', 'number'],
+        ['rate-token', 'Requests per token per window', 'number']
+      ].forEach(function (field) {
+        var id = 'ai-access-' + field[0];
+        var fieldRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
+        $('<label></label>').attr('for', id).text(field[1]).appendTo(fieldRow);
+        var controls = field[0] === 'public-url' ? $('<div class="ai-access-public-url-controls"></div>').appendTo(fieldRow) : fieldRow;
+        var input = $('<input>').attr('id', id).attr('type', field[2]).appendTo(controls);
+        if (field[2] === 'number') input.attr('min', '1').attr('step', 'any');
+        input.on('change', scheduleAutoSave);
+        if (field[0] === 'public-url') {
+          $('<button type="button" id="ai-access-check-public-url" class="red-ui-button"></button>')
+            .text('Check').appendTo(controls).on('click', function () {
+              $('#ai-access-check-result').text('Checking…');
+              api('/settings/check-public-url', { method: 'POST', body: JSON.stringify({ publicBaseUrl: $('#ai-access-public-url').val() }) })
+                .then(function (result) {
+                  $('#ai-access-check-result').text((result.ok ? 'OK: ' : 'Failed: ') + (result.message || result.error) + (result.status ? ' (HTTP ' + result.status + ')' : ''));
+                }).catch(function (err) { $('#ai-access-check-result').text(err.message); });
+            });
+          $('<p id="ai-access-check-result" aria-live="polite"></p>').appendTo(fieldRow);
+        }
+      });
+      var trustRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
+      $('<label></label>').text('Express trust proxy (read-only)').appendTo(trustRow);
+      $('<span id="ai-access-trust-proxy"></span>').appendTo(trustRow);
+      Object.keys(FIELD_IDS).forEach(function (key) {
+        var id = FIELD_IDS[key];
+        $('<span class="form-tips" style="display:none"></span>')
+          .attr('id', 'ai-access-lock-' + id).text('🔒 Locked by settings.js')
+          .appendTo(content.find('#ai-access-' + id).closest('.red-ui-settings-row'));
+      });
+
+      content.find('#ai-access-enabled, #ai-access-allow-without, #ai-access-deploy').on(
         'change',
         scheduleAutoSave
       );

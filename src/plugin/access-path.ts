@@ -68,6 +68,34 @@ export function normalizePublicBaseUrl(value: unknown): string | undefined {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
+/** Settings Public URL: an HTTPS origin, or HTTP loopback for local development. */
+export function validateSettingsPublicBaseUrl(value: unknown): string {
+  if (value === '') return '';
+  const message =
+    'publicBaseUrl must be an HTTPS origin with no path, query, fragment, or credentials (HTTP localhost is allowed)';
+  if (typeof value !== 'string') throw new Error(message);
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error(message);
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (
+    (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+    !/^https?:\/\/[^/?#]+\/?$/i.test(value.trim()) ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password ||
+    value.includes('?') ||
+    value.includes('#')
+  )
+    throw new Error(message);
+  return url.origin;
+}
+
 /** Bind (or clear) the explicit public base URL used for absolute URLs. */
 export function bindPublicBaseUrl(value: unknown): void {
   configuredPublicBaseUrl = normalizePublicBaseUrl(value);

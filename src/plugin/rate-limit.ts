@@ -8,6 +8,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import rateLimit, {
   ipKeyGenerator,
+  MemoryStore,
   type Options,
   type RateLimitRequestHandler,
 } from 'express-rate-limit';
@@ -27,7 +28,7 @@ export interface RateLimitConfig {
 
 function positiveInt(value: unknown, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
+    return Math.max(1, Math.floor(value));
   }
   return fallback;
 }
@@ -186,4 +187,41 @@ export function createGetLinkRateLimiter(
     cfg.windowMs,
     (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
   );
+}
+
+/** Stable middleware references with fresh buckets whenever live configuration changes. */
+export function createLiveAiAccessDualRateLimiters(getSettings: () => AiAccessSettings) {
+  let currentKey = '';
+  let stores: MemoryStore[] = [];
+  let current: { ip: RateLimitRequestHandler; token: RateLimitRequestHandler };
+  function refresh() {
+    const cfg = resolveRateLimitConfig(getSettings());
+    const key = JSON.stringify(cfg);
+    if (key !== currentKey) {
+      for (const store of stores) store.shutdown();
+      const ipStore = new MemoryStore();
+      const tokenStore = new MemoryStore();
+      stores = [ipStore, tokenStore];
+      const make = (token: boolean, store: MemoryStore) =>
+        rateLimit({
+          store,
+          windowMs: cfg.windowMs,
+          max: token ? cfg.maxPerToken : cfg.maxPerIp,
+          standardHeaders: true,
+          legacyHeaders: false,
+          keyGenerator: token
+            ? (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
+            : clientIpKey,
+          skip: (req: Request) => token && accessTokenRateLimitKey(req) == null,
+          handler: rateLimitedHandler(cfg.windowMs),
+        });
+      current = { ip: make(false, ipStore), token: make(true, tokenStore) };
+      currentKey = key;
+    }
+    return current;
+  }
+  const ip = (req: Request, res: Response, next: NextFunction) => refresh().ip(req, res, next);
+  const token = (req: Request, res: Response, next: NextFunction) =>
+    refresh().token(req, res, next);
+  return { ip, token };
 }

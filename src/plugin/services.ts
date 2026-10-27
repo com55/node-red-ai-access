@@ -85,7 +85,7 @@ export function createPluginServices(
     bindSettingsStore(settingsStore);
   }
 
-  bindPublicBaseUrl(RED.settings.aiAccess?.publicBaseUrl);
+  bindPublicBaseUrl(settingsStore.getEffective().publicBaseUrl);
 
   const linkStore = options.linkStore ?? createConfiguredLinkStore(RED);
   linkStore.configureDefaults({
