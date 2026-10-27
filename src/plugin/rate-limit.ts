@@ -191,37 +191,63 @@ export function createGetLinkRateLimiter(
 
 /** Stable middleware references with fresh buckets whenever live configuration changes. */
 export function createLiveAiAccessDualRateLimiters(getSettings: () => AiAccessSettings) {
-  let currentKey = '';
-  let stores: MemoryStore[] = [];
-  let current: { ip: RateLimitRequestHandler; token: RateLimitRequestHandler };
-  function refresh() {
+  let currentWindowMs = resolveRateLimitConfig(getSettings()).windowMs;
+  let currentMaxPerIp = resolveRateLimitConfig(getSettings()).maxPerIp;
+  let currentMaxPerToken = resolveRateLimitConfig(getSettings()).maxPerToken;
+  const ipStore = new MemoryStore();
+  const tokenStore = new MemoryStore();
+
+  const refreshWindow = () => {
     const cfg = resolveRateLimitConfig(getSettings());
-    const key = JSON.stringify(cfg);
-    if (key !== currentKey) {
-      for (const store of stores) store.shutdown();
-      const ipStore = new MemoryStore();
-      const tokenStore = new MemoryStore();
-      stores = [ipStore, tokenStore];
-      const make = (token: boolean, store: MemoryStore) =>
-        rateLimit({
-          store,
-          windowMs: cfg.windowMs,
-          max: token ? cfg.maxPerToken : cfg.maxPerIp,
-          standardHeaders: true,
-          legacyHeaders: false,
-          keyGenerator: token
-            ? (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
-            : clientIpKey,
-          skip: (req: Request) => token && accessTokenRateLimitKey(req) == null,
-          handler: rateLimitedHandler(cfg.windowMs),
-        });
-      current = { ip: make(false, ipStore), token: make(true, tokenStore) };
-      currentKey = key;
+    if (
+      cfg.windowMs !== currentWindowMs ||
+      cfg.maxPerIp !== currentMaxPerIp ||
+      cfg.maxPerToken !== currentMaxPerToken
+    ) {
+      const windowChanged = cfg.windowMs !== currentWindowMs;
+      currentWindowMs = cfg.windowMs;
+      currentMaxPerIp = cfg.maxPerIp;
+      currentMaxPerToken = cfg.maxPerToken;
+      // Reinitialize the existing stores so their expiry timers and counters
+      // use the new window without replacing the limiter instances.
+      void ipStore.resetAll();
+      void tokenStore.resetAll();
+      if (windowChanged) {
+        ipStore.init?.({ windowMs: currentWindowMs } as Options);
+        tokenStore.init?.({ windowMs: currentWindowMs } as Options);
+      }
     }
-    return current;
-  }
-  const ip = (req: Request, res: Response, next: NextFunction) => refresh().ip(req, res, next);
-  const token = (req: Request, res: Response, next: NextFunction) =>
-    refresh().token(req, res, next);
+    return cfg;
+  };
+
+  const make = (token: boolean, store: MemoryStore): RateLimitRequestHandler =>
+    rateLimit({
+      store,
+      windowMs: currentWindowMs,
+      limit: () => {
+        const cfg = resolveRateLimitConfig(getSettings());
+        return token ? cfg.maxPerToken : cfg.maxPerIp;
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+      keyGenerator: token
+        ? (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
+        : clientIpKey,
+      skip: (req: Request) => token && accessTokenRateLimitKey(req) == null,
+      handler: (req: Request, res: Response, _next: NextFunction) => {
+        sendRateLimited(req, res, resolveRateLimitConfig(getSettings()).windowMs);
+      },
+    });
+
+  const ipLimiter = make(false, ipStore);
+  const tokenLimiter = make(true, tokenStore);
+  const ip = (req: Request, res: Response, next: NextFunction) => {
+    refreshWindow();
+    return ipLimiter(req, res, next);
+  };
+  const token = (req: Request, res: Response, next: NextFunction) => {
+    refreshWindow();
+    return tokenLimiter(req, res, next);
+  };
   return { ip, token };
 }
