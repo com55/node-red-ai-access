@@ -496,6 +496,13 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     'http://2130706433:6379',
     'http://0x7f000001:6379',
     'http://[::ffff:127.0.0.1]:6379',
+    'http://2130706433:1880',
+    'http://0x7f000001:1880',
+    'http://0177.0.0.1:1880',
+    'http://127.1:1880',
+    'http://[::ffff:127.0.0.1]:1880',
+    'http://[::ffff:7f00:1]:1880',
+    'https://2851995646',
   ])('Check refuses unsafe target %s before connecting', async publicBaseUrl => {
     const outgoing = mockProbe();
     const { app } = createApp({ userDir, authenticate: asUser('*') });
@@ -526,27 +533,42 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(dns.lookup).toHaveBeenCalledWith('example.com', { all: true }, expect.any(Function));
   });
 
-  it.each([
-    'localhost',
-    'localhost.',
-    '127.1',
-    '2130706433',
-    '0x7f000001',
-    '[::1]',
-    '[::ffff:127.0.0.1]',
-  ])('Check permits loopback %s on the configured Node-RED port', async host => {
-    mockDns([
-      { address: host.includes(':') ? '::1' : '127.0.0.1', family: host.includes(':') ? 6 : 4 },
-    ]);
+  it.each(['localhost', '127.0.0.1', '[::1]'])(
+    'Check permits loopback %s on the configured Node-RED port',
+    async host => {
+      mockDns([
+        { address: host.includes(':') ? '::1' : '127.0.0.1', family: host.includes(':') ? 6 : 4 },
+      ]);
+      const outgoing = mockProbe();
+      const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+      Object.assign(RED.settings, { uiPort: 8080 });
+      const result = await request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .send({ publicBaseUrl: `https://${host}:8080` });
+      expect(result.status).toBe(200);
+      expect(result.body.ok).toBe(true);
+      expect(outgoing).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('Check treats a bare slash like no path and validates paths before DNS', async () => {
+    mockDns([{ address: '198.18.0.1', family: 4 }]);
     const outgoing = mockProbe();
-    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
-    Object.assign(RED.settings, { uiPort: 8080 });
-    const result = await request(app)
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    for (const publicBaseUrl of ['https://example.com', 'https://example.com/']) {
+      const result = await request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .send({ publicBaseUrl });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toContain('private or non-public');
+    }
+    expect(outgoing).not.toHaveBeenCalled();
+    vi.mocked(dns.lookup).mockClear();
+    const invalidPath = await request(app)
       .post('/mcp/api/v1/settings/check-public-url')
-      .send({ publicBaseUrl: `https://${host}:8080` });
-    expect(result.status).toBe(200);
-    expect(result.body.ok).toBe(true);
-    expect(outgoing).toHaveBeenCalledTimes(1);
+      .send({ publicBaseUrl: 'https://example.com/path' });
+    expect(invalidPath.status).toBe(400);
+    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(0);
   });
 
   it('Check prefers the actual listening port when available', async () => {

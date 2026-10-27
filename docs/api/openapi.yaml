@@ -425,6 +425,42 @@ paths:
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
 
+  /settings/check-public-url:
+    post:
+      tags: [Status]
+      summary: Check the configured public URL
+      description: Probes the MCP endpoint at the supplied HTTPS origin without following redirects.
+      operationId: checkPublicUrl
+      security:
+        - AdminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicBaseUrl]
+              properties:
+                publicBaseUrl:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Probe result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { type: [integer, 'null'] }
+                  url: { type: string }
+                  error: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /links:
     get:
       tags: [Access links]
@@ -1711,6 +1747,14 @@ components:
         maxActiveLinks:
           type: integer
           minimum: 1
+        publicBaseUrl:
+          type: string
+          format: uri
+        corsAllowedOrigins:
+          type: array
+          items:
+            type: string
+            format: uri
       additionalProperties: false
 
     AiAccessSettingsResponse:
@@ -1758,6 +1802,12 @@ components:
               $ref: '#/components/schemas/DeploymentType'
             maxActiveLinks:
               type: integer
+            publicBaseUrl:
+              type: string
+            corsAllowedOrigins:
+              type: array
+              items:
+                type: string
         sources:
           type: object
           additionalProperties:

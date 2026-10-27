@@ -79,7 +79,9 @@ export function canonicalizeIp(host: string): string | undefined {
     const address = hostname.replace(/^\[|\]$/g, '');
     if (!isIP(address)) return undefined;
     if (address.startsWith('::ffff:')) {
-      const words = address.slice(7).split(':');
+      const mapped = address.slice(7);
+      if (isIP(mapped) === 4) return mapped;
+      const words = mapped.split(':');
       if (words.length === 2) {
         const value = parseInt(words[0]!, 16) * 65536 + parseInt(words[1]!, 16);
         return [24, 16, 8, 0].map(shift => (value >>> shift) & 255).join('.');

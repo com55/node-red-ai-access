@@ -130,6 +130,17 @@ export async function preparePublicUrlCheck(
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (isMetadataHostname(host)) throw new Error('Public URL Check cannot target metadata hosts');
   const literal = canonicalizeIp(host);
+  // WHATWG URL intentionally accepts legacy IPv4 spellings (decimal, octal,
+  // hex and shortened forms). Keep them out of the probe path, even when they
+  // normalize to a loopback address that would otherwise be allowed locally.
+  const rawHost =
+    typeof value === 'string'
+      ? /^https?:\/\/(\[[^\]]+\]|[^/?#:]+)/i.exec(value.trim())?.[1]
+      : undefined;
+  const suppliedHost = rawHost?.replace(/^\[|\]$/g, '');
+  if (literal && suppliedHost && suppliedHost.toLowerCase() !== literal.toLowerCase()) {
+    throw new Error('Public URL Check requires canonical IP address notation');
+  }
   const local =
     host.toLowerCase().replace(/\.$/, '') === 'localhost' ||
     (literal !== undefined && classifyPublicUrlAddress(literal) === 'loopback');
@@ -145,7 +156,10 @@ export async function preparePublicUrlCheck(
       throw new Error('Public URL Check cannot target private or non-public addresses');
     }
   };
-  if (literal) validateAddress(literal);
+  if (literal) {
+    validateAddress(literal);
+    return { origin, address: literal, family: isIP(literal) as 4 | 6 };
+  }
   const addresses = await new Promise<dns.LookupAddress[]>((resolve, reject) => {
     const abort = () =>
       reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
