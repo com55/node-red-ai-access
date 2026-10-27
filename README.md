@@ -162,7 +162,11 @@ requires `*` permission because it performs an outbound request. It validates
 the form URL, fetches only `{publicBaseUrl}{httpAdminRoot}/mcp/api/v1`
 (discovery), times out after 5 seconds, and never follows redirects. The result
 reports the HTTP status or a connection/timeout error; it does not save the
-form.
+form. Loopback checks use Node-RED's own listening port; behind a reverse proxy,
+use the internal Node-RED port. Unix-socket listeners are not supported. HTTPS
+checks using a self-signed certificate fail because TLS verification remains
+enabled. Saving a Public URL with a private/internal IP literal is allowed, but
+the settings response and sidebar show a warning.
 
 Storage lives under **`<userDir>/.ai-access`** (`config.json`,
 `proposals/*.json`, and append-only `logs/audit.jsonl`). Directories use mode
