@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../../src/storage/paths.js';
 import { mergeAiAccessSettings, SettingsStore } from '../../src/storage/settings-store.js';
@@ -98,5 +98,56 @@ describe('SettingsStore', () => {
     writeFileSync(join(paths.root, 'settings.json'), JSON.stringify({ enabled: true }));
     expect(new SettingsStore(paths).getEffective().enabled).toBe(false);
     expect(new SettingsStore(paths, { enabled: true }).getEffective().enabled).toBe(true);
+  });
+
+  it('drops invalid disk URLs and CORS entries and warns', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    writeFileSync(
+      paths.settings,
+      JSON.stringify({
+        publicBaseUrl: 'http://public.example/path',
+        corsAllowedOrigins: ['https://good.example/path', 'https://Good.Example'],
+      })
+    );
+    const warn = vi.fn();
+    const store = new SettingsStore(paths, undefined, warn);
+
+    expect(store.getEffective().publicBaseUrl).toBe('');
+    expect(store.getEffective().corsAllowedOrigins).toEqual(['https://good.example']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('publicBaseUrl'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('invalid CORS origin'));
+  });
+
+  it('warns and falls back to defaults for corrupt config.json', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    writeFileSync(paths.settings, '{ invalid json');
+    const warn = vi.fn();
+
+    const store = new SettingsStore(paths, undefined, warn);
+
+    expect(store.getEffective().enabled).toBe(true);
+    expect(store.getEffective().sources.enabled).toBe('default');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('corrupt or unreadable'));
+  });
+
+  it('drops non-integer and out-of-range rate limits from disk', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    writeFileSync(
+      paths.settings,
+      JSON.stringify({
+        rateLimitWindowMs: 1.5,
+        rateLimitMaxPerIp: 1_000_001,
+        rateLimitMaxPerToken: 1,
+      })
+    );
+
+    const store = new SettingsStore(paths);
+
+    expect(store.getEffective().rateLimitWindowMs).toBe(60_000);
+    expect(store.getEffective().rateLimitMaxPerIp).toBe(600);
+    expect(store.getEffective().rateLimitMaxPerToken).toBe(1);
   });
 });

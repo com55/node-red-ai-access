@@ -2,6 +2,9 @@
  * GET/PUT /mcp/api/v1/settings — permissions and hot persistence.
  */
 
+import dns from 'node:dns';
+import { EventEmitter } from 'node:events';
+import https from 'node:https';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +19,27 @@ import { areAiFeaturesEnabled, bindSettingsStore } from '../../src/plugin/settin
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 import { resolveAiAccessPaths } from '../../src/storage/paths.js';
+
+const originalLookup = dns.lookup;
+
+function mockDns(addresses = [{ address: '93.184.216.34', family: 4 }]) {
+  return vi.spyOn(dns, 'lookup').mockImplementation(((host, options, callback) => {
+    if (options?.all) callback(null, addresses);
+    else originalLookup(host, options, callback);
+  }) as typeof dns.lookup);
+}
+
+function mockProbe(status = 200) {
+  return vi.spyOn(https, 'request').mockImplementation(((_url, options, callback) => {
+    const req = new EventEmitter();
+    Object.assign(req, {
+      end: () => {
+        queueMicrotask(() => callback({ statusCode: status, destroy: vi.fn() }));
+      },
+    });
+    return req;
+  }) as typeof https.request);
+}
 
 interface MockUser {
   username: string;
@@ -96,12 +120,14 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
   let userDir: string;
 
   beforeEach(() => {
+    mockDns();
     userDir = mkdtempSync(join(tmpdir(), 'ai-access-settings-api-'));
   });
 
   afterEach(() => {
     bindPublicBaseUrl(undefined);
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     bindSettingsStore(null);
     rmSync(userDir, { recursive: true, force: true });
@@ -164,6 +190,23 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const again = await request(app).put('/mcp/api/v1/settings').send({ enabled: true });
     expect(again.status).toBe(200);
     expect(areAiFeaturesEnabled(RED.settings)).toBe(true);
+  });
+
+  it('reports edit access without adminAuth when local AI access is enabled', async () => {
+    const { app } = createApp({
+      userDir,
+      adminAuth: false,
+      aiAccess: { allowWithoutAdminAuth: true },
+      authenticate: (_req, _res, next) => next(),
+    });
+
+    const got = await request(app).get('/mcp/api/v1/settings');
+    expect(got.status).toBe(200);
+    expect(got.body.canEdit).toBe(true);
+    expect(got.body.permission).toBe('*');
+
+    const put = await request(app).put('/mcp/api/v1/settings').send({ enabled: false });
+    expect(put.status).toBe(200);
   });
 
   it('rejects unauthenticated settings access', async () => {
@@ -262,11 +305,11 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     await request(app).get('/mcp/api/v1');
     const saved = await request(app)
       .put('/mcp/api/v1/settings')
-      .send({ rateLimitWindowMs: 50, rateLimitMaxPerIp: 1 });
+      .send({ rateLimitWindowMs: 100, rateLimitMaxPerIp: 1 });
     expect(saved.status).toBe(200);
     expect((await request(app).get('/mcp/api/v1')).status).toBe(200);
     expect((await request(app).get('/mcp/api/v1')).status).toBe(429);
-    await vi.advanceTimersByTimeAsync(51);
+    await vi.advanceTimersByTimeAsync(101);
     expect((await request(app).get('/mcp/api/v1')).status).toBe(200);
   });
 
@@ -275,6 +318,10 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     'https://public.example/',
     'http://localhost:1880',
     'http://127.0.0.1:1880',
+    'http://127.0.0.1:6379',
+    'http://[::1]:8080',
+    'http://[::ffff:127.0.0.1]:1880',
+    'https://10.0.0.1',
     '',
   ])('accepts Public URL %s', async publicBaseUrl => {
     const { app } = createApp({ userDir, authenticate: asUser('*') });
@@ -315,6 +362,35 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     }
   );
 
+  it.each([
+    ['rateLimitWindowMs', 1.5],
+    ['rateLimitMaxPerIp', 1.5],
+    ['rateLimitMaxPerToken', 1.5],
+    ['rateLimitWindowMs', 99],
+    ['rateLimitWindowMs', 3_600_001],
+    ['rateLimitMaxPerIp', 1_000_001],
+    ['rateLimitMaxPerToken', 1_000_001],
+  ])('rejects out-of-range or non-integer %s=%s', async (key, value) => {
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const result = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ [key]: value });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toContain(key);
+    expect(result.body.error).toContain('integer between');
+  });
+
+  it.each([
+    ['PUT settings', 'put', '/mcp/api/v1/settings'],
+    ['Check', 'post', '/mcp/api/v1/settings/check-public-url'],
+  ] as const)('%s requires JSON Content-Type for bodies', async (_name, method, path) => {
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const missing = await request(app)[method](path).set('Content-Type', '').send('{}');
+    expect(missing.status).toBe(415);
+    const wrong = await request(app)[method](path).set('Content-Type', 'text/plain').send('{}');
+    expect(wrong.status).toBe(415);
+  });
+
   it('rejects invalid and mixed CORS entries without saving', async () => {
     const { app } = createApp({ userDir, authenticate: asUser('*') });
     for (const corsAllowedOrigins of [
@@ -340,8 +416,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
   });
 
   it('restricts Check to star users and validates its URL before fetching', async () => {
-    const fetcher = vi.fn();
-    vi.stubGlobal('fetch', fetcher);
+    const fetcher = mockProbe();
     const { app } = createApp({ userDir, authenticate: asUser('read') });
     expect(
       (
@@ -362,8 +437,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
   });
 
   it.each([200, 302, 503])('Check reports HTTP %s without following redirects', async status => {
-    const fetcher = vi.fn().mockResolvedValue(new globalThis.Response(null, { status }));
-    vi.stubGlobal('fetch', fetcher);
+    const fetcher = mockProbe(status);
     const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
     RED.settings.httpAdminRoot = '/red/';
     const result = await request(app)
@@ -375,14 +449,106 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
       status,
       url: 'https://example.com/red/mcp/api/v1',
     });
-    expect(fetcher).toHaveBeenCalledWith('https://example.com/red/mcp/api/v1', {
-      redirect: 'manual',
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, options] = fetcher.mock.calls[0]! as unknown as [URL, https.RequestOptions];
+    expect(url.href).toBe('https://example.com/red/mcp/api/v1');
+    expect(options).toMatchObject({
+      agent: false,
+      servername: 'example.com',
+      headers: { Host: 'example.com' },
       signal: expect.any(AbortSignal),
     });
+    const lookupResult = vi.fn();
+    options.lookup!('example.com', {}, lookupResult);
+    expect(lookupResult).toHaveBeenCalledWith(null, '93.184.216.34', 4);
+    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(1);
+  });
+
+  it.each([
+    'https://10.0.0.1',
+    'https://192.168.1.1',
+    'https://172.16.0.1',
+    'https://169.254.169.254',
+    'https://100.100.100.200',
+    'https://0.0.0.0',
+    'https://[fc00::1]',
+    'https://[fe80::1]',
+    'https://[::]',
+    'https://[::ffff:10.0.0.1]',
+    'https://metadata.google.internal',
+    'https://metadata.google.com.',
+    'https://instance-data.ec2.internal',
+    'http://127.0.0.1:6379',
+    'http://[::1]:8080',
+    'http://127.1:6379',
+    'http://2130706433:6379',
+    'http://0x7f000001:6379',
+    'http://[::ffff:127.0.0.1]:6379',
+  ])('Check refuses unsafe target %s before connecting', async publicBaseUrl => {
+    const outgoing = mockProbe();
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const result = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl });
+    expect(result.status).toBe(400);
+    expect(outgoing).not.toHaveBeenCalled();
+    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(0);
+  });
+
+  it.each([
+    [{ address: '10.0.0.1', family: 4 }],
+    [
+      { address: '93.184.216.34', family: 4 },
+      { address: '192.168.1.1', family: 4 },
+    ],
+    [{ address: '::ffff:127.0.0.1', family: 6 }],
+  ])('Check refuses DNS answers containing a non-public IP: %j', async (...addresses) => {
+    const outgoing = mockProbe();
+    mockDns(addresses);
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const result = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'https://example.com' });
+    expect(result.status).toBe(400);
+    expect(outgoing).not.toHaveBeenCalled();
+    expect(dns.lookup).toHaveBeenCalledWith('example.com', { all: true }, expect.any(Function));
+  });
+
+  it.each(['localhost', '127.1', '2130706433', '0x7f000001', '[::1]', '[::ffff:127.0.0.1]'])(
+    'Check permits loopback %s on the configured Node-RED port',
+    async host => {
+      mockDns([
+        { address: host.includes(':') ? '::1' : '127.0.0.1', family: host.includes(':') ? 6 : 4 },
+      ]);
+      const outgoing = mockProbe();
+      const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+      Object.assign(RED.settings, { uiPort: 8080 });
+      const result = await request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .send({ publicBaseUrl: `https://${host}:8080` });
+      expect(result.status).toBe(200);
+      expect(result.body.ok).toBe(true);
+      expect(outgoing).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('Check prefers the actual listening port when available', async () => {
+    mockDns([{ address: '127.0.0.1', family: 4 }]);
+    const outgoing = mockProbe();
+    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+    Object.assign(RED, { server: { address: () => ({ port: 8080 }) } });
+    Object.assign(RED.settings, { uiPort: 1880 });
+    const result = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'https://localhost:8080' });
+    expect(result.body.ok).toBe(true);
+    expect(outgoing).toHaveBeenCalledTimes(1);
   });
 
   it('Check reports network failure', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network failure')));
+    vi.spyOn(https, 'request').mockImplementation(() => {
+      throw new Error('network failure');
+    });
     const { app } = createApp({ userDir, authenticate: asUser('*') });
     const result = await request(app)
       .post('/mcp/api/v1/settings/check-public-url')
@@ -394,22 +560,24 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     });
   });
 
-  it('Check aborts after five seconds', async () => {
+  it.each(['DNS', 'request'])('Check aborts after five seconds during %s', async phase => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let started!: () => void;
     const ready = new Promise<void>(resolve => {
       started = resolve;
     });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        (_url, options: RequestInit) =>
-          new Promise((_resolve, reject) => {
-            options.signal!.addEventListener('abort', () => reject(new Error('aborted')));
-            started();
-          })
-      )
-    );
+    vi.spyOn(https, 'request').mockImplementation(((_url, options) => {
+      const req = new EventEmitter();
+      options.signal!.addEventListener('abort', () => req.emit('error', new Error('aborted')));
+      Object.assign(req, { end: started });
+      return req;
+    }) as typeof https.request);
+    if (phase === 'DNS') {
+      vi.mocked(dns.lookup).mockImplementation(((host, options, callback) => {
+        if (options?.all) started();
+        else originalLookup(host, options, callback);
+      }) as typeof dns.lookup);
+    }
     const { app } = createApp({ userDir, authenticate: asUser('*') });
     const pending = request(app)
       .post('/mcp/api/v1/settings/check-public-url')
