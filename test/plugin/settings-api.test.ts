@@ -4,8 +4,9 @@
 
 import dns from 'node:dns';
 import { EventEmitter } from 'node:events';
-import https from 'node:https';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import https from 'node:https';
+import { isIP } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,10 +24,16 @@ import { resolveAiAccessPaths } from '../../src/storage/paths.js';
 const originalLookup = dns.lookup;
 
 function mockDns(addresses = [{ address: '93.184.216.34', family: 4 }]) {
+  // Node 22+ Server.listen(host) resolves via dns.lookup(host, { all: true }).
+  // Only stub hostname lookups so supertest's listen(0, '127.0.0.1') still binds.
   return vi.spyOn(dns, 'lookup').mockImplementation(((host, options, callback) => {
-    if (options?.all) callback(null, addresses);
+    if (options?.all && !isIP(String(host))) callback(null, addresses);
     else originalLookup(host, options, callback);
   }) as typeof dns.lookup);
+}
+
+function hostnameAllLookups() {
+  return vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all && !isIP(String(call[0])));
 }
 
 function mockProbe(status = 200) {
@@ -471,7 +478,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const lookupResult = vi.fn();
     options.lookup!('example.com', {}, lookupResult);
     expect(lookupResult).toHaveBeenCalledWith(null, '93.184.216.34', 4);
-    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(1);
+    expect(hostnameAllLookups()).toHaveLength(1);
   });
 
   it.each([
@@ -511,7 +518,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
       .send({ publicBaseUrl });
     expect(result.status).toBe(400);
     expect(outgoing).not.toHaveBeenCalled();
-    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(0);
+    expect(hostnameAllLookups()).toHaveLength(0);
   });
 
   it.each([
@@ -568,7 +575,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
       .post('/mcp/api/v1/settings/check-public-url')
       .send({ publicBaseUrl: 'https://example.com/path' });
     expect(invalidPath.status).toBe(400);
-    expect(vi.mocked(dns.lookup).mock.calls.filter(call => call[1]?.all)).toHaveLength(0);
+    expect(hostnameAllLookups()).toHaveLength(0);
   });
 
   it('Check prefers the actual listening port when available', async () => {
@@ -636,7 +643,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     }) as typeof https.request);
     if (phase === 'DNS') {
       vi.mocked(dns.lookup).mockImplementation(((host, options, callback) => {
-        if (options?.all) started();
+        if (options?.all && !isIP(String(host))) started();
         else originalLookup(host, options, callback);
       }) as typeof dns.lookup);
     }
