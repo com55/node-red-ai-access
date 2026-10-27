@@ -465,6 +465,8 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
   });
 
   it.each([
+    'https://[2001::1]',
+    'https://[2001:0:0:0:0:0:0:1]',
     'https://10.0.0.1',
     'https://192.168.1.1',
     'https://172.16.0.1',

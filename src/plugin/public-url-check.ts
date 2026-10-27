@@ -38,21 +38,57 @@ function classifyIpv4(address: string): AddressClass {
   return blocked ? 'blocked' : 'public';
 }
 
+function expandIpv6(address: string): number[] | undefined {
+  const parts = address.split(':');
+  const compressedAt = parts.indexOf('');
+  const words: number[] = [];
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.includes('.')) {
+      const octets = part.split('.').map(Number);
+      if (
+        octets.length !== 4 ||
+        octets.some(octet => !Number.isInteger(octet) || octet < 0 || octet > 255)
+      ) {
+        return undefined;
+      }
+      words.push(((octets[0] ?? 0) << 8) | (octets[1] ?? 0));
+      words.push(((octets[2] ?? 0) << 8) | (octets[3] ?? 0));
+      continue;
+    }
+    const word = Number.parseInt(part, 16);
+    if (!/^[\da-f]{1,4}$/i.test(part) || !Number.isInteger(word)) return undefined;
+    words.push(word);
+  }
+
+  if (compressedAt >= 0) {
+    const missing = 8 - words.length;
+    if (missing < 1) return undefined;
+    const leftWords = parts.slice(0, compressedAt).filter(Boolean).length;
+    words.splice(leftWords, 0, ...Array<number>(missing).fill(0));
+  } else if (words.length !== 8) {
+    return undefined;
+  }
+  return words.length === 8 ? words : undefined;
+}
+
 function classifyIpv6(address: string): AddressClass {
-  if (address === '::1') return 'loopback';
+  const hextets = expandIpv6(address);
+  if (!hextets) return 'blocked';
+  if (hextets.slice(0, 7).every(word => word === 0) && hextets[7] === 1) {
+    return 'loopback';
+  }
   // Only global unicast is eligible. This excludes ULA, link-local, unspecified,
   // multicast, NAT64 and other special-purpose address space.
-  const [firstWord, secondWord] = address.split(':');
-  const first = parseInt(firstWord ?? '', 16);
-  const second = parseInt(secondWord ?? '0', 16);
+  const first = hextets[0] ?? 0;
+  const second = hextets[1] ?? 0;
   const blocked =
-    !Number.isFinite(first) ||
     first === 0 ||
     first < 0x2000 ||
     first > 0x3fff ||
     (first === 0x2001 && second <= 0x1ff) ||
-    address.startsWith('2001:db8:') ||
-    address.startsWith('2002:');
+    (first === 0x2001 && second === 0x0db8) ||
+    first === 0x2002;
   return blocked ? 'blocked' : 'public';
 }
 
