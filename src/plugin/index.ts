@@ -228,6 +228,7 @@ export function registerRoutes(
     tokenLimiter,
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
+    requireJsonContentType('rest'),
     asyncRoute(putSettingsHandler(RED, services.settingsStore, services.linkStore))
   );
 
@@ -237,6 +238,7 @@ export function registerRoutes(
     tokenLimiter,
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
+    requireJsonContentType('rest'),
     asyncRoute(checkPublicUrlHandler(RED))
   );
 

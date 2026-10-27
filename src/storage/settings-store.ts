@@ -13,7 +13,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { normalizeCorsOrigins } from '../plugin/cors.js';
+import { validateSettingsPublicBaseUrl } from '../plugin/access-path.js';
+import { canonicalOrigin } from '../plugin/cors.js';
 import type { DeploymentType } from '../runtime/types.js';
 
 import type { AiAccessPaths } from './paths.js';
@@ -76,7 +77,9 @@ function isDeploymentType(value: unknown): value is DeploymentType {
   return value === 'nodes' || value === 'flows' || value === 'full';
 }
 
-function sanitizePartial(raw: unknown): PersistedAiAccessSettings {
+type Warn = (message: string) => void;
+
+function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {};
   }
@@ -105,24 +108,44 @@ function sanitizePartial(raw: unknown): PersistedAiAccessSettings {
   ) {
     out.maxActiveLinks = Math.floor(data.maxActiveLinks);
   }
-  if (typeof data.publicBaseUrl === 'string') out.publicBaseUrl = data.publicBaseUrl;
-  if (Array.isArray(data.corsAllowedOrigins))
-    out.corsAllowedOrigins = normalizeCorsOrigins(data.corsAllowedOrigins);
+  if (typeof data.publicBaseUrl === 'string') {
+    try {
+      out.publicBaseUrl = validateSettingsPublicBaseUrl(data.publicBaseUrl);
+    } catch {
+      warn?.(
+        `AI Access: invalid publicBaseUrl value ${JSON.stringify(data.publicBaseUrl)} was dropped`
+      );
+    }
+  }
+  if (Array.isArray(data.corsAllowedOrigins)) {
+    const origins = new Set<string>();
+    for (const value of data.corsAllowedOrigins) {
+      const canonical = canonicalOrigin(value);
+      if (canonical) origins.add(canonical);
+      else warn?.(`AI Access: invalid CORS origin value ${JSON.stringify(value)} was dropped`);
+    }
+    out.corsAllowedOrigins = [...origins];
+  }
   for (const key of ['rateLimitWindowMs', 'rateLimitMaxPerIp', 'rateLimitMaxPerToken'] as const) {
     const value = data[key];
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[key] = value;
+    const min = key === 'rateLimitWindowMs' ? 100 : 1;
+    const max = key === 'rateLimitWindowMs' ? 3_600_000 : 1_000_000;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max) {
+      out[key] = value;
+    }
   }
   return out;
 }
 
-function readDiskFile(filePath: string): PersistedAiAccessSettings {
+function readDiskFile(filePath: string, warn?: Warn): PersistedAiAccessSettings {
   if (!existsSync(filePath)) {
     return {};
   }
   try {
     const text = readFileSync(filePath, 'utf8');
-    return sanitizePartial(JSON.parse(text) as unknown);
-  } catch {
+    return sanitizePartial(JSON.parse(text) as unknown, warn);
+  } catch (error) {
+    warn?.(`AI Access: config.json is corrupt or unreadable; defaults are used (${String(error)})`);
     return {};
   }
 }
@@ -149,9 +172,10 @@ export function mergeAiAccessSettings(
 }
 
 export function settingsJsPartial(
-  aiAccess: PersistedAiAccessSettings | undefined
+  aiAccess: PersistedAiAccessSettings | undefined,
+  warn?: Warn
 ): PersistedAiAccessSettings {
-  const sanitized = sanitizePartial(aiAccess ?? {});
+  const sanitized = sanitizePartial(aiAccess ?? {}, warn);
   // A present settings.js key is always locked, even if its invalid value needs a default.
   for (const key of Object.keys(BUILTIN) as (keyof EffectiveAiAccessSettings)[]) {
     if (aiAccess && Object.hasOwn(aiAccess, key) && sanitized[key] === undefined) {
@@ -169,12 +193,14 @@ export class SettingsStore {
 
   constructor(
     private readonly paths: AiAccessPaths,
-    settingsJsAiAccess?: PersistedAiAccessSettings
+    settingsJsAiAccess?: PersistedAiAccessSettings,
+    warn?: Warn
   ) {
     this.filePath = join(paths.root, 'config.json');
-    this.settingsJs = settingsJsPartial(settingsJsAiAccess);
+    this.settingsJs = settingsJsPartial(settingsJsAiAccess, warn);
     this.disk = readDiskFile(
-      existsSync(this.filePath) ? this.filePath : join(paths.root, 'settings.json')
+      existsSync(this.filePath) ? this.filePath : join(paths.root, 'settings.json'),
+      warn
     );
     this.cached = mergeAiAccessSettings(this.settingsJs, this.disk);
   }

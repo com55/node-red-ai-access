@@ -9,8 +9,9 @@ import type { PersistedAiAccessSettings, SettingsStore } from '../storage/settin
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { bindPublicBaseUrl, validateSettingsPublicBaseUrl } from './access-path.js';
-import { mcpApiBase, normalizeHttpAdminRoot, resolvePermission } from './auth.js';
+import { describeAccess, mcpApiBase, normalizeHttpAdminRoot } from './auth.js';
 import { canonicalOrigin } from './cors.js';
+import { preparePublicUrlCheck, requestPublicUrlCheck } from './public-url-check.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -29,7 +30,7 @@ function normalizeTrustProxy(value: unknown): boolean | number | string {
 
 function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: AuthenticatedRequest) {
   const { sources, ...settings } = store.getEffective();
-  const permission = resolvePermission(req);
+  const { permission } = describeAccess(RED, req);
   const adminAuthEnabled = isAdminAuthEnabled(RED.settings);
   return {
     ok: true,
@@ -56,6 +57,55 @@ export function getSettingsHandler(RED: NodeRedPluginAPI, store: SettingsStore) 
   };
 }
 
+function parseBooleanField(
+  body: Record<string, unknown>,
+  key: 'enabled' | 'allowWithoutAdminAuth',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`);
+  patch[key] = value;
+}
+
+function parsePositiveIntField(
+  body: Record<string, unknown>,
+  key: 'defaultLinkTtlSeconds' | 'maxActiveLinks',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new Error(`${key} must be a positive number`);
+  patch[key] = Math.floor(value);
+}
+
+function parseRateLimitField(
+  body: Record<string, unknown>,
+  key: 'rateLimitWindowMs' | 'rateLimitMaxPerIp' | 'rateLimitMaxPerToken',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  const min = key === 'rateLimitWindowMs' ? 100 : 1;
+  const max = key === 'rateLimitWindowMs' ? 3_600_000 : 1_000_000;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max)
+    throw new Error(`${key} must be an integer between ${min} and ${max}`);
+  patch[key] = value;
+}
+
+function parseCorsField(body: Record<string, unknown>, patch: PersistedAiAccessSettings): void {
+  if (body.corsAllowedOrigins === undefined) return;
+  if (!Array.isArray(body.corsAllowedOrigins))
+    throw new Error('corsAllowedOrigins must be a list of HTTP(S) origins');
+  const origins = body.corsAllowedOrigins.map(entry => canonicalOrigin(entry));
+  if (origins.some(origin => origin === undefined))
+    throw new Error(
+      'corsAllowedOrigins must contain only HTTP(S) origins without paths, credentials, queries, or fragments'
+    );
+  patch.corsAllowedOrigins = [...new Set(origins as string[])];
+}
+
 export function putSettingsHandler(
   RED: NodeRedPluginAPI,
   store: SettingsStore,
@@ -75,34 +125,14 @@ export function putSettingsHandler(
     }
 
     const patch: PersistedAiAccessSettings = {};
-    if (body.enabled !== undefined) {
-      if (typeof body.enabled !== 'boolean') {
-        res.status(400).json({ error: 'enabled must be a boolean', code: 'invalid_body' });
-        return;
-      }
-      patch.enabled = body.enabled;
-    }
-    if (body.allowWithoutAdminAuth !== undefined) {
-      if (typeof body.allowWithoutAdminAuth !== 'boolean') {
-        res
-          .status(400)
-          .json({ error: 'allowWithoutAdminAuth must be a boolean', code: 'invalid_body' });
-        return;
-      }
-      patch.allowWithoutAdminAuth = body.allowWithoutAdminAuth;
-    }
-    if (body.defaultLinkTtlSeconds !== undefined) {
-      if (
-        typeof body.defaultLinkTtlSeconds !== 'number' ||
-        !Number.isFinite(body.defaultLinkTtlSeconds) ||
-        body.defaultLinkTtlSeconds <= 0
-      ) {
-        res
-          .status(400)
-          .json({ error: 'defaultLinkTtlSeconds must be a positive number', code: 'invalid_body' });
-        return;
-      }
-      patch.defaultLinkTtlSeconds = Math.floor(body.defaultLinkTtlSeconds);
+    try {
+      parseBooleanField(body, 'enabled', patch);
+      parseBooleanField(body, 'allowWithoutAdminAuth', patch);
+      parsePositiveIntField(body, 'defaultLinkTtlSeconds', patch);
+      parsePositiveIntField(body, 'maxActiveLinks', patch);
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
+      return;
     }
     if (body.defaultDeploymentType !== undefined) {
       const deploy = body.defaultDeploymentType;
@@ -115,44 +145,16 @@ export function putSettingsHandler(
       }
       patch.defaultDeploymentType = deploy;
     }
-    if (body.maxActiveLinks !== undefined) {
-      if (
-        typeof body.maxActiveLinks !== 'number' ||
-        !Number.isFinite(body.maxActiveLinks) ||
-        body.maxActiveLinks <= 0
-      ) {
-        res
-          .status(400)
-          .json({ error: 'maxActiveLinks must be a positive number', code: 'invalid_body' });
-        return;
-      }
-      patch.maxActiveLinks = Math.floor(body.maxActiveLinks);
-    }
-
     try {
       if (body.publicBaseUrl !== undefined)
         patch.publicBaseUrl = validateSettingsPublicBaseUrl(body.publicBaseUrl);
-      if (body.corsAllowedOrigins !== undefined) {
-        if (!Array.isArray(body.corsAllowedOrigins))
-          throw new Error('corsAllowedOrigins must be a list of HTTP(S) origins');
-        const origins = body.corsAllowedOrigins.map(entry => canonicalOrigin(entry));
-        if (origins.some(origin => origin === undefined))
-          throw new Error(
-            'corsAllowedOrigins must contain only HTTP(S) origins without paths, credentials, queries, or fragments'
-          );
-        patch.corsAllowedOrigins = [...new Set(origins as string[])];
-      }
+      parseCorsField(body, patch);
       for (const key of [
         'rateLimitWindowMs',
         'rateLimitMaxPerIp',
         'rateLimitMaxPerToken',
       ] as const) {
-        const value = body[key];
-        if (value !== undefined) {
-          if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
-            throw new Error(`${key} must be a positive finite number`);
-          patch[key] = value;
-        }
+        parseRateLimitField(body, key, patch);
       }
     } catch (error) {
       res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
@@ -181,23 +183,36 @@ export function putSettingsHandler(
 /** Star-only outbound probe; never follow redirects or fetch a caller-supplied path. */
 export function checkPublicUrlHandler(RED: NodeRedPluginAPI) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    let origin: string;
-    try {
-      origin = validateSettingsPublicBaseUrl(
-        (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl
-      );
-      if (!origin) throw new Error('publicBaseUrl is required for Check');
-    } catch (error) {
-      res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
-      return;
-    }
-    const url = origin + mcpApiBase(RED.settings.httpAdminRoot);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
+    let url: string | undefined;
     try {
-      const result = await fetch(url, { redirect: 'manual', signal: controller.signal });
-      // Only headers/status are needed; release the response without downloading its body.
-      await result.body?.cancel();
+      let target;
+      try {
+        const settings = RED.settings as { uiPort?: number };
+        const server = (
+          RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
+        ).server;
+        const address = server?.address();
+        const port =
+          address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
+        target = await preparePublicUrlCheck(
+          (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl,
+          port,
+          controller.signal
+        );
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
+        return;
+      }
+      url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
+      const status = await requestPublicUrlCheck(
+        target,
+        mcpApiBase(RED.settings.httpAdminRoot),
+        controller.signal
+      );
+      const result = { status, ok: status >= 200 && status < 300 };
       res.json({
         ok: result.ok,
         status: result.status,

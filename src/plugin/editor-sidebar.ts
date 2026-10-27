@@ -290,7 +290,7 @@ function editorSidebarScriptPartA(): string {
     function hoursFromSeconds(seconds) {
       var s = Number(seconds);
       if (!Number.isFinite(s) || s <= 0) return 4;
-      return s / 3600;
+      return Math.round(s / 3600);
     }
 
     function selectedTtlHours() {
