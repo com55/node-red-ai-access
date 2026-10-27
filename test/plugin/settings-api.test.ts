@@ -330,6 +330,16 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     );
   });
 
+  it('returns a non-blocking warning when saving a private IP Public URL', async () => {
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const result = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ publicBaseUrl: 'https://10.0.0.1' });
+    expect(result.status).toBe(200);
+    expect(result.body.settings.publicBaseUrl).toBe('https://10.0.0.1');
+    expect(result.body.warnings).toEqual(['Public URL uses a private or non-public IP address.']);
+  });
+
   it.each([
     'http://example.com',
     'https://example.com/path',
@@ -516,23 +526,28 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(dns.lookup).toHaveBeenCalledWith('example.com', { all: true }, expect.any(Function));
   });
 
-  it.each(['localhost', '127.1', '2130706433', '0x7f000001', '[::1]', '[::ffff:127.0.0.1]'])(
-    'Check permits loopback %s on the configured Node-RED port',
-    async host => {
-      mockDns([
-        { address: host.includes(':') ? '::1' : '127.0.0.1', family: host.includes(':') ? 6 : 4 },
-      ]);
-      const outgoing = mockProbe();
-      const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
-      Object.assign(RED.settings, { uiPort: 8080 });
-      const result = await request(app)
-        .post('/mcp/api/v1/settings/check-public-url')
-        .send({ publicBaseUrl: `https://${host}:8080` });
-      expect(result.status).toBe(200);
-      expect(result.body.ok).toBe(true);
-      expect(outgoing).toHaveBeenCalledTimes(1);
-    }
-  );
+  it.each([
+    'localhost',
+    'localhost.',
+    '127.1',
+    '2130706433',
+    '0x7f000001',
+    '[::1]',
+    '[::ffff:127.0.0.1]',
+  ])('Check permits loopback %s on the configured Node-RED port', async host => {
+    mockDns([
+      { address: host.includes(':') ? '::1' : '127.0.0.1', family: host.includes(':') ? 6 : 4 },
+    ]);
+    const outgoing = mockProbe();
+    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+    Object.assign(RED.settings, { uiPort: 8080 });
+    const result = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: `https://${host}:8080` });
+    expect(result.status).toBe(200);
+    expect(result.body.ok).toBe(true);
+    expect(outgoing).toHaveBeenCalledTimes(1);
+  });
 
   it('Check prefers the actual listening port when available', async () => {
     mockDns([{ address: '127.0.0.1', family: 4 }]);
@@ -545,6 +560,29 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
       .send({ publicBaseUrl: 'https://localhost:8080' });
     expect(result.body.ok).toBe(true);
     expect(outgoing).toHaveBeenCalledTimes(1);
+  });
+
+  it('Check refuses loopback when Node-RED listens on a unix socket', async () => {
+    const outgoing = mockProbe();
+    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+    Object.assign(RED, { server: { address: () => '/tmp/node-red.sock' } });
+    const result = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'http://localhost:1880' });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toContain('Unix socket');
+    expect(outgoing).not.toHaveBeenCalled();
+  });
+
+  it('Check sends the Host header with a non-default port', async () => {
+    mockDns([{ address: '93.184.216.34', family: 4 }]);
+    const outgoing = mockProbe();
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'https://example.com:8443' });
+    const [, options] = outgoing.mock.calls[0]! as unknown as [URL, https.RequestOptions];
+    expect(options.headers).toMatchObject({ Host: 'example.com:8443' });
   });
 
   it('Check reports network failure', async () => {

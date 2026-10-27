@@ -7,6 +7,7 @@ import {
   bindPublicBaseUrl,
   buildAccessLinkUrl,
   canonicalizeIp,
+  validateSettingsPublicBaseUrl,
   isTrustProxyEnabled,
   isValidHostHeader,
   normalizePublicBaseUrl,
@@ -231,6 +232,9 @@ describe('requestPublicOrigin validates forwarded and Host values', () => {
 
 // Check-specific network policy is independent from configuration storage.
 describe('Public URL Check address policy', () => {
+  it('validates a trailing-dot localhost as an HTTP loopback origin', () => {
+    expect(validateSettingsPublicBaseUrl('http://localhost.:1880')).toBe('http://localhost.:1880');
+  });
   it.each(['127.1', '2130706433', '0x7f000001', '::ffff:127.0.0.1', '[::ffff:7f00:1]'])(
     'canonicalizes loopback %s',
     host => {
