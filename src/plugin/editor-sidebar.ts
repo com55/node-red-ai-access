@@ -440,6 +440,9 @@ function editorSidebarScriptPartA(): string {
       api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
         .then(function (data) {
           applyForm(data);
+          if (data.warnings && data.warnings.length) {
+            $('#ai-access-check-result').text(data.warnings.join(' '));
+          }
           if (silent) showSavedToast();
           else setFlash($('#ai-access-flash'), 'Settings saved.', true);
           refreshPending();
@@ -581,6 +584,7 @@ function editorSidebarScriptPartB(): string {
                   $('#ai-access-check-result').text((result.ok ? 'OK: ' : 'Failed: ') + (result.message || result.error) + (result.status ? ' (HTTP ' + result.status + ')' : ''));
                 }).catch(function (err) { $('#ai-access-check-result').text(err.message); });
             });
+          $('<p class="form-tips"></p>').text("Loopback checks use Node-RED's listening port; behind a reverse proxy, use the internal port. Unix-socket listeners are not supported. HTTPS checks fail with self-signed certificates.").appendTo(fieldRow);
           $('<p id="ai-access-check-result" aria-live="polite"></p>').appendTo(fieldRow);
         }
       });

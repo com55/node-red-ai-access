@@ -104,7 +104,10 @@ export function validateSettingsPublicBaseUrl(value: unknown): string {
     throw new Error(message);
   }
   const address = canonicalizeIp(url.hostname);
-  const local = url.hostname === 'localhost' || address === '::1' || address?.startsWith('127.');
+  const local =
+    url.hostname.toLowerCase().replace(/\.$/, '') === 'localhost' ||
+    address === '::1' ||
+    address?.startsWith('127.');
   if (
     (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
     !/^https?:\/\/[^/?#]+\/?$/i.test(value.trim()) ||

@@ -8,10 +8,14 @@ import type { AccessLinkStore } from '../access/link-store.js';
 import type { PersistedAiAccessSettings, SettingsStore } from '../storage/settings-store.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
-import { bindPublicBaseUrl, validateSettingsPublicBaseUrl } from './access-path.js';
+import { bindPublicBaseUrl, canonicalizeIp, validateSettingsPublicBaseUrl } from './access-path.js';
 import { describeAccess, mcpApiBase, normalizeHttpAdminRoot } from './auth.js';
 import { canonicalOrigin } from './cors.js';
-import { preparePublicUrlCheck, requestPublicUrlCheck } from './public-url-check.js';
+import {
+  classifyPublicUrlAddress,
+  preparePublicUrlCheck,
+  requestPublicUrlCheck,
+} from './public-url-check.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -168,7 +172,18 @@ export function putSettingsHandler(
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,
         maxActiveLinks: effective.maxActiveLinks,
       });
-      res.json(settingsResponse(RED, store, req));
+      const response = settingsResponse(RED, store, req);
+      const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
+      const literal = publicUrl
+        ? canonicalizeIp(publicUrl.hostname.replace(/^\[|\]$/g, ''))
+        : undefined;
+      const addressClass = literal ? classifyPublicUrlAddress(literal) : undefined;
+      res.json({
+        ...response,
+        ...(addressClass !== undefined && addressClass !== 'public'
+          ? { warnings: ['Public URL uses a private or non-public IP address.'] }
+          : {}),
+      });
     } catch (error) {
       if (error instanceof StoragePayloadTooLargeError) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -194,6 +209,19 @@ export function checkPublicUrlHandler(RED: NodeRedPluginAPI) {
           RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
         ).server;
         const address = server?.address();
+        const value = (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl;
+        const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
+        const loopback =
+          host
+            .toLowerCase()
+            .replace(/^\[|\]$/g, '')
+            .replace(/\.$/, '') === 'localhost' ||
+          classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
+        if (loopback && typeof address === 'string') {
+          throw new Error(
+            'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
+          );
+        }
         const port =
           address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
         target = await preparePublicUrlCheck(
