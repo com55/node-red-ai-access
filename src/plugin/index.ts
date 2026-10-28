@@ -133,42 +133,6 @@ function registerMcpShellAndDiscovery(
   limiter: ReturnType<typeof createLiveAiAccessDualRateLimiters>['ip'],
   tokenLimiter: ReturnType<typeof createLiveAiAccessDualRateLimiters>['token']
 ): void {
-  // Dashboard shell is public: browser reads editor localStorage Bearer, then calls APIs.
-  // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
-  RED.httpAdmin.get('/ai-access', limiter, (_req: AuthenticatedRequest, res: Response) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res
-      .type('html')
-      .status(200)
-      .send(
-        renderMcpPage({
-          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
-          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
-          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
-          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
-          dashboardPath: dashboardPath(RED.settings.httpAdminRoot),
-        })
-      );
-  });
-
-  // `/mcp` is the MCP endpoint (OAuth protected resource). Same content negotiation
-  // as before 0.2.0-beta.3: MCP Streamable HTTP GETs (Accept: text/event-stream
-  // without text/html) fall through; everything else (browsers) is redirected.
-  RED.httpAdmin.get(
-    '/mcp',
-    limiter,
-    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-      if (isMcpStreamRequest(req)) {
-        next();
-        return;
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      res.redirect(302, dashboardPath(RED.settings.httpAdminRoot));
-    }
-  );
-
   // tokenLimiter after the IP limiter: when a Bearer token is present its
   // per-token RateLimit-* headers replace the per-IP ones (both still enforced).
   RED.httpAdmin.get('/mcp/api/v1', limiter, tokenLimiter, discoveryIndexHandler(RED));
@@ -379,6 +343,48 @@ export function registerRoutes(
     ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),
     rateLimiters: dualLimiters,
   });
+
+  // Registered here (not in a helper) so CodeQL missing-rate-limiting sees the limiter.
+  // Dashboard shell is public: browser reads editor localStorage Bearer, then calls APIs.
+  // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
+  RED.httpAdmin.get(
+    '/ai-access',
+    limiter,
+    tokenLimiter,
+    (_req: AuthenticatedRequest, res: Response) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res
+        .type('html')
+        .status(200)
+        .send(
+          renderMcpPage({
+            apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+            mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
+            editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
+            authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
+            dashboardPath: dashboardPath(RED.settings.httpAdminRoot),
+          })
+        );
+    }
+  );
+
+  // `/mcp` is the MCP endpoint (OAuth protected resource). Same content negotiation
+  // as before 0.2.0-beta.3: MCP Streamable HTTP GETs (Accept: text/event-stream
+  // without text/html) fall through; everything else (browsers) is redirected.
+  RED.httpAdmin.get(
+    '/mcp',
+    limiter,
+    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      if (isMcpStreamRequest(req)) {
+        next();
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(302, dashboardPath(RED.settings.httpAdminRoot));
+    }
+  );
 
   registerMcpShellAndDiscovery(RED, limiter, tokenLimiter);
 
