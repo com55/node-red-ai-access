@@ -495,6 +495,13 @@ describe('ai-access-sidebar.js served tab', () => {
                 nodeId: 'abc',
                 nodeName: 'Meta in',
               },
+              {
+                kind: 'metadata',
+                path: '/.well-known/oauth-<b>x</b>',
+                source: 'http-in',
+                nodeId: 'evil',
+                nodeName: '<img src=x onerror=alert(1)>',
+              },
             ],
             httpNodeRootFallback: true,
           };
@@ -560,6 +567,40 @@ describe('ai-access-sidebar.js served tab', () => {
       expect(warningText).toContain('already registered by another node or plugin');
       expect(warningText).toContain("http-in node 'Meta in'");
       expect(warningText).toContain('OAuth metadata disabled');
+      interface TagNode {
+        tag?: string;
+        textContent?: string;
+        children?: TagNode[];
+      }
+      const codes: string[] = [];
+      const walk = (el: TagNode): void => {
+        if (el.tag === 'code') codes.push(el.textContent ?? '');
+        (el.children ?? []).forEach(walk);
+      };
+      walk($('#ai-access-oauth-route-warning').elements[0]!);
+      expect(codes).toEqual([
+        '/mcp/oauth/token',
+        '/.well-known/oauth-authorization-server',
+        '/.well-known/oauth-<b>x</b>',
+      ]);
+      // Untrusted node names/paths are set as text: no element or raw HTML is created.
+      interface HtmlNode {
+        tag?: string;
+        htmlContent?: string;
+        children?: HtmlNode[];
+      }
+      const tags: string[] = [];
+      const html: string[] = [];
+      const collect = (el: HtmlNode): void => {
+        if (el.tag) tags.push(el.tag);
+        if (el.htmlContent) html.push(el.htmlContent);
+        (el.children ?? []).forEach(collect);
+      };
+      collect($('#ai-access-oauth-route-warning').elements[0]!);
+      expect(tags).not.toContain('img');
+      expect(tags).not.toContain('b');
+      expect(html).toEqual([]);
+      expect(warningText).toContain("'<img src=x onerror=alert(1)>'");
       expect(
         $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[0]!.textContent
       ).toContain('Test app');

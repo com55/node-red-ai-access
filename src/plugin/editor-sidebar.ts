@@ -73,6 +73,12 @@ function editorSidebarStyles(): string {
   overflow-wrap: anywhere;
 }
 #red-ui-sidebar-ai-access .ai-access-oauth-warning code {
+  font-family: var(--red-ui-monospace-font, monospace);
+  color: var(--red-ui-primary-text-color, #333);
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 3px;
+  padding: 0 4px;
   font-size: 0.95em;
   overflow-wrap: anywhere;
   word-break: break-all;
@@ -948,7 +954,7 @@ function editorSidebarScriptPartB(): string {
           .appendTo(line).on('change', scheduleAutoSave);
         field[2].forEach(function (u) { $('<option></option>').attr('value', u[0]).text(u[2]).appendTo(select); });
       });
-      $('<p id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></p>').appendTo(body);
+      $('<div id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></div>').appendTo(body);
       $('<h4></h4>').text('Registered OAuth clients').appendTo(body);
       $('<div id="ai-access-oauth-clients" aria-live="polite"></div>').appendTo(body);
       Object.keys(FIELD_IDS).forEach(function (key) {

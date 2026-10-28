@@ -6,7 +6,6 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { NextFunction, Request, Response } from 'express';
 
@@ -23,6 +22,7 @@ import {
   requireAdminSessionOrAccessLink,
   requireAiFeatures,
   requireStarPermission,
+  resolvePermission,
 } from './auth.js';
 import { requireJsonContentType } from './content-type.js';
 import { aiCorsMiddleware, installAiCorsMiddleware } from './cors.js';
@@ -52,8 +52,7 @@ import {
 } from './node-types-routes.js';
 import {
   describeOAuthRouteCollision,
-  detectOAuthRouteCollisionDetails,
-  findHttpInCollisions,
+  scanOAuthRouteCollisions,
   type OAuthRouteCollision,
   LocalOAuthProvider,
   OAuthStore,
@@ -79,6 +78,7 @@ import {
   getSettingsHandler,
   putSettingsHandler,
 } from './settings-routes.js';
+import { isAdminAuthEnabled } from './settings.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -209,57 +209,18 @@ export function registerRoutes(
   };
   let lastLogged = '';
   const refreshCollisions = () => {
-    const metadataPaths = routeStatus.httpNodeRootFallback
-      ? ['/mcp/.well-known/oauth-']
-      : ['/.well-known/oauth-'];
-    let httpIn: { auth: OAuthRouteCollision[]; meta: OAuthRouteCollision[] } = {
-      auth: [],
-      meta: [],
-    };
-    try {
-      // Flows are not loaded yet while the plugin registers; `flows:started` re-runs this.
-      const each = RED.nodes?.eachNode.bind(RED.nodes);
-      httpIn = {
-        auth: findHttpInCollisions(each, ['/mcp/oauth/']),
-        meta: findHttpInCollisions(each, ['/.well-known/oauth-']),
-      };
-    } catch {
-      // ignore: flow runtime not started
-    }
-    // An enabled http-in node also shows up as an Express 'bound dispatch' route on
-    // httpNode; report it once, as the node. Routes of stopped/removed/disabled nodes
-    // are unregistered by Node-RED, so the scan is re-evaluated from scratch each deploy.
-    const nodePaths = new Set([...httpIn.auth, ...httpIn.meta].map(c => c.path));
-    const express = (app: unknown, prefixes: string[], isHttpNode: boolean) =>
-      detectOAuthRouteCollisionDetails(app, prefixes).filter(
-        c => !(isHttpNode && c.source === 'route' && nodePaths.has(c.path))
-      );
-    const auth: OAuthRouteCollision[] = [
-      ...express(RED.httpAdmin, ['/mcp/oauth/'], false),
-      ...express(RED.httpNode, ['/mcp/oauth/'], true),
-      ...httpIn.auth,
-    ];
-    const meta: OAuthRouteCollision[] = [
-      ...express(RED.httpAdmin, metadataPaths, false),
-      ...express(RED.httpNode, metadataPaths, true),
-      ...httpIn.meta,
-    ];
-    const staticDirs = RED.settings.httpStatic ? [RED.settings.httpStatic].flat() : [];
-    for (const dir of staticDirs) {
-      for (const path of [
-        '.well-known/oauth-authorization-server',
-        '.well-known/oauth-protected-resource',
-        'mcp/oauth/authorize',
-        'mcp/oauth/token',
-        'mcp/oauth/register',
-        'mcp/oauth/revoke',
-      ]) {
-        if (!existsSync(join(dir, path))) continue;
-        const entry: OAuthRouteCollision = { path: join(dir, path), source: 'httpStatic' };
-        if (path.startsWith('mcp/')) auth.push(entry);
-        else meta.push(entry);
-      }
-    }
+    const scan = scanOAuthRouteCollisions({
+      httpAdmin: RED.httpAdmin,
+      httpNode: RED.httpNode,
+      httpAdminRoot: RED.settings.httpAdminRoot,
+      httpNodeRoot: RED.settings.httpNodeRoot,
+      metadataFallback: routeStatus.httpNodeRootFallback,
+      eachNode: RED.nodes ? listener => RED.nodes?.eachNode(listener) : undefined,
+      staticDirs: RED.settings.httpStatic ? [RED.settings.httpStatic].flat().map(String) : [],
+      fileExists: existsSync,
+    });
+    const auth = scan.authorization;
+    const meta = scan.metadata;
     routeStatus.authorization = auth.map(describeOAuthRouteCollision);
     routeStatus.metadata = meta.map(describeOAuthRouteCollision);
     routeStatus.details = [
@@ -329,12 +290,18 @@ export function registerRoutes(
     limiter,
     tokenLimiter,
     requireAdminSession(RED, 'api'),
-    (_req: AuthenticatedRequest, res: Response) =>
+    (req: AuthenticatedRequest, res: Response) => {
+      // Absolute httpStatic filesystem paths are only shown to full-permission admins.
+      const full = !isAdminAuthEnabled(RED.settings) || resolvePermission(req) === '*';
       res.json({
         ...routeStatus,
+        details: full
+          ? routeStatus.details
+          : routeStatus.details.map(({ file: _file, ...rest }) => rest),
         collisions: [...routeStatus.authorization, ...routeStatus.metadata],
         oauthEnabled: services.settingsStore.getEffective().oauth.enabled,
-      })
+      });
+    }
   );
   RED.httpAdmin.delete(
     '/mcp/api/v1/oauth/clients/:id',

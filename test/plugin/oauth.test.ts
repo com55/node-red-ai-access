@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ import {
   canonicalResource,
   detectOAuthRouteCollisions,
   findHttpInCollisions,
+  scanOAuthRouteCollisions,
   type FlowNodeLike,
 } from '../../src/plugin/oauth.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
@@ -44,6 +45,7 @@ function appFor(
     refreshMax?: number;
     oauthFromDisk?: boolean;
     flowNodes?: FlowNodeLike[];
+    httpStatic?: string;
   } = {}
 ) {
   const admin = express();
@@ -55,6 +57,7 @@ function appFor(
     settings: {
       userDir,
       httpNodeRoot: options.fallback ? false : '/',
+      ...(options.httpStatic ? { httpStatic: options.httpStatic } : {}),
       ...(options.session ? { adminAuth: { type: 'credentials' } } : {}),
       aiAccess: {
         ...(options.enabled === false ? { enabled: false } : {}),
@@ -869,6 +872,110 @@ describe('MCP OAuth backend', () => {
     app.events.emit('flows:started');
     status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
     expect(status.collisions).toEqual([]);
+  });
+
+  it('counts http-in nodes in subflow templates only when a running instance exists', () => {
+    const base: FlowNodeLike[] = [
+      { id: 'tab', type: 'tab' },
+      { id: 'off', type: 'tab', disabled: true },
+      { id: 'sf', type: 'subflow' },
+      { id: 'h', type: 'http in', url: '/mcp/oauth/token', z: 'sf' },
+    ];
+    const run = (extra: FlowNodeLike[]) =>
+      findHttpInCollisions(fn => [...base, ...extra].forEach(fn), ['/mcp/oauth/']);
+    expect(run([])).toEqual([]);
+    expect(run([{ id: 'i1', type: 'subflow:sf', z: 'tab', d: true }])).toEqual([]);
+    expect(run([{ id: 'i2', type: 'subflow:sf', z: 'off' }])).toEqual([]);
+    expect(run([{ id: 'i3', type: 'subflow:sf', z: 'tab' }])).toHaveLength(1);
+    // nested: subflow sf used inside subflow outer, which has an enabled instance
+    expect(
+      run([
+        { id: 'outer', type: 'subflow' },
+        { id: 'i4', type: 'subflow:sf', z: 'outer' },
+        { id: 'i5', type: 'subflow:outer', z: 'tab' },
+      ])
+    ).toHaveLength(1);
+  });
+
+  it('compares real mounted paths using httpAdminRoot and httpNodeRoot', () => {
+    const node = express();
+    node.get('/mcp/oauth/token', (_req, res) => res.end());
+    const nodes: FlowNodeLike[] = [
+      { id: 't', type: 'tab' },
+      { id: 'n', type: 'http in', url: '/mcp/oauth/token', z: 't' },
+    ];
+    const base = {
+      httpAdmin: express(),
+      httpNode: node,
+      metadataFallback: false,
+      eachNode: (fn: (n: FlowNodeLike) => void) => nodes.forEach(fn),
+    };
+    // httpNodeRoot '/api': node route is /api/mcp/oauth/token -> no collision
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/', httpNodeRoot: '/api' }).authorization
+    ).toEqual([]);
+    // Same roots -> collision, reported once as the node
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/', httpNodeRoot: '/' }).authorization
+    ).toEqual([{ path: '/mcp/oauth/token', source: 'http-in', nodeId: 'n', nodeName: undefined }]);
+    // httpAdminRoot '/admin' + httpNodeRoot '/admin' -> collision
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/admin', httpNodeRoot: '/admin/' })
+        .authorization
+    ).toHaveLength(1);
+    // httpAdminRoot '/admin', httpNodeRoot '/' + http-in /admin/mcp/oauth/x -> collision
+    const adminNodes: FlowNodeLike[] = [{ id: 'm', type: 'http in', url: '/ADMIN/mcp/OAuth/x' }];
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpNode: express(),
+        httpAdminRoot: '/admin',
+        httpNodeRoot: '/',
+        metadataFallback: false,
+        eachNode: fn => adminNodes.forEach(fn),
+      }).authorization
+    ).toHaveLength(1);
+  });
+
+  it('keeps different sources at the same path and survives eachNode throwing', () => {
+    const admin = express();
+    admin.get('/mcp/oauth/token', (_req, res) => res.end());
+    const node = express();
+    node.get('/MCP/oauth/token', (_req, res) => res.end());
+    const scan = scanOAuthRouteCollisions({
+      httpAdmin: admin,
+      httpNode: node,
+      httpAdminRoot: '/',
+      httpNodeRoot: '/',
+      metadataFallback: false,
+      eachNode: () => {
+        throw new Error('not started');
+      },
+      staticDirs: ['/srv/static'],
+      fileExists: p => p === '/srv/static/mcp/oauth/token',
+    });
+    expect(scan.authorization.map(c => c.source)).toEqual(['route', 'httpStatic']);
+    expect(scan.authorization[1]).toMatchObject({
+      path: '/mcp/oauth/token',
+      file: '/srv/static/mcp/oauth/token',
+    });
+  });
+
+  it('hides absolute httpStatic file paths from non-admin users in /oauth/status', async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), 'ai-access-static-'));
+    mkdirSync(join(staticDir, '.well-known'), { recursive: true });
+    writeFileSync(join(staticDir, '.well-known', 'oauth-authorization-server'), '{}');
+    const app = appFor(userDir, { session: true, httpStatic: staticDir });
+    const admin = (
+      await request(app.admin).get('/mcp/api/v1/oauth/status').set('x-test-user', 'alice')
+    ).body;
+    const viewer = (
+      await request(app.admin).get('/mcp/api/v1/oauth/status').set('x-test-user', 'bob')
+    ).body;
+    expect(admin.details[0].file).toContain(staticDir);
+    expect(viewer.details[0].file).toBeUndefined();
+    expect(JSON.stringify(viewer)).not.toContain(staticDir);
+    rmSync(staticDir, { recursive: true, force: true });
   });
 
   it('normalizes scheme, host, and trailing slash for resource indicators', () => {
