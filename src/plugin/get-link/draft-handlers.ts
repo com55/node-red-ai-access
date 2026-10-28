@@ -11,6 +11,7 @@ import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../../storage/trusted-write.js';
 import {
+  adapterAtRev,
   aiOpsErrorToHttp,
   conflictWarningFields,
   findConflictingProposals,
@@ -18,12 +19,13 @@ import {
 } from '../ai-ops.js';
 import { channelErrorHint } from '../channel-errors.js';
 import type { NodeTypesAdapter } from '../node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from '../proposal-conflicts.js';
+import { autoClosedFields } from '../proposal-conflicts.js';
 import {
   resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposalForApi,
 } from '../proposal-present.js';
+import { expireByTtl } from '../proposal-sync.js';
 import { sendCaughtRouteError } from '../route-errors.js';
 import type { AuthenticatedRequest } from '../types.js';
 
@@ -239,7 +241,7 @@ export function getLinkDraftNewHandler(draftStore: DraftStore, flowAdapter: Flow
 
     // Fail fast when the client’s rev is already stale.
     try {
-      const live = await flowAdapter.getFlow(flowId);
+      const live = await (await adapterAtRev(flowAdapter, rev)).getFlow(flowId);
       if (live.rev !== rev) {
         res.status(409).json({
           error: 'Flow revision mismatch',
@@ -473,9 +475,11 @@ export function getLinkDraftSubmitHandler(
       let builtFlow: FlowTab;
       let expectedRev = draft.expectedRev;
 
+      // A recent known rev builds against that snapshot (auto-rebased on submit).
+      const atRev = await adapterAtRev(flowAdapter, draft.expectedRev);
       if (draft.mode === 'field') {
         const edits = editsFromFieldDraft(draft, assembled);
-        const patched = await buildPatchedFlowTab(flowAdapter, draft.flowId, edits);
+        const patched = await buildPatchedFlowTab(atRev, draft.flowId, edits);
         if (patched.expectedRev !== draft.expectedRev) {
           // Draft is retained (assemble no longer deletes); tell the client clearly.
           res.status(409).json({
@@ -501,7 +505,7 @@ export function getLinkDraftSubmitHandler(
             nodes: interpreted.flow.nodes ?? [],
           };
         } else {
-          const patched = await applyFlowNodeOps(flowAdapter, builtFlowId, interpreted.ops, {
+          const patched = await applyFlowNodeOps(atRev, builtFlowId, interpreted.ops, {
             expectedRev: draft.expectedRev,
             ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
           });
@@ -544,9 +548,7 @@ export function getLinkDraftSubmitHandler(
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         mine: true,
       };
-      const autoClosedCount = expireStalePendingProposals(proposalStore, proposal.expectedRev, {
-        flowId: proposal.payload.flowId,
-      });
+      const autoClosedCount = expireByTtl(proposalStore);
       const conflicts = findConflictingProposals(
         proposalStore,
         proposalStore.get(proposal.id),

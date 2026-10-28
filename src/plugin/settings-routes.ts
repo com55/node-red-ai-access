@@ -176,6 +176,12 @@ export function putSettingsHandler(
     const patch: PersistedAiAccessSettings = {};
     const reset: (keyof PersistedAiAccessSettings)[] = [];
     try {
+      if (body.proposalTtlDays !== undefined) {
+        const value = body.proposalTtlDays;
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 365)
+          throw new Error('proposalTtlDays must be an integer between 1 and 365');
+        patch.proposalTtlDays = value;
+      }
       if (body.oauth !== undefined) {
         if (!body.oauth || typeof body.oauth !== 'object' || Array.isArray(body.oauth))
           throw new Error('oauth must be an object');

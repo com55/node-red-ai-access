@@ -13,8 +13,10 @@ import type { FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
   ProposalConcurrentApproveError,
+  ProposalConflictError,
   ProposalNotFoundError,
   ProposalNotPendingError,
+  isOpenProposalStatus,
   type ProposalStore,
 } from '../storage/proposals.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
@@ -36,11 +38,14 @@ import {
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  resolveMyProposal,
+  resolveConflictChoice,
+  type SubmitReplaceFlowInput,
 } from './ai-ops.js';
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import type { NodeTypesAdapter } from './node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import {
   liveFlowLabelsFromFlows,
@@ -50,7 +55,19 @@ import {
   presentProposalForApi,
   presentProposalsForApi,
 } from './proposal-present.js';
-import type { ProposalService } from './proposal-service.js';
+import {
+  ProposalRebaseAckRequiredError,
+  ProposalRebaseRaceError,
+  ProposalDeployTimeoutError,
+  ProposalApproveQueueTimeoutError,
+  type ProposalService,
+} from './proposal-service.js';
+import {
+  expireByTtl,
+  rebaseOpenProposalsWith,
+  syncOneProposal,
+  tryRawLive,
+} from './proposal-sync.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import { adapterForRequest } from './secret-redaction.js';
 import type { AuthenticatedRequest } from './types.js';
@@ -119,10 +136,7 @@ export function createProposalHandler(
         presentOpts,
         nodeTypesAdapter
       );
-      // expectedRev matched live at submit — expire any older pending on this flow.
-      const autoClosedCount = expireStalePendingProposals(store, proposal.expectedRev, {
-        flowId: proposal.payload.flowId,
-      });
+      const autoClosedCount = expireByTtl(store);
       const conflicts = findConflictingProposals(store, store.get(proposal.id), req.accessLink.id);
       const warnings = proposal.warnings;
       res.status(201).json({
@@ -150,15 +164,9 @@ export function listProposalsHandler(
   httpAdminRoot?: string
 ) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    let liveRev: string | undefined;
-    let liveFlowLabels: Map<string, string> | undefined;
-    try {
-      const snapshot = await adapter.getFlows();
-      liveRev = snapshot.rev;
-      liveFlowLabels = liveFlowLabelsFromFlows(snapshot.flows);
-    } catch {
-      // Client can still learn stale from /diff when live rev is unavailable.
-    }
+    const live = await tryRawLive(adapter);
+    const liveRev = live?.rev;
+    const liveFlowLabels = live ? liveFlowLabelsFromFlows(live.flows) : undefined;
 
     const presentOpts = {
       ...presentOptionsFor(req, httpAdminRoot),
@@ -173,7 +181,10 @@ export function listProposalsHandler(
       return;
     }
 
-    const autoClosedCount = liveRev ? expireStalePendingProposals(store, liveRev) : 0;
+    // TTL-expire, then auto-rebase every open proposal onto the live flows.
+    const autoClosedCount = live
+      ? rebaseOpenProposalsWith(store, live).expired
+      : expireByTtl(store);
 
     const accessLink = req.accessLink;
     if (accessLink) {
@@ -186,7 +197,7 @@ export function listProposalsHandler(
           { ...presentOpts, include },
           { includeConflicts: false }
         );
-        if (lean.status !== 'pending' || liveRev === undefined) {
+        if (!isOpenProposalStatus(lean.status) || liveRev === undefined) {
           return lean;
         }
         return { ...lean, baseRevStale: lean.expectedRev !== liveRev };
@@ -215,7 +226,7 @@ export function listProposalsHandler(
           ? all.slice(offset)
           : all;
     const proposals = sliced.map(p => {
-      if (p.status !== 'pending' || liveRev === undefined) {
+      if (!isOpenProposalStatus(p.status) || liveRev === undefined) {
         return p;
       }
       return { ...p, baseRevStale: p.expectedRev !== liveRev };
@@ -246,14 +257,7 @@ export function getProposalHandler(
     }
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
     const include = resolveIncludeFromQuery(req.query);
-    let liveRev: string | undefined;
-    if (adapter) {
-      try {
-        liveRev = (await adapter.getFlows()).rev;
-      } catch {
-        // Conflicts still work without liveRev; expiry is best-effort.
-      }
-    }
+    const live = await tryRawLive(adapter);
     try {
       if (req.accessLink) {
         const presented = getAccessibleProposal(store, req.accessLink, id, presentOpts);
@@ -263,13 +267,15 @@ export function getProposalHandler(
             req.accessLink,
             presented,
             { ...presentOpts, include },
-            { ...(liveRev ? { liveRev } : {}) }
+            { ...(live ? { live } : {}) }
           )
         );
         return;
       }
-      if (liveRev) {
-        expireStalePendingProposals(store, liveRev);
+      if (live) {
+        rebaseOpenProposalsWith(store, live);
+      } else {
+        expireByTtl(store);
       }
       res.json(presentProposalForApi(store.get(id), { ...presentOpts, include }));
     } catch (error) {
@@ -295,8 +301,15 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
       res.status(400).json({ error: 'Missing proposal id' });
       return;
     }
-    const body = (req.body ?? {}) as { deploymentType?: unknown };
-    const approveOptions: { deploymentType?: 'nodes' | 'flows' | 'full' } = {};
+    const body = (req.body ?? {}) as { deploymentType?: unknown; mergedHash?: unknown };
+    const approveOptions: { deploymentType?: 'nodes' | 'flows' | 'full'; mergedHash?: string } = {};
+    if (body.mergedHash !== undefined) {
+      if (typeof body.mergedHash !== 'string' || !/^[0-9a-f]{8,64}$/.test(body.mergedHash)) {
+        res.status(400).json({ error: 'mergedHash must be a hex string', code: 'invalid_body' });
+        return;
+      }
+      approveOptions.mergedHash = body.mergedHash;
+    }
     if (body.deploymentType !== undefined) {
       if (
         body.deploymentType !== 'nodes' &&
@@ -312,6 +325,25 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
       const proposal = await service.approve(id, adminActor(req), approveOptions);
       res.json(presentProposal(proposal, presentOptionsFor(req, httpAdminRoot)));
     } catch (error) {
+      if (error instanceof ProposalConflictError) {
+        sendSafeJsonError(res, 409, error.code, { conflicts: error.conflicts });
+        return;
+      }
+      if (error instanceof ProposalRebaseAckRequiredError) {
+        sendSafeJsonError(res, 409, error.code, {
+          mergedHash: error.mergedHash,
+          rebaseState: error.rebaseState,
+        });
+        return;
+      }
+      if (
+        error instanceof ProposalRebaseRaceError ||
+        error instanceof ProposalDeployTimeoutError ||
+        error instanceof ProposalApproveQueueTimeoutError
+      ) {
+        sendSafeJsonError(res, error.statusCode, error.code);
+        return;
+      }
       if (
         error instanceof ProposalNotFoundError ||
         error instanceof ProposalNotPendingError ||
@@ -436,7 +468,7 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
         return;
       }
       const diff = applyDiffFormat(
-        await computeProposalDiff(proposal, adapterForRequest(req, adapter)),
+        await computeProposalDiff(proposal, adapterForRequest(req, adapter), store.get(id)),
         resolved.format
       );
       res.json(diff);
@@ -460,6 +492,82 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
       }
       sendCaughtRouteError(res, error);
       return;
+    }
+  };
+}
+
+/** Replace the caller's own open proposal using the same validation as submit. */
+export function resolveProposalHandler(
+  store: ProposalStore,
+  audit: AuditLog,
+  adapter: FlowAdapter,
+  httpAdminRoot?: string,
+  nodeTypes?: NodeTypesAdapter
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.accessLink) {
+      sendSafeJsonError(res, 401, 'access_link_missing');
+      return;
+    }
+    try {
+      const opts = presentOptionsFor(req, httpAdminRoot);
+      const proposal = await resolveMyProposal(
+        store,
+        audit,
+        req.accessLink,
+        String(req.params.id),
+        (req.body ?? {}) as SubmitReplaceFlowInput,
+        adapter,
+        opts,
+        nodeTypes
+      );
+      res.json(presentAccessibleProposalForApi(store, req.accessLink, proposal, opts));
+    } catch (error) {
+      sendCaughtRouteError(res, error);
+    }
+  };
+}
+
+export function resolveProposalConflictHandler(
+  store: ProposalStore,
+  audit: AuditLog,
+  adapter: FlowAdapter,
+  httpAdminRoot?: string
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const body = (req.body ?? {}) as { nodeId?: unknown; choice?: unknown };
+      const proposal = await resolveConflictChoice(
+        store,
+        audit,
+        adminActor(req),
+        String(req.params.id),
+        body.nodeId,
+        body.choice,
+        adapter
+      );
+      res.json(presentProposalForApi(proposal, presentOptionsFor(req, httpAdminRoot)));
+    } catch (error) {
+      sendCaughtRouteError(res, error);
+    }
+  };
+}
+
+export function recheckProposalHandler(
+  store: ProposalStore,
+  adapter: FlowAdapter,
+  httpAdminRoot?: string
+) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      expireByTtl(store);
+      let proposal = store.get(String(req.params.id));
+      const live = await tryRawLive(adapter);
+      if (live && isOpenProposalStatus(proposal.status))
+        proposal = syncOneProposal(store, proposal, live).proposal;
+      res.json(presentProposalForApi(proposal, presentOptionsFor(req, httpAdminRoot)));
+    } catch (error) {
+      sendCaughtRouteError(res, error);
     }
   };
 }

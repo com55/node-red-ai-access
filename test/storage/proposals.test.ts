@@ -34,7 +34,14 @@ describe('ProposalStore + ProposalService', () => {
     updateFlow = vi.fn(() => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }));
     adapter = {
       kind: 'red',
-      getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+      getFlows: () =>
+        Promise.resolve({
+          rev: 'rev-1',
+          flows: [
+            { id: 'tab-1', type: 'tab', label: 'Old' },
+            { id: 'n1', type: 'inject', z: 'tab-1' },
+          ],
+        }),
       getFlow: () =>
         Promise.resolve({ rev: 'rev-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } }),
       updateFlow,
@@ -87,13 +94,13 @@ describe('ProposalStore + ProposalService', () => {
     expect(audit.list()[0]?.action).toBe('proposal.approved');
   });
 
-  it('rev conflict marks proposal rejected with resubmit reason', async () => {
+  it('rev race retries and approves without closing the proposal', async () => {
     const created = createPending();
     updateFlow.mockRejectedValueOnce(new FlowRevisionConflictError('rev-1', 'rev-9', 'updateFlow'));
     const result = await service.approve(created.id, { kind: 'admin', username: 'admin' });
-    expect(result.status).toBe('rejected');
-    expect(result.reason).toMatch(/resubmit/i);
-    expect(updateFlow).toHaveBeenCalledOnce();
+    expect(result.status).toBe('approved');
+    expect(result.reason).toBeUndefined();
+    expect(updateFlow).toHaveBeenCalledTimes(2);
   });
 
   it('other deploy errors mark proposal failed', async () => {
@@ -129,7 +136,7 @@ describe('ProposalStore + ProposalService', () => {
     });
 
     const first = service.approve(created.id, { kind: 'admin', username: 'a' });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
     await expect(
       service.approve(created.id, { kind: 'admin', username: 'b' })
     ).rejects.toBeInstanceOf(ProposalConcurrentApproveError);

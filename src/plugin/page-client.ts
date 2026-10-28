@@ -557,6 +557,9 @@ function pageClientScriptPartAFormat(): string {
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
+      'proposal.conflict': 'Conflict',
+      'proposal.resolved': 'Resolved',
+      'proposal.conflict_resolved': 'Conflict resolved',
       'proposal.withdrawn': 'Withdrawn',
       'link.created': 'Link created',
       'link.revoked': 'Link revoked'
@@ -575,6 +578,9 @@ function pageClientScriptPartAFormat(): string {
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
+      'proposal.conflict': 'Conflict',
+      'proposal.resolved': 'Resolved',
+      'proposal.conflict_resolved': 'Conflict resolved',
       'proposal.withdrawn': 'Withdrawn',
       'link.created': 'Link created',
       'link.revoked': 'Link revoked'
@@ -1689,16 +1695,16 @@ function pageClientScriptPartB(): string {
   }
 
   function proposalIsStale(p) {
-    if (!p || p.status !== 'pending') return false;
-    if (p.baseRevStale === true) return true;
+    if (!p || (p.status !== 'pending' && p.status !== 'conflict')) return false;
     var cached = proposalDiffCache[p.id];
-    return !!(cached && cached.baseRevStale);
+    var rebase = (cached && cached.rebase) || p.rebase;
+    return p.status === 'conflict' || !!(rebase && rebase.state === 'conflict');
   }
 
   function formatPendingBadgeText(live, stale) {
     var parts = [];
     if (live > 0) parts.push(live + ' to review');
-    if (stale > 0) parts.push(stale + ' out of date');
+    if (stale > 0) parts.push(stale + ' conflict' + (stale === 1 ? '' : 's'));
     return parts.length ? parts.join(' · ') : '0';
   }
 
@@ -1829,7 +1835,7 @@ function pageClientScriptPartB(): string {
   }
 
   function countPendingBuckets() {
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
     var stale = 0;
     pending.forEach(function (p) {
       if (proposalIsStale(p)) stale += 1;
@@ -1838,7 +1844,7 @@ function pageClientScriptPartB(): string {
       pending: pending.length,
       live: pending.length - stale,
       stale: stale,
-      decided: Math.max(decidedTotal, cachedProposals.filter(function (p) { return p.status !== 'pending'; }).length)
+      decided: Math.max(decidedTotal, cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); }).length)
     };
   }
 `;
@@ -2138,7 +2144,8 @@ function pageClientScriptPartBDiffView(): string {
 function pageClientScriptPartBDiffView2(): string {
   return `
   function renderDiffSections(sections, mode, emptyMsg) {
-    var parts = '';
+    var parts = sections.summary && (sections.summary.tabChanges || []).length
+      ? '<p>Flow settings changed: ' + esc(sections.summary.tabChanges.join(', ')) + '</p>' : '';
     if (sections.added && sections.added.length) {
       parts += '<div class="diff-section"><h4>Added nodes</h4>' +
         sections.added.map(function (n) { return renderPresenceNode(n, 'added'); }).join('') +
@@ -2179,7 +2186,8 @@ function pageClientScriptPartBDiffView2(): string {
       ? '<p class="muted">No starting snapshot was saved with this proposal, so changes are compared with the live flow.</p>'
       : '';
     // Hide +/-/~ counters and tab:label jargon — the card sentence already says it.
-    var showModeToggle = diffHasTextChanges(diff);
+    var showModeToggle = diffHasTextChanges(diff) || diffHasTextChanges(diff.liveChanges || {}) ||
+      diffHasTextChanges(diff.vsCurrent || {});
     var toolbar = '';
     if (showModeToggle) {
       toolbar =
@@ -2203,16 +2211,51 @@ function pageClientScriptPartBDiffView2(): string {
         ? 'No node changes compared with what the AI started from.'
         : 'No node changes compared with the live flow.'
     );
-    var vsCurrent = '';
-    if (diff.vsCurrent) {
-      var vc = diff.vsCurrent.summary || {};
-      var places = (vc.added || 0) + (vc.removed || 0) + (vc.modified || 0);
-      if (places > 0) {
-        vsCurrent = '<p class="muted vs-current-plain">The flow also changed in ' +
-          places + ' other place' + (places === 1 ? '' : 's') + ' since then.</p>';
-      }
+    var liveChanges = diff.liveChanges;
+    var liveHtml = liveChanges && ((liveChanges.added || []).length ||
+      (liveChanges.removed || []).length || (liveChanges.modified || []).length ||
+      (liveChanges.summary && (liveChanges.summary.tabChanges || []).length))
+      ? '<h3>Changed in editor since submit</h3>' + renderDiffSections(liveChanges, mode, 'No editor node changes.') : '';
+    var deployHtml = diff.vsCurrent
+      ? renderDiffSections(diff.vsCurrent, mode, 'No node changes compared with the live flow.')
+      : '<p class="muted">' + (diff.rebase && diff.rebase.state === 'conflict'
+        ? 'Resolve conflicts to preview what will deploy.' : 'Deployment preview unavailable.') + '</p>';
+    return missing + warnHtml + toolbar + '<h3>Proposed change (vs base)</h3>' + sections +
+      liveHtml + '<h3>Will deploy (vs live)</h3>' + deployHtml;
+  }
+
+  function renderConflictPanel(p, diff) {
+    var rebase = (diff && diff.rebase) || p.rebase;
+    if (!rebase || rebase.state !== 'conflict') return '';
+    return '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
+      '<h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>' +
+      (rebase.conflicts || []).map(function (c) {
+        return '<div class="proposal-conflict"><strong>' + esc(c.nodeName || 'Unnamed node') + '</strong>' +
+          ' · ' + esc(c.nodeType || 'unknown type') + ' · <code>' + esc(c.nodeId || '') + '</code>' +
+          '<p>' + esc(c.kind) + '</p><p>Fields: ' + esc((c.fields || []).join(', ')) + '</p>' +
+          '<p>' + esc(c.message) + '</p>' + (canApprove ? (c.choices || []).filter(function (choice) {
+            return choice === 'live' || choice === 'proposed';
+          }).map(function (choice) {
+            return '<button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
+              '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(choice) + '">' +
+              (choice === 'live' ? 'Keep live' : 'Use proposed') + '</button> ';
+          }).join('') : '') + '</div>';
+      }).join('') + (canApprove ? '<button type="button" class="action secondary recheck-btn" data-id="' +
+        esc(p.id) + '">Re-check</button>' : '') + '</div>';
+  }
+
+  async function updateProposalConflict(id, nodeId, choice) {
+    try {
+      await api('/proposals/' + encodeURIComponent(id) + (choice ? '/resolve-conflict' : '/recheck'), {
+        method: 'POST', body: JSON.stringify(choice ? { nodeId: nodeId, choice: choice } : {})
+      });
+      delete proposalDiffCache[id];
+      await loadProposals();
+      await loadProposalDiff(id);
+      notifySidebarPendingRefresh();
+    } catch (e) {
+      showFlash($('proposals-flash'), e.message || String(e), false);
     }
-    return missing + warnHtml + toolbar + sections + vsCurrent;
   }
 
   function renderDiffRevMeta(diff) {
@@ -2235,8 +2278,8 @@ function pageClientScriptPartB2(): string {
     var fullText = formatPendingBadgeText(counts.live, counts.stale);
     var badge = $('proposals-pending-badge');
     if (badge) {
-      // Tab badge: to-review count only; full wording lives in the tooltip.
-      badge.textContent = String(counts.live);
+      // Include conflicts in the open proposal count.
+      badge.textContent = String(counts.pending);
       badge.hidden = counts.pending <= 0;
       badge.title = fullText;
     }
@@ -2284,6 +2327,14 @@ function pageClientScriptPartB2(): string {
         });
       });
     });
+    list.querySelectorAll('.resolve-conflict-btn, .recheck-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', async function () {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        await updateProposalConflict(btn.getAttribute('data-id'), btn.getAttribute('data-node-id'), btn.getAttribute('data-choice'));
+        btn.disabled = false;
+      });
+    });
     list.querySelectorAll('.approve-btn').forEach(function (btn) {
       bindOnce(btn, 'click', function () {
         if (btn.disabled) return;
@@ -2294,24 +2345,6 @@ function pageClientScriptPartB2(): string {
       bindOnce(btn, 'click', function () {
         openRejectDialog(btn.getAttribute('data-id'));
       });
-    });
-    list.querySelectorAll('.dismiss-stale-btn').forEach(function (btn) {
-      bindOnce(btn, 'click', function () {
-        var id = btn.getAttribute('data-id');
-        openConfirmDialog({
-          title: 'Dismiss proposal',
-          message: 'This closes the out-of-date item from your queue. The flow is unchanged.',
-          confirmLabel: 'Dismiss',
-          danger: true,
-          onConfirm: function () {
-            rejectProposal(id, 'Dismissed — ask the AI to resubmit');
-          }
-        });
-      });
-    });
-    var dismissAll = list.querySelector('#dismiss-all-stale');
-    bindOnce(dismissAll, 'click', function () {
-      dismissAllStaleProposals();
     });
     list.querySelectorAll('.deploy-type').forEach(function (sel) {
       bindOnce(sel, 'change', function () {
@@ -2359,9 +2392,7 @@ function pageClientScriptPartB2Actions(): string {
   }
 
   function renderPendingActions(p, stale) {
-    if (!canApprove || p.status !== 'pending') return '';
-    // Stale items live in the Out of date group (Dismiss only).
-    if (stale) return '';
+    if (!canApprove || (p.status !== 'pending' && p.status !== 'conflict')) return '';
     var cached = proposalDiffCache[p.id];
     var warns = proposalWarnings(p, cached);
     var warnNote = warns.length
@@ -2375,7 +2406,7 @@ function pageClientScriptPartB2Actions(): string {
       '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
       '<div class="row">' +
       '<button type="button" class="action approve-btn" data-id="' + esc(p.id) +
-      '">Approve &amp; deploy</button>' +
+      '"' + (stale ? ' disabled title="Resolve conflicts before approving"' : (!cached ? ' disabled title="Wait for the diff to load"' : '')) + '>Approve &amp; deploy</button>' +
       '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) +
       '">Reject</button>' +
       '</div>' +
@@ -2395,42 +2426,6 @@ function pageClientScriptPartB2Actions(): string {
       '</details>';
   }
 
-  function dismissAllStaleProposals() {
-    var staleIds = cachedProposals
-      .filter(function (p) { return p.status === 'pending' && proposalIsStale(p); })
-      .map(function (p) { return p.id; });
-    if (!staleIds.length) return;
-    var n = staleIds.length;
-    openConfirmDialog({
-      title: 'Dismiss out-of-date proposals',
-      message: 'Dismiss ' + n + ' out-of-date proposal' + (n === 1 ? '' : 's') +
-        ' from your queue? The flow is unchanged.',
-      confirmLabel: n === 1 ? 'Dismiss' : 'Dismiss all',
-      danger: true,
-      onConfirm: function () { doDismissAllStaleProposals(staleIds); }
-    });
-  }
-
-  async function doDismissAllStaleProposals(staleIds) {
-    var flash = $('proposals-flash');
-    var failed = 0;
-    for (var i = 0; i < staleIds.length; i += 1) {
-      try {
-        await rejectProposal(staleIds[i], 'Dismissed — ask the AI to resubmit', { silent: true });
-      } catch (e) {
-        failed += 1;
-      }
-    }
-    if (failed) {
-      showFlash(flash, 'Dismissed with ' + failed + ' error(s).', false);
-    } else {
-      showFlash(flash, 'Dismissed ' + staleIds.length + ' out-of-date proposal' +
-        (staleIds.length === 1 ? '' : 's') + '.', true);
-      showToast('Out-of-date proposals dismissed.', true);
-    }
-    loadProposals();
-    loadLogs();
-  }
 `;
 }
 
@@ -2486,6 +2481,13 @@ function pageClientScriptPartB2Cards(): string {
       '</span>';
   }
 
+  function renderRebaseChip(p, diff) {
+    var rebase = (diff && diff.rebase) || p.rebase;
+    var count = p.rebase && p.rebase.liveChangedCount;
+    return '<span class="rebase-chip"' + (p.status === 'pending' && rebase && rebase.state === 'merged' ? '' : ' hidden') +
+      '>Rebased · ' + esc(count == null ? 0 : count) + ' live changes</span>';
+  }
+
   function renderProposalCard(p) {
     var cached = proposalDiffCache[p.id];
     var title = titleForProposalCard(p);
@@ -2499,7 +2501,13 @@ function pageClientScriptPartB2Cards(): string {
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
     var cardWarns = proposalWarnings(p, cached);
-    var warnBanner = renderRestoredSecrets(p) + (cardWarns.length && !cached
+    var deployBanner = p.deployPending
+      ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
+        esc(p.deployPending.queueReleased
+          ? 'The approval queue was released. Check the live flow before approving again.'
+          : p.deployPending.reason) + '</p></div>'
+      : '';
+    var warnBanner = deployBanner + renderRestoredSecrets(p) + (cardWarns.length && !cached
       ? renderValidationWarnings(cardWarns)
       : '');
     var stale = proposalIsStale(p);
@@ -2513,8 +2521,8 @@ function pageClientScriptPartB2Cards(): string {
       '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
       '<header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
-      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span> ' +
-      renderProposalMetaLine(p) +
+      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status === 'conflict' ? 'Conflict' : p.status) + '</span> ' +
+      renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
       '</header>' +
       (createdBy ? createdBy + '<br/>' : '') +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
@@ -2522,6 +2530,7 @@ function pageClientScriptPartB2Cards(): string {
       deleteBanner +
       warnBanner +
       reason +
+      '<div class="proposal-conflict-host">' + renderConflictPanel(p, cached) + '</div>' +
       changes +
       renderProposalTech(p, cached) +
       actions +
@@ -2532,52 +2541,6 @@ function pageClientScriptPartB2Cards(): string {
 
 function pageClientScriptPartB2CardsList(): string {
   return `
-  function renderStaleItem(p) {
-    var cached = proposalDiffCache[p.id];
-    var title = titleForProposalCard(p);
-    var deleteBanner = cached ? renderDeleteBanner(cached) : '';
-    var dismissBtn = canApprove
-      ? '<button type="button" class="action secondary dismiss-stale-btn" data-id="' +
-        esc(p.id) + '">Dismiss</button>'
-      : '';
-    return '<div class="stale-item proposal-detail" id="proposal-' + esc(p.id) +
-      '" data-id="' + esc(p.id) + '" data-status="pending" data-stale="1">' +
-      '<div class="stale-item-row">' +
-      '<div class="stale-item-main">' +
-      '<strong class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) +
-      '</strong>' +
-      '<span class="stale-reason muted">Flow changed since this was submitted</span>' +
-      renderProposalMetaLine(p) +
-      '</div>' +
-      dismissBtn +
-      '</div>' +
-      deleteBanner +
-      '<details class="stale-item-diff">' +
-      '<summary>Show changes</summary>' +
-      '<div class="proposal-changes proposal-diff" data-diff-for="' + esc(p.id) +
-      '" data-changes-for="' + esc(p.id) + '">' +
-      (cached ? renderHumanDiff(cached) : '<p class="muted">Loading changes…</p>') +
-      '</div>' +
-      renderProposalTech(p, cached) +
-      '</details></div>';
-  }
-
-  function renderStaleGroup(items) {
-    if (!items.length) return '';
-    return '<details class="stale-group">' +
-      '<summary>Out of date (' + items.length + ')</summary>' +
-      '<p class="muted dismiss-vs-reject">Dismiss closes an out-of-date item from your queue ' +
-      '(the AI is asked to resubmit). Reject tells the AI the change was refused — use Reject ' +
-      'only on proposals that are still current.</p>' +
-      (canApprove
-        ? '<div class="stale-group-actions">' +
-          '<button type="button" class="action secondary" id="dismiss-all-stale">' +
-          'Dismiss all out-of-date</button></div>'
-        : '') +
-      items.map(renderStaleItem).join('') +
-      '</details>';
-  }
-
   function renderCompactProposal(p) {
     var title = titleForProposalCard(p);
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
@@ -2610,8 +2573,8 @@ function pageClientScriptPartB2CardsList(): string {
   }
 
   function countSearchMatchesInFilter(filter) {
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
-    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
+    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
     if (filter === 'decided') {
       return decided.filter(proposalMatchesSearch).length;
     }
@@ -2649,8 +2612,8 @@ function pageClientScriptPartB2CardsList(): string {
     var list = $('proposals-list');
     if (!list) return;
     var filters = $('proposals-filters');
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
-    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
+    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
     updatePendingBadges();
     if (filters) filters.hidden = cachedProposals.length === 0;
     if (!cachedProposals.length) {
@@ -2661,13 +2624,8 @@ function pageClientScriptPartB2CardsList(): string {
       return;
     }
     if (proposalsFilter === 'pending') {
-      var live = pending.filter(function (p) {
-        return !proposalIsStale(p) && proposalMatchesSearch(p);
-      });
-      var stale = pending.filter(function (p) {
-        return proposalIsStale(p) && proposalMatchesSearch(p);
-      });
-      if (!live.length && !stale.length) {
+      var live = pending.filter(proposalMatchesSearch);
+      if (!live.length) {
         var decidedMatches = countSearchMatchesInFilter('decided');
         list.innerHTML = renderEmptyProposalsState(
           proposalsSearchQuery.trim() ? 'No matching proposals' : 'No pending proposals',
@@ -2679,9 +2637,9 @@ function pageClientScriptPartB2CardsList(): string {
         bindCrossTabHint(list);
         return;
       }
-      disambiguatedTitleCache = buildDisambiguatedTitles(live.concat(stale));
-      list.innerHTML = live.map(renderProposalCard).join('') + renderStaleGroup(stale);
-      live.concat(stale).forEach(function (p) { loadProposalDiff(p.id); });
+      disambiguatedTitleCache = buildDisambiguatedTitles(live);
+      list.innerHTML = live.map(renderProposalCard).join('');
+      live.forEach(function (p) { loadProposalDiff(p.id); });
     } else {
       var matchedDecided = decided.filter(proposalMatchesSearch);
       if (proposalsSearchQuery.trim() && decidedHasMore) {
@@ -2735,7 +2693,7 @@ function pageClientScriptPartB2Focus(): string {
     }
     try {
       await refreshFlowLabels();
-      var pendingData = await api('/proposals?status=pending');
+      var pendingData = await api('/proposals?status=pending,conflict');
       // Refresh keeps however many decided cards were already loaded.
       var decidedLimit = Math.min(200, Math.max(DECIDED_PAGE_SIZE, decidedLoaded));
       var decidedData = await api('/proposals?status=' + DECIDED_STATUSES +
@@ -2842,7 +2800,7 @@ function pageClientScriptPartB2Focus(): string {
       needsRerender = true;
     }
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    if (p && p.status !== 'pending' && proposalsFilter === 'pending') {
+    if (p && (p.status !== 'pending' && p.status !== 'conflict') && proposalsFilter === 'pending') {
       proposalsFilter = 'decided';
       var filtersEl = $('proposals-filters');
       if (filtersEl) {
@@ -2904,14 +2862,18 @@ function pageClientScriptPartB2Apply(): string {
   }
 
   function applyDiffToProposalCard(id, diff) {
-    proposalDiffCache[id] = diff;
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var wasStale = p ? proposalIsStale(p) : false;
+    proposalDiffCache[id] = diff;
+    if (p && diff.rebase && (p.status === 'pending' || p.status === 'conflict')) {
+      p.rebase = Object.assign({}, p.rebase || {}, diff.rebase);
+      p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
+    }
     if (p && typeof diff.baseRevStale === 'boolean') {
       p.baseRevStale = diff.baseRevStale;
     }
-    // Newly discovered stale → re-render into the Out of date group.
-    if (p && p.status === 'pending' && !wasStale && diff.baseRevStale) {
+    // Move cards between review and conflict groups when the rebase state changes.
+    if (p && (p.status === 'pending' || p.status === 'conflict') && wasStale !== proposalIsStale(p)) {
       renderProposalsList();
       return;
     }
@@ -2933,7 +2895,19 @@ function pageClientScriptPartB2Apply(): string {
       updatePendingBadges();
       return;
     }
-    if (diff.baseRevStale) article.setAttribute('data-stale', '1');
+    if (p) {
+      article.setAttribute('data-status', p.status);
+      var pill = article.querySelector('.status-pill');
+      if (pill) { pill.className = 'status-pill ' + p.status; pill.textContent = p.status === 'conflict' ? 'Conflict' : p.status; }
+      var conflictHost = article.querySelector('.proposal-conflict-host');
+      if (conflictHost) conflictHost.innerHTML = renderConflictPanel(p, diff);
+      var approveBtn = article.querySelector('.approve-btn');
+      if (approveBtn) { approveBtn.disabled = proposalIsStale(p); approveBtn.title = approveBtn.disabled ? 'Resolve conflicts before approving' : ''; }
+      var chip = article.querySelector('.rebase-chip');
+      if (chip) chip.outerHTML = renderRebaseChip(p, diff);
+      bindProposalActions(article);
+    }
+    if (p && proposalIsStale(p)) article.setAttribute('data-stale', '1');
     else article.removeAttribute('data-stale');
 
     // Banner for any large delete (stale or live) — owners must see the risk.
@@ -2963,7 +2937,7 @@ function pageClientScriptPartB2Apply(): string {
 
     // Refresh headings from the live diff; rebuild disambiguation across peers
     // (includes stale cards — relative "12h ago" alone must not be the only cue).
-    var pendingPeers = cachedProposals.filter(function (x) { return x.status === 'pending'; });
+    var pendingPeers = cachedProposals.filter(function (x) { return (x.status === 'pending' || x.status === 'conflict'); });
     disambiguatedTitleCache = buildDisambiguatedTitles(pendingPeers);
     pendingPeers.forEach(function (peer) {
       var el = document.querySelector('[data-title-for="' + peer.id + '"]');
@@ -3183,7 +3157,7 @@ function pageClientScriptPartC(): string {
       renderProposalsList();
       return;
     }
-    if (status && status !== 'pending' && proposalsFilter === 'pending') {
+    if (status && status !== 'pending' && status !== 'conflict' && proposalsFilter === 'pending') {
       var decidedMatches = countSearchMatchesInFilter('decided');
       if (decidedMatches > 0) {
         setProposalsFilter('decided');
@@ -3224,17 +3198,17 @@ function pageClientScriptPartC(): string {
     var expectedRev = pBefore && pBefore.expectedRev;
     var peersBefore = expectedRev
       ? cachedProposals.filter(function (x) {
-          return x.id !== id && x.status === 'pending' && x.expectedRev === expectedRev;
+          return x.id !== id && (x.status === 'pending' || x.status === 'conflict') && x.expectedRev === expectedRev;
         }).length
       : 0;
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
-        body: JSON.stringify({ deploymentType: deploymentType })
+        body: JSON.stringify({ deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash })
       });
       var viewOpts = { title: toastTitle, href: proposalViewHref(id), linkLabel: 'View' };
       if (result.status === 'rejected') {
-        var rejectMsg = friendlyReason(result.reason) || 'Proposal rejected (revision conflict).';
+        var rejectMsg = result.reason || 'Proposal rejected.';
         showFlash(flash, rejectMsg, false);
         showToast(rejectMsg, false, viewOpts);
       } else if (result.status === 'failed') {
@@ -3248,9 +3222,9 @@ function pageClientScriptPartC(): string {
         showToast('Approved & deployed.', true, viewOpts);
       }
       delete proposalDiffCache[id];
-      // Clear diff cache for peers that shared the rev — they are now out of date.
+      // Re-check peer diffs against the newly deployed flow.
       cachedProposals.forEach(function (peer) {
-        if (peer.id !== id && peer.status === 'pending' && peer.expectedRev === expectedRev) {
+        if (peer.id !== id && (peer.status === 'pending' || peer.status === 'conflict') && peer.expectedRev === expectedRev) {
           delete proposalDiffCache[peer.id];
           peer.baseRevStale = true;
         }
@@ -3260,8 +3234,8 @@ function pageClientScriptPartC(): string {
       notifySidebarPendingRefresh();
       if (result.status !== 'rejected' && result.status !== 'failed' && peersBefore > 0) {
         var note = peersBefore === 1
-          ? '1 other proposal is now out of date'
-          : peersBefore + ' other proposals are now out of date';
+          ? '1 other proposal was rechecked'
+          : peersBefore + ' other proposals were rechecked';
         var priorOk = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
         showFlash(flash, (priorOk ? priorOk + ' ' : '') + note + '.', true);
         showToast(note + '.', true);
@@ -3269,7 +3243,18 @@ function pageClientScriptPartC(): string {
       settleSearchAfterAction(id, 'approved');
       loadLogs();
     } catch (e) {
-      var errMsg = friendlyReason(e.message) || String(e);
+      var code = e.body && e.body.code;
+      var errMsg = e.message || String(e);
+      if (e.status === 409 && (code === 'rebase_ack_required' || code === 'proposal_conflict')) {
+        errMsg = code === 'rebase_ack_required'
+          ? 'This proposal was rebased onto newer editor changes since you viewed it — review the updated diff'
+          : 'Resolve the conflicts before approving this proposal.';
+        delete proposalDiffCache[id];
+        await loadProposals();
+        await loadProposalDiff(id);
+      } else if (e.status === 409 && code === 'rebase_race') {
+        errMsg = 'Flows kept changing, try again';
+      }
       showFlash(flash, errMsg, false);
       showToast(errMsg, false, toastTitle ? { title: toastTitle } : undefined);
     }
@@ -3280,8 +3265,13 @@ function pageClientScriptPartC(): string {
     var deploymentType = select ? select.value : defaultDeploy;
     var diff = proposalDiffCache[id];
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    if (diff && diff.baseRevStale) {
-      showToast('This proposal is out of date. Ask the AI to resubmit.', false);
+    if ((p && p.status === 'conflict') || (diff && diff.rebase && diff.rebase.state === 'conflict')) {
+      showToast('Resolve the conflicts before approving this proposal.', false);
+      return;
+    }
+    if (!diff) {
+      await loadProposalDiff(id);
+      showToast('Review the loaded diff, then click Approve again.', false);
       return;
     }
     if (needsApproveConfirm(diff, p)) {
@@ -3490,7 +3480,7 @@ function pageClientScriptPartD(): string {
     }
 
     $('proposals-hint').textContent = canApprove
-      ? 'Review changes from your AI assistant. Each card shows a short id (first 8 hex after prop-; click to copy the full id). Approve & deploy makes them live; Reject leaves the flow unchanged; Dismiss closes out-of-date items.'
+      ? 'Review changes from your AI assistant. Each card shows a short id (first 8 hex after prop-; click to copy the full id). Approve & deploy makes them live; Reject leaves the flow unchanged. Resolve conflicts to review the merged change.'
       : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals. Short ids are the first 8 hex characters after prop- (click to copy the full id).';
 
     renderLinksManage();

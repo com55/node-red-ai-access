@@ -90,7 +90,8 @@ function createApp(options: {
 
   const adapter: FlowAdapter = {
     kind: 'red',
-    getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+    getFlows: () =>
+      Promise.resolve({ rev: 'rev-1', flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }] }),
     getFlow: () =>
       Promise.resolve({
         rev: 'rev-1',
@@ -206,7 +207,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Node added|Node removed/);
     expect(res.text).toMatch(/base snapshot|vsCurrent/);
     expect(res.text).toMatch(/to review|out of date/);
-    expect(res.text).toMatch(/Dismiss all out-of-date/);
+    expect(res.text).toMatch(/Resolve conflicts before approving/);
     expect(res.text).toMatch(/Deploy options/);
     expect(res.text).toMatch(/filter-decided-count/);
     expect(res.text).toMatch(/for troubleshooting/);
@@ -225,13 +226,15 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/AI access links can only read/);
     expect(res.text).toMatch(/titleWasDisambiguated|time-exact|buildDisambiguatedTitles/);
     expect(res.text).toMatch(/renderHumanDiff|proposal-changes/);
-    expect(res.text).toMatch(/dismiss-vs-reject/);
-    expect(res.text).toMatch(/Out of date \(/);
-    expect(res.text).toMatch(/renderStaleGroup|stale-group/);
+    expect(res.text).toMatch(/proposal-conflicts/);
+    expect(res.text).toMatch(/Conflicts/);
+    expect(res.text).toMatch(/renderConflictPanel|proposal-conflicts/);
     expect(res.text).toMatch(/Requested via link/);
-    expect(res.text).toMatch(/Dismiss closes/);
+    expect(res.text).toMatch(/Keep live/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
-    expect(res.text).toMatch(/The flow also changed in/);
+    expect(res.text).toMatch(/Changed in editor since submit/);
+    expect(res.text).toMatch(/Will deploy \(vs live\)/);
+    expect(res.text).toMatch(/mergedHash/);
     // Proposal id chip (first 8 hex after prop-) + search matches short/full id.
     expect(res.text).toMatch(/id="proposals-search"/);
     expect(res.text).toMatch(/proposalIdChip|proposalShortId|data-copy-id/);
@@ -264,7 +267,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/openConfirmDialog/);
     expect(res.text).toMatch(/trapDialogFocus|showInPageDialog/);
     expect(res.text).toMatch(/Revoke access link/);
-    expect(res.text).toMatch(/Dismiss out-of-date proposals/);
+    expect(res.text).toMatch(/Re-check/);
     expect(res.text).not.toMatch(/window\.confirm|window\.alert|window\.prompt/);
     // Regression: Deletes X of Y banner must show for large deletes even when stale.
     expect(res.text).toMatch(/renderDeleteBanner|Deletes .* of .* nodes/);

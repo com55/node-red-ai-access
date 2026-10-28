@@ -189,6 +189,14 @@ function renderMcpPageSettingsSection(): string {
             </div>
           </div>
           <div class="form-row">
+            <label for="set-proposal-ttl">Proposal expiry (days)</label>
+            <div class="field-line">
+              <input type="number" id="set-proposal-ttl" min="1" max="365" step="1" value="7" class="num" />
+              ${lockBadge('proposal-ttl')}
+            </div>
+            <p class="hint">Open proposals expire after this many days from submission (1–365, default 7).</p>
+          </div>
+          <div class="form-row">
             <label for="set-max-links">Maximum active tokens</label>
             <div class="field-line">
               <input type="number" id="set-max-links" min="1" step="1" class="num" />

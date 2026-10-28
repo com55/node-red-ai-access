@@ -8,6 +8,7 @@ import type { FlowAdapter, FlowTab } from '../../runtime/types.js';
 import type { AuditLog } from '../../storage/audit-log.js';
 import type { ProposalStore } from '../../storage/proposals.js';
 import {
+  adapterAtRev,
   aiOpsErrorToHttp,
   conflictWarningFields,
   findConflictingProposals,
@@ -16,12 +17,13 @@ import {
 import { channelErrorHint } from '../channel-errors.js';
 import { registryHint } from '../error-registry.js';
 import type { NodeTypesAdapter } from '../node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from '../proposal-conflicts.js';
+import { autoClosedFields } from '../proposal-conflicts.js';
 import {
   resolveIncludeFromQuery,
   presentOptionsFor,
   presentProposalForApi,
 } from '../proposal-present.js';
+import { expireByTtl } from '../proposal-sync.js';
 import { sendCaughtRouteError } from '../route-errors.js';
 import type { AuthenticatedRequest } from '../types.js';
 
@@ -334,7 +336,9 @@ export function getLinkProposeHandler(
     }
 
     try {
-      const built = await buildProposeFromQuery(res, flowAdapter, q, q.rev, nodeTypesAdapter);
+      // A recent known rev builds against that snapshot (auto-rebased on submit).
+      const atRev = await adapterAtRev(flowAdapter, q.rev);
+      const built = await buildProposeFromQuery(res, atRev, q, q.rev, nodeTypesAdapter);
       if (!built) {
         return;
       }
@@ -363,9 +367,7 @@ export function getLinkProposeHandler(
         ...presentProposalForApi(proposal, { ...presentOpts, include }),
         mine: true,
       };
-      const autoClosedCount = expireStalePendingProposals(proposalStore, proposal.expectedRev, {
-        flowId: proposal.payload.flowId,
-      });
+      const autoClosedCount = expireByTtl(proposalStore);
       const conflicts = findConflictingProposals(
         proposalStore,
         proposalStore.get(proposal.id),

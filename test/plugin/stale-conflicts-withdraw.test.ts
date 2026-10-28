@@ -12,10 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
-import {
-  expireStalePendingProposals,
-  findConflictingProposals,
-} from '../../src/plugin/proposal-conflicts.js';
+import { findConflictingProposals } from '../../src/plugin/proposal-conflicts.js';
+import { rebaseOpenProposalsWith } from '../../src/plugin/proposal-sync.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../../src/storage/paths.js';
@@ -97,8 +95,8 @@ function createApp(
         rev,
         flows: [
           { id: 'tab-1', type: 'tab', label: 'Main' },
-          { id: 'n1', type: 'inject', z: 'tab-1' },
-          { id: 'n2', type: 'template', z: 'tab-1' },
+          { id: 'n1', type: 'inject', name: 'tick', z: 'tab-1', wires: [[]] },
+          { id: 'n2', type: 'template', name: 'tpl', template: 'Hello', z: 'tab-1', wires: [[]] },
         ],
       }),
     getFlow: (id: string) =>
@@ -133,7 +131,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
-  it('findConflictingProposals keeps same-rev and overlaps; skips other older-rev peers', () => {
+  it('findConflictingProposals warns only about overlapping edits across revisions', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);
     const store = new ProposalStore(paths, {
@@ -174,7 +172,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
       },
     });
 
-    // Same rev, no overlap (touches only n2) — still listed.
+    // Same rev, no overlap (touches only n2) — auto-rebases without warning.
     const sameRevPeer = store.create({
       ...base,
       title: 'same-rev',
@@ -232,7 +230,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
 
     const result = findConflictingProposals(store, self, 'link-1');
     const ids = result.conflictingProposals.map(c => c.id);
-    expect(ids).toContain(sameRevPeer.id);
+    expect(ids).not.toContain(sameRevPeer.id);
     expect(ids).toContain(overlapOld.id);
     expect(ids).not.toContain(staleOther.id);
     expect(result).not.toHaveProperty('staleOnOlderRev');
@@ -240,7 +238,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
     expect(overlapRef?.overlappingNodeIds).toEqual(expect.arrayContaining(['n1']));
   });
 
-  it('expires pending proposals when liveRev moves', () => {
+  it('rebases pending proposals when liveRev moves', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);
     const store = new ProposalStore(paths);
@@ -259,12 +257,19 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
       },
       createdBy: { kind: 'access-link', linkId: 'l1' },
     });
-    expect(expireStalePendingProposals(store, 'rev-2')).toBe(1);
-    expect(store.get(created.id).status).toBe('expired');
-    expect(store.get(created.id).reason).toMatch(/expired/i);
+    const summary = rebaseOpenProposalsWith(store, {
+      rev: 'rev-2',
+      flows: [
+        { id: 'tab-1', type: 'tab' },
+        { id: 'n1', type: 'inject', name: 'y', z: 'tab-1' },
+      ],
+    });
+    expect(summary).toMatchObject({ checked: 1, expired: 0, conflicts: 0 });
+    expect(store.get(created.id).status).toBe('pending');
+    expect(store.get(created.id).rebase?.state).toBe('clean');
   });
 
-  it('approving one proposal supersedes other pending on the same flow', async () => {
+  it('approving one proposal keeps non-overlapping peers open', async () => {
     const { app, linkStore } = createApp(userDir, { authenticate: asUser('*') });
     const link = linkStore.create({ label: 'bot', kind: 'rest' });
     const auth = { Authorization: `Bearer ${link.token}` };
@@ -296,8 +301,8 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
 
     const other = await request(app).get(`/mcp/api/v1/proposals/${b.body.id}`).set(auth);
     expect(other.status).toBe(200);
-    expect(other.body.status).toBe('superseded');
-    expect(other.body.reason).toMatch(/Superseded/i);
+    expect(other.body.status).toBe('pending');
+    expect(other.body.rebase.state).toBe('clean');
   });
 
   it('list omits conflictingProposals; get/submit may include them', async () => {

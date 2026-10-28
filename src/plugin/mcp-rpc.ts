@@ -33,6 +33,7 @@ import {
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  resolveMyProposal,
   type ListFilterParameter,
   type ListProposalsFilter,
 } from './ai-ops.js';
@@ -40,9 +41,10 @@ import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
+import { expireByTtl, rebaseOpenProposalsWith, tryRawLive } from './proposal-sync.js';
 import {
   accessLinkAuditActor,
   mcpOperationName,
@@ -446,7 +448,7 @@ function registerProposalTools(
         'Secret values appear as "[REDACTED]" in reads; leave the placeholder unchanged to keep the stored secret ' +
         '(it is restored on submit), or replace it with a new value to change it. ' +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
-        'expectedRev is checked against the live rev at submit time (409 if stale). ' +
+        'Recent known expectedRev snapshots are accepted and auto-rebased; unknown revisions return 409 version_mismatch. Open proposals auto-rebase on revision changes; conflict blocks approval until resolved. Proposals expire after the configured TTL (default 7 days). ' +
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
         'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
         'search_palette and ask the user to install via Manage palette (never auto-install). ' +
@@ -540,13 +542,7 @@ function registerProposalTools(
           }),
           mine: true,
         };
-        const autoClosedCount = expireStalePendingProposals(
-          services.proposalStore,
-          proposal.expectedRev,
-          {
-            flowId: proposal.payload.flowId,
-          }
-        );
+        const autoClosedCount = expireByTtl(services.proposalStore);
         const conflicts = conflictWarningFields(
           findConflictingProposals(
             services.proposalStore,
@@ -583,7 +579,7 @@ function registerListProposalsTools(
       .optional()
       .describe(
         'Filter by proposal status: one value, an array, or a comma-separated string ' +
-          '(pending, approved, rejected, failed, withdrawn, expired, superseded). ' +
+          '(pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). ' +
           'An empty array or empty string means no status filter.'
       ),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
@@ -616,10 +612,10 @@ function registerListProposalsTools(
   }) => {
     try {
       const include = includeSetFromPayloadFlag(args.include_payload);
-      const liveRev = await tryLiveRev(services.flowAdapter);
-      const autoClosedCount = liveRev
-        ? expireStalePendingProposals(services.proposalStore, liveRev)
-        : 0;
+      const live = await tryRawLive(services.flowAdapter);
+      const autoClosedCount = live
+        ? rebaseOpenProposalsWith(services.proposalStore, live).expired
+        : expireByTtl(services.proposalStore);
       const filter: ListProposalsFilter = {};
       if (typeof args.mine === 'boolean') {
         filter.mine = args.mine;
@@ -697,7 +693,7 @@ function registerProposalQueryTools(
     {
       description:
         'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
-        'pending proposals, conflictingProposals when other pending work touches the same flow. ' +
+        'open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. ' +
         'Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
         'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
@@ -707,7 +703,7 @@ function registerProposalQueryTools(
     },
     async ({ id, include_payload }) => {
       try {
-        const liveRev = await tryLiveRev(services.flowAdapter);
+        const live = await tryRawLive(services.flowAdapter);
         const proposal = getAccessibleProposal(services.proposalStore, accessLink, id, presentOpts);
         return jsonResult(
           presentAccessibleProposalForApi(
@@ -718,7 +714,7 @@ function registerProposalQueryTools(
               ...presentOpts,
               include: includeSetFromPayloadFlag(include_payload),
             },
-            { ...(liveRev ? { liveRev } : {}) }
+            { ...(live ? { live } : {}) }
           )
         );
       } catch (error) {
@@ -739,7 +735,7 @@ function registerProposalActionTools(
     {
       description:
         'Diff any proposal against its stored baseFlow snapshot (what changed). ' +
-        'Optional format=summary|full (default summary). Pending + stale also includes vsCurrent.',
+        'Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
         format: z
@@ -760,7 +756,7 @@ function registerProposalActionTools(
           );
         }
         const diff = applyDiffFormat(
-          await computeProposalDiff(proposal, services.flowAdapter),
+          await computeProposalDiff(proposal, services.flowAdapter, services.proposalStore.get(id)),
           resolved.format
         );
         return jsonResult(diff);
@@ -771,10 +767,47 @@ function registerProposalActionTools(
   );
 
   server.registerTool(
+    'resolve_proposal_conflict',
+    {
+      description:
+        'Replace your own open proposal with a resolution based on expectedRev. Revision changes auto-rebase; conflict blocks approval until resolved. Open proposals expire after the configured TTL (default 7 days). Read the current flow first; payload accepts a full flow or nodes ops as in submit_proposal.',
+      inputSchema: {
+        id: z.string().min(1),
+        expectedRev: z.string().min(1),
+        title: z.string().max(80).optional(),
+        payload: z.object({
+          flowId: z.string().min(1),
+          flow: z.record(z.string(), z.unknown()).optional(),
+          nodes: z.array(z.record(z.string(), z.unknown())).optional(),
+        }),
+      },
+    },
+    async ({ id, ...body }) => {
+      try {
+        const proposal = await resolveMyProposal(
+          services.proposalStore,
+          services.auditLog,
+          accessLink,
+          id,
+          body,
+          services.flowAdapter,
+          presentOpts,
+          services.nodeTypesAdapter
+        );
+        return jsonResult(
+          presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, presentOpts)
+        );
+      } catch (error) {
+        return jsonError(error);
+      }
+    }
+  );
+
+  server.registerTool(
     'withdraw_proposal',
     {
       description:
-        'Withdraw one of YOUR pending proposals (status becomes withdrawn, not rejected). ' +
+        'Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). ' +
         'Optional reason. Only the creating access link can withdraw; other tokens get 403. ' +
         'Cite displayName + reviewUrl when telling the user.',
       inputSchema: {
@@ -807,7 +840,7 @@ function registerProposalActionTools(
   );
 }
 
-function createAiMcpServer(
+export function createAiMcpServer(
   RED: NodeRedPluginAPI,
   services: PluginServices,
   req: AuthenticatedRequest

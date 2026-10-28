@@ -63,6 +63,7 @@ import {
 import { openApiJsonHandler, openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import { liveFlowLabelsFromFlows, setRequestFlowLabels } from './proposal-present.js';
+import { configureProposalTtl, createDebouncedSync, syncOpenProposals } from './proposal-sync.js';
 import {
   approveProposalHandler,
   createProposalHandler,
@@ -71,6 +72,9 @@ import {
   listProposalsHandler,
   rejectProposalHandler,
   withdrawProposalHandler,
+  resolveProposalHandler,
+  resolveProposalConflictHandler,
+  recheckProposalHandler,
 } from './proposals-routes.js';
 import { createAiAccessRateLimiter, createLiveAiAccessDualRateLimiters } from './rate-limit.js';
 import { redactionAuditMiddleware } from './redaction-audit.js';
@@ -119,6 +123,7 @@ export {
 export { packageVersion } from './package-version.js';
 
 const PLUGIN_ID = 'com55-ai-access';
+const syncCleanup = new WeakMap<NodeRedPluginAPI, () => void>();
 
 /**
  * True for MCP Streamable HTTP GET requests (they ask for `text/event-stream`
@@ -183,6 +188,19 @@ export function registerRoutes(
     ...serviceOptions,
     linkStore: serviceOptions.linkStore ?? createConfiguredLinkStore(RED),
   });
+
+  configureProposalTtl(() => services.settingsStore.getEffective().proposalTtlDays);
+  syncCleanup.get(RED)?.();
+  const proposalSync = createDebouncedSync(
+    () => syncOpenProposals(services.proposalStore, services.flowAdapter),
+    500
+  );
+  const cleanup = () => {
+    proposalSync.cancel();
+    RED.events?.removeListener?.('flows:started', proposalSync.trigger);
+  };
+  syncCleanup.set(RED, cleanup);
+  RED.events?.on('flows:started', proposalSync.trigger);
 
   const dualLimiters = createLiveAiAccessDualRateLimiters(() =>
     services.settingsStore.getEffective()
@@ -573,6 +591,41 @@ export function registerRoutes(
     asyncRoute(withdrawProposalHandler(services.proposalStore, services.auditLog, httpAdminRoot))
   );
 
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/resolve-conflict',
+    ...linkGuards,
+    requireJsonContentType('rest'),
+    asyncRoute(
+      resolveProposalConflictHandler(
+        services.proposalStore,
+        services.auditLog,
+        flows,
+        httpAdminRoot
+      )
+    )
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/recheck',
+    ...linkGuards,
+    asyncRoute(recheckProposalHandler(services.proposalStore, flows, httpAdminRoot))
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/resolve',
+    limiter,
+    tokenLimiter,
+    requireJsonContentType('rest'),
+    requireAccessLink(RED, services.linkStore, 'rest'),
+    asyncRoute(
+      resolveProposalHandler(
+        services.proposalStore,
+        services.auditLog,
+        flows,
+        httpAdminRoot,
+        nodeTypes
+      )
+    )
+  );
+
   const mcpRpcGuards = [
     limiter,
     tokenLimiter,
@@ -646,6 +699,10 @@ export function registerRoutes(
 function registerAiAccessPlugin(RED: NodeRedPluginAPI): void {
   RED.plugins.registerPlugin(PLUGIN_ID, {
     type: 'com55-ai-access',
+    onremove() {
+      syncCleanup.get(RED)?.();
+      syncCleanup.delete(RED);
+    },
     onadd() {
       registerRoutes(RED);
       RED.log?.info?.('Node-RED AI Access plugin loaded (dashboard /ai-access, MCP /mcp)');

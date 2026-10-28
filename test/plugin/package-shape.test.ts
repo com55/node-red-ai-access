@@ -122,13 +122,13 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/Only changed nodes \(recommended\)/);
     expect(client).toMatch(/Changed flows|Full redeploy/);
     expect(client).toMatch(/to review.*out of date|formatPendingBadgeText/);
-    expect(client).toMatch(/badge\.textContent = String\(counts\.live\)/);
+    expect(client).toMatch(/badge\.textContent = String\(counts\.pending\)/);
     expect(client).toMatch(/displayTitleForProposal|data-title-for/);
-    expect(client).toMatch(/Flow changed since this was submitted/);
+    expect(client).toMatch(/Resolve conflicts before approving/);
     expect(client).toMatch(/displayTitleForProposal|resolveLinkDetails|cachedLinksById/);
     expect(client).toMatch(/ensureTitleIncludesFlowName|cachedFlowLabels/);
     expect(client).toMatch(/buildDisambiguatedTitles|fmtClockHm|titleForProposalCard/);
-    expect(client).toMatch(/Dismiss all out-of-date|dismiss-all-stale/);
+    expect(client).toMatch(/Resolve conflicts before approving|dismiss-all-stale/);
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);
     expect(client).toMatch(/needsApproveConfirm/);
@@ -143,7 +143,7 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/Deletes .* of .* nodes/);
     // Round-2 regression guard: banner must NOT be gated on !stale.
     expect(client).not.toMatch(/isLargeDelete\([^)]*\) && !/);
-    expect(client).toMatch(/renderStaleGroup|stale-group/);
+    expect(client).toMatch(/renderConflictPanel|proposal-conflicts/);
     expect(client).toMatch(/Requested via link/);
     expect(client).toMatch(/Show .*line change|large-diff-btn/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');

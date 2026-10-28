@@ -56,7 +56,10 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
     getFlows: () =>
       Promise.resolve({
         rev: 'rev-1',
-        flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }],
+        flows: [
+          { id: 'tab-1', type: 'tab', label: 'Main' },
+          { id: 'n1', type: 'inject', z: 'tab-1', x: 100, y: 100 },
+        ],
       }),
     getFlow: () =>
       Promise.resolve({
@@ -65,7 +68,7 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
           id: 'tab-1',
           type: 'tab',
           label: 'Main',
-          nodes: [{ id: 'n1', type: 'inject', z: 'tab-1' }],
+          nodes: [{ id: 'n1', type: 'inject', z: 'tab-1', x: 100, y: 100 }],
         },
       }),
     updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }),

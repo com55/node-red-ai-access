@@ -36,6 +36,7 @@ export interface PersistedAiAccessSettings {
   enabled?: boolean;
   allowWithoutAdminAuth?: boolean;
   defaultLinkTtlSeconds?: number;
+  proposalTtlDays?: number;
   defaultDeploymentType?: DeploymentType;
   maxActiveLinks?: number;
   publicBaseUrl?: string;
@@ -58,6 +59,7 @@ export interface EffectiveAiAccessSettings {
   enabled: boolean;
   allowWithoutAdminAuth: boolean;
   defaultLinkTtlSeconds: number;
+  proposalTtlDays: number;
   defaultDeploymentType: DeploymentType;
   maxActiveLinks: number;
   publicBaseUrl: string;
@@ -93,6 +95,7 @@ const BUILTIN: EffectiveAiAccessSettings = {
   enabled: true,
   allowWithoutAdminAuth: false,
   defaultLinkTtlSeconds: 14_400,
+  proposalTtlDays: 7,
   maxActiveLinks: 10,
   defaultDeploymentType: 'nodes',
   publicBaseUrl: '',
@@ -128,6 +131,14 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
     data.defaultLinkTtlSeconds > 0
   ) {
     out.defaultLinkTtlSeconds = Math.floor(data.defaultLinkTtlSeconds);
+  }
+  if (
+    typeof data.proposalTtlDays === 'number' &&
+    Number.isInteger(data.proposalTtlDays) &&
+    data.proposalTtlDays >= 1 &&
+    data.proposalTtlDays <= 365
+  ) {
+    out.proposalTtlDays = data.proposalTtlDays;
   }
   if (isDeploymentType(data.defaultDeploymentType)) {
     out.defaultDeploymentType = data.defaultDeploymentType;

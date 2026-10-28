@@ -21,7 +21,7 @@
  */
 
 import type { FlowAdapter, FlowNode, FlowSnapshot, FlowTab } from '../runtime/types.js';
-import type { Proposal } from '../storage/proposals.js';
+import type { Proposal, ProposalWarning } from '../storage/proposals.js';
 
 import {
   DEFAULT_SECRET_NAME_PATTERNS,
@@ -485,8 +485,10 @@ export interface ScanOptions {
 
 export interface ScanResult {
   text: string;
-  /** Original secret literals, one per placeholder in `text`, in order. */
+  /** Original secret literals, excluding pre-existing literal placeholders. */
   secrets: string[];
+  /** Source offsets of the actual secret replacements, excluding literals. */
+  spans: Span[];
 }
 
 export function scanTextForSecrets(
@@ -494,7 +496,7 @@ export function scanTextForSecrets(
   matcher: SecretNameMatcher,
   options: ScanOptions = {}
 ): ScanResult {
-  if (text.length === 0) return { text, secrets: [] };
+  if (text.length === 0) return { text, secrets: [], spans: [] };
   const spans: Span[] = [];
   let rules = contentRules(matcher);
   if (!options.code) {
@@ -521,7 +523,7 @@ export function scanTextForSecrets(
       if (m[0].length === 0) rule.re.lastIndex++;
     }
   }
-  if (spans.length === 0) return { text, secrets: [] };
+  if (spans.length === 0) return { text, secrets: [], spans: [] };
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const merged: Span[] = [];
   for (const span of spans) {
@@ -535,25 +537,55 @@ export function scanTextForSecrets(
   let out = '';
   let pos = 0;
   const secrets: string[] = [];
+  const replaced: Span[] = [];
   for (const span of merged) {
     const secret = text.slice(span.start, span.end);
     if (secret === REDACTED_PLACEHOLDER) continue;
     out += text.slice(pos, span.start) + REDACTED_PLACEHOLDER;
     secrets.push(secret);
+    replaced.push(span);
     pos = span.end;
   }
   out += text.slice(pos);
-  return { text: out, secrets };
+  return { text: out, secrets, spans: replaced };
 }
 
 // ---------------------------------------------------------------------------
 // Flow redaction
+
+interface PlaceholderOccurrence {
+  kind: 'literal' | 'secret';
+  value: string;
+}
+
+interface RedactedField {
+  text: string;
+  occurrences: PlaceholderOccurrence[];
+}
+
+/** Classify every output placeholder using source offsets, never secret-array indices. */
+function classifyPlaceholders(original: string, spans: Span[]): PlaceholderOccurrence[] {
+  const out: PlaceholderOccurrence[] = [];
+  let pos = 0;
+  const literals = (text: string) => {
+    const count = countRedactionPlaceholders(text);
+    for (let i = 0; i < count; i++) out.push({ kind: 'literal', value: REDACTED_PLACEHOLDER });
+  };
+  for (const span of spans) {
+    literals(original.slice(pos, span.start));
+    out.push({ kind: 'secret', value: original.slice(span.start, span.end) });
+    pos = span.end;
+  }
+  literals(original.slice(pos));
+  return out;
+}
 
 interface RedactCtx {
   matcher: SecretNameMatcher;
   count: number;
   /** When set, original secret literals per `${entityId}\u0000${path}`. */
   secrets?: Map<string, string[]>;
+  fields?: Map<string, RedactedField>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -582,10 +614,20 @@ class EntityRedactor {
     if ((nameSensitive && isSecretLikeValue(value)) || value.length > MAX_SCAN_FIELD_CHARS) {
       // Oversized fields are never scanned: safest is to hide them entirely.
       this.record(path, [value]);
+      this.ctx.fields?.set(`${this.entityId}\u0000${path}`, {
+        text: REDACTED_PLACEHOLDER,
+        occurrences: [{ kind: 'secret', value }],
+      });
       return REDACTED_PLACEHOLDER;
     }
     const topKey = path.split(/[.[]/, 1)[0] ?? '';
     const scanned = scanTextForSecrets(value, this.ctx.matcher, { code: CODE_KEYS.has(topKey) });
+    if (this.ctx.fields && scanned.text.includes(REDACTED_PLACEHOLDER)) {
+      this.ctx.fields.set(`${this.entityId}\u0000${path}`, {
+        text: scanned.text,
+        occurrences: classifyPlaceholders(value, scanned.spans),
+      });
+    }
     if (scanned.secrets.length > 0) {
       this.record(path, scanned.secrets);
       return scanned.text;
@@ -702,6 +744,62 @@ export function redactFlowData<T>(
   return { value: redactValueInner(value, ctx) as T, count: ctx.count };
 }
 
+/** Named env/header entries keep their identity when the editor reorders them. */
+function normalizeSecretArrays(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const entries = value.map(item => ({
+      item: normalizeSecretArrays(item),
+      key: stableElementKey(item),
+    }));
+    if (
+      entries.every(entry => entry.key !== undefined) &&
+      new Set(entries.map(entry => entry.key)).size === entries.length
+    ) {
+      entries.sort((a, b) => (a.key ?? '').localeCompare(b.key ?? ''));
+    }
+    return entries.map(entry => entry.item);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, normalizeSecretArrays(child)])
+    );
+  }
+  return value;
+}
+
+/** Whether the editor changed any secret value on a node since the base. */
+export function secretValuesChanged(before: FlowNode, after: FlowNode): boolean {
+  const values = (node: FlowNode): Map<string, string[]> => {
+    const secrets = new Map<string, string[]>();
+    redactEntity(normalizeSecretArrays(node) as FlowNode, {
+      matcher: createSecretNameMatcher(currentSecretNamePatterns()),
+      count: 0,
+      secrets,
+    });
+    return secrets;
+  };
+  const a = values(before);
+  const b = values(after);
+  return [...new Set([...a.keys(), ...b.keys()])].some(
+    key => JSON.stringify(a.get(key)) !== JSON.stringify(b.get(key))
+  );
+}
+
+/** Conflict labels can contain the same secrets as node names in flow reads. */
+export function redactConflictLabels<T extends { nodeName?: string }>(
+  conflicts: readonly T[],
+  patterns: readonly string[] = currentSecretNamePatterns()
+): T[] {
+  return conflicts.map(conflict => {
+    if (conflict.nodeName === undefined) return { ...conflict };
+    const label = redactFlowData(
+      { id: 'conflict', type: 'node', name: conflict.nodeName },
+      patterns
+    );
+    return { ...conflict, nodeName: label.value.name };
+  });
+}
+
 /** Redact a stored proposal's flow bodies for AI presentation / diffs. */
 export function redactProposalForAi<P extends Proposal>(
   proposal: P,
@@ -713,6 +811,12 @@ export function redactProposalForAi<P extends Proposal>(
   };
   if (proposal.baseFlow !== undefined) {
     out.baseFlow = redactFlowData(proposal.baseFlow, patterns).value;
+  }
+  if (proposal.rebase) {
+    out.rebase = {
+      ...proposal.rebase,
+      conflicts: redactConflictLabels(proposal.rebase.conflicts, patterns),
+    };
   }
   return out;
 }
@@ -830,14 +934,29 @@ function placeholderContexts(text: string): { before: string; after: string }[] 
   return out;
 }
 
+function contextKey(context: { before: string; after: string }): string {
+  return JSON.stringify([context.before, context.after]);
+}
+
+function indexOccurrences(field: RedactedField): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  placeholderContexts(field.text).forEach((context, i) => {
+    const key = contextKey(context);
+    const indices = index.get(key) ?? [];
+    indices.push(i);
+    index.set(key, indices);
+  });
+  return index;
+}
+
 function restoreString(
   ai: string,
   redacted: string,
   original: string,
-  secrets: string[]
+  occurrences: PlaceholderOccurrence[]
 ): { text: string; restored: number } | { error: string } {
   if (ai === redacted) {
-    return { text: original, restored: countRedactionPlaceholders(ai) };
+    return { text: original, restored: occurrences.filter(o => o.kind === 'secret').length };
   }
   const aiCtx = placeholderContexts(ai);
   const origCtx = placeholderContexts(redacted);
@@ -846,26 +965,40 @@ function restoreString(
       error: `contains ${aiCtx.length} [REDACTED] placeholders but the original had ${origCtx.length}`,
     };
   }
-  const used = new Set<number>();
+  const index = indexOccurrences({ text: redacted, occurrences });
+  const ambiguous = new Set(
+    [...index]
+      .filter(([, indices]) => new Set(indices.map(i => occurrences[i]?.kind)).size > 1)
+      .map(([key]) => key)
+  );
+  const consumed = new Map<string, number>();
   const parts = ai.split(REDACTED_PLACEHOLDER);
   let text = parts[0] ?? '';
+  let restored = 0;
   for (let i = 0; i < aiCtx.length; i++) {
     const c = aiCtx[i];
     if (!c) break;
-    const k = origCtx.findIndex(
-      (o, idx) => !used.has(idx) && o.before === c.before && o.after === c.after
-    );
+    const key = contextKey(c);
+    const candidates = index.get(key) ?? [];
+    // Identical contexts of different classifications cannot be safely distinguished.
+    if (ambiguous.has(key)) {
+      return { error: 'ambiguous literal and secret [REDACTED] occurrences' };
+    }
+    const used = consumed.get(key) ?? 0;
+    const k = candidates[used] ?? -1;
     if (k < 0) {
       return { error: 'a [REDACTED] placeholder is not on an unchanged original line' };
     }
-    used.add(k);
-    text += (secrets[k] ?? REDACTED_PLACEHOLDER) + (parts[i + 1] ?? '');
+    consumed.set(key, used + 1);
+    const occurrence = occurrences[k];
+    if (occurrence?.kind === 'secret') restored++;
+    text += (occurrence?.value ?? REDACTED_PLACEHOLDER) + (parts[i + 1] ?? '');
   }
-  return { text, restored: aiCtx.length };
+  return { text, restored };
 }
 
 interface RestoreCtx {
-  secrets: Map<string, string[]>;
+  fields: Map<string, RedactedField>;
   restored: number;
   restoredFields: RestoredField[];
   unresolved: (RestoredField & { reason: string })[];
@@ -874,13 +1007,192 @@ interface RestoreCtx {
 const STABLE_ELEMENT_KEYS = ['name', 'keyValue', 'p', 'property', 'key', 'k'] as const;
 
 /** Stable identity of an array element: `<key>=<value>` from a name-like field. */
-function stableElementKey(value: unknown): string | undefined {
+export function stableElementKey(value: unknown): string | undefined {
   if (!isPlainObject(value)) return undefined;
   for (const k of STABLE_ELEMENT_KEYS) {
     const v = value[k];
     if (typeof v === 'string' && v.length > 0) return `${k}=${v}`;
   }
   return undefined;
+}
+
+/** Warn when changed env arrays contain names that cannot be paired uniquely. */
+export function duplicateEnvWarnings(
+  before: Partial<FlowTab>,
+  after: Partial<FlowTab>
+): ProposalWarning[] {
+  const entities = (tab: Partial<FlowTab>) => [tab, ...(tab.nodes ?? []), ...(tab.configs ?? [])];
+  const previous = new Map(entities(before).map(node => [node.id, node]));
+  const warnings: ProposalWarning[] = [];
+  for (const node of entities(after)) {
+    const old = previous.get(node.id);
+    if (JSON.stringify(old?.env) === JSON.stringify(node.env)) continue;
+    const hasDuplicates = (env: unknown) => {
+      const names = new Set<string>();
+      if (!Array.isArray(env)) return false;
+      return env.some(entry => {
+        if (!isPlainObject(entry) || typeof entry.name !== 'string' || !entry.name) return false;
+        if (names.has(entry.name)) return true;
+        names.add(entry.name);
+        return false;
+      });
+    };
+    if (!hasDuplicates(old?.env) && !hasDuplicates(node.env)) continue;
+    warnings.push({
+      code: 'duplicate_env_keys',
+      ...(node.id ? { nodeId: node.id } : {}),
+      property: 'env',
+      error:
+        'Duplicate env names make pairing by name ambiguous when entries are reordered. Review the env values before approval.',
+    });
+  }
+  return warnings;
+}
+
+/** A retained duplicate secret cannot be paired after another copy was deleted. */
+export class SecretAlignmentConflictError extends Error {
+  constructor() {
+    super(
+      'A duplicate secret line was removed while its live values changed. Resolve this field against the live flow.'
+    );
+    this.name = 'SecretAlignmentConflictError';
+  }
+}
+
+/** Keep each unchanged proposed secret span at its live value, preserving other edits. */
+export function preserveLiveSecrets(
+  base: FlowNode,
+  proposed: FlowNode,
+  live: FlowNode,
+  warnings: ProposalWarning[] = []
+): FlowNode {
+  const fieldsFor = (node: FlowNode) => {
+    const fields = new Map<string, RedactedField>();
+    redactEntity(node, {
+      matcher: createSecretNameMatcher(currentSecretNamePatterns()),
+      count: 0,
+      fields,
+    });
+    return fields;
+  };
+  const baseFields = fieldsFor(base),
+    proposedFields = fieldsFor(proposed),
+    liveFields = fieldsFor(live);
+  const walk = (b: unknown, p: unknown, c: unknown, bp: string, pp = bp, cp = bp): unknown => {
+    if (typeof p === 'string') {
+      const bf = baseFields.get(`${base.id}\u0000${bp}`);
+      if (!bf?.occurrences.some(o => o.kind === 'secret')) return p;
+      const pf = proposedFields.get(`${proposed.id}\u0000${pp}`);
+      const cf = liveFields.get(`${live.id}\u0000${cp}`);
+      const bc = placeholderContexts(bf.text);
+      const baseIndex = indexOccurrences(bf);
+      const proposedIndex = pf ? indexOccurrences(pf) : new Map<string, number[]>();
+      const liveIndex = cf ? indexOccurrences(cf) : new Map<string, number[]>();
+      const values = pf?.occurrences.map(o => o.value) ?? [];
+      const proposedContexts = pf ? placeholderContexts(pf.text) : [];
+      const unmatchedProposedSecret = pf?.occurrences.some((o, j) => {
+        const pc = proposedContexts[j];
+        return o.kind === 'secret' && pc && !baseIndex.has(contextKey(pc));
+      });
+      let ambiguous = false;
+      bf.occurrences.forEach((occurrence, i) => {
+        if (occurrence.kind !== 'secret') return;
+        const context = bc[i];
+        const key = context ? contextKey(context) : '';
+        const baseCopies = baseIndex.get(key) ?? [];
+        const proposedCopies = proposedIndex.get(key) ?? [];
+        const liveCopies = liveIndex.get(key) ?? [];
+        if (
+          baseCopies.length > 1 &&
+          proposedCopies.length > 0 &&
+          proposedCopies.length < baseCopies.length &&
+          JSON.stringify(baseCopies.map(j => bf.occurrences[j]?.value)) !==
+            JSON.stringify(liveCopies.map(j => cf?.occurrences[j]?.value))
+        ) {
+          throw new SecretAlignmentConflictError();
+        }
+        const matches = (lookup: Map<string, number[]>, field: RedactedField | undefined) => {
+          const indices = lookup.get(key) ?? [];
+          // A literal with the same context also makes alignment ambiguous.
+          const [index] = indices;
+          return indices.length === 1 &&
+            index !== undefined &&
+            field?.occurrences[index]?.kind === 'secret'
+            ? index
+            : undefined;
+        };
+        const bi = matches(baseIndex, bf),
+          pi = matches(proposedIndex, pf),
+          ci = matches(liveIndex, cf);
+        // A removed secret span cannot restore an old value. Keep warning for
+        // retained secrets whose surrounding code changed or became ambiguous.
+        if (!proposedIndex.has(key) && !unmatchedProposedSecret) return;
+        if (bi === undefined || pi === undefined || ci === undefined) {
+          ambiguous = true;
+          return;
+        }
+        const liveOccurrence = cf?.occurrences[ci];
+        if (pf?.occurrences[pi]?.value === occurrence.value && liveOccurrence)
+          values[pi] = liveOccurrence.value;
+      });
+      if (ambiguous)
+        warnings.push({
+          code: 'secret_may_revert',
+          nodeId: base.id,
+          property: pp,
+          error:
+            'Secret spans could not be aligned reliably. The proposed value was kept and may revert an editor secret change. Review this field before approval.',
+        });
+      if (!pf || ambiguous) return p;
+      return pf.text
+        .split(REDACTED_PLACEHOLDER)
+        .reduce(
+          (text, part, i) => text + (i ? (values[i - 1] ?? REDACTED_PLACEHOLDER) : '') + part,
+          ''
+        );
+    }
+    if (Array.isArray(p)) {
+      const before: unknown[] = Array.isArray(b) ? b : [];
+      const current: unknown[] = Array.isArray(c) ? c : [];
+      const usedBase = new Set<number>(),
+        usedLive = new Set<number>();
+      return p.map((item: unknown, i: number) => {
+        const key = stableElementKey(item);
+        const match = (list: unknown[], used: Set<number>): number => {
+          const index =
+            key === undefined
+              ? i
+              : list.findIndex((entry, j) => !used.has(j) && stableElementKey(entry) === key);
+          used.add(index);
+          return index;
+        };
+        const bi = match(before, usedBase),
+          ci = match(current, usedLive);
+        return walk(before[bi], item, current[ci], `${bp}[${bi}]`, `${pp}[${i}]`, `${cp}[${ci}]`);
+      });
+    }
+    if (isPlainObject(p)) {
+      const before = isPlainObject(b) ? b : {},
+        current = isPlainObject(c) ? c : {};
+      const path = (prefix: string, key: string) => (prefix ? `${prefix}.${key}` : key);
+      return Object.fromEntries(
+        Object.entries(p)
+          .map(([key, value]) => [
+            key,
+            walk(before[key], value, current[key], path(bp, key), path(pp, key), path(cp, key)),
+          ])
+          .filter(([, value]) => value !== undefined)
+      );
+    }
+    return p;
+  };
+  return walk(base, proposed, live, '') as FlowNode;
+}
+
+/** Validate actual literal occurrences retained in a restored proposal against live text. */
+export function hasNewLiteralPlaceholder(proposed: string, live: string): boolean {
+  const occurrences = classifyPlaceholders(live, []);
+  return 'error' in restoreString(proposed, live, live, occurrences);
 }
 
 function restoreWalk(
@@ -893,15 +1205,27 @@ function restoreWalk(
 ): unknown {
   if (typeof ai === 'string') {
     if (!ai.includes(REDACTED_PLACEHOLDER)) return ai;
-    const secrets = ctx.secrets.get(`${entityId}\u0000${path}`);
-    if (typeof redacted === 'string' && typeof original === 'string' && secrets?.length) {
-      const r = restoreString(ai, redacted, original, secrets);
+    const field = ctx.fields.get(`${entityId}\u0000${path}`);
+    if (
+      typeof redacted === 'string' &&
+      typeof original === 'string' &&
+      (field || original.includes(REDACTED_PLACEHOLDER))
+    ) {
+      const r = restoreString(
+        ai,
+        redacted,
+        original,
+        field?.occurrences ?? classifyPlaceholders(original, [])
+      );
       if ('error' in r) {
         ctx.unresolved.push({ nodeId: entityId, property: path, reason: r.error });
         return ai;
       }
-      ctx.restored += r.restored;
-      ctx.restoredFields.push({ nodeId: entityId, property: path });
+      // An existing literal placeholder is retained, not a restored secret.
+      if (r.restored > 0) {
+        ctx.restored += r.restored;
+        ctx.restoredFields.push({ nodeId: entityId, property: path });
+      }
       return r.text;
     }
     ctx.unresolved.push({
@@ -1007,9 +1331,9 @@ export function restoreRedactedPlaceholders(
   for (const node of liveFlows) {
     if (isPlainObject(node) && typeof node.id === 'string') originals.set(node.id, node);
   }
-  const secrets = new Map<string, string[]>();
-  const rctx: RedactCtx = { matcher: createSecretNameMatcher(patterns), count: 0, secrets };
-  const ctx: RestoreCtx = { secrets, restored: 0, restoredFields: [], unresolved: [] };
+  const fields = new Map<string, RedactedField>();
+  const rctx: RedactCtx = { matcher: createSecretNameMatcher(patterns), count: 0, fields };
+  const ctx: RestoreCtx = { fields, restored: 0, restoredFields: [], unresolved: [] };
   const flow = restoreEntity(aiFlow, originals, ctx, rctx);
   return {
     flow,

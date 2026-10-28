@@ -52,9 +52,10 @@ import {
   searchPaletteHandler,
 } from './node-types-routes.js';
 import type { CatalogueFetcher, NodeTypesAdapter } from './node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { resolveIncludeFromQuery, presentOptionsFor } from './proposal-present.js';
+import { expireByTtl, rebaseOpenProposalsWith, tryRawLive } from './proposal-sync.js';
 import { createAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute, sendCaughtRouteError } from './route-errors.js';
 import { buildStatus } from './status.js';
@@ -270,15 +271,10 @@ function registerGetLinkProposalRoutes(
       const presentOpts = presentOptionsFor(req, httpAdminRoot);
       const include = resolveIncludeFromQuery(req.query);
       const listFilter = parseListProposalsQuery(req.query);
-      let liveRev: string | undefined;
-      try {
-        liveRev = (await listFlows(options.flowAdapter)).rev;
-      } catch {
-        // Expiry is best-effort when live rev is unavailable.
-      }
-      const autoClosedCount = liveRev
-        ? expireStalePendingProposals(options.proposalStore, liveRev)
-        : 0;
+      const live = await tryRawLive(options.flowAdapter);
+      const autoClosedCount = live
+        ? rebaseOpenProposalsWith(options.proposalStore, live).expired
+        : expireByTtl(options.proposalStore);
       const page = listAccessibleProposals(options.proposalStore, link, presentOpts, listFilter);
       res.json({
         proposals: page.proposals.map(p =>
@@ -314,12 +310,7 @@ function registerGetLinkProposalRoutes(
       try {
         const presentOpts = presentOptionsFor(req, httpAdminRoot);
         const include = resolveIncludeFromQuery(req.query);
-        let liveRev: string | undefined;
-        try {
-          liveRev = (await listFlows(options.flowAdapter)).rev;
-        } catch {
-          // ignore
-        }
+        const live = await tryRawLive(options.flowAdapter);
         const presented = getAccessibleProposal(options.proposalStore, link, id, presentOpts);
         res.json(
           presentAccessibleProposalForApi(
@@ -327,7 +318,7 @@ function registerGetLinkProposalRoutes(
             link,
             presented,
             { ...presentOpts, include },
-            { ...(liveRev ? { liveRev } : {}) }
+            { ...(live ? { live } : {}) }
           )
         );
       } catch (error) {
@@ -466,7 +457,10 @@ function registerGetLinkDiffRoute(
           return;
         }
         res.json(
-          applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter), resolved.format)
+          applyDiffFormat(
+            await computeProposalDiff(proposal, options.flowAdapter, options.proposalStore.get(id)),
+            resolved.format
+          )
         );
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error);

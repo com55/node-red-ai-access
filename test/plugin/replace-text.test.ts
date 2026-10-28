@@ -119,6 +119,8 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore;
         type: 'template',
         z: 'tab-1',
         name: 'Tpl',
+        x: 100,
+        y: 100,
         template: '<p>Hello</p><p>Hello</p><p>Bye</p>',
       },
       {
@@ -126,6 +128,8 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore;
         type: 'function',
         z: 'tab-1',
         name: 'Fn',
+        x: 200,
+        y: 100,
         func: 'return msg;\n// TODO\n// TODO\n',
       },
     ],
@@ -133,7 +137,11 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore;
   let rev = 'rev-1';
   const adapter = {
     kind: 'red',
-    getFlows: () => Promise.resolve({ rev, flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }] }),
+    getFlows: () =>
+      Promise.resolve({
+        rev,
+        flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }, ...structuredClone(flow.nodes ?? [])],
+      }),
     getFlow: (id: string) =>
       Promise.resolve({
         rev,

@@ -117,9 +117,12 @@ function docsIntro(label: string, expires: string): string {
   return `# Node-RED AI Access — self-contained GET link (get_link)${label}
 
 **Git mental model:** a proposal is like a pull request. Human approve = merge;
-reject = close; withdraw = you close your own PR. If \`rev\`/\`expectedRev\` does
-not match, treat it as a conflict: re-read the flow, rebase the edit, and
-resubmit. Every access link can see all proposals (\`mine: true|false\`).
+reject = close; withdraw = you close your own PR. Revision changes auto-rebase
+open proposals. A \`conflict\` blocks approval until resolved. Recent known
+revisions are accepted on submit; unknown revisions return \`version_mismatch\`.
+Open proposals expire after the configured TTL (default 7 days).
+Use REST POST /proposals/{id}/resolve or MCP resolve_proposal_conflict to
+replace your own open proposal with a resolution based on the current flow. Every access link can see all proposals (\`mine: true|false\`).
 
 **Which channel to use:** prefer **MCP** (\`/mcp/rpc\` + mcp Bearer) or **REST**
 (\`/mcp/api/v1\` + rest Bearer) when your client can send headers and JSON —
@@ -236,8 +239,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
-   with a summary sentence; pending+stale may include \`vsCurrent\`.
-9. Withdraw your own pending proposal:
+   with a summary sentence; open proposals include \`rebase\` and \`liveChanges\`; \`vsCurrent\` shows the merged deployment when there are no conflicts.
+9. Withdraw your own open (pending or conflict) proposal:
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
    not \`rejected\`). Only the link that created a proposal can withdraw it;
    others get \`403 proposal_not_owned\`.
@@ -245,8 +248,8 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.
 
-On submit and on read of a pending proposal, the response may include
-\`conflictingProposals\` (same-rev or overlapping pending work; list omits this) with
+On submit and on read of an open (pending or conflict) proposal, the response may include
+\`conflictingProposals\` (overlapping open work; list omits this) with
 \`overlappingNodeIds\` / \`overlappingFields\` when detectable — treat like a
 git conflict warning; prefer one pending change per flow when possible.
 

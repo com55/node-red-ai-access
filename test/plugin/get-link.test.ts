@@ -43,7 +43,14 @@ function createApp(options: { userDir: string; adapter?: FlowAdapter }): {
     options.adapter ??
     ({
       kind: 'red',
-      getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [{ id: 'tab-1', type: 'tab' }] }),
+      getFlows: () =>
+        Promise.resolve({
+          rev: 'rev-1',
+          flows: [
+            { id: 'tab-1', type: 'tab', label: 'Main' },
+            ...structuredClone(flow.nodes ?? []),
+          ],
+        }),
       getFlow: (id: string) =>
         Promise.resolve({
           rev: 'rev-1',

@@ -387,7 +387,7 @@ describe('list filters, pagination, validation errors', () => {
     expect(res.body.errors).toHaveLength(1);
   });
 
-  it('reports autoClosedCount instead of staleOnOlderRev', async () => {
+  it('keeps proposals open when the global revision moves', async () => {
     const { app, linkStore, setRev } = createApp(userDir);
     const link = linkStore.create({ kind: 'rest' });
     const first = await submitRest(app, link.token, 'old');
@@ -395,14 +395,15 @@ describe('list filters, pagination, validation errors', () => {
     expect(first.body).not.toHaveProperty('staleOnOlderRev');
     expect(first.body).not.toHaveProperty('autoClosedCount');
 
-    // Live rev moves: the next list auto-closes the old pending proposal.
+    // Live rev moves: the next list rebases the open proposal.
     setRev('rev-9');
     const listed = await request(app)
       .get('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`);
     expect(listed.status).toBe(200);
-    expect(listed.body.autoClosedCount).toBe(1);
-    expect(listed.body.proposals[0].status).toBe('expired');
+    expect(listed.body).not.toHaveProperty('autoClosedCount');
+    expect(listed.body.proposals[0].status).toBe('pending');
+    expect(listed.body.proposals[0].rebase.state).toBe('clean');
     expect(listed.body).not.toHaveProperty('staleOnOlderRev');
 
     const again = await request(app)
@@ -485,11 +486,18 @@ describe('PR #74 follow-ups: whole-file ids, multi-status, messages, hints, mine
   });
 
   async function seedStatuses(h: Harness, token: string): Promise<void> {
-    // two pending, then move rev so a list closes them as expired, then one new pending
-    expect((await submitRest(h.app, token, 'a')).status).toBe(201);
-    h.setRev('rev-2');
-    await request(h.app).get('/mcp/api/v1/proposals').set('Authorization', `Bearer ${token}`);
-    h.setRev('rev-1');
+    // Age only the proposal: advancing the global clock would also expire the token.
+    const created = await submitRest(h.app, token, 'a');
+    expect(created.status).toBe(201);
+    const path = join(userDir, '.ai-access', 'proposals', `${created.body.id}.json`);
+    const proposal = JSON.parse(readFileSync(path, 'utf8'));
+    proposal.createdAt = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    writeFileSync(path, JSON.stringify(proposal));
+    const listed = await request(h.app)
+      .get('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${token}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.proposals[0].status).toBe('expired');
   }
 
   it('status supports comma-separated and repeated values on REST and GET', async () => {
@@ -863,7 +871,7 @@ describe('/mcp page UI follow-ups', () => {
     expect(html).toContain('id="decided-load-more"');
     expect(html).toContain('Load more');
     expect(html).toContain('loadAllDecidedForSearch()');
-    expect(html).toContain("api('/proposals?status=pending')");
+    expect(html).toContain("api('/proposals?status=pending,conflict')");
   });
 
   it('copy short-id buttons have an accessible name', () => {

@@ -14,10 +14,10 @@ Temporary, owner-approved Node-RED access for AI clients. Ships as a **Node-RED
   services
 
 **Git mental model:** a proposal is like a pull request. Human approve = merge;
-reject = close; withdraw = the author closes their own PR. If `rev` /
-`expectedRev` does not match, treat it as a conflict: re-read the flow, rebase
-the edit, and resubmit. Every access link can see all proposals
-(`mine: true|false`).
+reject = close; withdraw = the author closes their own PR. Revision changes
+auto-rebase open proposals. A `conflict` blocks approval until resolved. Open
+proposals expire after a configurable TTL (default 7 days). Every access link
+can see all proposals (`mine: true|false`).
 
 Derived from
 [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).
@@ -78,6 +78,9 @@ module.exports = {
     maxActiveLinks: 10,
     // Deploy type used on approve (default: "nodes"; also "flows" | "full")
     defaultDeploymentType: 'nodes',
+    approveQueueTimeoutMs: 60_000, // maximum time waiting to start approval
+    deployTimeoutMs: 60_000, // caller deadline; does not cancel deployment
+    deployHardCapMs: 300_000, // release the queue even if deployment never settles
     // In-memory rate limits for /mcp/api and /mcp/a (per IP + per access token)
     rateLimitWindowMs: 60000,
     rateLimitMaxPerIp: 600,
@@ -406,10 +409,43 @@ revoke the link and create a new one. After a restart every old token is
 invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
-`expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
-`deploymentType`: `nodes` (default), `flows`, or `full`. A stale `expectedRev`
-at approve marks the proposal **rejected** with a resubmit message; other deploy
-errors mark it **failed**. Reject never mutates flows.
+`expectedRev`. Recent known stale revisions are accepted and auto-rebased;
+unknown revisions return **409** `version_mismatch`. Human approval waits up to
+60 seconds for deployment. A timeout returns **504** `deploy_timeout`, leaves
+the proposal pending with a persisted `deployPending` reason shown in the API
+and dashboard, and holds the approval queue until the runtime settles or the 5
+minute hard cap is reached. Before the cap, a late success marks the proposal
+approved with its `resultRev`; a late failure clears `deployPending` and keeps
+it pending for retry. At the cap the queue and proposal lock are released,
+`deployPending.queueReleased` becomes true, and the card asks reviewers to check
+the live flow before approving again. Later runtime settlement leaves this
+unknown-outcome record unchanged. Every subsequent approval re-reads live flows
+before rebasing and deploying, recognizing already-applied results. Queued
+approvals time out after 60 seconds with **504** `approve_queue_timeout` without
+deploying. Queued proposals can still be rejected or withdrawn; their approvals
+then return `proposal_not_pending` when dequeued. These three deadlines are
+configurable in `settings.js` under `aiAccess` (positive milliseconds; invalid
+values use the defaults shown above). When choosing **proposed** during conflict
+resolution, unchanged secret spans keep their live editor values. If spans
+cannot be aligned safely, proposed values are retained with a
+`secret_may_revert` warning on the dashboard card. Deliberately deleted secret
+spans do not raise this warning. Deleting one of several identical secret lines
+while their live values changed keeps the proposal in conflict; resolve that
+field against the live flow or choose **live**. Changed env arrays with
+duplicate names show `duplicate_env_keys`, since pairing by name is ambiguous
+when entries are reordered.
+
+Open proposals auto-rebase on editor changes. A `conflict` blocks approval until
+resolved using REST `POST /proposals/:id/resolve`, admin
+`POST /proposals/:id/resolve-conflict`, or MCP `resolve_proposal_conflict`.
+Diffs include `rebase`, `liveChanges` and (without conflicts) `vsCurrent`, the
+merged deployment. Approval requires the reviewed `mergedHash` when editor
+changes are merged. Proposals expire after `proposalTtlDays` (integer 1–365,
+default 7), editable through the settings API. Approve may send
+`deploymentType`: `nodes` (default), `flows`, or `full`. Approval rebases
+against the current revision; conflicts leave the proposal open for resolution.
+Deploy timeouts keep it **pending**; other deploy errors mark it **failed**.
+Reject never mutates flows.
 
 ### Flow runtime adapter
 

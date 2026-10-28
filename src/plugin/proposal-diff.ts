@@ -8,10 +8,18 @@
 
 import { FlowNotFoundError } from '../runtime/errors.js';
 import type { FlowAdapter, FlowNode, FlowTab } from '../runtime/types.js';
-import type { Proposal } from '../storage/proposals.js';
+import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
 import { nodeTypeText } from './proposal-present.js';
+import { nestedLiveTab, type RebaseResult } from './proposal-rebase.js';
+import { rebaseProposal } from './proposal-sync.js';
+import {
+  rawFlowAdapter,
+  redactConflictLabels,
+  redactFlowData,
+  redactProposalForAi,
+} from './secret-redaction.js';
 
 /** Node property keys treated as multi-line text for line diffs. */
 const TEXT_PROPERTY_KEYS = new Set([
@@ -123,7 +131,7 @@ export interface ProposalDiffResult extends DiffSections {
   currentRev: string;
   /**
    * True only for **pending** proposals when expectedRev !== live rev
-   * (approve would fail). Never true for approved/rejected/failed.
+   * (informational). Never true for approved/rejected/failed.
    */
   baseRevStale: boolean;
   /** What the primary sections were compared against. */
@@ -135,6 +143,8 @@ export interface ProposalDiffResult extends DiffSections {
    * flow (what would apply / conflict with the current editor state).
    */
   vsCurrent?: DiffSections;
+  liveChanges?: DiffSections;
+  rebase?: Pick<RebaseResult, 'state' | 'mergedHash' | 'conflicts'>;
   /** Diff payload format (`summary` default collapses unchanged runs). */
   format?: 'summary' | 'full';
 }
@@ -519,7 +529,7 @@ export function buildProposalDiff(
   const currentRev = options.currentRev ?? before.rev;
   const expectedRev = proposal.expectedRev;
   const baseRevStale =
-    options.baseRevStale ?? (proposal.status === 'pending' && expectedRev !== currentRev);
+    options.baseRevStale ?? (isOpenProposalStatus(proposal.status) && expectedRev !== currentRev);
 
   const result: ProposalDiffResult = {
     proposalId: proposal.id,
@@ -549,7 +559,8 @@ export function buildProposalDiff(
  */
 export async function computeProposalDiff(
   proposal: Proposal,
-  adapter: FlowAdapter
+  adapter: FlowAdapter,
+  rawProposal: Proposal = proposal
 ): Promise<ProposalDiffResult> {
   const flowId = proposal.payload.flowId;
   const emptyTab: Partial<FlowTab> = { id: flowId, type: 'tab', nodes: [], configs: [] };
@@ -572,9 +583,42 @@ export async function computeProposalDiff(
     }
   }
 
-  const pending = proposal.status === 'pending';
+  const pending = isOpenProposalStatus(proposal.status);
   const baseRevStale = pending && proposal.expectedRev !== liveRev;
   const storedBase = proposal.baseFlow;
+
+  if (pending) {
+    const raw = rawFlowAdapter(adapter);
+    const live = await raw.getFlows();
+    const rebase = rebaseProposal(rawProposal, live);
+    const ai = raw !== adapter;
+    const view = ai ? redactProposalForAi(rawProposal) : rawProposal;
+    const rawTab = nestedLiveTab(live.flows, flowId, rawProposal.baseFlow) ?? emptyTab;
+    const currentTab = ai ? redactFlowData(rawTab).value : rawTab;
+    const result = buildProposalDiff(
+      view,
+      { rev: proposal.expectedRev, flow: view.baseFlow ?? currentTab },
+      {
+        currentRev: live.rev,
+        compareAgainst: view.baseFlow ? 'base' : 'current',
+        baseSnapshotMissing: view.baseFlow === undefined,
+        baseRevStale: proposal.expectedRev !== live.rev,
+      }
+    );
+    result.rebase = {
+      state: rebase.state,
+      conflicts: ai ? redactConflictLabels(rebase.conflicts) : rebase.conflicts,
+      ...(rebase.mergedHash ? { mergedHash: rebase.mergedHash } : {}),
+    };
+    result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);
+    if (rebase.state !== 'conflict' && rebase.merged) {
+      result.vsCurrent = buildDiffSections(
+        ai ? redactFlowData(rebase.merged).value : rebase.merged,
+        currentTab
+      );
+    }
+    return result;
+  }
 
   if (storedBase !== undefined) {
     const vsCurrent = baseRevStale ? buildDiffSections(proposal.payload.flow, liveFlow) : undefined;

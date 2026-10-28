@@ -4,7 +4,12 @@
  */
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
-import { proposalOwnerId, type Proposal, type ProposalStore } from '../storage/proposals.js';
+import {
+  isOpenProposalStatus,
+  proposalOwnerId,
+  type Proposal,
+  type ProposalStore,
+} from '../storage/proposals.js';
 
 import { buildProposalDisplayName, resolveProposalTitle } from './proposal-present.js';
 
@@ -108,71 +113,10 @@ function overlapBetween(
   return { nodeIds, fields };
 }
 
-const EXPIRED_REASON =
-  'Proposal expired: the live flow revision moved past expectedRev. Re-read the flow and resubmit.';
-
 /**
- * Auto-close pending proposals whose expectedRev no longer matches `liveRev`
- * (they can no longer be approved). Returns how many were closed.
- */
-export function expireStalePendingProposals(
-  store: ProposalStore,
-  liveRev: string,
-  options: { flowId?: string } = {}
-): number {
-  let closed = 0;
-  for (const proposal of store.list()) {
-    if (proposal.status !== 'pending') continue;
-    if (options.flowId && proposal.payload.flowId !== options.flowId) continue;
-    if (proposal.expectedRev === liveRev) continue;
-    try {
-      store.markClosed(proposal.id, 'expired', EXPIRED_REASON);
-      closed += 1;
-    } catch {
-      // Race: already decided — skip.
-    }
-  }
-  return closed;
-}
-
-/**
- * After a successful approve, mark other pending proposals on the same flow
- * as `superseded` (they can no longer be approved against the new rev).
- */
-export function supersedePendingOnFlow(
-  store: ProposalStore,
-  flowId: string,
-  approvedId: string,
-  approvedRev: string
-): number {
-  const reason =
-    `Superseded by approved proposal ${approvedId} (resultRev ${approvedRev}). ` +
-    'Re-read the flow and resubmit if still needed.';
-  let closed = 0;
-  for (const proposal of store.list()) {
-    if (
-      proposal.id === approvedId ||
-      proposal.status !== 'pending' ||
-      proposal.payload.flowId !== flowId
-    ) {
-      continue;
-    }
-    try {
-      store.markClosed(proposal.id, 'superseded', reason);
-      closed += 1;
-    } catch {
-      // Race: already decided — skip.
-    }
-  }
-  return closed;
-}
-
-/**
- * Pending proposals on the same flowId that may conflict when approved.
- * Includes same-`expectedRev` peers and peers with true node/field overlap.
- * Pending peers on a different rev with no overlap are skipped (in practice
- * they are auto-closed as `expired` before this runs). Closed proposals are
- * never conflicts.
+ * Open proposals on the same flowId that touch the same nodes (approving one
+ * will put the other into `conflict`). Non-overlapping peers are skipped:
+ * they auto-rebase. Closed proposals are never conflicts.
  */
 export function findConflictingProposals(
   store: ProposalStore,
@@ -185,7 +129,7 @@ export function findConflictingProposals(
   for (const other of store.list()) {
     if (
       other.id === proposal.id ||
-      other.status !== 'pending' ||
+      !isOpenProposalStatus(other.status) ||
       other.payload.flowId !== proposal.payload.flowId
     ) {
       continue;
@@ -195,10 +139,8 @@ export function findConflictingProposals(
       ? proposalOwnerId(other.createdBy) === callerLinkId
       : proposalOwnerId(other.createdBy) === proposalOwnerId(proposal.createdBy);
     const overlap = overlapBetween(selfTouches, computeProposalTouches(other));
-    const sameRev = other.expectedRev === proposal.expectedRev;
-    const trulyOverlapping = overlap.nodeIds.length > 0;
-
-    if (!sameRev && !trulyOverlapping) {
+    // Non-overlapping peers auto-rebase after either is approved — no warning.
+    if (overlap.nodeIds.length === 0) {
       continue;
     }
 
@@ -232,9 +174,8 @@ export function conflictWarningFields(result: ConflictingProposalsResult): Recor
 }
 
 /**
- * `autoClosedCount` response field: how many pending proposals this request
- * auto-closed as `expired` (live rev moved past their expectedRev). Omitted
- * when zero.
+ * `autoClosedCount` response field: how many open proposals this request
+ * auto-closed as `expired` (older than the proposal TTL). Omitted when zero.
  */
 export function autoClosedFields(count: number): { autoClosedCount?: number } {
   return count > 0 ? { autoClosedCount: count } : {};
