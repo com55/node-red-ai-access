@@ -4,7 +4,7 @@
  */
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
-import type { Proposal, ProposalStore } from '../storage/proposals.js';
+import { proposalOwnerId, type Proposal, type ProposalStore } from '../storage/proposals.js';
 
 import { buildProposalDisplayName, resolveProposalTitle } from './proposal-present.js';
 
@@ -192,8 +192,8 @@ export function findConflictingProposals(
     }
     const title = resolveProposalTitle(other);
     const mine = callerLinkId
-      ? other.createdBy.linkId === callerLinkId
-      : other.createdBy.linkId === proposal.createdBy.linkId;
+      ? proposalOwnerId(other.createdBy) === callerLinkId
+      : proposalOwnerId(other.createdBy) === proposalOwnerId(proposal.createdBy);
     const overlap = overlapBetween(selfTouches, computeProposalTouches(other));
     const sameRev = other.expectedRev === proposal.expectedRev;
     const trulyOverlapping = overlap.nodeIds.length > 0;

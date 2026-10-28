@@ -256,7 +256,10 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
         rateLimitMaxPerToken: 1,
       });
     expect(result.status).toBe(200);
-    expect(Object.values(result.body.sources)).toEqual(Array(10).fill('settings.js'));
+    expect(Object.values(result.body.sources)).toEqual([
+      ...Array(10).fill('settings.js'),
+      'default',
+    ]);
     expect(result.body.settings.publicBaseUrl).toBe('https://locked.example');
     expect(result.body.settings.enabled).toBe(true);
     expect(result.body.disk).toEqual({});
@@ -348,7 +351,6 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
   });
 
   it.each([
-    'http://example.com',
     'https://example.com/path',
     'https://example.com/?q=1',
     'https://example.com/#frag',
@@ -361,7 +363,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(result.status).toBe(400);
     expect(result.body).toMatchObject({
       code: 'invalid_body',
-      error: expect.stringContaining('HTTPS origin'),
+      error: expect.stringContaining('HTTP(S) origin'),
     });
   });
 

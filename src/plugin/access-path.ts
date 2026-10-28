@@ -93,11 +93,11 @@ export function canonicalizeIp(host: string): string | undefined {
   }
 }
 
-/** Settings Public URL: an HTTPS origin, or HTTP loopback for local development. */
+/** Settings Public URL: an HTTP(S) origin; HTTP is reported as a warning by settings. */
 export function validateSettingsPublicBaseUrl(value: unknown): string {
   if (value === '') return '';
   const message =
-    'publicBaseUrl must be an HTTPS origin with no path, query, fragment, or credentials (HTTP localhost is allowed)';
+    'publicBaseUrl must be an HTTP(S) origin with no path, query, fragment, or credentials';
   if (typeof value !== 'string') throw new Error(message);
   let url: URL;
   try {
@@ -105,13 +105,8 @@ export function validateSettingsPublicBaseUrl(value: unknown): string {
   } catch {
     throw new Error(message);
   }
-  const address = canonicalizeIp(url.hostname);
-  const local =
-    url.hostname.toLowerCase().replace(/\.$/, '') === 'localhost' ||
-    address === '::1' ||
-    address?.startsWith('127.');
   if (
-    (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+    (url.protocol !== 'https:' && url.protocol !== 'http:') ||
     !/^https?:\/\/[^/?#]+\/?$/i.test(value.trim()) ||
     url.pathname !== '/' ||
     url.search ||

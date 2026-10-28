@@ -59,6 +59,12 @@ function scopesFromRequest(req: AuthenticatedRequest): string[] {
 }
 
 export function resolvePermission(req: AuthenticatedRequest): AiAccessPermission | null {
+  if (req.auth)
+    return req.auth.scopes.includes('propose')
+      ? 'propose'
+      : req.auth.scopes.includes('read')
+        ? 'read'
+        : null;
   const scopes = scopesFromRequest(req);
   if (scopes.includes('*')) {
     return '*';

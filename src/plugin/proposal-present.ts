@@ -694,6 +694,8 @@ export function buildChangeSummary(proposal: Proposal): string {
 
 /** Redact createdBy for API when only kind/label are needed (omit empty label). */
 function presentCreatedByForApi(createdBy: Proposal['createdBy']): Proposal['createdBy'] {
+  if (createdBy.kind === 'oauth')
+    return { kind: 'oauth', clientId: createdBy.clientId, user: createdBy.user };
   const out: Proposal['createdBy'] = {
     kind: createdBy.kind,
     linkId: createdBy.linkId,

@@ -32,6 +32,19 @@ function normalizeTrustProxy(value: unknown): boolean | number | string {
   return typeof value === 'function' ? 'custom function' : false;
 }
 
+function oauthPublicUrlWarning(publicBaseUrl: string): string | null {
+  if (!publicBaseUrl) return 'Set a Public URL before enabling OAuth.';
+  const url = new URL(publicBaseUrl);
+  const ip = canonicalizeIp(url.hostname);
+  const local =
+    url.hostname.toLowerCase().replace(/\.$/, '') === 'localhost' ||
+    ip === '::1' ||
+    ip?.startsWith('127.');
+  return url.protocol === 'http:' && !local
+    ? 'OAuth Public URL uses HTTP; HTTPS is recommended.'
+    : null;
+}
+
 function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: AuthenticatedRequest) {
   const { sources, ...settings } = store.getEffective();
   const { permission } = describeAccess(RED, req);
@@ -45,6 +58,7 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     apiBase: mcpApiBase(RED.settings.httpAdminRoot),
     // Add future settings to the shared effective type; sources also drives locks.
     settings,
+    oauthPublicUrlWarning: oauthPublicUrlWarning(settings.publicBaseUrl),
     sources,
     disk: store.getDisk(),
     trustProxy: normalizeTrustProxy(req.app.get('trust proxy')),
@@ -127,9 +141,34 @@ export function putSettingsHandler(
     for (const [key, source] of Object.entries(store.getEffective().sources)) {
       if (source === 'settings.js') delete body[key];
     }
+    if (store.getEffective().sources.oauth === 'settings.js') delete body.oauth;
 
     const patch: PersistedAiAccessSettings = {};
     try {
+      if (body.oauth !== undefined) {
+        if (!body.oauth || typeof body.oauth !== 'object' || Array.isArray(body.oauth))
+          throw new Error('oauth must be an object');
+        const value = body.oauth as Record<string, unknown>;
+        const oauth: NonNullable<PersistedAiAccessSettings['oauth']> = {};
+        if (value.enabled !== undefined) {
+          if (typeof value.enabled !== 'boolean')
+            throw new Error('oauth.enabled must be a boolean');
+          oauth.enabled = value.enabled;
+        }
+        for (const key of ['accessTokenTtlSec', 'refreshIdleTtlSec', 'dcrMaxClients'] as const) {
+          if (value[key] !== undefined) {
+            if (
+              typeof value[key] !== 'number' ||
+              !Number.isInteger(value[key]) ||
+              value[key] < 1 ||
+              value[key] > 31_536_000
+            )
+              throw new Error(`oauth.${key} must be a positive integer`);
+            oauth[key] = value[key];
+          }
+        }
+        patch.oauth = oauth;
+      }
       parseBooleanField(body, 'enabled', patch);
       parseBooleanField(body, 'allowWithoutAdminAuth', patch);
       parsePositiveIntField(body, 'defaultLinkTtlSeconds', patch);
@@ -178,11 +217,14 @@ export function putSettingsHandler(
         ? canonicalizeIp(publicUrl.hostname.replace(/^\[|\]$/g, ''))
         : undefined;
       const addressClass = literal ? classifyPublicUrlAddress(literal) : undefined;
+      const warnings: string[] = [];
+      if (addressClass !== undefined && addressClass !== 'public')
+        warnings.push('Public URL uses a private or non-public IP address.');
+      const oauthWarning = oauthPublicUrlWarning(effective.publicBaseUrl);
+      if (oauthWarning && effective.publicBaseUrl) warnings.push(oauthWarning);
       res.json({
         ...response,
-        ...(addressClass !== undefined && addressClass !== 'public'
-          ? { warnings: ['Public URL uses a private or non-public IP address.'] }
-          : {}),
+        ...(warnings.length ? { warnings } : {}),
       });
     } catch (error) {
       if (error instanceof StoragePayloadTooLargeError) {
