@@ -203,8 +203,8 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(created.body.title).toBeTruthy();
     expect(created.body.displayName).toContain(created.body.title);
     expect(created.body.displayName).toMatch(/[+-]\d{2}:\d{2}$/);
-    expect(created.body.reviewPath).toBe(`/mcp#proposal=${created.body.id}`);
-    expect(created.body.reviewUrl).toMatch(new RegExp(`/mcp#proposal=${created.body.id}$`));
+    expect(created.body.reviewPath).toBe(`/ai-access#proposal=${created.body.id}`);
+    expect(created.body.reviewUrl).toMatch(new RegExp(`/ai-access#proposal=${created.body.id}$`));
 
     const withTitle = await request(app)
       .post('/mcp/api/v1/proposals')
@@ -227,9 +227,9 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(withTitle.status).toBe(201);
     expect(withTitle.body.title).toBe('Add inject sensor in Main');
     expect(withTitle.body.displayName.startsWith('Add inject sensor in Main · ')).toBe(true);
-    expect(withTitle.body.reviewPath).toBe(`/mcp#proposal=${withTitle.body.id}`);
+    expect(withTitle.body.reviewPath).toBe(`/ai-access#proposal=${withTitle.body.id}`);
     expect(withTitle.body.reviewUrl).toBe(
-      `http://nr.example:1880/mcp#proposal=${withTitle.body.id}`
+      `http://nr.example:1880/ai-access#proposal=${withTitle.body.id}`
     );
 
     const listed = await request(app)

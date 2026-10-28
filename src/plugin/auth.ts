@@ -38,6 +38,12 @@ export function mcpApiBase(httpAdminRoot: string | undefined): string {
   return root === '/' ? '/mcp/api/v1' : `${root}/mcp/api/v1`;
 }
 
+/** Absolute admin path of the AI Access dashboard (`/ai-access`, respects httpAdminRoot). */
+export function dashboardPath(httpAdminRoot: string | undefined): string {
+  const root = normalizeHttpAdminRoot(httpAdminRoot);
+  return root === '/' ? '/ai-access' : `${root}/ai-access`;
+}
+
 /** Absolute admin path for `/mcp/rpc` (respects httpAdminRoot). */
 export function mcpRpcPath(httpAdminRoot: string | undefined): string {
   const root = normalizeHttpAdminRoot(httpAdminRoot);

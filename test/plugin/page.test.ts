@@ -121,7 +121,7 @@ describe('/mcp admin page', () => {
       httpAdminRoot: '/editor',
     });
 
-    const res = await request(app).get('/mcp');
+    const res = await request(app).get('/ai-access');
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toMatch(/no-store/);
     expect(res.headers.pragma).toMatch(/no-cache/i);
@@ -306,7 +306,7 @@ describe('/mcp admin page', () => {
       userDir,
       adminAuth: { type: 'credentials' },
     });
-    const res = await request(app).get('/mcp');
+    const res = await request(app).get('/ai-access');
     expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
     expect(res.text).toMatch(/showAuthGate|auth-gate/);
     expect(res.text).toMatch(/Please sign in to Node-RED first/);
@@ -319,7 +319,7 @@ describe('/mcp admin page', () => {
       userDir,
       adminAuth: { type: 'credentials' },
     });
-    const res = await request(app).get('/mcp');
+    const res = await request(app).get('/ai-access');
     expect(res.text).toMatch(/isStatusPath/);
     expect(res.text).toMatch(/Auth bootstrap: show a sign-in gate/);
     // Must not redirect on every 401 (that caused an /mcp ↔ editor loop).

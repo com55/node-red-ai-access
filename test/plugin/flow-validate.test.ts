@@ -279,9 +279,9 @@ describe('status tokenKind + wrong_token_kind hint', () => {
 
   it('wrongTokenKindHint points at Access links mint and tellUser', () => {
     const hint = wrongTokenKindHint('rest', 'get_link');
-    expect(hint).toMatch(/Access links/);
+    expect(hint).toMatch(/Access tokens/);
     expect(hint).toMatch(/kind=rest\/mcp/);
-    expect(whatToTellUserWrongTokenKind('rest')).toMatch(/Access links/);
+    expect(whatToTellUserWrongTokenKind('rest')).toMatch(/Access tokens/);
   });
 });
 

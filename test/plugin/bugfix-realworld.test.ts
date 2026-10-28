@@ -277,7 +277,7 @@ describe('bugfix: /mcp public shell', () => {
 
   it('serves GET /mcp without admin auth (boot shell + localStorage Bearer design)', async () => {
     const { app } = createApp({ userDir });
-    const res = await request(app).get('/mcp');
+    const res = await request(app).get('/ai-access');
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/html/);
     expect(res.text).toMatch(/data-config=/);

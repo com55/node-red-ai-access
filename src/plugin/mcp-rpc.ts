@@ -442,7 +442,7 @@ function registerProposalTools(
         'or the auto-generated title, which may already name the flow). ' +
         'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
-        'Humans approve on the /mcp page (reviewUrl opens/scrolls to it).',
+        'Humans approve on the /ai-access dashboard (reviewUrl opens/scrolls to it).',
       inputSchema: {
         type: z.literal('replace_flow').describe("Must be 'replace_flow'"),
         // Both optional in Zod so a missing rev yields our friendly

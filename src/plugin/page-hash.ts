@@ -1,16 +1,18 @@
 /**
- * /mcp location-hash helpers for tab restore and one-shot proposal deep links.
+ * /ai-access location-hash helpers for tab restore and one-shot proposal deep links.
  *
- * Tab fragments: #status | #links | #proposals | #audit
+ * Tab fragments: #status (alias #overview) | #settings | #links (alias #tokens) | #oauth | #proposals | #audit
  * Deep link: #proposal=<id> (consumed after focus → #proposals)
  */
 
-export type McpTabId = 'status' | 'links' | 'proposals' | 'logs';
+export type McpTabId = 'status' | 'settings' | 'links' | 'oauth' | 'proposals' | 'logs';
+
+const TAB_IDS: readonly string[] = ['status', 'settings', 'links', 'oauth', 'proposals'];
 
 /** Tab id → location hash fragment (Audit log panel uses #audit). */
 export function hashForTab(tab: string): string {
   if (tab === 'logs') return 'audit';
-  if (tab === 'status' || tab === 'links' || tab === 'proposals') return tab;
+  if (TAB_IDS.includes(tab)) return tab;
   return 'status';
 }
 
@@ -22,7 +24,9 @@ export function tabFromHash(hash: string): McpTabId | '' {
   const raw = String(hash || '').replace(/^#/, '');
   if (!raw || raw.startsWith('proposal=')) return '';
   if (raw === 'audit' || raw === 'logs') return 'logs';
-  if (raw === 'status' || raw === 'links' || raw === 'proposals') return raw;
+  if (raw === 'overview') return 'status';
+  if (raw === 'tokens') return 'links';
+  if (TAB_IDS.includes(raw)) return raw as McpTabId;
   return '';
 }
 

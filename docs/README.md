@@ -24,5 +24,5 @@ bodies. Use a **GET link** only as a fallback for headerless GET-only clients.
   `GET /mcp/api/v1/openapi.yaml` (JSON: `GET /mcp/api/v1/openapi.json`)
 - Discovery guide — `GET /mcp/api/v1` (unauthenticated JSON index)
 
-Mint tokens on the admin page at `/mcp` → **Access links** (admin `*` only).
-Each token works on **one** surface; wrong kind → `403 wrong_token_kind`.
+Mint tokens on the dashboard at `/ai-access` → **Access tokens** (admin `*`
+only). Each token works on **one** surface; wrong kind → `403 wrong_token_kind`.

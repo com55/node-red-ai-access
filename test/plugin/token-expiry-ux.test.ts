@@ -180,8 +180,8 @@ describe('token expiry UX', () => {
     expect(res.headers['www-authenticate']).toMatch(/^Bearer /);
     expect(res.body.code).toBe('token_expired');
     expect(res.body.expiredAt).toBe(created.expiresAt);
-    expect(res.body.accessLinksUrl).toBe('http://nr.example:1880/mcp#links');
-    expect(res.body.hint).toMatch(/Access links/);
+    expect(res.body.accessLinksUrl).toBe('http://nr.example:1880/ai-access#links');
+    expect(res.body.hint).toMatch(/Access tokens/);
   });
 
   it('GET-link 401s (token_expired, access_link_invalid) include WWW-Authenticate', async () => {
@@ -198,7 +198,7 @@ describe('token expiry UX', () => {
     expect(expired.headers['www-authenticate']).toMatch(/^Bearer /);
     expect(expired.body.code).toBe('token_expired');
     expect(expired.body.expiredAt).toBe(created.expiresAt);
-    expect(expired.body.accessLinksUrl).toMatch(/\/mcp#links$/);
+    expect(expired.body.accessLinksUrl).toMatch(/\/ai-access#links$/);
 
     const invalid = await request(app).get(
       '/mcp/a/aia_unknown-token-that-is-long-enough-000000/status'
@@ -222,10 +222,10 @@ describe('token expiry UX', () => {
   });
 
   it('accessLinksPagePath respects httpAdminRoot', () => {
-    expect(accessLinksPagePath(undefined)).toBe('/mcp#links');
-    expect(accessLinksPagePath('/')).toBe('/mcp#links');
-    expect(accessLinksPagePath('/admin/')).toBe('/admin/mcp#links');
-    expect(accessLinksPagePath('/admin')).toBe('/admin/mcp#links');
+    expect(accessLinksPagePath(undefined)).toBe('/ai-access#links');
+    expect(accessLinksPagePath('/')).toBe('/ai-access#links');
+    expect(accessLinksPagePath('/admin/')).toBe('/admin/ai-access#links');
+    expect(accessLinksPagePath('/admin')).toBe('/admin/ai-access#links');
   });
 
   it('minutesRemainingUntil rounds up (never 0 while valid) and never goes negative', () => {
@@ -247,7 +247,7 @@ describe('token expiry UX', () => {
 
   it('/mcp custom TTL row is hidden unless Custom… is selected (CSS cannot override [hidden])', async () => {
     const { app } = createApp(userDir);
-    const page = await request(app).get('/mcp');
+    const page = await request(app).get('/ai-access');
     expect(page.status).toBe(200);
     const html = page.text;
     // Global rule so `.ttl-custom-row { display: flex }` does not beat the hidden attribute.
@@ -263,7 +263,7 @@ describe('token expiry UX', () => {
 
   it('/mcp page client resets expiry to 1h when switching to get_link above 24h', async () => {
     const { app } = createApp(userDir);
-    const page = await request(app).get('/mcp');
+    const page = await request(app).get('/ai-access');
     expect(page.status).toBe(200);
     const html = page.text;
     // Dropdown includes 7d + Custom; 7d is hidden for get_link.

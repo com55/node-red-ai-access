@@ -159,28 +159,24 @@ describe('/mcp audit log page client', () => {
   });
 });
 
-describe('ai-access sidebar TTL layout', () => {
-  it('auto-saves only with friendly deploy labels (served JS, not cached HTML)', () => {
+describe('ai-access sidebar layout (0.2.0-beta.3: toggles + dashboard button only)', () => {
+  it('auto-saves the two toggles; settings live on the dashboard', () => {
     const sidebar = readFileSync(join(root, 'src/plugin/editor-sidebar.ts'), 'utf8');
-    expect(sidebar).toMatch(/scheduleAutoSave/);
-    expect(sidebar).toMatch(/Changes apply immediately \(no restart\)/);
+    expect(sidebar).toMatch(/Changes apply immediately/);
     expect(sidebar).not.toMatch(/ai-access-save/);
-    expect(sidebar).toMatch(/Default link expiry(?! \(hours\))/);
-    expect(sidebar).not.toMatch(/Default link expiry \(hours\)/);
     expect(sidebar).toMatch(/AI tools are disabled/);
     expect(sidebar).not.toMatch(/MCP tools are disabled/);
-    expect(sidebar).toMatch(/BroadcastChannel|ai-access-pending|refresh-pending/);
-    expect(sidebar).toMatch(/pendingSidebarText|1 proposal to review|to review/);
     expect(sidebar).toMatch(/ai-access-actions/);
-    expect(sidebar).toMatch(/Only changed nodes \(recommended\)/);
-    expect(sidebar).toMatch(/Changed flows/);
-    expect(sidebar).toMatch(/Full redeploy/);
-    expect(sidebar).toMatch(/flex-wrap:\s*nowrap/);
-    expect(sidebar).toMatch(/red-ui-settings-row stacked/);
+    expect(sidebar).not.toMatch(/Only changed nodes \(recommended\)/);
+    expect(sidebar).not.toMatch(/Default link expiry/);
+    expect(sidebar).toMatch(/Open AI Access dashboard/);
     expect(sidebar).toMatch(/flex-direction:\s*column/);
     expect(sidebar).toMatch(/showSavedToast|#ai-access-flash\.is-visible/);
     expect(sidebar).toMatch(/#ai-access-flash:not\(\.is-visible\)/);
     expect(sidebar).toMatch(/removeClass\('ok error'\)/);
+    const page = readFileSync(join(root, 'src/plugin/page.ts'), 'utf8');
+    expect(page).toMatch(/Only changed nodes \(recommended\)/);
+    expect(page).toMatch(/Default access token expiry/);
   });
 });
 

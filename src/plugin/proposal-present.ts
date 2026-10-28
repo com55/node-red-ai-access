@@ -175,11 +175,11 @@ export interface PresentedProposal extends Proposal {
   displayName: string;
   /**
    * Absolute deep link when the request Host is known
-   * (`https://host/mcp#proposal=<id>`); otherwise same as `reviewPath`.
+   * (`https://host/ai-access#proposal=<id>`); otherwise same as `reviewPath`.
    * Honors `X-Forwarded-*` only when Express `trust proxy` is set.
    */
   reviewUrl: string;
-  /** Relative deep link path (`/mcp#proposal=<id>` or under httpAdminRoot). */
+  /** Relative deep link path (`/ai-access#proposal=<id>` or under httpAdminRoot). */
   reviewPath: string;
 }
 
@@ -583,10 +583,10 @@ export function sanitizeProposalTitle(raw: unknown): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-/** Relative `/mcp#proposal=<id>` path (respects httpAdminRoot). */
+/** Relative `/ai-access#proposal=<id>` path (respects httpAdminRoot). */
 export function buildProposalReviewPath(proposalId: string, httpAdminRoot?: string): string {
   const root = normalizeHttpAdminRoot(httpAdminRoot);
-  const base = root === '/' ? '/mcp' : `${root}/mcp`;
+  const base = root === '/' ? '/ai-access' : `${root}/ai-access`;
   return `${base}#proposal=${encodeURIComponent(proposalId)}`;
 }
 

@@ -125,7 +125,7 @@ describe('AI Access plugin scaffold', () => {
         httpAdminRoot: '/admin',
       });
 
-      const res = await request(app).get('/mcp');
+      const res = await request(app).get('/ai-access');
       expect(res.status).toBe(200);
       expect(res.text).toMatch(/localStorage/);
       expect(res.text).toMatch(/auth-tokens-admin/);
@@ -140,7 +140,7 @@ describe('AI Access plugin scaffold', () => {
       expect(res.headers['cache-control']).toMatch(/no-store/);
       expect(res.headers['x-ai-access-sidebar-version']).toBeTruthy();
       expect(res.text).toMatch(/RED\.sidebar\.addTab/);
-      expect(res.text).toMatch(/Only changed nodes \(recommended\)/);
+      expect(res.text).toMatch(/Open AI Access dashboard/);
       expect(res.text).not.toMatch(/ai-access-save/);
     });
 
@@ -167,7 +167,7 @@ describe('AI Access plugin scaffold', () => {
         },
       });
 
-      const page = await request(app).get('/mcp');
+      const page = await request(app).get('/ai-access');
       expect(page.status).toBe(200);
       expect(page.text).toMatch(/AI Access/i);
       expect(page.text).toMatch(/id="section-status"/);
@@ -218,7 +218,7 @@ describe('AI Access plugin scaffold', () => {
     it('serves /mcp shell; status reports AI features disabled by default', async () => {
       const { app } = createMockRed({});
 
-      const page = await request(app).get('/mcp');
+      const page = await request(app).get('/ai-access');
       expect(page.status).toBe(200);
       expect(page.text).toMatch(/AI Access/i);
       expect(page.text).toMatch(/localStorage/);

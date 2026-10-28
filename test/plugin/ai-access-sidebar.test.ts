@@ -326,22 +326,15 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(content.attr('id')).toBe('red-ui-sidebar-ai-access');
   });
 
-  it('auto-saves only (no Save), friendly deploy labels, Refresh in header', () => {
+  it('auto-saves only (no Save), Refresh in header, dashboard button', () => {
     const js = renderEditorSidebarJs();
-    expect(js).toMatch(/scheduleAutoSave/);
-    expect(js).toMatch(/Changes apply immediately \(no restart\)/);
+    expect(js).toMatch(/Changes apply immediately/);
     expect(js).not.toMatch(/ai-access-save/);
     expect(js).not.toMatch(/\.text\('Save'\)/);
-    expect(js).toMatch(/Only changed nodes \(recommended\)/);
-    expect(js).toMatch(/Changed flows/);
-    expect(js).toMatch(/Full redeploy/);
-    expect(js).not.toMatch(/nodes = only changed nodes restart/);
     expect(js).toMatch(/ai-access-refresh/);
     expect(js).toMatch(/Open AI Access dashboard/);
-    expect(js).toMatch(/ai-access-ttl-presets|data-hours/);
+    expect(js).toMatch(/\/ai-access/);
     expect(js).toMatch(/canEdit|readonly|\*/);
-    expect(js).toMatch(/red-ui-settings-row stacked/);
-    expect(js).toMatch(/flex-wrap:\s*nowrap/);
     expect(js).toMatch(new RegExp(`v=${EDITOR_SIDEBAR_ASSET_VERSION}`));
     expect(js).toMatch(/showSavedToast|Saved/);
     expect(js).toMatch(/2000/);
@@ -353,115 +346,132 @@ describe('ai-access-sidebar.js served tab', () => {
     expect(js).toMatch(/removeClass\('ok error'\)/);
     expect(js).not.toMatch(/#ai-access-flash \{[^}]*position:\s*absolute/);
   });
+
+  it('keeps only the two toggles, conflict warning and dashboard button (settings moved to dashboard)', () => {
+    const js = renderEditorSidebarJs();
+    for (const moved of [
+      'ai-access-public-url',
+      'ai-access-cors',
+      'ai-access-rate-ip',
+      'ai-access-rate-window',
+      'ai-access-rate-token',
+      'ai-access-max-links',
+      'ai-access-deploy',
+      'ai-access-ttl',
+      'ai-access-oauth-clients',
+      'ai-access-oauth-access-ttl',
+      'ai-access-oauth-dcr-cap',
+      'ai-access-check-public-url',
+      'ai-access-trust-proxy',
+      'ai-access-pending-line',
+    ]) {
+      expect(js, moved).not.toContain(`id="${moved}"`);
+    }
+    expect(js).toContain('id="ai-access-enabled"');
+    expect(js).toContain('id="ai-access-oauth-enabled"');
+    expect(js).toContain('id="ai-access-oauth-route-warning"');
+    expect(js).toContain('id="ai-access-open-mcp"');
+  });
+
+  function runSidebar(
+    fetcher: (url: string, options?: { method?: string; body?: string }) => unknown
+  ) {
+    const $ = createFakeJQuery();
+    let load!: () => void;
+    const opened: string[] = [];
+    runInNewContext(renderEditorSidebarJs(), {
+      window: {
+        setTimeout,
+        open(url: string) {
+          opened.push(url);
+        },
+      },
+      URL,
+      setTimeout,
+      clearTimeout,
+      $,
+      fetch: fetcher,
+      localStorage: { getItem: () => null },
+      document: {
+        getElementById: () => null,
+        createElement: () => ({}),
+        head: {
+          appendChild() {
+            return undefined;
+          },
+        },
+      },
+      RED: {
+        settings: {},
+        view: { reveal: vi.fn() },
+        actions: {
+          add() {
+            return undefined;
+          },
+        },
+        sidebar: {
+          addTab(options: { onchange: () => void }) {
+            load = options.onchange;
+          },
+          show() {
+            return undefined;
+          },
+        },
+      },
+    });
+    return { $, load: () => load(), opened };
+  }
+
   it.each([true, false])(
-    'renders field locks and read-only controls (canEdit=%s)',
+    'renders toggle locks and read-only controls (canEdit=%s)',
     async canEdit => {
       vi.useFakeTimers();
       try {
-        const $ = createFakeJQuery();
-        let load!: () => void;
-        const settings = {
-          enabled: true,
-          allowWithoutAdminAuth: false,
-          defaultLinkTtlSeconds: 7200,
-          defaultDeploymentType: 'flows',
-          maxActiveLinks: 9,
-          publicBaseUrl: 'https://locked.example',
-          corsAllowedOrigins: ['https://browser.example'],
-          rateLimitWindowMs: 60000,
-          rateLimitMaxPerIp: 600,
-          rateLimitMaxPerToken: 300,
-        };
+        const settings = { enabled: true, allowWithoutAdminAuth: false, oauth: { enabled: true } };
         const data = {
           canEdit,
           adminAuthEnabled: true,
+          mcpPageUrl: '/ai-access',
           settings,
-          trustProxy: 'loopback',
-          sources: {
-            publicBaseUrl: 'settings.js',
-            defaultDeploymentType: 'settings.js',
-            defaultLinkTtlSeconds: 'settings.js',
-          },
+          sources: { oauth: 'settings.js' },
         };
         const fetcher = vi.fn(async (url: string, _options?: unknown) => ({
           ok: true,
-          text: async () =>
-            JSON.stringify(
-              url.endsWith('/check-public-url')
-                ? { ok: true, status: 200, message: 'Discovery endpoint is reachable' }
-                : url.endsWith('/proposals')
-                  ? { proposals: [] }
-                  : data
-            ),
+          text: async () => JSON.stringify(url.endsWith('/oauth/status') ? { details: [] } : data),
         }));
-        runInNewContext(renderEditorSidebarJs(), {
-          window: { setTimeout },
-          setTimeout,
-          clearTimeout,
-          $,
-          fetch: fetcher,
-          localStorage: { getItem: () => null },
-          document: {
-            getElementById: () => null,
-            createElement: () => ({}),
-            head: {
-              appendChild() {
-                return undefined;
-              },
-            },
-          },
-          RED: {
-            settings: {},
-            actions: {
-              add() {
-                return undefined;
-              },
-            },
-            sidebar: {
-              addTab(options: { onchange: () => void }) {
-                load = options.onchange;
-              },
-              show() {
-                return undefined;
-              },
-            },
-          },
-        });
+        const { $, load, opened } = runSidebar(fetcher);
         load();
         await vi.advanceTimersByTimeAsync(0);
-        expect($('#ai-access-public-url').elements[0]!.props).toMatchObject({
-          value: 'https://locked.example',
+        expect($('#ai-access-enabled').elements[0]!.props).toMatchObject({
+          checked: true,
+          disabled: !canEdit,
+        });
+        expect($('#ai-access-oauth-enabled').elements[0]!.props).toMatchObject({
+          checked: true,
           disabled: true,
         });
-        expect($('#ai-access-lock-public-url').elements[0]!.props.visible).toBe(true);
-        expect($('#ai-access-rate-ip').elements[0]!.props.disabled).toBe(!canEdit);
-        expect($('#ai-access-cors').elements[0]!.props.value).toBe('https://browser.example');
-        expect($('#ai-access-trust-proxy').elements[0]!.textContent).toBe('Trust proxy: loopback');
-        // Confirm dialog overlays the non-scrolling tab root, not the scrolled body.
+        expect($('#ai-access-oauth-lock').elements[0]!.props.visible).toBe(true);
+        expect($('#ai-access-readonly-note').elements[0]!.props.visible).toBe(!canEdit);
+        // No conflicts → warning hidden.
+        expect($('#ai-access-oauth-route-warning').elements[0]!.props.visible).toBe(false);
         expect(
           ($('#ai-access-dialog').elements[0] as unknown as { parent?: { id?: string } }).parent?.id
         ).toBe('red-ui-sidebar-ai-access');
-        expect($('#ai-access-check-public-url').elements[0]!.props.disabled).toBe(!canEdit);
-        expect($('#ai-access-ttl').elements[0]!.props.value).toBe(2);
+        $('#ai-access-open-mcp').elements[0]!.handlers.click![0]!();
+        expect(opened).toEqual(['/ai-access']);
         if (canEdit) {
-          $('#ai-access-check-public-url').elements[0]!.handlers.click![0]!();
+          $('#ai-access-enabled').elements[0]!.props.checked = false;
+          $('#ai-access-enabled').elements[0]!.handlers.change![0]!();
           await vi.advanceTimersByTimeAsync(0);
-          expect($('#ai-access-check-result').elements[0]!.textContent).toContain(
-            'OK: Discovery endpoint is reachable (HTTP 200)'
-          );
-          expect($('#ai-access-check-result').elements[0]!.className).toContain('is-ok');
-          $('#ai-access-rate-ip').elements[0]!.props.value = 20;
-          $('#ai-access-rate-ip').elements[0]!.handlers.change![0]!();
-          await vi.advanceTimersByTimeAsync(400);
           const put = fetcher.mock.calls.find(
             call => (call[1] as { method?: string } | undefined)?.method === 'PUT'
           );
           expect(put).toBeDefined();
-          const payload = JSON.parse((put![1] as { body: string }).body);
-          expect(payload.rateLimitMaxPerIp).toBe(20);
-          expect(payload).not.toHaveProperty('publicBaseUrl');
-          expect(payload).not.toHaveProperty('defaultDeploymentType');
-          expect(payload).not.toHaveProperty('defaultLinkTtlSeconds');
+          // Partial PUT of sidebar-owned toggles only; locked oauth is omitted.
+          expect(JSON.parse((put![1] as { body: string }).body)).toEqual({
+            enabled: false,
+            allowWithoutAdminAuth: false,
+          });
         }
       } finally {
         vi.useRealTimers();
@@ -469,23 +479,12 @@ describe('ai-access-sidebar.js served tab', () => {
     }
   );
 
-  it('shows OAuth status and clients, revokes a client, and confirms an insecure Public URL', async () => {
+  it('shows escaped OAuth route conflicts with reveal links and confirms an insecure Public URL', async () => {
     vi.useFakeTimers();
     try {
-      const $ = createFakeJQuery();
-      let load!: () => void;
-      const settings = {
-        oauth: {
-          enabled: false,
-          accessTokenTtlSec: 3600,
-          refreshIdleTtlSec: 2592000,
-          dcrMaxClients: 20,
-        },
-        publicBaseUrl: '',
-      };
+      const settings = { oauth: { enabled: false }, publicBaseUrl: '' };
       const fetcher = vi.fn(async (url: string, options?: { method?: string; body?: string }) => {
         let body: unknown = { canEdit: true, adminAuthEnabled: true, settings, sources: {} };
-        if (url.endsWith('/proposals')) body = { proposals: [] };
         if (url.endsWith('/oauth/status'))
           body = {
             authorization: ['/mcp/oauth/token (other plugin)'],
@@ -509,117 +508,55 @@ describe('ai-access-sidebar.js served tab', () => {
             ],
             httpNodeRootFallback: true,
           };
-        if (url.endsWith('/oauth/clients'))
-          body = {
-            clients: [
-              {
-                client_id: 'client-id',
-                client_name: 'Test app',
-                redirect_uris: ['https://app.example/callback'],
-              },
-            ],
-          };
         if (options?.method === 'PUT') Object.assign(settings, JSON.parse(options.body!));
-        if (options?.method === 'DELETE') body = { revoked: true };
         return { ok: true, text: async () => JSON.stringify(body) };
       });
-      runInNewContext(renderEditorSidebarJs(), {
-        window: { setTimeout },
-        URL,
-        setTimeout,
-        clearTimeout,
-        $,
-        fetch: fetcher,
-        localStorage: { getItem: () => null },
-        document: {
-          getElementById: () => null,
-          createElement: () => ({}),
-          head: {
-            appendChild() {
-              return undefined;
-            },
-          },
-        },
-        RED: {
-          settings: {},
-          actions: {
-            add() {
-              return undefined;
-            },
-          },
-          sidebar: {
-            addTab(options: { onchange: () => void }) {
-              load = options.onchange;
-            },
-            show() {
-              return undefined;
-            },
-          },
-        },
-      });
+      const { $, load } = runSidebar(fetcher);
       load();
       await vi.advanceTimersByTimeAsync(0);
       interface TextNode {
-        textContent?: string;
-        children?: TextNode[];
-      }
-      const deepText = (el: TextNode): string =>
-        (el.textContent ?? '') + (el.children ?? []).map(deepText).join('');
-      const warningText = deepText($('#ai-access-oauth-route-warning').elements[0]!);
-      expect(warningText).toContain('httpNodeRoot is disabled');
-      expect(warningText).toContain('/mcp/oauth/token');
-      expect(warningText).toContain('already registered by another node or plugin');
-      expect(warningText).toContain("http-in node 'Meta in'");
-      expect(warningText).toContain('OAuth metadata disabled');
-      interface TagNode {
         tag?: string;
         textContent?: string;
-        children?: TagNode[];
+        htmlContent?: string;
+        children?: TextNode[];
+        handlers?: Record<string, ((...a: unknown[]) => void)[]>;
       }
+      const box = $('#ai-access-oauth-route-warning').elements[0]! as unknown as TextNode & {
+        props: Record<string, unknown>;
+      };
+      expect(box.props.visible).toBe(true);
+      const deepText = (el: TextNode): string =>
+        (el.textContent ?? '') + (el.children ?? []).map(deepText).join('');
+      const warningText = deepText(box);
+      expect(warningText).toContain('OAuth route conflict');
+      expect(warningText).toContain('already registered by another node or plugin');
+      expect(warningText).toContain("http-in node 'Meta in'");
+      expect(warningText).toContain("'<img src=x onerror=alert(1)>'");
+      const tags: string[] = [];
+      const html: string[] = [];
       const codes: string[] = [];
-      const walk = (el: TagNode): void => {
+      const links: TextNode[] = [];
+      const walk = (el: TextNode): void => {
+        if (el.tag) tags.push(el.tag);
         if (el.tag === 'code') codes.push(el.textContent ?? '');
+        if (el.tag === 'a') links.push(el);
+        if (el.htmlContent) html.push(el.htmlContent);
         (el.children ?? []).forEach(walk);
       };
-      walk($('#ai-access-oauth-route-warning').elements[0]!);
+      walk(box);
       expect(codes).toEqual([
         '/mcp/oauth/token',
         '/.well-known/oauth-authorization-server',
         '/.well-known/oauth-<b>x</b>',
       ]);
-      // Untrusted node names/paths are set as text: no element or raw HTML is created.
-      interface HtmlNode {
-        tag?: string;
-        htmlContent?: string;
-        children?: HtmlNode[];
-      }
-      const tags: string[] = [];
-      const html: string[] = [];
-      const collect = (el: HtmlNode): void => {
-        if (el.tag) tags.push(el.tag);
-        if (el.htmlContent) html.push(el.htmlContent);
-        (el.children ?? []).forEach(collect);
-      };
-      collect($('#ai-access-oauth-route-warning').elements[0]!);
       expect(tags).not.toContain('img');
       expect(tags).not.toContain('b');
       expect(html).toEqual([]);
-      expect(warningText).toContain("'<img src=x onerror=alert(1)>'");
-      expect(
-        $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[0]!.textContent
-      ).toContain('Test app');
-      expect($('#ai-access-oauth-access-ttl').elements[0]!.props.value).toBe(1);
-      expect($('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value).toBe('hours');
-      expect($('#ai-access-oauth-refresh-ttl').elements[0]!.props.value).toBe(30);
-      expect($('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value).toBe('days');
-      expect($('#ai-access-oauth-refresh-max').elements[0]!.props.value).toBe(90);
-      $('#ai-access-oauth-access-ttl').elements[0]!.props.value = 90;
-      $('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value = 'minutes';
-      $('#ai-access-oauth-refresh-ttl').elements[0]!.props.value = 12;
-      $('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value = 'hours';
+      expect(links).toHaveLength(2);
+
       $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
       $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(0);
       expect($('#ai-access-dialog-message').elements[0]!.textContent).toContain('No Public URL');
       $('#ai-access-dialog-cancel').elements[0]!.handlers.click![0]!();
       await vi.advanceTimersByTimeAsync(0);
@@ -627,40 +564,22 @@ describe('ai-access-sidebar.js served tab', () => {
       expect($('#ai-access-oauth-enabled').elements[0]!.props.checked).toBe(false);
       $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
       $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(0);
       $('#ai-access-dialog-allow').elements[0]!.handlers.click![0]!();
       await vi.advanceTimersByTimeAsync(0);
       const put = fetcher.mock.calls.find(call => call[1]?.method === 'PUT');
-      expect(JSON.parse(put![1]!.body!)).toMatchObject({
-        oauth: {
-          enabled: true,
-          dcrMaxClients: 20,
-          accessTokenTtlSec: 5400,
-          refreshIdleTtlSec: 43200,
-        },
+      expect(JSON.parse(put![1]!.body!)).toEqual({
+        enabled: true,
+        allowWithoutAdminAuth: false,
+        oauth: { enabled: true },
       });
-      expect(JSON.parse(put![1]!.body!).oauth).not.toHaveProperty('refreshMaxLifetimeSec');
-      const button = $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[1]!;
-      button.handlers.click![0]!();
-      $('#ai-access-dialog-allow').elements[0]!.handlers.click![0]!();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(
-        fetcher.mock.calls.some(
-          call => call[0].endsWith('/oauth/clients/client-id') && call[1]?.method === 'DELETE'
-        )
-      ).toBe(true);
-      $('#ai-access-oauth-refresh-max').elements[0]!.props.value = 0;
-      $('#ai-access-oauth-refresh-max').elements[0]!.handlers.change![0]!();
-      await vi.advanceTimersByTimeAsync(400);
-      const puts = fetcher.mock.calls.filter(call => call[1]?.method === 'PUT');
-      expect(JSON.parse(puts.at(-1)![1]!.body!).oauth.refreshMaxLifetimeSec).toBe(0);
       settings.oauth.enabled = false;
       settings.publicBaseUrl = 'http://node.example';
       load();
       await vi.advanceTimersByTimeAsync(0);
       $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
       $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(0);
       expect($('#ai-access-dialog-message').elements[0]!.textContent).toContain(
         'does not use HTTPS'
       );
@@ -672,7 +591,7 @@ describe('ai-access-sidebar.js served tab', () => {
       const putCount = fetcher.mock.calls.filter(call => call[1]?.method === 'PUT').length;
       $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
       $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(0);
       expect(fetcher.mock.calls.filter(call => call[1]?.method === 'PUT')).toHaveLength(
         putCount + 1
       );

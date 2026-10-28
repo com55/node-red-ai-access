@@ -1,5 +1,6 @@
 /**
- * HTML admin UI for GET /mcp — status, links, proposals, audit log.
+ * HTML dashboard for GET /ai-access — overview, settings, access tokens, OAuth,
+ * proposals, audit log. (Browser GETs of /mcp redirect here.)
  *
  * Served without adminAuth so the browser can read the editor's localStorage
  * Bearer token (Node-RED does not use cookies). APIs remain protected.
@@ -17,6 +18,8 @@ export interface RenderMcpPageOptions {
   editorRoot: string;
   /** localStorage key matching the Node-RED editor auth token. */
   authTokenKey: string;
+  /** Absolute dashboard path (`/ai-access`, respects httpAdminRoot). */
+  dashboardPath?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -46,13 +49,15 @@ function renderMcpPageHeader(): string {
       <p>Open the editor, sign in, then return here to manage AI Access.</p>
       <p class="row">
         <a class="action" id="auth-gate-editor" href="/">Open Node-RED editor</a>
-        <a class="action secondary" id="auth-gate-return" href="/mcp">Return to AI Access</a>
+        <a class="action secondary" id="auth-gate-return" href="/ai-access">Return to AI Access</a>
       </p>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
     <nav class="tabs" aria-label="Admin views" hidden id="main-nav">
-      <button type="button" data-tab="status" aria-selected="true">Status</button>
-      <button type="button" data-tab="links" aria-selected="false">Access links</button>
+      <button type="button" data-tab="status" aria-selected="true">Overview</button>
+      <button type="button" data-tab="settings" aria-selected="false">Settings</button>
+      <button type="button" data-tab="links" aria-selected="false">Access tokens</button>
+      <button type="button" data-tab="oauth" aria-selected="false">OAuth</button>
       <button type="button" data-tab="proposals" aria-selected="false">
         Proposals <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>
       </button>
@@ -62,8 +67,8 @@ function renderMcpPageHeader(): string {
 
 function renderMcpPageStatusSection(): string {
   return `
-    <section class="panel active" id="section-status" aria-label="Status" hidden>
-      <h2>Status</h2>
+    <section class="panel active" id="section-status" aria-label="Overview" hidden>
+      <h2>Overview</h2>
       <div id="status-flash" class="flash" hidden></div>
       <aside id="status-warning" class="warning" role="status" hidden></aside>
       <div class="dash-grid" id="status-dashboard">
@@ -110,8 +115,8 @@ function renderMcpPageStatusSection(): string {
 
 function renderMcpPageLinksSection(): string {
   return `
-    <section class="panel" id="section-links" aria-label="Access links" hidden>
-      <h2>Access links</h2>
+    <section class="panel" id="section-links" aria-label="Access tokens" hidden>
+      <h2>Access tokens</h2>
       <p class="muted" id="links-intro">
         Create a token for the channel your AI uses: a GET link to paste in chat,
         a REST Bearer, or an MCP token. It can read flows and submit proposals —
@@ -120,6 +125,204 @@ function renderMcpPageLinksSection(): string {
       <div id="links-flash" class="flash" hidden></div>
       <div id="links-manage"></div>
       <div id="links-list"></div>
+    </section>`;
+}
+
+function lockBadge(field: string): string {
+  return `<span class="lock-badge" id="lock-${field}" hidden>Locked by settings.js</span>`;
+}
+
+function renderMcpPageSettingsSection(): string {
+  return `
+    <section class="panel" id="section-settings" aria-label="Settings" hidden>
+      <h2>Settings</h2>
+      <p class="muted">Changes save automatically and apply immediately (no restart).</p>
+      <div id="settings-flash" class="flash" hidden></div>
+      <p id="settings-readonly" class="notice" hidden>Read-only: full admin permission (*) is required to change these settings.</p>
+      <div class="settings-grid">
+        <div class="card settings-card">
+          <h3>General</h3>
+          <div class="form-row toggle-row" id="row-enabled">
+            <label class="switch-label"><input type="checkbox" id="set-enabled" />
+              <span><strong>Enable AI Access features</strong>
+              <span class="hint">When off, access tokens, proposals, and AI tools are disabled.</span></span></label>
+            ${lockBadge('enabled')}
+          </div>
+          <div class="form-row toggle-row" id="row-allow-without" hidden>
+            <label class="switch-label"><input type="checkbox" id="set-allow-without" />
+              <span><strong>Allow AI Access without adminAuth (local-only)</strong>
+              <span class="hint danger-text">Not for production. Anyone who can reach the editor admin port can use AI features.</span></span></label>
+            ${lockBadge('allow-without')}
+          </div>
+          <div class="form-row">
+            <label for="set-deploy">Default deploy type</label>
+            <div class="field-line">
+              <select id="set-deploy">
+                <option value="nodes">Only changed nodes (recommended)</option>
+                <option value="flows">Changed flows</option>
+                <option value="full">Full redeploy</option>
+              </select>
+              ${lockBadge('deploy')}
+            </div>
+            <p class="hint danger-text" id="set-deploy-full-warn" hidden>Full redeploy restarts the entire runtime.</p>
+          </div>
+          <div class="form-row">
+            <label for="set-ttl">Default access token expiry</label>
+            <div class="field-line">
+              <input type="number" id="set-ttl" min="1" step="1" class="num" />
+              <span class="unit">hours</span>
+              ${lockBadge('ttl')}
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="set-max-links">Maximum active tokens</label>
+            <div class="field-line">
+              <input type="number" id="set-max-links" min="1" step="1" class="num" />
+              <span class="unit">tokens</span>
+              ${lockBadge('max-links')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card settings-card">
+          <h3>Public URL</h3>
+          <p class="hint">The HTTPS origin AI clients use to reach Node-RED (used in links and OAuth metadata).</p>
+          <div class="form-row">
+            <label for="set-public-url">Public URL</label>
+            <div class="field-line">
+              <input type="url" id="set-public-url" placeholder="https://nodered.example.com" class="grow" />
+              <button type="button" class="action secondary" id="set-check-public-url">Check</button>
+              ${lockBadge('public-url')}
+            </div>
+            <div id="set-public-url-warning" class="hint warn-text" role="status" hidden></div>
+            <div id="set-check-result" class="check-result" aria-live="polite" hidden></div>
+          </div>
+          <details class="tech-details">
+            <summary>About the check</summary>
+            <p class="hint">Loopback checks use Node-RED's listening port; behind a reverse proxy, use the internal port. Unix-socket listeners are not supported. HTTPS checks fail with self-signed certificates.</p>
+            <p class="hint" id="set-trust-proxy"></p>
+          </details>
+        </div>
+
+        <div class="card settings-card">
+          <h3>CORS</h3>
+          <div class="form-row">
+            <label for="set-cors">Allowed origins <span class="hint">(comma separated)</span></label>
+            <div class="field-line">
+              <input type="text" id="set-cors" class="grow" placeholder="https://app.example.com" />
+              ${lockBadge('cors')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card settings-card">
+          <h3>Rate limits</h3>
+          <div class="form-row">
+            <label for="set-rate-window">Window</label>
+            <div class="field-line">
+              <input type="number" id="set-rate-window" min="1" step="1" class="num" />
+              <span class="unit">ms</span>
+              ${lockBadge('rate-window')}
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="set-rate-ip">Per IP</label>
+            <div class="field-line">
+              <input type="number" id="set-rate-ip" min="1" step="1" class="num" />
+              <span class="unit">requests / window</span>
+              ${lockBadge('rate-ip')}
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="set-rate-token">Per token</label>
+            <div class="field-line">
+              <input type="number" id="set-rate-token" min="1" step="1" class="num" />
+              <span class="unit">requests / window</span>
+              ${lockBadge('rate-token')}
+            </div>
+          </div>
+          <p class="hint" id="set-trust-proxy-inline"></p>
+        </div>
+      </div>
+    </section>`;
+}
+
+function renderMcpPageOAuthSection(): string {
+  return `
+    <section class="panel" id="section-oauth" aria-label="OAuth" hidden>
+      <h2>MCP OAuth</h2>
+      <p class="muted">MCP clients (ChatGPT, Claude, …) can request read or propose access through OAuth.</p>
+      <div id="oauth-flash" class="flash" hidden></div>
+      <div id="oauth-route-warning" class="warning" role="status" hidden></div>
+      <div class="settings-grid">
+        <div class="card settings-card">
+          <h3>Status</h3>
+          <div class="form-row toggle-row">
+            <label class="switch-label"><input type="checkbox" id="oauth-enabled" />
+              <span><strong>Enable MCP OAuth</strong>
+              <span class="hint">Also available in the editor sidebar (AI Access tab).</span></span></label>
+            ${lockBadge('oauth')}
+          </div>
+          <div class="form-row">
+            <span class="label">Server URL for MCP clients</span>
+            <div class="field-line"><code id="oauth-server-url" class="grow">—</code>
+              <button type="button" class="action secondary" id="oauth-copy-url">Copy</button></div>
+          </div>
+          <details class="tech-details" open>
+            <summary>How to connect with OAuth</summary>
+            <ol class="hint steps">
+              <li>Set the Public URL on the Settings tab to the HTTPS address clients use, then click Check.</li>
+              <li>Enable MCP OAuth (above, or in the editor sidebar AI Access tab).</li>
+              <li>In your MCP client add the server URL <code>&lt;Public URL&gt;/mcp</code> (shown above).</li>
+              <li>The client registers itself automatically (Dynamic Client Registration).</li>
+              <li>You are sent to the Node-RED login and consent page; approve read or propose access.</li>
+            </ol>
+            <p class="hint">Opening <code>/mcp</code> in a browser redirects to this dashboard; MCP clients use the same URL.</p>
+          </details>
+        </div>
+        <div class="card settings-card">
+          <h3>Token lifetimes</h3>
+          <div class="form-row">
+            <label for="oauth-access-ttl">Access token lifetime</label>
+            <div class="field-line">
+              <input type="number" id="oauth-access-ttl" min="1" step="1" class="num" />
+              <select id="oauth-access-ttl-unit" aria-label="Access token lifetime unit">
+                <option value="minutes">minutes</option><option value="hours">hours</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="oauth-refresh-ttl">Refresh token idle lifetime</label>
+            <div class="field-line">
+              <input type="number" id="oauth-refresh-ttl" min="1" step="1" class="num" />
+              <select id="oauth-refresh-ttl-unit" aria-label="Refresh token idle lifetime unit">
+                <option value="hours">hours</option><option value="days">days</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="oauth-refresh-max">Refresh token max lifetime</label>
+            <div class="field-line">
+              <input type="number" id="oauth-refresh-max" min="0" step="1" class="num" />
+              <span class="unit">days</span>
+            </div>
+            <p class="hint">Default 90 days; 0 = unlimited.</p>
+          </div>
+          <div class="form-row">
+            <label for="oauth-dcr-cap">Maximum registered clients</label>
+            <div class="field-line">
+              <input type="number" id="oauth-dcr-cap" min="1" step="1" class="num" />
+              <span class="unit">clients</span>
+            </div>
+            <p class="hint">Applies to new registrations: existing clients keep working, but new apps are refused while the number of clients is at or above this limit.</p>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Registered OAuth clients</h3>
+          <button type="button" class="action secondary" id="oauth-refresh">Refresh</button></div>
+        <div id="oauth-clients" aria-live="polite"><p class="muted">Loading…</p></div>
+      </div>
     </section>`;
 }
 
@@ -219,6 +422,7 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
   const config = {
     apiBase: options.apiBase,
     mcpRpc: options.mcpRpc ?? '/mcp/rpc',
+    dashboardPath: options.dashboardPath ?? '/ai-access',
     editorRoot: options.editorRoot,
     authTokenKey: options.authTokenKey,
   };
@@ -239,7 +443,9 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
     data-config="${escapeHtml(JSON.stringify(config))}"
   >${renderMcpPageHeader()}
 ${renderMcpPageStatusSection()}
+${renderMcpPageSettingsSection()}
 ${renderMcpPageLinksSection()}
+${renderMcpPageOAuthSection()}
 ${renderMcpPageProposalsSection()}
 ${renderMcpPageLogsSection()}
 ${renderMcpPageDialogs()}

@@ -62,7 +62,7 @@ describe('channel onboarding copy', () => {
 
   it('/mcp REST prompt includes base URL, Bearer, OpenAPI, guide, and custom-headers line', async () => {
     const app = createApp(userDir);
-    const page = await request(app).get('/mcp');
+    const page = await request(app).get('/ai-access');
     expect(page.status).toBe(200);
     expect(page.text).toContain(REST_CUSTOM_HEADERS_LINE);
     expect(page.text).toMatch(/restPromptForAi/);
@@ -75,7 +75,7 @@ describe('channel onboarding copy', () => {
 
   it('/mcp MCP setup panel has client tabs with distinct copy labels', async () => {
     const app = createApp(userDir);
-    const page = await request(app).get('/mcp');
+    const page = await request(app).get('/ai-access');
     expect(page.status).toBe(200);
     expect(page.text).toMatch(/id="mcp-setup-panel"/);
     expect(page.text).toMatch(/mcpSetupSnippets/);

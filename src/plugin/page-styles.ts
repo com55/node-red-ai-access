@@ -1,4 +1,4 @@
-/** CSS for the /mcp admin page. */
+/** CSS for the /ai-access dashboard (light + prefers-color-scheme: dark). */
 
 import { DIFF_SPLIT_MIN_PX } from './diff-ui.js';
 
@@ -17,6 +17,8 @@ function pageStylesPartA(): string {
   --card: #ffffff;
   --line: #cfd8e3;
   --ok: #1b6b4a;
+  --soft: #f4f7fa;
+  --input-bg: #ffffff;
 }
 * { box-sizing: border-box; }
 /* Author display rules (e.g. .ttl-custom-row { display:flex }) must not defeat [hidden]. */
@@ -92,7 +94,7 @@ nav.tabs {
 nav.tabs.is-stuck {
   box-shadow: 0 4px 12px rgba(26, 35, 48, 0.08);
   border-bottom-color: var(--line);
-  background: #f3f6f8;
+  background: var(--soft);
 }
 nav.tabs button {
   border: 1px solid var(--line);
@@ -115,7 +117,7 @@ nav.tabs button[aria-selected="true"] {
   max-width: 14rem;
   padding: 0.05rem 0.45rem;
   border-radius: 999px;
-  background: #fff;
+  background: var(--card);
   color: var(--accent);
   font-size: 0.72rem;
   font-weight: 700;
@@ -184,7 +186,7 @@ function pageStylesPartB(): string {
   text-align: left;
   border: 1px dashed var(--line);
   border-radius: 8px;
-  background: #f7faf8;
+  background: var(--soft);
 }
 .empty-state .empty-title {
   margin: 0 0 0.25rem;
@@ -213,7 +215,7 @@ function pageStylesPartB(): string {
   font-size: 0.78rem;
   font-weight: 650;
   white-space: nowrap;
-  background: #eef2f0;
+  background: var(--soft);
   color: #3a4a42;
 }
 .kind-badge.kind-get_link { background: #e8f1fb; color: #1a4a7a; }
@@ -248,7 +250,7 @@ input, select, textarea, button.action {
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 0.4rem 0.55rem;
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
 }
 textarea { min-height: 4rem; width: min(100%, 28rem); }
@@ -260,7 +262,7 @@ button.action {
   font-weight: 600;
 }
 button.action.secondary {
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   border-color: var(--line);
 }
@@ -285,7 +287,7 @@ th, td {
 }
 th { color: var(--muted); font-weight: 600; }
 .token-once {
-  background: #f4faf7;
+  background: var(--soft);
   border: 1px dashed var(--accent);
   border-radius: 8px;
   padding: 0.75rem 0.9rem;
@@ -296,7 +298,7 @@ th { color: var(--muted); font-weight: 600; }
 .token-once .token-copy-block {
   margin: 0.6rem 0;
   padding: 0.55rem 0.65rem;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
   font-size: 0.8rem;
@@ -306,7 +308,7 @@ th { color: var(--muted); font-weight: 600; }
 .token-once #token-copy-btn { margin-top: 0.35rem; }
 .token-once #token-docs-hint { margin: 0.45rem 0 0; }
 .token-usage {
-  background: var(--panel-soft, #f7f8fa);
+  background: var(--panel-soft, var(--soft));
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.75rem 0.9rem;
@@ -316,7 +318,7 @@ th { color: var(--muted); font-weight: 600; }
 .token-usage .token-copy-block {
   margin: 0.6rem 0;
   padding: 0.55rem 0.65rem;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
   font-size: 0.8rem;
@@ -346,7 +348,7 @@ dialog.token-modal { width: min(720px, 94vw); max-width: min(720px, 94vw); max-h
 .proposal-detail {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: #f7fafc;
+  background: var(--soft);
   border-radius: 8px;
   border: 1px solid var(--line);
   overflow-wrap: anywhere;
@@ -435,7 +437,7 @@ table.audit-table {
   max-height: 10rem;
   overflow: auto;
   font-size: 0.78rem;
-  background: #f4f7fa;
+  background: var(--soft);
   padding: 0.4rem 0.5rem;
   border-radius: 6px;
 }
@@ -452,7 +454,7 @@ function pageStylesPartD(): string {
 .proposal-diff {
   margin: 0.65rem 0;
   padding: 0.55rem 0.65rem;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 7px;
   overflow-wrap: anywhere;
@@ -470,7 +472,7 @@ function pageStylesPartD(): string {
   border: 1px solid var(--line);
   border-radius: 7px;
   overflow: hidden;
-  background: #f4f7fa;
+  background: var(--soft);
 }
 .diff-mode-toggle button {
   border: 0;
@@ -540,7 +542,7 @@ function pageStylesPartE(): string {
   max-height: 18rem;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fafbfc;
+  background: var(--soft);
 }
 .diff-line {
   display: grid;
@@ -591,7 +593,7 @@ function pageStylesPartE(): string {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.4;
-  background: #fafbfc;
+  background: var(--soft);
 }
 .diff-split .diff-pane + .diff-pane {
   border-left: 1px solid var(--line);
@@ -638,7 +640,7 @@ function pageStylesPartF(): string {
   margin: 0.35rem 0 0.55rem;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--soft);
 }
 .node-presence > summary {
   cursor: pointer;
@@ -680,7 +682,7 @@ function pageStylesPartF(): string {
   padding: 0.15rem 0.55rem;
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   cursor: pointer;
 }
@@ -692,7 +694,7 @@ function pageStylesPartF(): string {
   margin: 0.3rem 0;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fff;
+  background: var(--card);
   overflow: hidden;
 }
 .presence-preview-frame {
@@ -701,7 +703,7 @@ function pageStylesPartF(): string {
   min-height: 10rem;
   max-height: 18rem;
   border: 0;
-  background: #fff;
+  background: var(--card);
 }
 .presence-pre {
   margin: 0.3rem 0 0;
@@ -711,7 +713,7 @@ function pageStylesPartF(): string {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.4;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 5px;
   padding: 0.4rem 0.5rem;
@@ -753,7 +755,7 @@ function pageStylesPartG(): string {
   margin: 0 0 1rem;
 }
 .dash-card {
-  background: #f7faf8;
+  background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 0.75rem 0.85rem;
@@ -787,7 +789,7 @@ function pageStylesPartG(): string {
   padding: 0.28rem 0.65rem;
   font: inherit;
   font-size: 0.88rem;
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
 }
 .proposals-search:focus {
@@ -817,7 +819,7 @@ button.id-copy:focus {
 }
 .filter-chip {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   border-radius: 999px;
   padding: 0.28rem 0.75rem;
@@ -838,7 +840,7 @@ button.id-copy:focus {
   padding: 0.55rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fafbfc;
+  background: var(--soft);
   margin-top: 0.45rem;
   cursor: pointer;
 }
@@ -940,7 +942,7 @@ button.id-copy:focus {
 .mcp-setup-tab {
   appearance: none;
   border: 1px solid var(--border, #ccd);
-  background: var(--surface, #fff);
+  background: var(--surface, var(--card));
   color: inherit;
   border-radius: 4px;
   padding: 0.35rem 0.65rem;
@@ -959,7 +961,7 @@ button.id-copy:focus {
   font-size: 0.85rem;
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--code-bg, #f6f8fa);
+  background: var(--code-bg, var(--soft));
   border-radius: 4px;
 }
 `;
@@ -985,7 +987,7 @@ function pageStylesPartH(): string {
 .stale-item {
   margin: 0.55rem 0 0;
   padding: 0.55rem 0.65rem;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 7px;
 }
@@ -1133,6 +1135,96 @@ dialog h3 { margin: 0 0 0.4rem; }
 `;
 }
 
+function pageStylesDashboard(): string {
+  return `
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin: 0 0 1rem;
+}
+.card h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.5rem; }
+.card-head h3 { margin: 0; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 1rem;
+  align-items: start;
+  margin-bottom: 1rem;
+}
+.settings-grid .card { margin: 0; }
+.form-row { margin: 0 0 0.9rem; }
+.form-row:last-child { margin-bottom: 0; }
+.form-row > label, .form-row > .label { display: block; font-weight: 600; margin: 0 0 0.3rem; }
+.field-line { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.5rem; min-width: 0; }
+.field-line .grow { flex: 1 1 auto; min-width: 0; }
+.field-line input.num { width: 7.5rem; flex: 0 0 auto; }
+.field-line select { flex: 0 0 auto; width: auto; }
+.field-line .unit { color: var(--muted); white-space: nowrap; }
+.field-line code { overflow-wrap: anywhere; padding: 0.35rem 0.5rem; background: var(--soft); border-radius: 6px; }
+.hint { display: block; color: var(--muted); font-size: 0.88rem; font-weight: 400; margin: 0.25rem 0 0; line-height: 1.4; }
+.warn-text { color: #8a5a00; }
+.toggle-row { display: flex; align-items: flex-start; gap: 0.5rem; justify-content: space-between; }
+.switch-label { display: flex; gap: 0.6rem; align-items: flex-start; cursor: pointer; }
+.switch-label input { margin-top: 0.25rem; width: 1.05rem; height: 1.05rem; flex: 0 0 auto; }
+.lock-badge {
+  font-size: 0.8rem; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap;
+}
+.notice { padding: 0.6rem 0.8rem; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); }
+.check-result { margin: 0.6rem 0 0; padding: 0.6rem 0.8rem; border-radius: 8px; font-weight: 600; overflow-wrap: anywhere; }
+.check-result.is-ok { color: var(--ok); background: #e8f6ef; border: 1px solid #a8d8b4; }
+.check-result.is-fail { color: var(--danger); background: #fdecec; border: 1px solid #f0c4c4; }
+.check-result.is-pending { color: var(--muted); font-weight: 400; background: var(--soft); border: 1px solid var(--line); }
+.steps { margin: 0.5rem 0 0.5rem 1.2rem; padding: 0; }
+.steps li { margin: 0.2rem 0; }
+.client-row, .conflict-list li { overflow-wrap: anywhere; }
+.client-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.55rem 0; border-top: 1px solid var(--line);
+}
+.client-row:first-child { border-top: 0; }
+.client-row .client-meta { color: var(--muted); font-size: 0.85rem; }
+.conflict-list { margin: 0.4rem 0 0 1.2rem; padding: 0; }
+.conflict-list li { margin: 0.25rem 0; }
+@media (max-width: 640px) {
+  nav.tabs { overflow-x: auto; flex-wrap: nowrap; }
+  nav.tabs button { flex: 0 0 auto; }
+  .field-line { flex-wrap: wrap; }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #12171d;
+    --ink: #e3e9ef;
+    --muted: #9aa8b6;
+    --accent: #4cc59a;
+    --accent-soft: #1d3a31;
+    --warn-bg: #3a2e1a;
+    --warn-border: #a2772f;
+    --danger: #ff8a8a;
+    --card: #1b222a;
+    --line: #33404d;
+    --ok: #6fd3a5;
+    --soft: #222b35;
+    --input-bg: #11161c;
+  }
+  body { background: var(--bg); }
+  input, select, textarea { background: var(--input-bg); color: var(--ink); border-color: var(--line); }
+  a { color: #7cc4ff; }
+  .flash.error, .check-result.is-fail { background: #3a1f22; border-color: #6b3036; }
+  .flash.ok, .check-result.is-ok { background: #173327; border-color: #2d6149; }
+  .warn-text { color: #f0c36d; }
+  .warning { background: var(--warn-bg); color: var(--ink); }
+  button.action, button.action.danger, nav.tabs button[aria-selected="true"] { color: #0d1a14; }
+  button.action.secondary { background: var(--soft); color: var(--ink); border-color: var(--line); }
+  dialog { background: var(--card); color: var(--ink); }
+}
+`;
+}
+
 export function pageStyles(): string {
   return (
     pageStylesPartA() +
@@ -1143,6 +1235,7 @@ export function pageStyles(): string {
     pageStylesPartE() +
     pageStylesPartF() +
     pageStylesPartG() +
-    pageStylesPartH()
+    pageStylesPartH() +
+    pageStylesDashboard()
   ).trim();
 }

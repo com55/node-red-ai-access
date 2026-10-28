@@ -148,7 +148,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(got.body.canEdit).toBe(false);
     expect(got.body.settings.defaultDeploymentType).toBe('nodes');
     expect(got.body.precedence).toEqual(['settings.js', 'disk', 'default']);
-    expect(got.body.mcpPageUrl).toBe('/mcp');
+    expect(got.body.mcpPageUrl).toBe('/ai-access');
 
     const put = await request(app)
       .put('/mcp/api/v1/settings')

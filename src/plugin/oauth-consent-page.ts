@@ -121,7 +121,7 @@ export function renderConsentPage(input: ConsentPageInput): string {
     `<button id="allow" class="primary" type="button" hidden>Allow access</button>` +
     `<button id="retry" class="secondary" type="button" hidden>Retry</button></div>` +
     `</div>` +
-    `<div class="foot">You can revoke this app at any time from the AI Access sidebar in the Node-RED editor.</div>` +
+    `<div class="foot">You can revoke this app at any time from the AI Access dashboard (OAuth tab) in Node-RED.</div>` +
     `</main><script nonce="${esc(input.nonce)}">${input.script}</script></body></html>`
   );
 }

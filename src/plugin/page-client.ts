@@ -1,6 +1,7 @@
-/** Inline client script for the /mcp admin page (editor localStorage Bearer). */
+/** Inline client script for the /ai-access dashboard (editor localStorage Bearer). */
 
 import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
+import { pageClientSettingsScript } from './page-client-settings.js';
 
 function pageClientScriptPartA(): string {
   return `
@@ -74,7 +75,7 @@ function pageClientScriptPartA(): string {
     var gate = $('auth-gate');
     var nav = $('main-nav');
     if (nav) nav.hidden = true;
-    ['section-status', 'section-links', 'section-proposals', 'section-logs'].forEach(function (id) {
+    ['section-status', 'section-settings', 'section-links', 'section-oauth', 'section-proposals', 'section-logs'].forEach(function (id) {
       var el = $(id);
       if (el) el.hidden = true;
     });
@@ -84,7 +85,7 @@ function pageClientScriptPartA(): string {
       if (ed) ed.setAttribute('href', editorLoginUrl());
       var ret = $('auth-gate-return');
       if (ret) {
-        ret.setAttribute('href', (typeof location !== 'undefined' ? location.pathname : '/mcp') +
+        ret.setAttribute('href', (typeof location !== 'undefined' ? location.pathname : (cfg.dashboardPath || '/ai-access')) +
           (typeof location !== 'undefined' ? location.search : '') +
           (typeof location !== 'undefined' ? location.hash : ''));
       }
@@ -600,9 +601,10 @@ function pageClientScriptPartAAudit(): string {
 function pageClientScriptPartATabs(): string {
   return `
   // Hash helpers — keep in sync with page-hash.ts
+  var TAB_IDS = ['status', 'settings', 'links', 'oauth', 'proposals'];
   function hashForTab(tab) {
     if (tab === 'logs') return 'audit';
-    if (tab === 'status' || tab === 'links' || tab === 'proposals') return tab;
+    if (TAB_IDS.indexOf(tab) >= 0) return tab;
     return 'status';
   }
 
@@ -610,7 +612,9 @@ function pageClientScriptPartATabs(): string {
     var raw = String(hash || '').replace(/^#/, '');
     if (!raw || raw.indexOf('proposal=') === 0) return '';
     if (raw === 'audit' || raw === 'logs') return 'logs';
-    if (raw === 'status' || raw === 'links' || raw === 'proposals') return raw;
+    if (raw === 'overview') return 'status';
+    if (raw === 'tokens') return 'links';
+    if (TAB_IDS.indexOf(raw) >= 0) return raw;
     return '';
   }
 
@@ -670,6 +674,8 @@ function pageClientScriptPartATabs(): string {
   }
 
   function loadTabData(target) {
+    if (target === 'settings') loadSettings();
+    if (target === 'oauth') loadOAuthTab();
     if (target === 'links') loadLinks();
     if (target === 'proposals') loadProposals();
     if (target === 'logs') {
@@ -3234,7 +3240,7 @@ function pageClientScriptPartD(): string {
     var blurb = $('permissions-blurb');
     if (blurb) {
       if (!s.aiFeaturesEnabled) {
-        blurb.textContent = 'AI Access is turned off. Enable it in the editor sidebar to create links and review proposals.';
+        blurb.textContent = 'AI Access is turned off. Enable it on the Settings tab (or in the editor sidebar) to create access tokens and review proposals.';
       } else if (canManage && canApprove) {
         blurb.textContent = "You're an admin: you can create access links and approve or reject proposals.";
       } else if (canManage) {
@@ -3371,13 +3377,17 @@ function pageClientScriptPartDBoot(): string {
       applyStatus(s);
       $('main-nav').hidden = false;
       $('section-status').hidden = false;
+      $('section-settings').hidden = false;
       $('section-links').hidden = false;
+      $('section-oauth').hidden = false;
       $('section-proposals').hidden = false;
       $('section-logs').hidden = false;
       setupStickyNav();
       // Restore tab from hash (or default #status); keep #proposal=<id> until focus consumes it.
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId() });
+      if (initialTab === 'settings') loadSettings();
+      if (initialTab === 'oauth') loadOAuthTab();
       if (aiOn) {
         if (canManage) loadLinks();
         loadProposals();
@@ -3486,6 +3496,7 @@ export function pageClientScript(): string {
     pageClientScriptPartC() +
     pageClientScriptPartCLogs() +
     pageClientScriptPartD() +
+    pageClientSettingsScript() +
     pageClientScriptPartDBoot()
   ).trim();
 }

@@ -64,13 +64,13 @@ function sendUnauthorized(
   res.status(401).json({ error: message, code, ...(hint ? { hint } : {}) });
 }
 
-/** Admin path of the `/mcp` page's Access links section (respects httpAdminRoot). */
+/** Admin path of the `/ai-access` dashboard's Access tokens section (respects httpAdminRoot). */
 export function accessLinksPagePath(httpAdminRoot: string | undefined): string {
   let root = httpAdminRoot ?? '';
   while (root.endsWith('/')) {
     root = root.slice(0, -1);
   }
-  return `${root}/mcp#links`;
+  return `${root}/ai-access#links`;
 }
 
 /**
@@ -90,7 +90,7 @@ export function tokenExpiredBody(
     accessLinksUrl,
     hint:
       hint ??
-      `Ask the user to create a new access link in Node-RED on the /mcp page → Access links (${accessLinksUrl}).`,
+      `Ask the user to create a new access link in Node-RED on the /ai-access dashboard → Access tokens (${accessLinksUrl}).`,
   };
 }
 
@@ -116,7 +116,7 @@ function truncatedBearerHint(token: string): string | undefined {
 
 /** Where owners mint tokens — include in wrong_token_kind hints. */
 export const ACCESS_LINKS_MINT_HINT =
-  'ask the owner: Node-RED /mcp → Access links → create kind=rest/mcp (or get_link)';
+  'ask the owner: Node-RED /ai-access → Access tokens → create kind=rest/mcp (or get_link)';
 
 /**
  * Ready-made sentence AIs can show the human when the token kind is wrong.
@@ -124,12 +124,12 @@ export const ACCESS_LINKS_MINT_HINT =
 export function whatToTellUserWrongTokenKind(expectedKind: AccessLinkKind): string {
   if (expectedKind === 'get_link') {
     return (
-      'Please open Node-RED → /mcp → Access links and create a get_link access URL, ' +
+      'Please open Node-RED → /ai-access → Access tokens and create a get_link access URL, ' +
       'then send me that /mcp/a/<token> link.'
     );
   }
   return (
-    `Please open Node-RED → /mcp → Access links and create a kind=${expectedKind} token, ` +
+    `Please open Node-RED → /ai-access → Access tokens and create a kind=${expectedKind} token, ` +
     'then send me the Bearer token (not a get_link path URL).'
   );
 }

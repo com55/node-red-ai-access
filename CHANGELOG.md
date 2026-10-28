@@ -6,7 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.2.0-beta.3] - 2026-10-28
+
+### Breaking
+
+- **Dashboard moved from `<httpAdminRoot>/mcp` to `<httpAdminRoot>/ai-access`.**
+  Browser `GET /mcp` (anything that is not an MCP `text/event-stream` request)
+  now answers `302` → `/ai-access`; MCP traffic on `/mcp` and `/mcp/rpc` (OAuth
+  resource, ChatGPT/Claude) is unchanged. Proposal `reviewPath` / `reviewUrl`,
+  `accessLinksUrl`, settings `mcpPageUrl`, error hints and docs now point at
+  `/ai-access` (`#proposal=<id>`, `#links`). Update bookmarks.
+- **Settings moved out of the editor sidebar.** The sidebar now holds only the
+  Enable AI Access toggle (or the local-only opt-in without adminAuth), the
+  Enable MCP OAuth toggle, the OAuth route-conflict warning (with reveal links,
+  shown only when conflicts exist) and an "Open AI Access dashboard" button.
+  Public URL + check, CORS, rate limits, trust proxy, default deploy type,
+  default token expiry, max active tokens, OAuth lifetimes / max clients,
+  registered OAuth clients + revoke and the pending-proposal counter moved to
+  the dashboard. Permission checks are unchanged (writes need `*`).
+
+### Added
+
+- Dashboard redesign: top tabs Overview, Settings, Access tokens, OAuth,
+  Proposals, Audit log; card layout, number + unit inputs on one line, prominent
+  Public URL check result, responsive, dark-mode aware (`prefers-color-scheme`),
+  no external assets. Hash aliases `#overview`, `#tokens`, plus `#settings` and
+  `#oauth`.
+- OAuth tab collision list links `http in` nodes to the editor
+  (`<httpAdminRoot>/#node/<id>`, falling back to `#flow/<tabId>`); collision
+  details now include `flowId`.
 
 ### Fixed
 
