@@ -27,6 +27,10 @@ Notes:
 - Refresh tokens are sliding: each refresh renews the idle lifetime. A token
   chain also has a maximum lifetime of 90 days from approval by default; after
   that the client must sign in again. Change it in the sidebar (0 = unlimited).
+  Lowering the maximum applies immediately to existing token chains. Raising it
+  or setting 0 does not extend the refresh token a client already holds; the new
+  limit takes effect from that chain's next successful refresh (and for new
+  chains).
 
 ## Access-link bearer tokens
 
