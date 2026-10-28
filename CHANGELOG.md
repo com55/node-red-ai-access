@@ -16,10 +16,16 @@ and this project adheres to
   on disabled flows; collisions are re-evaluated from scratch on every deploy,
   and an enabled `http in` node is reported once (not again as an Express "bound
   dispatch" route).
+- OAuth route collision check ignores `http in` nodes in subflow templates
+  without a running instance, compares real mounted paths (`httpAdminRoot` /
+  `httpNodeRoot`), and matches paths case-insensitively like Express.
+- `GET /mcp/api/v1/oauth/status` no longer exposes absolute `httpStatic`
+  filesystem paths to users without full (`*`) permission.
 - Editor sidebar: OAuth lifetime number inputs and unit dropdowns sit on one
   line, including the narrow Node-RED 5 sidebar.
 - Editor sidebar: OAuth route collisions are shown as a readable bulleted list,
-  one route per line; `http in` nodes link to the node in the editor.
+  one route per line with paths in `<code>`; `http in` nodes link to the node in
+  the editor.
 - Editor sidebar: Public URL "Check" result is shown as a clear green/red
   status; loopback notes and the trust proxy state are moved into a muted,
   collapsible "About the check" section with human-readable wording.
