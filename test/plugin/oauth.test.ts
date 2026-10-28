@@ -423,6 +423,24 @@ describe('MCP OAuth backend', () => {
     expect((await refresh(rotated.body.refresh_token as string)).status).toBe(400);
   });
 
+  it('keeps one client from evicting pending consents of another client and rate limits authorize floods', async () => {
+    const { admin } = appFor(userDir);
+    const victim = (await register(admin)).body.client_id as string;
+    const attacker = (await register(admin)).body.client_id as string;
+    const victimPage = await request(admin)
+      .get('/mcp/oauth/authorize')
+      .query(consentParams(victim));
+    const first = await request(admin).get('/mcp/oauth/authorize').query(consentParams(attacker));
+    const statuses: number[] = [];
+    for (let i = 0; i < 40; i++)
+      statuses.push(
+        (await request(admin).get('/mcp/oauth/authorize').query(consentParams(attacker))).status
+      );
+    expect(statuses).toContain(429);
+    expect((await approve(admin, victimPage)).code).toBeTruthy();
+    expect((await approve(admin, first)).details.status).toBe(404);
+  });
+
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {
     const { admin, linkStore } = appFor(userDir);
     const link = linkStore.create({ kind: 'mcp', label: 'legacy' });

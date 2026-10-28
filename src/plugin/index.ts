@@ -68,7 +68,7 @@ import {
   rejectProposalHandler,
   withdrawProposalHandler,
 } from './proposals-routes.js';
-import { createLiveAiAccessDualRateLimiters } from './rate-limit.js';
+import { createAiAccessRateLimiter, createLiveAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute } from './route-errors.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import {
@@ -248,6 +248,7 @@ export function registerRoutes(
   };
   refreshCollisions();
   RED.events?.on('flows:started', refreshCollisions);
+  const authorizeLimiter = createAiAccessRateLimiter({ windowMs: 60_000, maxPerIp: 30 });
   const oauthServerMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (
       !services.settingsStore.getEffective().oauth.enabled ||
@@ -258,7 +259,13 @@ export function registerRoutes(
       return;
     }
     // Same gate as aia_ links: disabled AI Access blocks consent, token, register, revoke.
-    requireAiFeatures(RED)(req, res, () => oauth.server(req, res, next));
+    // Consent pages get the shared per-IP limiter plus a tighter one for /authorize,
+    // which creates pending in-memory requests.
+    const path = req.path.replace(/\/+$/, '').toLowerCase();
+    const run = () => requireAiFeatures(RED)(req, res, () => oauth.server(req, res, next));
+    if (path === '/mcp/oauth/authorize') limiter(req, res, () => authorizeLimiter(req, res, run));
+    else if (path.startsWith('/mcp/oauth/consent/')) limiter(req, res, run);
+    else run();
   };
   (oauthServerMiddleware as typeof oauthServerMiddleware & { oauthOwned: boolean }).oauthOwned =
     true;

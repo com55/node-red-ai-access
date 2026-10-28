@@ -71,6 +71,8 @@ const secret = () => randomBytes(32).toString('base64url');
 const UNCONSENTED_CLIENT_TTL_MS = 3_600_000;
 /** Hard bound on clients awaiting consent (registration is also rate limited per IP). */
 const MAX_UNCONSENTED_CLIENTS = 100;
+const MAX_PENDING_PER_CLIENT = 5;
+const MAX_PENDING_TOTAL = 500;
 const emptyDb = (): OAuthDb => ({ clients: [], codes: [], tokens: [] });
 
 export class OAuthStore implements OAuthRegisteredClientsStore {
@@ -520,7 +522,14 @@ export function makeOAuthHandlers(
   const sweep = () => {
     const now = Date.now();
     for (const [id, p] of pending) if (p.expires <= now) pending.delete(id);
-    while (pending.size > 500) pending.delete(pending.keys().next().value!);
+  };
+  /** Keeps at most a few pending consents per client, evicting only that client's oldest. */
+  const reservePending = (clientId: string): boolean => {
+    sweep();
+    const own = [...pending].filter(([, p]) => p.clientId === clientId);
+    while (own.length >= MAX_PENDING_PER_CLIENT) pending.delete(own.shift()![0]);
+    // Never evict other clients' requests; refuse new ones when the table is full.
+    return pending.size < MAX_PENDING_TOTAL;
   };
   const securityHeaders = (res: Response, nonce?: string) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -593,6 +602,10 @@ export function makeOAuthHandlers(
     }
     if (canonical !== canonicalResource(resource())) {
       res.status(400).send('Resource mismatch');
+      return;
+    }
+    if (!reservePending(client.client_id)) {
+      res.status(429).send('Too many pending authorization requests; try again later');
       return;
     }
     const id = secret();
