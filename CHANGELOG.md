@@ -15,7 +15,8 @@ and this project adheres to
   tokens, and `read`/`propose` scopes. Existing access-link tokens still work.
 - Sidebar controls for OAuth lifetimes and client limits, registered-client
   revocation, route-collision and metadata-fallback warnings, and a Public URL
-  warning when enabling OAuth.
+  warning when enabling OAuth, plus an optional refresh-token maximum lifetime
+  (off by default).
 
 ## [0.1.1] - 2026-10-17
 

@@ -11,6 +11,23 @@ The sidebar lists registered clients and lets an admin revoke them and their
 tokens. Localhost HTTP is supported for development. If `httpNodeRoot` is
 disabled, see the sidebar warning for the metadata fallback path.
 
+Notes:
+
+- Redirect URIs must use `https://`, or `http://` on a loopback host
+  (`localhost`, `127.0.0.1`, `[::1]`). Custom native-app schemes such as
+  `myapp://callback` are not supported.
+- The consent page uses your Node-RED editor login from the same browser (the
+  editor keeps its token in browser storage, not a cookie). Open the editor on
+  the same origin as the Public URL and sign in first; the consent page offers a
+  Retry button after you sign in.
+- Users with read-only Node-RED permission can approve only the `read` scope;
+  `propose` requires full (`*`) permission.
+- Clients that register but are never approved are removed after one hour and do
+  not count toward the client limit.
+- Refresh tokens are sliding: each refresh renews the idle lifetime with no
+  absolute cap by default. An optional maximum lifetime can be set in the
+  sidebar (0 = unlimited).
+
 ## Access-link bearer tokens
 
 Use an **mcp** access-link token from `/mcp` → Access links (kind = MCP token).
