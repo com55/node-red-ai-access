@@ -746,7 +746,7 @@ export function presentProposalForApi(
   if (full.warnings && full.warnings.length > 0) {
     lean.warnings = full.warnings;
   }
-  if (typeof proposal.payload?.flowId === 'string') {
+  if (typeof proposal.payload.flowId === 'string') {
     lean.flowId = proposal.payload.flowId;
   }
   if (proposal.restoredSecrets && proposal.restoredSecrets.length > 0) {
