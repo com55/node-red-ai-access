@@ -1,4 +1,4 @@
-/** CSS for the /ai-access dashboard (light + prefers-color-scheme: dark). */
+/** CSS for the /ai-access dashboard (light theme only; no dark-mode variant). */
 
 import { DIFF_SPLIT_MIN_PX } from './diff-ui.js';
 
@@ -1193,34 +1193,6 @@ function pageStylesDashboard(): string {
   nav.tabs { overflow-x: auto; flex-wrap: nowrap; }
   nav.tabs button { flex: 0 0 auto; }
   .field-line { flex-wrap: wrap; }
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --bg: #12171d;
-    --ink: #e3e9ef;
-    --muted: #9aa8b6;
-    --accent: #4cc59a;
-    --accent-soft: #1d3a31;
-    --warn-bg: #3a2e1a;
-    --warn-border: #a2772f;
-    --danger: #ff8a8a;
-    --card: #1b222a;
-    --line: #33404d;
-    --ok: #6fd3a5;
-    --soft: #222b35;
-    --input-bg: #11161c;
-  }
-  body { background: var(--bg); }
-  input, select, textarea { background: var(--input-bg); color: var(--ink); border-color: var(--line); }
-  a { color: #7cc4ff; }
-  .flash.error, .check-result.is-fail { background: #3a1f22; border-color: #6b3036; }
-  .flash.ok, .check-result.is-ok { background: #173327; border-color: #2d6149; }
-  .warn-text { color: #f0c36d; }
-  .warning { background: var(--warn-bg); color: var(--ink); }
-  button.action, button.action.danger, nav.tabs button[aria-selected="true"] { color: #0d1a14; }
-  button.action.secondary { background: var(--soft); color: var(--ink); border-color: var(--line); }
-  dialog { background: var(--card); color: var(--ink); }
 }
 `;
 }

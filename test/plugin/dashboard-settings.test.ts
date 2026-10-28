@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizeHttpAdminRoot } from '../../src/plugin/auth.js';
 import { acceptedMediaTypes, registerRoutes } from '../../src/plugin/index.js';
+import { renderConsentPage } from '../../src/plugin/oauth-consent-page.js';
 import { pageClientSettingsScript } from '../../src/plugin/page-client-settings.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
 import { renderMcpPage } from '../../src/plugin/page.js';
@@ -151,7 +152,8 @@ describe('dashboard routing', () => {
       /id="set-rate-window"[^>]*class="num"[\s\S]*?<span class="unit">ms<\/span>/
     );
     expect(html).toMatch(/id="oauth-access-ttl-unit"/);
-    expect(html).toContain('prefers-color-scheme: dark');
+    expect(html).not.toContain('prefers-color-scheme');
+    expect(html).toContain('color-scheme: light');
     expect(html).not.toMatch(/<link[^>]+href=|<script[^>]+src=|@import|https?:\/\/fonts/);
   });
 });
@@ -240,6 +242,24 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
   );
   return { dom, calls, out: ctx.out, confirm };
 }
+
+describe('light theme only', () => {
+  it('consent / sign-in page has no dark-mode variant', () => {
+    const html = renderConsentPage({
+      requestId: 'r',
+      tokenKey: 'auth-tokens',
+      adminRoot: '/',
+      nonce: 'n',
+      redirectHost: 'app.example',
+      loopbackRedirect: false,
+      clientName: 'App',
+      scopes: ['read'],
+      script: '',
+    });
+    expect(html).not.toContain('prefers-color-scheme');
+    expect(html).toContain('color-scheme:light;');
+  });
+});
 
 describe('helpers', () => {
   it('normalizeHttpAdminRoot collapses duplicate slashes', () => {
