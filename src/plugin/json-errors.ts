@@ -17,7 +17,8 @@ import type { NodeRedPluginAPI } from './types.js';
 const ATTACHED = Symbol.for('com55.ai-access.mcpJsonErrorHandler');
 
 function isMcpRpcPath(path: string): boolean {
-  return /\/mcp\/rpc\/?$/.test(path) || path.includes('/mcp/rpc');
+  // `/mcp` itself is a Streamable HTTP alias of `/mcp/rpc`.
+  return /\/mcp\/rpc\/?$/.test(path) || path.includes('/mcp/rpc') || /\/mcp\/?$/.test(path);
 }
 
 function isMcpPath(path: string): boolean {

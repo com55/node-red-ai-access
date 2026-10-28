@@ -33,6 +33,7 @@ import { encodeTrustedJson, writeTrustedAtomic } from '../storage/trusted-write.
 
 import { editorAuthTokenKey } from './auth-token-key.js';
 import { requireAdminSession, resolvePermission } from './auth.js';
+import { renderConsentPage } from './oauth-consent-page.js';
 import { consentScript } from './oauth-consent-script.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -708,12 +709,6 @@ export function canonicalResource(value: string): string {
 
 const oauthScopes = ['read', 'propose'];
 const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
-function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"']/g,
-    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
-  );
-}
 function value(raw: unknown): string {
   return typeof raw === 'string' ? raw : '';
 }
@@ -862,20 +857,16 @@ export function makeOAuthHandlers(
       .status(200)
       .type('html')
       .send(
-        `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize MCP client</title>` +
-          `<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px}h1{font-size:1.4em;word-break:break-all}.warn{color:#9b2c2c}.muted{color:#555}button{margin-right:8px;padding:6px 14px}</style>` +
-          `<main data-request="${escapeHtml(id)}" data-token-key="${escapeHtml(tokenKey)}">` +
-          `<p class="muted">An MCP client wants to access Node-RED and will receive tokens at:</p>` +
-          `<h1>${escapeHtml(redirectHost)}</h1>${
-            loopback.has(new URL(redirect).hostname)
-              ? '<p class="warn">Warning: this redirect URI is reachable only on this machine.</p>'
-              : ''
-          }<p class="muted">Client-provided name (unverified): ${escapeHtml(client.client_name || 'Unnamed client')}</p>` +
-          `<p>Requested permissions: ${escapeHtml(scopes.join(', '))}</p>` +
-          `<p id="status">Checking your Node-RED editor session…</p>` +
-          `<p id="grant" hidden></p>` +
-          `<p><button id="allow" type="button" hidden>Allow</button><button id="deny" type="button" hidden>Deny</button><button id="retry" type="button" hidden>Retry</button></p>` +
-          `</main><script nonce="${nonce}">${consentScript}</script></html>`
+        renderConsentPage({
+          requestId: id,
+          tokenKey,
+          nonce,
+          redirectHost,
+          loopbackRedirect: loopback.has(new URL(redirect).hostname),
+          clientName: client.client_name || 'Unnamed client',
+          scopes,
+          script: consentScript,
+        })
       );
   };
   const consentApi: RequestHandler = (req: AuthenticatedRequest, res, next) => {

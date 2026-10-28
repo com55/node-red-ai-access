@@ -273,6 +273,51 @@ describe('MCP OAuth backend', () => {
       .set('Accept', 'application/json, text/event-stream')
       .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(rpc.status).toBe(200);
+    // `/mcp` is the protected resource URL users add in ChatGPT: it must serve MCP too.
+    const bearer = `Bearer ${issued.body.access_token as string}`;
+    const mcpInit = await request(admin)
+      .post('/mcp')
+      .set('Authorization', bearer)
+      .set('Accept', 'application/json, text/event-stream')
+      .send({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'chatgpt-like', version: '1' },
+        },
+      });
+    expect(mcpInit.status).toBe(200);
+    const mcpList = await request(admin)
+      .post('/mcp')
+      .set('Authorization', bearer)
+      .set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    expect(mcpList.status).toBe(200);
+    expect(JSON.stringify(mcpList.body)).toContain('list_flows');
+  });
+
+  it('serves MCP at /mcp: 401 with resource_metadata, SSE GET 405, browsers still get the page', async () => {
+    const { admin } = appFor(userDir);
+    const unauth = await request(admin)
+      .post('/mcp')
+      .set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(unauth.status).toBe(401);
+    expect(unauth.headers['www-authenticate']).toContain(
+      'resource_metadata="https://node.example/.well-known/oauth-protected-resource/mcp"'
+    );
+    const prm = await request(appFor(userDir).node!).get(
+      '/.well-known/oauth-protected-resource/mcp'
+    );
+    expect(prm.body.resource).toBe(resource);
+    const sse = await request(admin).get('/mcp').set('Accept', 'text/event-stream');
+    expect(sse.status).toBe(401);
+    const page = await request(admin).get('/mcp').set('Accept', 'text/html,*/*');
+    expect(page.status).toBe(200);
+    expect(page.type).toBe('text/html');
   });
 
   it('rotates refresh tokens and revokes a family on reuse', async () => {
@@ -649,6 +694,23 @@ describe('MCP OAuth backend', () => {
     expect(proposeOnly.details?.status).toBe(403);
   });
 
+  it('escapes the client name on the consent page', async () => {
+    const { admin } = appFor(userDir);
+    const reg = await request(admin)
+      .post('/mcp/oauth/register')
+      .send({
+        client_name: '<img src=x onerror=alert(1)>"\'',
+        redirect_uris: ['http://127.0.0.1:3456/callback'],
+        token_endpoint_auth_method: 'none',
+      });
+    const page = await request(admin)
+      .get('/mcp/oauth/authorize')
+      .query(consentParams(reg.body.client_id as string));
+    expect(page.status).toBe(200);
+    expect(page.text).not.toContain('<img src=x');
+    expect(page.text).toContain('&lt;img src=x onerror=alert(1)&gt;&quot;&#39;');
+  });
+
   it('hardens the consent page and its decision endpoint', async () => {
     const { admin } = appFor(userDir, { session: true });
     const id = (await register(admin)).body.client_id as string;
@@ -657,6 +719,11 @@ describe('MCP OAuth backend', () => {
     expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(page.headers['content-security-policy']).toMatch(/script-src 'nonce-[^']+'/);
     expect(page.text.indexOf('127.0.0.1')).toBeLessThan(page.text.indexOf('Test client'));
+    // Branded, self-contained page: no external assets, sign-in form + permission list.
+    expect(page.text).toContain('Node-RED AI Access');
+    expect(page.text).not.toMatch(/(src|href)="https?:/);
+    expect(page.text).toContain('id="login"');
+    expect(page.text).toContain('Propose flow changes');
     expect(
       (await request(admin).post('/mcp/oauth/authorize').type('form').send({})).status
     ).not.toBe(302);

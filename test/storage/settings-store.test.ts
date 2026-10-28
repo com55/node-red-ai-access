@@ -43,6 +43,12 @@ describe('SettingsStore', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
+  it('defaults the maximum registered OAuth clients to 5', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    expect(new SettingsStore(paths, {}).getEffective().oauth.dcrMaxClients).toBe(5);
+  });
+
   it('persists unlocked patch to config.json and hot-reloads effective values', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);

@@ -117,6 +117,15 @@ export { packageVersion } from './package-version.js';
 
 const PLUGIN_ID = 'com55-ai-access';
 
+/**
+ * True for MCP Streamable HTTP GET requests (they ask for `text/event-stream`
+ * and not HTML). Browsers opening `/mcp` still get the dashboard page.
+ */
+export function isMcpStreamRequest(req: Request): boolean {
+  const accept = String(req.headers.accept ?? '').toLowerCase();
+  return accept.includes('text/event-stream') && !accept.includes('text/html');
+}
+
 /** Public shell + discovery (no authorization middleware — safe to extract). */
 function registerMcpShellAndDiscovery(
   RED: NodeRedPluginAPI,
@@ -125,22 +134,31 @@ function registerMcpShellAndDiscovery(
 ): void {
   // Page shell is public: browser reads editor localStorage Bearer, then calls APIs.
   // Inline CSS/JS — must not be cached across plugin upgrades (no-store).
-  RED.httpAdmin.get('/mcp', limiter, (_req: AuthenticatedRequest, res: Response) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res
-      .type('html')
-      .status(200)
-      .send(
-        renderMcpPage({
-          apiBase: mcpApiBase(RED.settings.httpAdminRoot),
-          mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
-          editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
-          authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
-        })
-      );
-  });
+  RED.httpAdmin.get(
+    '/mcp',
+    limiter,
+    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      // MCP clients (Streamable HTTP GET/SSE) hit the same URL; only browsers get the page.
+      if (isMcpStreamRequest(req)) {
+        next();
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res
+        .type('html')
+        .status(200)
+        .send(
+          renderMcpPage({
+            apiBase: mcpApiBase(RED.settings.httpAdminRoot),
+            mcpRpc: mcpRpcPath(RED.settings.httpAdminRoot),
+            editorRoot: normalizeHttpAdminRoot(RED.settings.httpAdminRoot),
+            authTokenKey: editorAuthTokenKey(RED.settings.httpAdminRoot),
+          })
+        );
+    }
+  );
 
   // tokenLimiter after the IP limiter: when a Bearer token is present its
   // per-token RateLimit-* headers replace the per-IP ones (both still enforced).
@@ -552,6 +570,17 @@ export function registerRoutes(
   );
   RED.httpAdmin.get('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
   RED.httpAdmin.delete('/mcp/rpc', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
+  // `/mcp` is the OAuth protected resource (PRM `resource`) and the URL users add in
+  // ChatGPT/Claude, so it must be a working MCP endpoint too (alias of /mcp/rpc).
+  // Without this, OAuth succeeds but tools/list POSTs to /mcp got 404.
+  RED.httpAdmin.post(
+    '/mcp',
+    ...mcpRpcGuards,
+    requireJsonContentType('mcp'),
+    asyncRoute(mcpRpcPostHandler(RED, services))
+  );
+  RED.httpAdmin.get('/mcp', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
+  RED.httpAdmin.delete('/mcp', ...mcpRpcGuards, mcpRpcMethodNotAllowed);
 
   RED.httpAdmin.get(
     '/mcp/api/v1/logs',

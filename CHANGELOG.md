@@ -8,6 +8,25 @@ and this project adheres to
 
 ## Unreleased
 
+### Fixed
+
+- MCP OAuth with ChatGPT: "Authentication succeeded, action discovery failed".
+  The OAuth protected resource (and the URL users add in ChatGPT/Claude) is
+  `<Public URL>/mcp`, but MCP was only served at `/mcp/rpc`, so the
+  authenticated `POST /mcp` returned 404. `/mcp` now also serves MCP Streamable
+  HTTP (POST; SSE `GET`/`DELETE` answer 405 like `/mcp/rpc`, and the same 401 +
+  `resource_metadata` challenge). Browsers opening `/mcp` still get the
+  dashboard.
+
+### Changed
+
+- Default "Maximum registered OAuth clients" (`oauth.dcrMaxClients`) is now 5
+  (was 20).
+- Redesigned OAuth consent page: branded card, redirect host first, permission
+  list with descriptions, signed-in user, prominent Allow / secondary Deny,
+  responsive and dark-mode friendly, no external assets. When signed out with
+  credentials login, the page shows an inline sign-in form in the same style.
+
 ## [0.2.0-beta.2] - 2026-10-28
 
 ### Fixed

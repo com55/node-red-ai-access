@@ -504,7 +504,7 @@ function editorSidebarScriptPartA(): string {
       setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
       $('#ai-access-oauth-refresh-max').val(Math.round((typeof oauth.refreshMaxLifetimeSec === 'number' ? oauth.refreshMaxLifetimeSec : 7776000) / 86400));
       $('#ai-access-oauth-refresh-max-unit').val('days');
-      $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
+      $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 5);
       var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
       $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-refresh-max, #ai-access-oauth-refresh-max-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
       $('#ai-access-oauth-lock').toggle(!!(data.sources && data.sources.oauth === 'settings.js'));
