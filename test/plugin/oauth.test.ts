@@ -725,6 +725,13 @@ describe('MCP OAuth backend', () => {
     expect(page.headers['x-frame-options']).toBe('DENY');
     expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(page.headers['content-security-policy']).toMatch(/script-src 'nonce-[^']+'/);
+    // Native submits are blocked; sign-in and consent POST via fetch instead.
+    expect(page.headers['content-security-policy']).toContain("form-action 'none'");
+    expect(page.headers['content-security-policy']).toContain("connect-src 'self'");
+    expect(page.text).toMatch(
+      /login\.addEventListener\('submit', function \(ev\) \{\s*ev\.preventDefault\(\)/
+    );
+    expect(page.text).toContain("method: 'POST', headers: headers(), credentials: 'same-origin'");
     expect(page.text.indexOf('127.0.0.1')).toBeLessThan(page.text.indexOf('Test client'));
     // Branded, self-contained page: no external assets, sign-in form + permission list.
     expect(page.text).toContain('Node-RED AI Access');

@@ -52,7 +52,7 @@ function renderMcpPageHeader(): string {
           <h1 id="auth-gate-title">Sign in to Node-RED</h1>
           <p class="sg-sub">AI Access uses your Node-RED editor account. Signing in here also signs in the editor in this browser.</p>
           <p id="auth-gate-status" class="sg-status" role="status" aria-live="polite">Checking how Node-RED signs you in…</p>
-          <form id="auth-gate-login" class="sg-login" hidden autocomplete="on">
+          <form id="auth-gate-login" method="post" class="sg-login" hidden autocomplete="on">
             <label>Username<input id="auth-gate-username" name="username" autocomplete="username" required></label>
             <label>Password<input id="auth-gate-password" name="password" type="password" autocomplete="current-password" required></label>
             <div class="sg-actions"><button id="auth-gate-submit" class="sg-primary" type="submit">Sign in</button></div>
