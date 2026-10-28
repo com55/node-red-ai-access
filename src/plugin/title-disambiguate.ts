@@ -1,6 +1,6 @@
 /**
  * Disambiguate colliding proposal card titles with · HH:mm (and #n if needed).
- * Used by the /mcp page client (logic mirrored inline) and unit-tested here.
+ * Used by the /ai-access dashboard client (logic mirrored inline) and unit-tested here.
  */
 
 export function formatClockHm(iso: string, now: Date = new Date(iso)): string {

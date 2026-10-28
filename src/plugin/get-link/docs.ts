@@ -53,7 +53,7 @@ from the Access links page (\`/mcp\` → Access links → create \`kind=rest\` o
 \`kind=mcp\`).
 
 **What to tell the user** (copy/paste when you get \`wrong_token_kind\`):
-> Please open Node-RED → /mcp → Access links and create a kind=rest or kind=mcp
+> Please open Node-RED → /ai-access → Access tokens and create a kind=rest or kind=mcp
 > token (or a get_link URL if that is what I asked for), then send it to me.
 
 - REST: \`${rest}\` with \`Authorization: Bearer <rest-token>\` (**rest** kind —
@@ -146,7 +146,7 @@ same either way.
 - Link expires at: **${expires}** (ISO-8601); \`GET ./status\` also reports
   \`caller.minutesRemaining\` (rounded up) and \`caller.secondsRemaining\`
 - After expiry, every path under this link returns \`401 token_expired\` with
-  \`expiredAt\` and \`accessLinksUrl\` (the /mcp page → Access links section)
+  \`expiredAt\` and \`accessLinksUrl\` (the /ai-access dashboard → Access tokens tab)
 - Ask the user for a **new** link there if you see that error (or \`access_link_invalid\`)
 
 ## What you can do
@@ -171,7 +171,7 @@ when it does not name the flow), \`storedTitle\` (the title as saved: your title
 \` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
 \`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
-Host is known), and \`reviewPath\` (relative \`/mcp#proposal=<id>\`).
+Host is known), and \`reviewPath\` (relative \`/ai-access#proposal=<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
 \`displayName\` + \`reviewUrl\` — not the raw id.**
 

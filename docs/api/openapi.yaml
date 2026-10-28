@@ -1361,8 +1361,8 @@ components:
                 error: 'Access link token has expired. Ask the user for a new access link.'
                 code: token_expired
                 expiredAt: '2026-01-01T12:00:00.000Z'
-                accessLinksUrl: 'https://node-red.example/mcp#links'
-                hint: 'Ask the user to create a new access link in Node-RED on the /mcp page → Access links (https://node-red.example/mcp#links).'
+                accessLinksUrl: 'https://node-red.example/ai-access#links'
+                hint: 'Ask the user to create a new access link in Node-RED on the /ai-access dashboard → Access tokens (https://node-red.example/ai-access#links).'
             askForNewLink:
               value:
                 error: 'Access link is invalid, revoked, or no longer available after a restart. Ask the user for a new access link.'
@@ -2252,14 +2252,14 @@ components:
         reviewUrl:
           type: string
           description: |
-            Absolute deep link (`https://host/mcp#proposal=<id>`) built from the
+            Absolute deep link (`https://host/ai-access#proposal=<id>`) built from the
             request Host/protocol. Uses `X-Forwarded-Host` / `X-Forwarded-Proto`
             only when Express `trust proxy` is enabled; otherwise falls back to
             the relative `reviewPath` when Host is unavailable.
         reviewPath:
           type: string
           description: |
-            Relative deep link `/mcp#proposal=<id>` (under `httpAdminRoot` when
+            Relative deep link `/ai-access#proposal=<id>` (under `httpAdminRoot` when
             set) that opens the admin page, switches to Proposals, and
             scrolls/highlights this item.
         createdBy:
@@ -2501,7 +2501,7 @@ components:
         preview:
           type: string
           enum: [html]
-          description: When set, the /mcp UI may offer a sandboxed HTML preview.
+          description: When set, the /ai-access dashboard may offer a sandboxed HTML preview.
 
     ProposalDiffPresenceNode:
       type: object

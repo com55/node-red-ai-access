@@ -227,6 +227,8 @@ export interface OAuthRouteCollision {
   layer?: string | undefined;
   nodeId?: string | undefined;
   nodeName?: string | undefined;
+  /** Tab/subflow id (`z`) of an http-in node — editor `#flow/<id>` fallback link. */
+  flowId?: string | undefined;
   /** Absolute filesystem path for httpStatic sources (admin-only detail). */
   file?: string | undefined;
 }
@@ -321,6 +323,7 @@ export function findHttpInCollisions(
       source: 'http-in',
       nodeId: node.id,
       nodeName: node.name ? node.name : undefined,
+      flowId: node.z,
     });
   }
   return found;

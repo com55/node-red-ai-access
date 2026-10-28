@@ -26,16 +26,23 @@ import type {
 export type AdminGateMode = 'page' | 'api';
 
 export function normalizeHttpAdminRoot(httpAdminRoot: string | undefined): string {
-  if (!httpAdminRoot || httpAdminRoot === '/') {
-    return '/';
-  }
-  return httpAdminRoot.endsWith('/') ? httpAdminRoot.slice(0, -1) : httpAdminRoot;
+  // Collapse duplicate slashes so a root like '//evil.com' can never yield a
+  // protocol-relative redirect target ('//evil.com/ai-access').
+  let root = `/${httpAdminRoot ?? ''}`.replace(/\/{2,}/g, '/');
+  while (root.length > 1 && root.endsWith('/')) root = root.slice(0, -1);
+  return root;
 }
 
 /** Absolute admin path for `/mcp/api/v1` (respects httpAdminRoot). */
 export function mcpApiBase(httpAdminRoot: string | undefined): string {
   const root = normalizeHttpAdminRoot(httpAdminRoot);
   return root === '/' ? '/mcp/api/v1' : `${root}/mcp/api/v1`;
+}
+
+/** Absolute admin path of the AI Access dashboard (`/ai-access`, respects httpAdminRoot). */
+export function dashboardPath(httpAdminRoot: string | undefined): string {
+  const root = normalizeHttpAdminRoot(httpAdminRoot);
+  return root === '/' ? '/ai-access' : `${root}/ai-access`;
 }
 
 /** Absolute admin path for `/mcp/rpc` (respects httpAdminRoot). */
@@ -421,7 +428,7 @@ export function requireAdminReadOrAccessLink(
  * Unknown `aia_` tokens return `access_link_invalid`.
  * Access-link Bearers must be `rest` (default) for this admin/API dual gate.
  *
- * The /mcp page treats any 401 on `/status` as the sign-in gate.
+ * The /ai-access dashboard treats any 401 on `/status` as the sign-in gate.
  */
 export function requireAdminSessionOrAccessLink(
   RED: NodeRedPluginAPI,

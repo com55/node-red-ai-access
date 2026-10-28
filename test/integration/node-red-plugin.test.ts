@@ -216,7 +216,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
   });
 
   it('GET /mcp is public; unauthenticated /status returns JSON access_link_missing', async () => {
-    const page = await request(RED.httpAdmin).get('/mcp');
+    const page = await request(RED.httpAdmin).get('/ai-access');
     expect(page.status).toBe(200);
     expect(page.text).toMatch(/localStorage/);
 

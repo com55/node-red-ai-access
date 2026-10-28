@@ -8,7 +8,7 @@
 Temporary, owner-approved Node-RED access for AI clients. Ships as a **Node-RED
 4.x+ plugin** with:
 
-- an admin page at `/mcp`
+- an admin dashboard at `/ai-access` (browser `GET /mcp` redirects there)
 - a versioned REST API under `/mcp/api/v1`
 - an MCP JSON-RPC endpoint at `/mcp/rpc` (Streamable HTTP) over the same
   services
@@ -37,21 +37,24 @@ Configuration).
    ```
 
 2. Restart Node-RED.
-3. Log in to the editor, then open **`/mcp`** on the admin root (for example
-   `http://localhost:1880/mcp`, or `{httpAdminRoot}/mcp` when `httpAdminRoot` is
-   set).
+3. Log in to the editor, then open **`/ai-access`** on the admin root (for
+   example `http://localhost:1880/ai-access`, or `{httpAdminRoot}/ai-access`
+   when `httpAdminRoot` is set), or click **Open AI Access dashboard** in the
+   editor sidebar. Opening `/mcp` in a browser redirects to the dashboard (MCP
+   clients keep using `/mcp`).
 
-The `/mcp` HTML shell is served without adminAuth so the page can read the
+The `/ai-access` HTML shell is served without adminAuth so the page can read the
 editor token from browser `localStorage` (Node-RED does not use cookies) and
 call APIs with `Authorization: Bearer`. If no valid token is present, the page
 redirects to the editor login. All data and actions stay behind permission
 checks.
 
-On `/mcp` you can create access links, review proposals (with a readable
-node/property diff against the live flow), approve or reject changes, and read a
-human-readable audit log. Users with `read` (including guest, if configured) get
-a read-only view; only users with `*` can create/revoke links and approve/reject
-proposals.
+The dashboard has tabs for **Overview** (status and diagnostics), **Settings**,
+**Access tokens**, **OAuth**, **Proposals** and **Audit log**. You can create
+access tokens, review proposals (with a readable node/property diff against the
+live flow), approve or reject changes, and read a human-readable audit log.
+Users with `read` (including guest, if configured) get a read-only view; only
+users with `*` can create/revoke links and approve/reject proposals.
 
 ## Configuration
 
@@ -143,8 +146,8 @@ are rejected. Exposed headers include `Mcp-Session-Id`, `WWW-Authenticate`,
 Effective values are resolved **without restart** in this order (highest wins):
 
 1. **`settings.js`** — keys present in the `aiAccess` block are locked
-2. **Disk** — `<userDir>/.ai-access/config.json` (editor sidebar **AI Access**
-   tab, or `PUT /mcp/api/v1/settings`)
+2. **Disk** — `<userDir>/.ai-access/config.json` (dashboard **Settings** /
+   **OAuth** tabs, editor sidebar toggles, or `PUT /mcp/api/v1/settings`)
 3. **Built-in defaults** — as documented above
 
 This is a breaking precedence change in 0.2.0: settings.js now wins over disk.
@@ -154,21 +157,23 @@ PUT ignores locked keys while applying unlocked ones; GET and PUT return
 per-field `sources` (`settings.js`, `disk`, or `default`) and the precedence
 order.
 
-The editor right-hand sidebar tab (**AI Access**, next to Information / Help /
-Debug / Configuration nodes / Context Data) lets `*` admins change
-enable/disable, default deploy type, access-link TTL, maximum active links,
-Public URL, CORS origins, and the three rate limits. `read` users see the same
-values read-only. Express's effective `trust proxy` setting is displayed
-read-only. Public URL, CORS, and rate limits apply immediately; changing limits
-starts fresh rate-limit buckets. A button opens the `/mcp` page. When
-`adminAuth` is off, the tab exposes the `allowWithoutAdminAuth` opt-in with a
-clear local-only warning.
+The editor right-hand sidebar tab (**AI Access**) holds only: the **Enable AI
+Access features** toggle (the `allowWithoutAdminAuth` local-only opt-in when
+`adminAuth` is off), the **Enable MCP OAuth** toggle, an OAuth route-conflict
+warning with links that reveal the conflicting node (only when conflicts exist),
+and an **Open AI Access dashboard** button.
 
-The sidebar also configures MCP OAuth, shows registered clients with revoke
-buttons, and reports route collisions and the `httpNodeRoot: false` metadata
-fallback. Enabling OAuth with no Public URL or an HTTP non-loopback URL shows a
-warning confirmation; it does not block the change. OAuth fields set in
-`settings.js` are locked in the sidebar.
+Everything else is on the dashboard. The **Settings** tab lets `*` admins change
+default deploy type, access-token TTL, maximum active tokens, Public URL (with a
+reachability **Check**), CORS origins, and the three rate limits, and shows
+Express's effective `trust proxy` setting. The **OAuth** tab configures token
+lifetimes and the client limit, lists registered clients with revoke buttons,
+and reports route collisions (linking `http in` nodes to the editor) and the
+`httpNodeRoot: false` metadata fallback. `read` users see the same values
+read-only; writes need `*`, exactly as before. Changes apply immediately;
+changing limits starts fresh rate-limit buckets. Enabling OAuth with no Public
+URL or an HTTP non-loopback URL shows a warning confirmation; it does not block
+the change. Fields set in `settings.js` are locked.
 
 ### MCP OAuth
 
@@ -180,9 +185,9 @@ at `/.well-known/oauth-authorization-server` and protected resource metadata at
 `/.well-known/oauth-protected-resource/mcp` and
 `/.well-known/oauth-protected-resource`. The issuer is `publicBaseUrl` and the
 resource indicator is `{publicBaseUrl}/mcp`. When `httpNodeRoot` is false,
-metadata is available under the admin `/mcp` path instead; the sidebar displays
-this fallback. Route collisions disable the affected OAuth endpoints and appear
-in the sidebar.
+metadata is available under the admin `/mcp` path instead; the dashboard OAuth
+tab displays this fallback. Route collisions disable the affected OAuth
+endpoints and appear in the sidebar and on the OAuth tab.
 
 Clients use authorization code with PKCE S256 and can request `read` or
 `propose`. Consent uses the Node-RED editor login. Access tokens last one hour
@@ -193,9 +198,9 @@ bearer tokens continue to work. See [MCP client setup](docs/mcp-clients.md).
 
 Add `{publicBaseUrl}/mcp` as the server URL in ChatGPT, Claude and other MCP
 clients; `/mcp` and `/mcp/rpc` serve the same MCP endpoint (browsers opening
-`/mcp` get the dashboard). At most `oauth.dcrMaxClients` (default 5) approved
-clients are kept: lowering the limit removes none, but new registrations are
-refused with `400` until clients are revoked.
+`/mcp` are redirected to `/ai-access`). At most `oauth.dcrMaxClients`
+(default 5) approved clients are kept: lowering the limit removes none, but new
+registrations are refused with `400` until clients are revoked.
 
 When you are signed out and Node-RED uses `credentials` login, the consent page
 shows its own sign-in form. It calls Node-RED's `/auth/token` endpoint and
@@ -248,7 +253,8 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** or
 
 | Path                                     | Purpose                                                   |
 | ---------------------------------------- | --------------------------------------------------------- |
-| `GET /mcp`                               | Admin UI (status, links, proposals, audit log)            |
+| `GET /ai-access`                         | Admin dashboard (overview, settings, tokens, OAuth, …)    |
+| `GET /mcp` (browser)                     | `302` redirect to `/ai-access`                            |
 | `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)                   |
 | `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts              |
 | `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)           |
@@ -286,22 +292,23 @@ use them. Proposal create/list/get responses include `title`, `displayName`
 (`title ·` **server-local** datetime with explicit offset, e.g.
 `16 Oct 01:35 +00:00`), `reviewUrl` (absolute URL using the request
 Host/protocol — `X-Forwarded-*` only when Express `trust proxy` is set), and
-`reviewPath` (relative `/mcp#proposal=<id>`). `createdAt` remains ISO-8601. The
-`/mcp` page renders times in the browser's local timezone. AI clients should
-refer to proposals by `displayName` + `reviewUrl`, not the raw id. For
-access-link callers, `get_status` reports `permission: null` and
-`caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
+`reviewPath` (relative `/ai-access#proposal=<id>`). `createdAt` remains
+ISO-8601. The `/ai-access` dashboard renders times in the browser's local
+timezone. AI clients should refer to proposals by `displayName` + `reviewUrl`,
+not the raw id. For access-link callers, `get_status` reports `permission: null`
+and `caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
 
-Approve, reject, and access-link management stay human-only on the `/mcp` admin
-page (and the corresponding REST routes). Rate limits, payload size limits, and
-audit logging match REST. Missing tokens return **401** `access_link_missing`;
-known-expired tokens return **401** `token_expired`; other invalid/revoked
-tokens return **401** `access_link_invalid` (all with `WWW-Authenticate`)
-telling the AI to ask the user for a new access link. Every error JSON includes
-a `code`. `token_expired` also includes `expiredAt` and `accessLinksUrl` (the
-`/mcp` page's Access links section). Access-link `/status` includes `expiresAt`,
-`minutesRemaining` (rounded up), and `secondsRemaining`. See `docs/errors.md`
-(generated from `src/plugin/error-registry.ts`).
+Approve, reject, and access-link management stay human-only on the `/ai-access`
+admin page (and the corresponding REST routes). Rate limits, payload size
+limits, and audit logging match REST. Missing tokens return **401**
+`access_link_missing`; known-expired tokens return **401** `token_expired`;
+other invalid/revoked tokens return **401** `access_link_invalid` (all with
+`WWW-Authenticate`) telling the AI to ask the user for a new access link. Every
+error JSON includes a `code`. `token_expired` also includes `expiredAt` and
+`accessLinksUrl` (the `/ai-access` dashboard's Access tokens tab). Access-link
+`/status` includes `expiresAt`, `minutesRemaining` (rounded up), and
+`secondsRemaining`. See `docs/errors.md` (generated from
+`src/plugin/error-registry.ts`).
 
 Access links are **in memory** (default TTL **4h**, max 10). Caps: **get_link ≤
 24h**, **rest/mcp ≤ 30d**. Creating a link returns the raw `token` plus a
@@ -329,8 +336,8 @@ errors mark it **failed**. Reject never mutates flows.
 
 ### Self-contained GET link (chat AIs that can only HTTP GET)
 
-1. An owner with `*` opens `/mcp` → **Access links** → create a **GET link**
-   (default TTL **4 hours**, max **24 hours**). Copy the full URL
+1. An owner with `*` opens `/ai-access` → **Access tokens** → create a **GET
+   link** (default TTL **4 hours**, max **24 hours**). Copy the full URL
    `http(s)://<host><httpAdminRoot>/mcp/a/<token>` (or **Copy link for AI**).
 2. The AI opens that URL for markdown docs, then uses GET-only routes under the
    same path (`/status`, `/flows`, `/flows/<id>`, `/proposals`, `/propose` with
@@ -355,7 +362,7 @@ errors mark it **failed**. Reject never mutates flows.
    HTML adds a restrictive `Content-Security-Policy`. REST and MCP endpoints are
    not affected.
 
-3. Changes become **pending proposals**; a human approves on `/mcp`. JSON
+3. Changes become **pending proposals**; a human approves on `/ai-access`. JSON
    responses use `Cache-Control: no-store`.
 
 ### Bearer REST / MCP
@@ -373,7 +380,7 @@ errors mark it **failed**. Reject never mutates flows.
      `list_proposals` / alias `list_my_proposals` (same access-link auth and
      limits)
 
-3. The owner reviews the proposal on `/mcp` and approves or rejects it.
+3. The owner reviews the proposal on `/ai-access` and approves or rejects it.
 4. If the token is invalid, expired, revoked, or cleared by a restart, the API
    returns **401** telling the AI to **ask the user for a new access link**.
 

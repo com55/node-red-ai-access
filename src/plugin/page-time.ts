@@ -1,8 +1,8 @@
 /**
- * Browser-local timestamp helpers for the /mcp admin UI.
+ * Browser-local timestamp helpers for the /ai-access dashboard.
  *
  * API `displayName` keeps Node-RED **server** local time (+ offset) for AI
- * clients. The /mcp page must never show that server string — rebuild the
+ * clients. The /ai-access dashboard must never show that server string — rebuild the
  * visible title from `title` / displayName prefix + ISO `createdAt`/`at`
  * via `Intl.DateTimeFormat` in the browser timezone.
  *

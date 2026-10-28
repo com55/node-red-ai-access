@@ -63,7 +63,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'token_expired',
     401,
     'Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`)',
-    'Ask the user to create a new link on the `/mcp` page → Access links (`accessLinksUrl`)'
+    'Ask the user to create a new link on the `/ai-access` dashboard → Access tokens (`accessLinksUrl`)'
   ),
   e(
     'access_link_invalid',
@@ -75,7 +75,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'wrong_token_kind',
     403,
     'Token kind does not match this surface',
-    'Mint the matching kind on `/mcp` → Access links; show `tellUser` to the human'
+    'Mint the matching kind on `/ai-access` → Access tokens; show `tellUser` to the human'
   ),
   e('ai_features_disabled', 403, 'Plugin AI features off', 'Owner enables AI Access / `adminAuth`'),
   e('auth_required', 401, 'Admin session required', 'Sign in to the Node-RED editor', ADMIN),

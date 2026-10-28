@@ -300,7 +300,7 @@ describe('MCP OAuth backend', () => {
     expect(JSON.stringify(mcpList.body)).toContain('list_flows');
   });
 
-  it('serves MCP at /mcp: 401 with resource_metadata, SSE GET 405, browsers still get the page', async () => {
+  it('serves MCP at /mcp: 401 with resource_metadata, SSE GET 405, browsers are redirected to /ai-access', async () => {
     const { admin } = appFor(userDir);
     const unauth = await request(admin)
       .post('/mcp')
@@ -317,8 +317,8 @@ describe('MCP OAuth backend', () => {
     const sse = await request(admin).get('/mcp').set('Accept', 'text/event-stream');
     expect(sse.status).toBe(401);
     const page = await request(admin).get('/mcp').set('Accept', 'text/html,*/*');
-    expect(page.status).toBe(200);
-    expect(page.type).toBe('text/html');
+    expect(page.status).toBe(302);
+    expect(page.headers.location).toBe('/ai-access');
   });
 
   it('rotates refresh tokens and revokes a family on reuse', async () => {
@@ -893,7 +893,13 @@ describe('MCP OAuth backend', () => {
       { id: 'c', type: 'http in', url: '.well-known/oauth-x', z: 't2', name: 'Mine' },
     ];
     expect(findHttpInCollisions(fn => nodes.forEach(fn), ['/.well-known/oauth-'])).toEqual([
-      { path: '/.well-known/oauth-x', source: 'http-in', nodeId: 'c', nodeName: 'Mine' },
+      {
+        path: '/.well-known/oauth-x',
+        source: 'http-in',
+        nodeId: 'c',
+        nodeName: 'Mine',
+        flowId: 't2',
+      },
     ]);
   });
 
@@ -929,6 +935,7 @@ describe('MCP OAuth backend', () => {
         source: 'http-in',
         nodeId: 'n1',
         nodeName: 'Meta',
+        flowId: expect.anything(),
       },
     ]);
     expect(status.metadata[0]).toContain("http-in node 'Meta'");
@@ -992,7 +999,15 @@ describe('MCP OAuth backend', () => {
     // Same roots -> collision, reported once as the node
     expect(
       scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/', httpNodeRoot: '/' }).authorization
-    ).toEqual([{ path: '/mcp/oauth/token', source: 'http-in', nodeId: 'n', nodeName: undefined }]);
+    ).toEqual([
+      {
+        path: '/mcp/oauth/token',
+        source: 'http-in',
+        nodeId: 'n',
+        nodeName: undefined,
+        flowId: 't',
+      },
+    ]);
     // httpAdminRoot '/admin' + httpNodeRoot '/admin' -> collision
     expect(
       scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/admin', httpNodeRoot: '/admin/' })
@@ -1075,7 +1090,7 @@ describe('MCP OAuth backend', () => {
     rmSync(staticDir, { recursive: true, force: true });
   });
 
-  it('routes /mcp by Accept header: browsers get the page, MCP clients the endpoint', async () => {
+  it('routes /mcp by Accept header: browsers redirect to /ai-access, MCP clients the endpoint', async () => {
     const { admin } = appFor(userDir);
     const cases: [string | undefined, 'page' | 'mcp'][] = [
       [undefined, 'page'],
@@ -1090,8 +1105,8 @@ describe('MCP OAuth backend', () => {
       const req = request(admin).get('/mcp');
       const res = await (accept ? req.set('Accept', accept) : req);
       if (expected === 'page') {
-        expect(res.status, String(accept)).toBe(200);
-        expect(res.type, String(accept)).toBe('text/html');
+        expect(res.status, String(accept)).toBe(302);
+        expect(res.headers.location, String(accept)).toBe('/ai-access');
       } else {
         expect(res.status, String(accept)).toBe(401);
         expect(res.headers['www-authenticate'], String(accept)).toContain('resource_metadata=');

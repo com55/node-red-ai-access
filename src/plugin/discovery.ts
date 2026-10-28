@@ -135,7 +135,7 @@ export function buildDiscoveryIndex(RED: NodeRedPluginAPI): Record<string, unkno
       scheme: 'Bearer',
       header: 'Authorization: Bearer <token>',
       description:
-        'An admin with * mints tokens on the /mcp Access links page (POST /links only — never under GET /mcp/a/<token>). Each token has kind get_link | rest | mcp and only works on that surface. Send rest/mcp tokens as Authorization: Bearer <token>. Missing/invalid → 401 access_link_missing / access_link_invalid; wrong kind → 403 wrong_token_kind. GET /mcp/a links cannot create tokens.',
+        'An admin with * mints tokens on the /ai-access dashboard (Access tokens tab) (POST /links only — never under GET /mcp/a/<token>). Each token has kind get_link | rest | mcp and only works on that surface. Send rest/mcp tokens as Authorization: Bearer <token>. Missing/invalid → 401 access_link_missing / access_link_invalid; wrong kind → 403 wrong_token_kind. GET /mcp/a links cannot create tokens.',
       tokenKinds: ['get_link', 'rest', 'mcp'],
       mint: {
         path: '/links',

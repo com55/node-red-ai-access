@@ -2,14 +2,15 @@
 
 ## OAuth (for clients with OAuth discovery)
 
-Enable MCP OAuth in the AI Access editor sidebar and set a public HTTPS origin
-in **Public URL**. Give the client the MCP endpoint
-`https://YOUR-NODE-RED/mcp/rpc`. It can discover the authorization server from
-the protected resource metadata, register itself, and request `read` or
-`propose` scope. Sign in to Node-RED and approve the client on the consent page.
-The sidebar lists registered clients and lets an admin revoke them and their
-tokens. Localhost HTTP is supported for development. If `httpNodeRoot` is
-disabled, see the sidebar warning for the metadata fallback path.
+Enable MCP OAuth (AI Access editor sidebar, or the dashboard **OAuth** tab at
+`/ai-access`) and set a public HTTPS origin in **Public URL** (dashboard
+**Settings** tab). Give the client the MCP endpoint `https://YOUR-NODE-RED/mcp`
+(`/mcp/rpc` also works). It can discover the authorization server from the
+protected resource metadata, register itself, and request `read` or `propose`
+scope. Sign in to Node-RED and approve the client on the consent page. The
+dashboard **OAuth** tab lists registered clients and lets an admin revoke them
+and their tokens. Localhost HTTP is supported for development. If `httpNodeRoot`
+is disabled, see the OAuth tab for the metadata fallback path.
 
 Notes:
 
@@ -26,16 +27,16 @@ Notes:
   not count toward the client limit.
 - Refresh tokens are sliding: each refresh renews the idle lifetime. A token
   chain also has a maximum lifetime of 90 days from approval by default; after
-  that the client must sign in again. Change it in the sidebar (0 = unlimited).
-  Lowering the maximum applies immediately to existing token chains. Raising it
-  or setting 0 does not extend the refresh token a client already holds; the new
-  limit takes effect from that chain's next successful refresh (and for new
-  chains).
+  that the client must sign in again. Change it on the dashboard OAuth tab (0 =
+  unlimited). Lowering the maximum applies immediately to existing token chains.
+  Raising it or setting 0 does not extend the refresh token a client already
+  holds; the new limit takes effect from that chain's next successful refresh
+  (and for new chains).
 
 ## Access-link bearer tokens
 
-Use an **mcp** access-link token from `/mcp` → Access links (kind = MCP token).
-Endpoint: `POST https://YOUR-NODE-RED/mcp/rpc` with
+Use an **mcp** access-link token from `/ai-access` → Access tokens (kind = MCP
+token). Endpoint: `POST https://YOUR-NODE-RED/mcp/rpc` with
 `Authorization: Bearer <mcp-token>`.
 
 If your AI app cannot add MCP servers, create a **REST** or **GET link** token

@@ -9,7 +9,7 @@ import type { PersistedAiAccessSettings, SettingsStore } from '../storage/settin
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { bindPublicBaseUrl, canonicalizeIp, validateSettingsPublicBaseUrl } from './access-path.js';
-import { describeAccess, mcpApiBase, normalizeHttpAdminRoot } from './auth.js';
+import { dashboardPath, describeAccess, mcpApiBase } from './auth.js';
 import { canonicalOrigin } from './cors.js';
 import {
   classifyPublicUrlAddress,
@@ -21,8 +21,7 @@ import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
 function mcpPageUrl(RED: NodeRedPluginAPI): string {
-  const root = normalizeHttpAdminRoot(RED.settings.httpAdminRoot);
-  return root === '/' ? '/mcp' : `${root}/mcp`;
+  return dashboardPath(RED.settings.httpAdminRoot);
 }
 
 function normalizeTrustProxy(value: unknown): boolean | number | string {

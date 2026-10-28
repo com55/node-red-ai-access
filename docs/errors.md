@@ -15,9 +15,9 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | --- | --- | --- | --- | --- |
 | `access_link_missing` | 401 | No Bearer / path token | Ask the user for a new access link of the right kind | GET, REST, MCP |
 | `bearer_scheme_required` | 401 | Auth used Basic (or non-Bearer) | Send `Authorization: Bearer <token>` | REST, MCP |
-| `token_expired` | 401 | Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`) | Ask the user to create a new link on the `/mcp` page → Access links (`accessLinksUrl`) | GET, REST, MCP |
+| `token_expired` | 401 | Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`) | Ask the user to create a new link on the `/ai-access` dashboard → Access tokens (`accessLinksUrl`) | GET, REST, MCP |
 | `access_link_invalid` | 401 | Unknown, revoked, or cleared after restart | Ask the user for a new access link | GET, REST, MCP |
-| `wrong_token_kind` | 403 | Token kind does not match this surface | Mint the matching kind on `/mcp` → Access links; show `tellUser` to the human | GET, REST, MCP |
+| `wrong_token_kind` | 403 | Token kind does not match this surface | Mint the matching kind on `/ai-access` → Access tokens; show `tellUser` to the human | GET, REST, MCP |
 | `ai_features_disabled` | 403 | Plugin AI features off | Owner enables AI Access / `adminAuth` | GET, REST, MCP |
 | `auth_required` | 401 | Admin session required | Sign in to the Node-RED editor | admin |
 | `insufficient_permissions` | 403 | Admin lacks required scope | Need `*` for link mint / approve | admin |
