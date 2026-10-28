@@ -1,6 +1,7 @@
 /** Inline client script for the /ai-access dashboard (editor localStorage Bearer). */
 
 import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
+import { editorSignInHelpers } from './editor-signin-script.js';
 import { pageClientSettingsScript } from './page-client-settings.js';
 
 function pageClientScriptPartA(): string {
@@ -119,6 +120,94 @@ function pageClientScriptPartA(): string {
     return target;
   }
 
+  /*
+   * Signed-out card (same look/flow as the OAuth consent page). Credentials
+   * login: inline form → <adminRoot>/auth/token, token stored under the
+   * editor's key (editor stays signed in). Strategy login: open the editor in
+   * the named window; continue automatically when its token appears (storage
+   * event) or on focus / visibility with a new token; Retry as fallback.
+   */
+  var authGateShown = false;
+  var authGateToken = null;
+  var authGateLastAuto = 0;
+  var authGateEditorOpened = false;
+  function authGateAdminHref() {
+    var root = editorLoginUrl();
+    if (root.charAt(root.length - 1) !== '/') root += '/';
+    return new URL(root, location.href).href;
+  }
+  function authGateStatus(text, isError) {
+    var st = $('auth-gate-status');
+    if (!st) return;
+    st.textContent = text;
+    st.className = 'sg-status' + (isError ? ' error' : '');
+    st.hidden = !text;
+  }
+  function authGateContinue() {
+    authGateStatus('Signed in. Loading AI Access…');
+    location.reload();
+  }
+  function authGateTyping() {
+    var form = $('auth-gate-login');
+    return !!form && !form.hidden &&
+      !!(($('auth-gate-username') || {}).value || ($('auth-gate-password') || {}).value);
+  }
+  function authGateAuto(fromStorage) {
+    if (!authGateShown) return;
+    var tok = readEditorToken();
+    if (!tok || tok === authGateToken) return;
+    // Leave a half-typed form alone unless the user chose the editor handoff;
+    // a new token written by another tab is definitive.
+    if (!fromStorage && !authGateEditorOpened && authGateTyping()) return;
+    if (Date.now() - authGateLastAuto < 1000) return;
+    authGateLastAuto = Date.now();
+    authGateContinue();
+  }
+  function wireAuthGate() {
+    var form = $('auth-gate-login');
+    if (form) form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var btn = $('auth-gate-submit');
+      btn.disabled = true;
+      authGateStatus('Signing in…');
+      nrPasswordSignIn(authGateAdminHref(), authTokenKey, $('auth-gate-username').value, $('auth-gate-password').value)
+        .then(function (x) {
+          btn.disabled = false;
+          $('auth-gate-password').value = '';
+          if (!x.ok) { authGateStatus('Sign in failed. Check your username and password.', true); return; }
+          authGateContinue();
+        })
+        .catch(function (e) { btn.disabled = false; authGateStatus('Error: ' + (e.message || String(e)), true); });
+    });
+    wireAuthGateEditor();
+  }
+  // Both the strategy button and the optional credentials link use this handoff.
+  function wireAuthGateEditor() {
+    ['auth-gate-editor', 'auth-gate-editor-link'].forEach(function (id) {
+      var ed = $(id);
+      if (!ed) return;
+      if (id === 'auth-gate-editor-link') ed.href = editorLoginUrl();
+      ed.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        authGateEditorOpened = true;
+        window.open(editorLoginUrl(), 'node-red-editor');
+        $('auth-gate-retry').hidden = false;
+        authGateStatus('Sign in in the Node-RED editor window. This page continues automatically.');
+      });
+    });
+    var retry = $('auth-gate-retry');
+    if (retry) retry.addEventListener('click', function () {
+      if (readEditorToken()) authGateContinue();
+      else authGateStatus('Not signed in yet. Sign in in the Node-RED editor, then come back here.', true);
+    });
+    window.addEventListener('storage', function (ev) {
+      if (ev.key === authTokenKey && ev.newValue) authGateAuto(true);
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') authGateAuto(false);
+    });
+    window.addEventListener('focus', function () { authGateAuto(false); });
+  }
   function showAuthGate() {
     var gate = $('auth-gate');
     var nav = $('main-nav');
@@ -127,20 +216,27 @@ function pageClientScriptPartA(): string {
       var el = $(id);
       if (el) el.hidden = true;
     });
-    if (gate) {
-      gate.hidden = false;
-      var ed = $('auth-gate-editor');
-      if (ed) ed.setAttribute('href', editorLoginUrl());
-      var ret = $('auth-gate-return');
-      if (ret) {
-        ret.setAttribute('href', (typeof location !== 'undefined' ? location.pathname : (cfg.dashboardPath || '/ai-access')) +
-          (typeof location !== 'undefined' ? location.search : '') +
-          (typeof location !== 'undefined' ? location.hash : ''));
+    if (!gate || authGateShown) return;
+    authGateShown = true;
+    authGateToken = readEditorToken();
+    gate.hidden = false;
+    if (document.body && document.body.classList) document.body.classList.add('signed-out');
+    wireAuthGate();
+    authGateStatus('Checking how Node-RED signs you in…');
+    nrLoginType(authGateAdminHref()).then(function (type) {
+      if (type === 'credentials') {
+        authGateStatus('Sign in with your Node-RED account to continue.');
+        $('auth-gate-login').hidden = false;
+        $('auth-gate-editor-link').hidden = false;
+        $('auth-gate-username').focus();
+      } else {
+        authGateStatus('Sign in with the Node-RED editor in this browser. This page continues automatically.');
+        $('auth-gate-editor').hidden = false;
+        $('auth-gate-retry').hidden = false;
       }
-    }
-    showFlash($('boot-flash'), 'Please sign in to Node-RED first.', false);
+    });
   }
-
+${editorSignInHelpers}
   function isStatusPath(path) {
     return path === '/status' || path.indexOf('/status?') === 0;
   }

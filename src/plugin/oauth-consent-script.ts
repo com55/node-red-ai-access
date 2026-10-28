@@ -1,3 +1,5 @@
+import { editorSignInHelpers } from './editor-signin-script.js';
+
 /**
  * Browser script for the OAuth consent page (served with a CSP nonce).
  * Reads the Node-RED editor token from localStorage (same origin as the editor)
@@ -7,6 +9,7 @@
  * All dynamic text is set with textContent.
  */
 export const consentScript = `(function () {
+${editorSignInHelpers}
   var main = document.querySelector('main');
   var id = main.getAttribute('data-request');
   var key = main.getAttribute('data-token-key');
@@ -40,10 +43,9 @@ export const consentScript = `(function () {
   }
   function showSignIn() {
     show(allow, false); show(deny, false); show(user, false); show(grant, false);
-    fetch(new URL('auth/login', adminRoot).href, { headers: { 'Node-RED-API-Version': 'v2' }, credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (cfg) {
-        if (cfg && cfg.type === 'credentials') {
+    nrLoginType(adminRoot.href)
+      .then(function (type) {
+        if (type === 'credentials') {
           setStatus('Sign in with your Node-RED account to continue.');
           show(login, true);
           $('username').focus();
@@ -51,10 +53,6 @@ export const consentScript = `(function () {
           editorLink('Sign in to the ', ' in this browser, then press Retry.');
           show(retry, true);
         }
-      })
-      .catch(function () {
-        editorLink('Sign in to the ', ' in this browser, then press Retry.');
-        show(retry, true);
       });
   }
   function load() {
@@ -86,21 +84,11 @@ export const consentScript = `(function () {
     var btn = $('login-submit');
     btn.disabled = true;
     setStatus('Signing in…');
-    var body = new URLSearchParams({
-      client_id: 'node-red-editor', grant_type: 'password', scope: '*',
-      username: $('username').value, password: $('password').value
-    });
-    fetch(new URL('auth/token', adminRoot).href, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Node-RED-API-Version': 'v2' },
-      body: body.toString()
-    })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { r: r, b: b }; }); })
+    nrPasswordSignIn(adminRoot.href, key, $('username').value, $('password').value)
       .then(function (x) {
         btn.disabled = false;
         $('password').value = '';
-        if (!x.r.ok || !x.b.access_token) { setStatus('Sign in failed. Check your username and password.', true); return; }
-        try { localStorage.setItem(key, JSON.stringify(x.b)); } catch (e) {}
+        if (!x.ok) { setStatus('Sign in failed. Check your username and password.', true); return; }
         load();
       })
       .catch(function (e) { btn.disabled = false; setStatus('Error: ' + e.message, true); });

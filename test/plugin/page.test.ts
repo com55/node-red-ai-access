@@ -25,10 +25,17 @@ function createApp(options: {
   adminAuth?: unknown;
   aiAccess?: AiAccessSettings;
   httpAdminRoot?: string;
+  contentSecurityPolicy?: string;
   authenticate?: (req: Request, _res: Response, next: NextFunction) => void;
 }): { app: Express; linkStore: AccessLinkStore } {
   const app = express();
   app.use(express.json());
+  if (options.contentSecurityPolicy) {
+    app.use((_req, res, next) => {
+      res.setHeader('Content-Security-Policy', options.contentSecurityPolicy!);
+      next();
+    });
+  }
 
   const authenticate =
     options.authenticate ??
@@ -123,6 +130,10 @@ describe('/mcp admin page', () => {
 
     const res = await request(app).get('/ai-access');
     expect(res.status).toBe(200);
+    expect(res.headers['content-security-policy']).toBe(
+      "form-action 'none'; frame-ancestors 'none'"
+    );
+    expect(res.headers['x-frame-options']).toBe('DENY');
     expect(res.headers['cache-control']).toMatch(/no-store/);
     expect(res.headers.pragma).toMatch(/no-cache/i);
     expect(res.text).toMatch(/http-equiv="Cache-Control"[^>]*no-store/);
@@ -260,6 +271,19 @@ describe('/mcp admin page', () => {
     expect(res.text).not.toMatch(/isLargeDelete\([^)]+\) && !/);
   });
 
+  it('preserves upstream CSP while blocking dashboard form submissions and framing', async () => {
+    const upstream =
+      "script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'";
+    const { app } = createApp({ userDir, contentSecurityPolicy: upstream });
+    const res = await request(app).get('/ai-access');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-security-policy'].split(/,\s*/)).toEqual([
+      upstream,
+      "form-action 'none'; frame-ancestors 'none'",
+    ]);
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+
   it('keeps /mcp/api/v1/status behind admin auth', async () => {
     const { app } = createApp({
       userDir,
@@ -309,7 +333,10 @@ describe('/mcp admin page', () => {
     const res = await request(app).get('/ai-access');
     expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
     expect(res.text).toMatch(/showAuthGate|auth-gate/);
-    expect(res.text).toMatch(/Please sign in to Node-RED first/);
+    expect(res.text).toMatch(/Sign in to Node-RED/);
+    expect(res.text).toMatch(/<form\b[^>]*id="auth-gate-login"[^>]*method="post"/);
+    // Single signed-out message: no duplicate red boot banner.
+    expect(res.text).not.toMatch(/Please sign in to Node-RED first/);
     // Must not silently bounce to the editor.
     expect(res.text).not.toMatch(/redirectToEditorLogin/);
   });

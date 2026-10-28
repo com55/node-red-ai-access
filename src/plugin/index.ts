@@ -373,6 +373,10 @@ export function registerRoutes(
     limiter,
     tokenLimiter,
     (_req: AuthenticatedRequest, res: Response) => {
+      // Additional policies combine restrictively with any upstream CSP.
+      // Fetch-based sign-in still works; native form submission is blocked.
+      res.append('Content-Security-Policy', "form-action 'none'; frame-ancestors 'none'");
+      res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');

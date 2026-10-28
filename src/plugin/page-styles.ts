@@ -60,19 +60,44 @@ h1 {
 }
 .how-it-works li { margin: 0.2rem 0; }
 .how-it-works strong { color: var(--accent); }
+/* Signed-out card: same look as the OAuth consent / sign-in page (light only). */
 .auth-gate {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 1.25rem 1.35rem;
-  margin-bottom: 1rem;
+  --sg-bg: #f3f4f6; --sg-card: #fff; --sg-text: #111827; --sg-muted: #4b5563; --sg-line: #e5e7eb;
+  --sg-soft: #f9fafb; --sg-brand: #8f0000; --sg-brand-2: #b91c1c; --sg-focus: #2563eb;
+  color-scheme: light;
+  position: fixed; inset: 0; z-index: 1000; overflow: auto;
+  display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+  background: var(--sg-bg); color: var(--sg-text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-.auth-gate h2 { margin: 0 0 0.4rem; font-size: 1.2rem; }
-.auth-gate a.action {
-  display: inline-block;
-  text-decoration: none;
-  text-align: center;
-}
+.auth-gate[hidden] { display: none !important; }
+body.signed-out { overflow: hidden; }
+.auth-gate * { box-sizing: border-box; }
+.auth-gate .sg-card { width: 100%; max-width: 440px; margin: 0; background: var(--sg-card); border: 1px solid var(--sg-line); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; }
+.auth-gate .sg-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--sg-line); }
+.auth-gate .logo { width: 40px; height: 40px; flex: none; }
+.auth-gate .sg-brand b { display: block; font-size: 15px; }
+.auth-gate .sg-brand span { font-size: 13px; color: var(--sg-muted); }
+.auth-gate .sg-body { padding: 20px 22px 22px; }
+.auth-gate h1 { font-size: 19px; line-height: 1.3; margin: 0 0 6px; color: var(--sg-text); }
+.auth-gate .sg-sub { margin: 0 0 14px; color: var(--sg-muted); font-size: 14px; }
+.auth-gate .sg-status { font-size: 14px; color: var(--sg-muted); margin: 0 0 14px; }
+.auth-gate .sg-status.error { color: var(--sg-brand-2); }
+.auth-gate .sg-actions { display: flex; gap: 10px; }
+.auth-gate button { font: inherit; border-radius: 10px; padding: 10px 16px; cursor: pointer; border: 1px solid var(--sg-line); background: var(--sg-card); color: var(--sg-text); }
+.auth-gate button:focus-visible, .auth-gate input:focus-visible, .auth-gate a:focus-visible { outline: 3px solid var(--sg-focus); outline-offset: 2px; }
+.auth-gate button[disabled] { opacity: .6; cursor: default; }
+.auth-gate .sg-primary { flex: 1; background: var(--sg-brand); border-color: var(--sg-brand); color: #fff; font-weight: 600; }
+.auth-gate .sg-primary:hover:not([disabled]) { background: var(--sg-brand-2); }
+.auth-gate .sg-secondary { flex: none; }
+.auth-gate .sg-login { display: grid; gap: 10px; margin: 0 0 4px; }
+.auth-gate .sg-login label { display: grid; gap: 4px; font-size: 13px; color: var(--sg-muted); }
+.auth-gate .sg-login input { font: inherit; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--sg-line); background: var(--sg-soft); color: var(--sg-text); }
+.auth-gate .sg-editor-option { display: inline-block; margin: 10px 0 14px; font-size: 14px; }
+.auth-gate .sg-editor-option[hidden] { display: none; }
+.auth-gate .sg-foot { padding: 12px 22px; border-top: 1px solid var(--sg-line); font-size: 12px; color: var(--sg-muted); background: var(--sg-soft); }
+.auth-gate a { color: var(--sg-focus); }
+@media (max-width: 420px) { .auth-gate .sg-actions { flex-direction: column-reverse; } .auth-gate .sg-secondary { flex: 1; } }
 `;
 }
 
