@@ -212,9 +212,10 @@ describe('MCP OAuth backend', () => {
     expect(flow.page.text).toContain('Warning');
     expect(flow.granted?.status).toBe(302);
     expect((await exchange(admin, id, flow.code!, 'https://other.example/mcp')).status).toBe(400);
-    const issued = await exchange(admin, id, flow.code!);
+    const second = (await authorize(admin, id)).code!;
+    const issued = await exchange(admin, id, second);
     expect(issued.status).toBe(200);
-    expect((await exchange(admin, id, flow.code!)).status).toBe(400);
+    expect((await exchange(admin, id, second)).status).toBe(400);
     const disk = readFileSync(join(userDir, '.ai-access', 'oauth.json'), 'utf8');
     expect(disk).not.toContain(issued.body.access_token as string);
     expect(disk).not.toContain(issued.body.refresh_token as string);
