@@ -291,6 +291,29 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     ALL,
     'warning'
   ),
+  e(
+    'redacted_placeholder_mismatch',
+    400,
+    'A `[REDACTED]` placeholder was added, duplicated, moved, or its env/header name changed',
+    'Keep placeholders exactly where they were shown (same line, same name) or supply a real value',
+    ALL
+  ),
+  e(
+    'secret_destination_changed',
+    201,
+    'Warning: a node holding a restored secret changed where it sends data (url/host/method/headers/…)',
+    'Reviewer must verify the new destination before approving',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_node_code_changed',
+    201,
+    'Warning: a node holding a restored secret had its code changed',
+    'Reviewer must check the code does not send the secret elsewhere',
+    ALL,
+    'warning'
+  ),
   // --- Proposal statuses (auto-closed)
   e(
     'expired',
