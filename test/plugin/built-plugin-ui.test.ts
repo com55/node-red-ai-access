@@ -33,5 +33,9 @@ describe('built dist/plugin.cjs UI contracts', () => {
     expect(bundle).toMatch(/Admin \(can approve & manage links\)/);
     expect(bundle).toMatch(/buildDisambiguatedTitles/);
     expect(bundle).toMatch(/fmtClockHm/);
+    expect(bundle).toMatch(/Enable MCP OAuth/);
+    expect(bundle).toMatch(/Registered OAuth clients/);
+    expect(bundle).toMatch(/OAuth authorization routes collide with/);
+    expect(bundle).toMatch(/Enable OAuth anyway/);
   });
 });

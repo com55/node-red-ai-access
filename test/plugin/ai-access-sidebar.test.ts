@@ -72,7 +72,14 @@ function createFakeJQuery() {
       },
       text(value?: string) {
         if (value === undefined) return els[0]?.textContent ?? '';
-        for (const el of els) el.textContent = value;
+        for (const el of els) {
+          el.textContent = value;
+          el.children = [];
+        }
+        return api;
+      },
+      empty() {
+        for (const el of els) el.children = [];
         return api;
       },
       html(value?: string) {
@@ -124,6 +131,11 @@ function createFakeJQuery() {
         return api;
       },
       show() {
+        for (const el of els) el.props.visible = true;
+        return api;
+      },
+      hide() {
+        for (const el of els) el.props.visible = false;
         return api;
       },
       toggleClass(name: string, on?: boolean) {
@@ -155,8 +167,8 @@ function createFakeJQuery() {
           .split(/\s+/)
           .includes(name);
       },
-      is() {
-        return false;
+      is(selector: string) {
+        return selector === ':checked' && !!els[0]?.props.checked;
       },
       val(value?: unknown) {
         if (value === undefined) return els[0]?.props.value;
@@ -168,6 +180,10 @@ function createFakeJQuery() {
           el.handlers[event] ??= [];
           el.handlers[event].push(handler);
         }
+        return api;
+      },
+      off(event: string) {
+        for (const el of els) el.handlers[event] = [];
         return api;
       },
       each(fn: (this: unknown, i: number) => void) {
@@ -447,4 +463,140 @@ describe('ai-access-sidebar.js served tab', () => {
       }
     }
   );
+
+  it('shows OAuth status and clients, revokes a client, and confirms an insecure Public URL', async () => {
+    vi.useFakeTimers();
+    try {
+      const $ = createFakeJQuery();
+      let load!: () => void;
+      const settings = {
+        oauth: {
+          enabled: false,
+          accessTokenTtlSec: 3600,
+          refreshIdleTtlSec: 2592000,
+          dcrMaxClients: 20,
+        },
+        publicBaseUrl: '',
+      };
+      const fetcher = vi.fn(async (url: string, options?: { method?: string; body?: string }) => {
+        let body: unknown = { canEdit: true, adminAuthEnabled: true, settings, sources: {} };
+        if (url.endsWith('/proposals')) body = { proposals: [] };
+        if (url.endsWith('/oauth/status'))
+          body = {
+            authorization: ['/mcp/oauth/token (other plugin)'],
+            metadata: [],
+            httpNodeRootFallback: true,
+          };
+        if (url.endsWith('/oauth/clients'))
+          body = {
+            clients: [
+              {
+                client_id: 'client-id',
+                client_name: 'Test app',
+                redirect_uris: ['https://app.example/callback'],
+              },
+            ],
+          };
+        if (options?.method === 'PUT') Object.assign(settings, JSON.parse(options.body!));
+        if (options?.method === 'DELETE') body = { revoked: true };
+        return { ok: true, text: async () => JSON.stringify(body) };
+      });
+      runInNewContext(renderEditorSidebarJs(), {
+        window: { setTimeout },
+        URL,
+        setTimeout,
+        clearTimeout,
+        $,
+        fetch: fetcher,
+        localStorage: { getItem: () => null },
+        document: {
+          getElementById: () => null,
+          createElement: () => ({}),
+          head: {
+            appendChild() {
+              return undefined;
+            },
+          },
+        },
+        RED: {
+          settings: {},
+          actions: {
+            add() {
+              return undefined;
+            },
+          },
+          sidebar: {
+            addTab(options: { onchange: () => void }) {
+              load = options.onchange;
+            },
+            show() {
+              return undefined;
+            },
+          },
+        },
+      });
+      load();
+      await vi.advanceTimersByTimeAsync(0);
+      expect($('#ai-access-oauth-route-warning').elements[0]!.textContent).toContain(
+        'httpNodeRoot is disabled'
+      );
+      expect($('#ai-access-oauth-route-warning').elements[0]!.textContent).toContain(
+        '/mcp/oauth/token (other plugin)'
+      );
+      expect(
+        $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[0]!.textContent
+      ).toContain('Test app');
+      expect($('#ai-access-oauth-access-ttl').elements[0]!.props.value).toBe(3600);
+      $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
+      $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
+      await vi.advanceTimersByTimeAsync(400);
+      expect($('#ai-access-dialog-message').elements[0]!.textContent).toContain('No Public URL');
+      $('#ai-access-dialog-cancel').elements[0]!.handlers.click![0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetcher.mock.calls.some(call => call[1]?.method === 'PUT')).toBe(false);
+      expect($('#ai-access-oauth-enabled').elements[0]!.props.checked).toBe(false);
+      $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
+      $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
+      await vi.advanceTimersByTimeAsync(400);
+      $('#ai-access-dialog-allow').elements[0]!.handlers.click![0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      const put = fetcher.mock.calls.find(call => call[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body!)).toMatchObject({
+        oauth: { enabled: true, dcrMaxClients: 20 },
+      });
+      const button = $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[1]!;
+      button.handlers.click![0]!();
+      $('#ai-access-dialog-allow').elements[0]!.handlers.click![0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        fetcher.mock.calls.some(
+          call => call[0].endsWith('/oauth/clients/client-id') && call[1]?.method === 'DELETE'
+        )
+      ).toBe(true);
+      settings.oauth.enabled = false;
+      settings.publicBaseUrl = 'http://node.example';
+      load();
+      await vi.advanceTimersByTimeAsync(0);
+      $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
+      $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
+      await vi.advanceTimersByTimeAsync(400);
+      expect($('#ai-access-dialog-message').elements[0]!.textContent).toContain(
+        'does not use HTTPS'
+      );
+      $('#ai-access-dialog-cancel').elements[0]!.handlers.click![0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      settings.publicBaseUrl = 'http://localhost:1880';
+      load();
+      await vi.advanceTimersByTimeAsync(0);
+      const putCount = fetcher.mock.calls.filter(call => call[1]?.method === 'PUT').length;
+      $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
+      $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(fetcher.mock.calls.filter(call => call[1]?.method === 'PUT')).toHaveLength(
+        putCount + 1
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

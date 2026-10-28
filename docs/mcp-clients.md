@@ -1,5 +1,18 @@
 # MCP client setup
 
+## OAuth (for clients with OAuth discovery)
+
+Enable MCP OAuth in the AI Access editor sidebar and set a public HTTPS origin
+in **Public URL**. Give the client the MCP endpoint
+`https://YOUR-NODE-RED/mcp/rpc`. It can discover the authorization server from
+the protected resource metadata, register itself, and request `read` or
+`propose` scope. Sign in to Node-RED and approve the client on the consent page.
+The sidebar lists registered clients and lets an admin revoke them and their
+tokens. Localhost HTTP is supported for development. If `httpNodeRoot` is
+disabled, see the sidebar warning for the metadata fallback path.
+
+## Access-link bearer tokens
+
 Use an **mcp** access-link token from `/mcp` → Access links (kind = MCP token).
 Endpoint: `POST https://YOUR-NODE-RED/mcp/rpc` with
 `Authorization: Bearer <mcp-token>`.

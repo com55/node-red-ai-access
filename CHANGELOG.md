@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- MCP OAuth 2.1 authorization server and protected resource support with PKCE
+  S256, dynamic client registration, resource-bound tokens, rotating refresh
+  tokens, and `read`/`propose` scopes. Existing access-link tokens still work.
+- Sidebar controls for OAuth lifetimes and client limits, registered-client
+  revocation, route-collision and metadata-fallback warnings, and a Public URL
+  warning when enabling OAuth.
+
 ## [0.1.1] - 2026-10-17
 
 ### Added
