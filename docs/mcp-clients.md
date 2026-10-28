@@ -24,9 +24,9 @@ Notes:
   `propose` requires full (`*`) permission.
 - Clients that register but are never approved are removed after one hour and do
   not count toward the client limit.
-- Refresh tokens are sliding: each refresh renews the idle lifetime with no
-  absolute cap by default. An optional maximum lifetime can be set in the
-  sidebar (0 = unlimited).
+- Refresh tokens are sliding: each refresh renews the idle lifetime. A token
+  chain also has a maximum lifetime of 90 days from approval by default; after
+  that the client must sign in again. Change it in the sidebar (0 = unlimited).
 
 ## Access-link bearer tokens
 

@@ -54,7 +54,7 @@ export interface AiAccessSettings {
     enabled?: boolean;
     accessTokenTtlSec?: number;
     refreshIdleTtlSec?: number;
-    /** Optional absolute refresh-family lifetime in seconds; 0 (default) = unlimited. */
+    /** Absolute refresh-family lifetime in seconds; default 7776000 (90 days), 0 = unlimited. */
     refreshMaxLifetimeSec?: number;
     dcrMaxClients?: number;
   };

@@ -150,4 +150,10 @@ describe('SettingsStore', () => {
     expect(store.getEffective().rateLimitMaxPerIp).toBe(600);
     expect(store.getEffective().rateLimitMaxPerToken).toBe(1);
   });
+  it('defaults the OAuth refresh max lifetime to 90 days and accepts 0 as unlimited', () => {
+    expect(mergeAiAccessSettings({}, {}).oauth.refreshMaxLifetimeSec).toBe(7_776_000);
+    expect(
+      mergeAiAccessSettings({}, { oauth: { refreshMaxLifetimeSec: 0 } }).oauth.refreshMaxLifetimeSec
+    ).toBe(0);
+  });
 });

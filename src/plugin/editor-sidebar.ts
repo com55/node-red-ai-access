@@ -393,7 +393,7 @@ function editorSidebarScriptPartA(): string {
       $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled);
       setDuration('access-ttl', oauth.accessTokenTtlSec || 3600, OAUTH_ACCESS_UNITS);
       setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
-      $('#ai-access-oauth-refresh-max').val(Math.round((oauth.refreshMaxLifetimeSec || 0) / 86400));
+      $('#ai-access-oauth-refresh-max').val(Math.round((typeof oauth.refreshMaxLifetimeSec === 'number' ? oauth.refreshMaxLifetimeSec : 7776000) / 86400));
       $('#ai-access-oauth-refresh-max-unit').val('days');
       $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
       var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
@@ -757,7 +757,7 @@ function editorSidebarScriptPartB(): string {
       [
         ['access-ttl', 'Access token lifetime', OAUTH_ACCESS_UNITS],
         ['refresh-ttl', 'Refresh token idle lifetime', OAUTH_REFRESH_UNITS],
-        ['refresh-max', 'Refresh token max lifetime (0 = unlimited, default)', OAUTH_MAX_UNITS],
+        ['refresh-max', 'Refresh token max lifetime (default 90 days, 0 = unlimited)', OAUTH_MAX_UNITS],
         ['dcr-cap', 'Maximum registered OAuth clients', null]
       ].forEach(function (field) {
         var id = 'ai-access-oauth-' + field[0];

@@ -78,7 +78,7 @@ const DEFAULT_OAUTH = {
   enabled: false,
   accessTokenTtlSec: 3600,
   refreshIdleTtlSec: 2_592_000,
-  refreshMaxLifetimeSec: 0,
+  refreshMaxLifetimeSec: 7_776_000,
   dcrMaxClients: 20,
 };
 
