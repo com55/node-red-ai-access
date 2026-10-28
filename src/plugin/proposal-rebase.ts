@@ -11,7 +11,7 @@
  *   edit is kept.
  * - Node deleted live and untouched by P → accept the deletion.
  * - Node deleted live but changed in P, or deleted in P but changed live → conflict.
- * - New node id in P that also exists live (any tab) with different content → conflict.
+ * - New node id in P that also exists live (any tab) → conflict.
  * - Tab deleted live → conflict.
  * - A merged node wiring to (or grouped under) a node that no longer exists → conflict.
  * - A `[REDACTED]` placeholder must never reach the deployed tab → conflict.
@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 import type { FlowNode, FlowTab } from '../runtime/types.js';
 
 import { REDACTED_PLACEHOLDER } from './secret-patterns.js';
+import { secretValuesChanged } from './secret-redaction.js';
 
 export type RebaseState = 'clean' | 'merged' | 'conflict';
 
@@ -71,6 +72,7 @@ export interface RebaseResult {
 
 const TAB_FIELDS = ['label', 'disabled', 'info', 'env'] as const;
 const POSITION_FIELDS = new Set(['x', 'y']);
+const EMPTY_TAB_PROPS = { label: '', disabled: false, info: '', env: [] };
 /** Keys never compared (set by the deploy path / runtime). */
 const IGNORED_FIELDS = new Set(['z']);
 const MAX_CONFLICTS = 200;
@@ -182,7 +184,10 @@ export function nestedLiveTab(
       ? true
       : hintNodes.has(node.id)
         ? false
-        : node.x === undefined && node.y === undefined && node.wires === undefined;
+        : node.type !== 'group' &&
+          node.x === undefined &&
+          node.y === undefined &&
+          node.wires === undefined;
     (isConfig ? configs : nodes).push(node);
   }
   const out: FlowTab = { id: flowId, type: live.tab.type, ...tabProps(live.tab), nodes };
@@ -190,14 +195,14 @@ export function nestedLiveTab(
   return out;
 }
 
-function containsPlaceholder(value: unknown, depth = 0): boolean {
-  if (depth > 40) return false;
-  if (typeof value === 'string') return value.includes(REDACTED_PLACEHOLDER);
-  if (Array.isArray(value)) return value.some(v => containsPlaceholder(v, depth + 1));
-  if (value && typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).some(v =>
-      containsPlaceholder(v, depth + 1)
-    );
+function containsPlaceholder(value: unknown): boolean {
+  const pending = [value];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (typeof next === 'string' && next.includes(REDACTED_PLACEHOLDER)) return true;
+    if (next && typeof next === 'object') {
+      for (const child of Object.values(next)) pending.push(child);
+    }
   }
   return false;
 }
@@ -234,11 +239,10 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
     return { state: 'conflict', rev: liveRev, conflicts, liveChangedIds: [flowId] };
   }
 
-  const base = input.base;
+  const base =
+    input.base ??
+    (input.baseRev === liveRev ? nestedLiveTab(liveFlows, flowId, proposed) : undefined);
   if (base === undefined) {
-    if (input.baseRev !== undefined && input.baseRev === liveRev) {
-      return finish(proposed, proposed, liveRev, [], []);
-    }
     push({
       kind: 'base_unavailable',
       nodeId: flowId,
@@ -268,7 +272,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
     liveChangedIds.push(flowId);
     if (tabProp.length === 0) {
       mergedTabProps = cTab;
-    } else if (stableStringify(cTab) !== stableStringify(pTab)) {
+    } else {
       push({
         kind: 'tab_changed_both',
         nodeId: flowId,
@@ -276,6 +280,15 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
         message: 'Both the editor and the proposal changed the flow tab settings.',
         choices: ['live', 'proposed'],
       });
+    }
+  }
+
+  // updateFlow preserves omitted settings, so express a requested removal
+  // with the corresponding empty Node-RED value.
+  mergedTabProps = { ...mergedTabProps };
+  for (const key of TAB_FIELDS) {
+    if (cTab[key] !== undefined && mergedTabProps[key] === undefined) {
+      mergedTabProps[key] = key === 'env' ? [] : EMPTY_TAB_PROPS[key];
     }
   }
 
@@ -296,13 +309,20 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
     if (b && (!c || dC.length > 0)) liveChangedIds.push(id);
     else if (!b && c) liveChangedIds.push(id);
 
-    if (b && c && p) {
+    if (p && b && otherTabIds.has(id)) {
+      push({
+        kind: 'id_collision',
+        nodeId: id,
+        ...nodeLabel(p.node),
+        message: 'This node id now exists outside this flow tab.',
+        choices: ['live'],
+      });
+    } else if (b && c && p) {
       if (dP.length === 0) resolved.set(id, c);
       else if (dC.length === 0) resolved.set(id, p);
-      else if (stableStringify(withoutZ(c.node)) === stableStringify(withoutZ(p.node)))
-        resolved.set(id, c);
       else if (positionOnly(dC)) resolved.set(id, { ...p, node: withPosition(p.node, c.node) });
-      else if (positionOnly(dP)) resolved.set(id, { ...c, node: withPosition(c.node, p.node) });
+      else if (positionOnly(dP) && !secretValuesChanged(b.node, c.node))
+        resolved.set(id, { ...c, node: withPosition(c.node, p.node) });
       else {
         push({
           kind: 'node_changed_both',
@@ -315,7 +335,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
       }
     } else if (b && c && !p) {
       // Proposal deletes it.
-      if (dC.length === 0 || positionOnly(dC)) resolved.set(id, null);
+      if (dC.length === 0) resolved.set(id, null);
       else
         push({
           kind: 'node_deleted_in_proposal_modified_live',
@@ -340,21 +360,18 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
     } else if (b && !c && !p) {
       resolved.set(id, null);
     } else if (!b && c && p) {
-      if (stableStringify(withoutZ(c.node)) === stableStringify(withoutZ(p.node)))
-        resolved.set(id, c);
-      else
-        push({
-          kind: 'id_collision',
-          nodeId: id,
-          ...nodeLabel(p.node),
-          fields: changedFields(c.node, p.node),
-          message: 'The proposal adds a node whose id was also added in the editor.',
-          choices: ['live', 'proposed'],
-        });
+      push({
+        kind: 'id_collision',
+        nodeId: id,
+        ...nodeLabel(p.node),
+        fields: changedFields(c.node, p.node),
+        message: 'The proposal adds a node whose id was also added in the editor.',
+        choices: ['live', 'proposed'],
+      });
     } else if (!b && c && !p) {
       resolved.set(id, c);
     } else if (!b && !c && p) {
-      const elsewhere = otherTabIds.get(id);
+      const elsewhere = otherTabIds.get(id) ?? (id === flowId ? live.tab : undefined);
       if (elsewhere) {
         push({
           kind: 'id_collision',
@@ -391,7 +408,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
 
   const merged: FlowTab = {
     id: flowId,
-    type: typeof proposed.type === 'string' ? proposed.type : live.tab.type,
+    type: live.tab.type,
     ...mergedTabProps,
     nodes,
   };
@@ -399,7 +416,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
 
   // --- Post-merge safety checks -----------------------------------------
   const mergedIds = new Set([...nodes, ...configs].map(n => n.id));
-  const allLive = new Set(liveFlows.map(n => n.id));
+  const allLive = new Set(liveFlows.filter(n => n.id !== flowId && n.z !== flowId).map(n => n.id));
   for (const node of [...nodes, ...configs]) {
     const missing: string[] = [];
     if (Array.isArray(node.wires)) {
@@ -410,16 +427,20 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
         }
       }
     }
-    if (typeof node.g === 'string' && !mergedIds.has(node.g)) missing.push(node.g);
+    if (typeof node.g === 'string' && node.g.length > 0 && !mergedIds.has(node.g))
+      missing.push(node.g);
+    if (node.type === 'group' && Array.isArray(node.nodes)) {
+      for (const member of node.nodes) {
+        if (typeof member === 'string' && !mergedIds.has(member)) missing.push(member);
+      }
+    }
     if (Array.isArray(node.links)) {
       for (const target of node.links as unknown[]) {
         if (typeof target === 'string' && !mergedIds.has(target) && !allLive.has(target))
           missing.push(target);
       }
     }
-    // Only refs the merge broke: targets that existed in the base or the
-    // proposal but are gone now (pre-existing dangling refs are left alone).
-    const broken = [...new Set(missing)].filter(m => B.has(m) || P.has(m)).sort();
+    const broken = [...new Set(missing)].sort();
     if (broken.length > 0) {
       push({
         kind: 'dangling_reference',
@@ -438,6 +459,29 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
         ...nodeLabel(node),
         message:
           'A [REDACTED] placeholder would be deployed over a real value. Ask the AI to resubmit.',
+        choices: [],
+      });
+    }
+  }
+  // Subflow ports are preserved by updateFlow even though they are outside
+  // the editable tab settings. Deleting their targets must still be blocked.
+  if (live.tab.type === 'subflow') {
+    const broken = new Set<string>();
+    for (const ports of [live.tab.in, live.tab.out]) {
+      if (!Array.isArray(ports)) continue;
+      for (const port of ports as { wires?: { id?: unknown }[] }[]) {
+        if (!Array.isArray(port?.wires)) continue;
+        for (const target of port.wires) {
+          if (typeof target?.id === 'string' && !mergedIds.has(target.id)) broken.add(target.id);
+        }
+      }
+    }
+    if (broken.size > 0) {
+      push({
+        kind: 'dangling_reference',
+        nodeId: flowId,
+        fields: [...broken].sort(),
+        message: 'A subflow port points to a node that would no longer exist.',
         choices: [],
       });
     }
@@ -481,7 +525,7 @@ function normalizeForHash(tab: Partial<FlowTab>): Record<string, unknown> {
   const all = [...asNodes(tab.nodes), ...asNodes(tab.configs)]
     .map(withoutZ)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { ...tabProps(tab), nodes: all };
+  return { ...EMPTY_TAB_PROPS, ...tabProps(tab), nodes: all };
 }
 
 function withoutZ(node: FlowNode): FlowNode {

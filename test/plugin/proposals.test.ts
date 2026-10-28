@@ -465,8 +465,8 @@ describe('proposals / flows / logs HTTP API', () => {
 
   it('GET /proposals/:id/diff compares against the stored base snapshot', async () => {
     const baseNodes = [
-      { id: 'n1', type: 'inject', name: 'tick' },
-      { id: 'n2', type: 'function', name: 'fn', func: 'return msg;' },
+      { id: 'n1', type: 'inject', name: 'tick', x: 100, y: 100 },
+      { id: 'n2', type: 'function', name: 'fn', func: 'return msg;', x: 200, y: 100 },
     ];
     let liveNodes = [...baseNodes];
     let liveRev = 'rev-1';

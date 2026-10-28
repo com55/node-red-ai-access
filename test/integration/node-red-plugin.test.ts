@@ -34,7 +34,7 @@ interface NodeRedEmbed {
   log?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
 
-describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () => {
+describe('Node-RED 4/5 in-process plugin integration', { timeout: 30_000 }, () => {
   let userDir: string;
   let server: Server;
   let RED: NodeRedEmbed;
@@ -84,6 +84,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
       },
       aiAccess: {
         defaultDeploymentType: 'nodes',
+        maxActiveLinks: 20,
       },
       disableEditor: false,
       SKIP_BUILD_CHECK: true,
@@ -176,7 +177,7 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
       },
     };
 
-    linkStore = new AccessLinkStore({ maxActiveLinks: 10 });
+    linkStore = new AccessLinkStore({ maxActiveLinks: 20 });
     registerRoutes(pluginRED, { linkStore });
 
     const tokenRes = await request(RED.httpAdmin).post('/auth/token').type('form').send({
@@ -597,64 +598,163 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     }
   );
 
-  it('an unrelated tab change keeps a stale proposal pending and approve succeeds', async () => {
-    const link = linkStore.create({ kind: 'rest', label: 'stale-approve' });
-    const snap = await request(RED.httpAdmin)
-      .get('/mcp/api/v1/flows/tab1')
-      .set('Authorization', `Bearer ${link.token}`);
-    expect(snap.status).toBe(200);
-    const candidate = await request(RED.httpAdmin)
-      .post('/mcp/api/v1/proposals')
-      .set('Authorization', `Bearer ${link.token}`)
-      .send({
-        type: 'replace_flow',
-        expectedRev: snap.body.rev,
-        payload: {
-          flowId: 'tab1',
-          flow: { ...snap.body.flow, label: 'Approved after unrelated edit' },
-        },
-      });
-    expect(candidate.status).toBe(201);
-
-    // Use the editor API to add another tab, moving the global revision.
-    const live = await request(RED.httpAdmin)
+  async function editorSnapshot() {
+    const result = await request(RED.httpAdmin)
       .get('/flows')
       .set('Node-RED-API-Version', 'v2')
       .set('Authorization', `Bearer ${adminToken}`);
-    expect(live.status).toBe(200);
-    const deployed = await request(RED.httpAdmin)
+    expect(result.status).toBe(200);
+    return result.body as { rev: string; flows: Record<string, unknown>[] };
+  }
+
+  async function editorDeploy(snapshot: { rev: string; flows: Record<string, unknown>[] }) {
+    const result = await request(RED.httpAdmin)
       .post('/flows')
       .set('Node-RED-API-Version', 'v2')
       .set('Node-RED-Deployment-Type', 'nodes')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        rev: live.body.rev,
-        flows: [...live.body.flows, { id: 'unrelated-tab', type: 'tab', label: 'Unrelated' }],
+      .send(snapshot);
+    expect(result.status).toBe(200);
+    return result.body as { rev: string };
+  }
+
+  it('keeps Flow 3 and Flow 4 proposals pending after creating Flow Test MCP AI Access, then approves both', async () => {
+    const link = linkStore.create({ kind: 'rest', label: 'owner-exact-case' });
+    const auth = { Authorization: `Bearer ${link.token}` };
+    const initial = await editorSnapshot();
+    await editorDeploy({
+      rev: initial.rev,
+      flows: [
+        ...initial.flows,
+        ...[3, 4].flatMap(i => [
+          { id: `flow-${i}`, type: 'tab', label: `Flow ${i}` },
+          {
+            id: `node-${i}`,
+            type: 'function',
+            z: `flow-${i}`,
+            name: `original ${i}`,
+            func: 'return msg;',
+            outputs: 1,
+            x: 100,
+            y: 100,
+            wires: [[]],
+          },
+        ]),
+      ],
+    });
+    const candidates: { id: string; flowId: string; nodeId: string; name: string }[] = [];
+    for (const i of [3, 4]) {
+      const snap = await request(RED.httpAdmin).get(`/mcp/api/v1/flows/flow-${i}`).set(auth);
+      expect(snap.status).toBe(200);
+      const name = `AI change ${i}`;
+      const submitted = await request(RED.httpAdmin)
+        .post('/mcp/api/v1/proposals')
+        .set(auth)
+        .send({
+          type: 'replace_flow',
+          expectedRev: snap.body.rev,
+          payload: {
+            flowId: `flow-${i}`,
+            flow: {
+              ...snap.body.flow,
+              nodes: snap.body.flow.nodes.map((n: { id: string }) =>
+                n.id === `node-${i}` ? { ...n, name } : n
+              ),
+            },
+          },
+        });
+      expect(submitted.status).toBe(201);
+      expect(submitted.body.status).toBe('pending');
+      candidates.push({ id: submitted.body.id, flowId: `flow-${i}`, nodeId: `node-${i}`, name });
+    }
+    const beforeNewTab = await editorSnapshot();
+    const newTab = {
+      id: 'flow-test-mcp-ai-access',
+      type: 'tab',
+      label: 'Flow Test MCP AI Access',
+      info: 'Keep this editor tab intact',
+      env: [{ name: 'MODE', value: 'test', type: 'str' }],
+    };
+    const moved = await editorDeploy({
+      rev: beforeNewTab.rev,
+      flows: [...beforeNewTab.flows, newTab],
+    });
+    expect(moved.rev).not.toBe(beforeNewTab.rev);
+    const listed = await request(RED.httpAdmin).get('/mcp/api/v1/proposals').set(auth);
+    expect(listed.status).toBe(200);
+    for (const candidate of candidates) {
+      expect(
+        listed.body.proposals.find((p: { id: string }) => p.id === candidate.id)
+      ).toMatchObject({ status: 'pending', rebase: { state: 'clean', rev: moved.rev } });
+    }
+    for (const candidate of candidates) {
+      const approved = await request(RED.httpAdmin)
+        .post(`/mcp/api/v1/proposals/${candidate.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({});
+      expect(approved.status).toBe(200);
+      expect(approved.body.status).toBe('approved');
+    }
+    const final = await editorSnapshot();
+    expect(final.flows.find(n => n.id === newTab.id)).toEqual(newTab);
+    for (const candidate of candidates) {
+      expect(final.flows.find(n => n.id === candidate.nodeId)).toMatchObject({
+        z: candidate.flowId,
+        name: candidate.name,
       });
-    expect(deployed.status).toBe(200);
+      const decided = await request(RED.httpAdmin)
+        .get(`/mcp/api/v1/proposals/${candidate.id}`)
+        .set(auth);
+      expect(decided.body.status).toBe('approved');
+    }
+  });
 
-    const after = await request(RED.httpAdmin)
-      .get(`/mcp/api/v1/proposals/${candidate.body.id}`)
-      .set('Authorization', `Bearer ${link.token}`);
-    expect(after.status).toBe(200);
-    expect(after.body.status).toBe('pending');
-    expect(after.body.rebase).toMatchObject({ state: 'clean', rev: deployed.body.rev });
-    expect(after.body.expectedRev).not.toBe(deployed.body.rev);
-
-    const approved = await request(RED.httpAdmin)
-      .post(`/mcp/api/v1/proposals/${candidate.body.id}/approve`)
+  it('reports a conflict and blocks approve when the editor edits the same node', async () => {
+    const link = linkStore.create({ kind: 'rest', label: 'same-node-conflict' });
+    const auth = { Authorization: `Bearer ${link.token}` };
+    const snap = await request(RED.httpAdmin).get('/mcp/api/v1/flows/flow-3').set(auth);
+    expect(snap.status).toBe(200);
+    const submitted = await request(RED.httpAdmin)
+      .post('/mcp/api/v1/proposals')
+      .set(auth)
+      .send({
+        type: 'replace_flow',
+        expectedRev: snap.body.rev,
+        payload: {
+          flowId: 'flow-3',
+          nodes: [{ op: 'set', id: 'node-3', set: { name: 'AI pending change' } }],
+        },
+      });
+    expect(submitted.status).toBe(201);
+    const live = await editorSnapshot();
+    await editorDeploy({
+      rev: live.rev,
+      flows: live.flows.map(n => (n.id === 'node-3' ? { ...n, name: 'Editor change wins' } : n)),
+    });
+    const listed = await request(RED.httpAdmin).get('/mcp/api/v1/proposals').set(auth);
+    expect(
+      listed.body.proposals.find((p: { id: string }) => p.id === submitted.body.id)
+    ).toMatchObject({
+      status: 'conflict',
+      rebase: {
+        state: 'conflict',
+        conflicts: [expect.objectContaining({ kind: 'node_changed_both', nodeId: 'node-3' })],
+      },
+    });
+    const blocked = await request(RED.httpAdmin)
+      .post(`/mcp/api/v1/proposals/${submitted.body.id}/approve`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({});
-    expect(approved.status).toBe(200);
-    expect(approved.body.status).toBe('approved');
-    const final = await request(RED.httpAdmin)
-      .get('/mcp/api/v1/flows')
-      .set('Authorization', `Bearer ${link.token}`);
-    expect(final.body.flows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'tab1', label: 'Approved after unrelated edit' }),
-        expect.objectContaining({ id: 'unrelated-tab', label: 'Unrelated' }),
-      ])
-    );
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toMatchObject({
+      code: 'proposal_conflict',
+      conflicts: [expect.objectContaining({ nodeId: 'node-3' })],
+    });
+    const final = await editorSnapshot();
+    expect(final.flows.find(n => n.id === 'node-3')!.name).toBe('Editor change wins');
+    const pending = await request(RED.httpAdmin)
+      .get(`/mcp/api/v1/proposals/${submitted.body.id}`)
+      .set(auth);
+    expect(pending.body.status).toBe('conflict');
   });
 });

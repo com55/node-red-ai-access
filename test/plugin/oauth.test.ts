@@ -27,7 +27,7 @@ const verifier = 'a'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 const adapter: FlowAdapter = {
   kind: 'red',
-  getFlows: async () => ({ rev: 'r1', flows: [] }),
+  getFlows: async () => ({ rev: 'r1', flows: [{ id: 'flow', type: 'tab' }] }),
   getFlow: async () => ({ rev: 'r1', flow: { id: 'flow', type: 'tab', nodes: [] } }),
   updateFlow: async () => ({ rev: 'r2' }),
 };

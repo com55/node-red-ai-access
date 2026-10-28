@@ -35,11 +35,7 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
     getFlows: () =>
       Promise.resolve({
         rev: 'rev-1',
-        flows: [
-          { id: 'tab-1', type: 'tab', label: 'Main' },
-          { id: 'n1', type: 'inject', z: 'tab-1' },
-          { id: 'n2', type: 'debug', z: 'tab-1' },
-        ],
+        flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }, ...structuredClone(live.nodes ?? [])],
       }),
     getFlow: () => Promise.resolve({ rev: 'rev-1', flow: structuredClone(live) }),
     updateFlow: () => Promise.resolve({ rev: 'rev-2' }),

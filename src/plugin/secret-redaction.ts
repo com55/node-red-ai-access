@@ -702,6 +702,47 @@ export function redactFlowData<T>(
   return { value: redactValueInner(value, ctx) as T, count: ctx.count };
 }
 
+/** Named env/header entries keep their identity when the editor reorders them. */
+function normalizeSecretArrays(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const entries = value.map(item => ({
+      item: normalizeSecretArrays(item),
+      key: stableElementKey(item),
+    }));
+    if (
+      entries.every(entry => entry.key !== undefined) &&
+      new Set(entries.map(entry => entry.key)).size === entries.length
+    ) {
+      entries.sort((a, b) => (a.key ?? '').localeCompare(b.key ?? ''));
+    }
+    return entries.map(entry => entry.item);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, normalizeSecretArrays(child)])
+    );
+  }
+  return value;
+}
+
+/** Whether the editor changed any secret value on a node since the base. */
+export function secretValuesChanged(before: FlowNode, after: FlowNode): boolean {
+  const values = (node: FlowNode): Map<string, string[]> => {
+    const secrets = new Map<string, string[]>();
+    redactEntity(normalizeSecretArrays(node) as FlowNode, {
+      matcher: createSecretNameMatcher(currentSecretNamePatterns()),
+      count: 0,
+      secrets,
+    });
+    return secrets;
+  };
+  const a = values(before);
+  const b = values(after);
+  return [...new Set([...a.keys(), ...b.keys()])].some(
+    key => JSON.stringify(a.get(key)) !== JSON.stringify(b.get(key))
+  );
+}
+
 /** Conflict labels can contain the same secrets as node names in flow reads. */
 export function redactConflictLabels<T extends { nodeName?: string }>(
   conflicts: readonly T[],

@@ -187,4 +187,33 @@ describe('RedAdapter', () => {
 
     expect(setFlows).not.toHaveBeenCalled();
   });
+  it('converts a native Node-RED revision race at setFlows into a retryable conflict', async () => {
+    let rev = 'rev-1';
+    const { RED } = createMockRed({
+      getFlows: async () => sampleFlows(rev),
+      setFlows: async () => {
+        rev = 'rev-2';
+        throw Object.assign(new Error(''), { code: 'version_mismatch', status: 409 });
+      },
+    });
+    await expect(
+      new RedAdapter(RED).updateFlow({ flowId: 'tab-1', expectedRev: 'rev-1', flow: { nodes: [] } })
+    ).rejects.toMatchObject({
+      name: 'FlowRevisionConflictError',
+      expectedRev: 'rev-1',
+      currentRev: 'rev-2',
+    });
+  });
+
+  it('preserves unrelated deploy errors instead of retrying them as revision races', async () => {
+    const error = new Error('storage unavailable');
+    const { RED } = createMockRed({
+      setFlows: async () => {
+        throw error;
+      },
+    });
+    await expect(
+      new RedAdapter(RED).updateFlow({ flowId: 'tab-1', expectedRev: 'rev-1', flow: { nodes: [] } })
+    ).rejects.toBe(error);
+  });
 });

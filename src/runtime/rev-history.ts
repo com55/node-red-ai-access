@@ -95,7 +95,11 @@ export function snapshotAdapter(snapshot: FlowsSnapshot, kind: FlowAdapter['kind
       for (const node of flows) {
         if (node.id === flowId || node.z !== flowId) continue;
         // Config nodes carry no position / wires (same split as GET /flow/:id).
-        const isConfig = node.x === undefined && node.y === undefined && node.wires === undefined;
+        const isConfig =
+          node.type !== 'group' &&
+          node.x === undefined &&
+          node.y === undefined &&
+          node.wires === undefined;
         (isConfig ? configs : nodes).push(node);
       }
       const flow: FlowTab = { id: flowId, type: tab.type, nodes };

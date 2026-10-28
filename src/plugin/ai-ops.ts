@@ -799,7 +799,7 @@ async function prepareReplaceFlowSubmission(
   const rawLive = rawFlowAdapter(adapter);
   const head = await rawLive.getFlows();
   // Base = flows at expectedRev: live when current, else the recorded snapshot.
-  let liveAdapter = rawLive;
+  let liveAdapter = snapshotAdapter(head, rawLive.kind);
   if (head.rev !== expectedRev) {
     const known = revHistoryOf(rawLive)?.get(expectedRev);
     if (!known) {
@@ -1005,6 +1005,9 @@ export async function resolveMyProposal(
     proposalId: id,
     flowId: proposal.payload.flowId,
     expectedRev: prepared.safeExpectedRev,
+    ...(prepared.restoration.restored > 0
+      ? { restoredRedactions: prepared.restoration.restored }
+      : {}),
     title: presented.title,
     displayName: presented.displayName,
     ...(proposal.rebase ? { rebaseState: proposal.rebase.state } : {}),
@@ -1031,11 +1034,11 @@ export async function resolveConflictChoice(
   if (typeof nodeId !== 'string' || nodeId.length === 0 || nodeId.length > 200) {
     throw new AiOpsValidationError('nodeId is required', 'missing_node_id');
   }
+  const live = await rawFlowAdapter(adapter).getFlows();
   const proposal = store.get(id);
   if (!isOpenProposalStatus(proposal.status)) {
     throw new ProposalNotPendingError(id, proposal.status);
   }
-  const live = await rawFlowAdapter(adapter).getFlows();
   // Re-check first so the choice applies to the conflicts as they are now.
   const checked = syncOneProposal(store, proposal, live).proposal;
   const conflict = checked.rebase?.conflicts.find(c => c.nodeId === nodeId);

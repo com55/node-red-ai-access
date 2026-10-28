@@ -83,7 +83,8 @@ function createApp(options: {
 
   const adapter: FlowAdapter = {
     kind: 'red',
-    getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+    getFlows: () =>
+      Promise.resolve({ rev: 'rev-1', flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }] }),
     getFlow: () =>
       Promise.resolve({
         rev: 'rev-1',

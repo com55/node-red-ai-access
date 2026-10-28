@@ -91,10 +91,14 @@ export function rebaseInfoFrom(result: RebaseResult, at = nowProvider()): Propos
 export function syncOneProposal(
   store: ProposalStore,
   proposal: Proposal,
-  live: FlowsSnapshot
+  live: FlowsSnapshot,
+  options: { duringApprove?: boolean } = {}
 ): { proposal: Proposal; result: RebaseResult } {
   const result = rebaseProposal(proposal, live);
-  const updated = store.recordRebase(proposal.id, rebaseInfoFrom(result));
+  const updated =
+    store.isApproving(proposal.id) && !options.duringApprove
+      ? store.get(proposal.id)
+      : store.recordRebase(proposal.id, rebaseInfoFrom(result));
   return { proposal: updated, result };
 }
 

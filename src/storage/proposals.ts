@@ -553,6 +553,7 @@ export class ProposalStore {
   }
 
   markRejected(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
+    if (this.inFlight.has(id)) throw new ProposalConcurrentApproveError(id);
     const proposal = this.get(id);
     proposal.status = 'rejected';
     if (decidedBy) {
@@ -577,6 +578,7 @@ export class ProposalStore {
   }
 
   markWithdrawn(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
+    if (this.inFlight.has(id)) throw new ProposalConcurrentApproveError(id);
     const proposal = this.get(id);
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);

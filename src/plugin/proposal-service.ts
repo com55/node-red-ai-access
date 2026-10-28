@@ -126,7 +126,7 @@ export class ProposalService {
         // Re-check atomically against the live flows right before deploying.
         const live = await raw.getFlows();
         const current = this.proposals.get(id);
-        const { result } = syncOneProposal(this.proposals, current, live);
+        const { result } = syncOneProposal(this.proposals, current, live, { duringApprove: true });
         if (result.state === 'conflict' || !result.merged || !result.mergedHash) {
           this.audit.append('proposal.conflict', decidedBy, {
             ...meta,

@@ -415,9 +415,23 @@ describe('proposal auto-rebase wiring', () => {
       services.proposalStore,
       services.auditLog,
       link,
-      { type: 'replace_flow', expectedRev: 'r1', payload: { flowId: 'tab1', flow: base } },
+      {
+        type: 'replace_flow',
+        expectedRev: 'r1',
+        payload: {
+          flowId: 'tab1',
+          flow: {
+            ...structuredClone(base),
+            nodes: base.nodes!.map(n => (n.id === 'n1' ? { ...n, func: 'proposal' } : n)),
+          },
+        },
+      },
       services.flowAdapter
     );
+    head.rev = 'r2';
+    head.flows.find(n => n.id === 'n1')!.func = 'editor';
+    await syncOpenProposals(services.proposalStore, services.flowAdapter);
+    expect(services.proposalStore.get(p.id).status).toBe('conflict');
     const server = createAiMcpServer(RED, services, req({}, '', link));
     const client = new Client({ name: 'rebase-test', version: '1' });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -430,7 +444,7 @@ describe('proposal auto-rebase wiring', () => {
         name: 'resolve_proposal_conflict',
         arguments: {
           id: p.id,
-          expectedRev: 'r1',
+          expectedRev: 'r2',
           payload: {
             flowId: 'tab1',
             nodes: [{ op: 'set', id: 'n1', set: { func: 'MCP resolution' } }],
