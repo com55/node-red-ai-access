@@ -109,9 +109,7 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     );
     this.db.clients = this.db.clients.filter(c => active.has(c.client_id));
     this.db.codes = this.db.codes.filter(c => c.expires > now && active.has(c.clientId));
-    this.db.tokens = this.db.tokens.filter(
-      t => active.has(t.clientId) && (t.expires > now || t.rotated)
-    );
+    this.db.tokens = this.db.tokens.filter(t => active.has(t.clientId) && t.expires > now);
     this.save();
   }
   getClient(id: string): OAuthClientInformationFull | undefined {

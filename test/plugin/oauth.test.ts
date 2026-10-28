@@ -296,6 +296,38 @@ describe('MCP OAuth backend', () => {
     expect(rotated.body.expires_in).toBe(30);
   });
 
+  it('prunes rotated refresh tokens once they expire', async () => {
+    const { admin } = appFor(userDir, { refreshTtl: 120 });
+    const id = (await register(admin)).body.client_id as string;
+    const base = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    clock.mockReturnValue(base);
+    const code = (await authorize(admin, id)).code!;
+    const issued = (await exchange(admin, id, code)).body;
+    clock.mockReturnValue(base + 60_000);
+    const rotated = await request(admin).post('/mcp/oauth/token').type('form').send({
+      grant_type: 'refresh_token',
+      client_id: id,
+      refresh_token: issued.refresh_token,
+      resource,
+    });
+    expect(rotated.status).toBe(200);
+    clock.mockReturnValue(base + 121_000);
+    await request(admin).post('/mcp/oauth/token').type('form').send({
+      grant_type: 'refresh_token',
+      client_id: id,
+      refresh_token: 'unknown',
+      resource,
+    });
+    const tokens = (
+      JSON.parse(readFileSync(join(userDir, '.ai-access', 'oauth.json'), 'utf8')) as {
+        tokens: { rotated: boolean; expires: number }[];
+      }
+    ).tokens;
+    expect(tokens.filter(t => t.rotated)).toHaveLength(0);
+    expect(tokens.every(t => t.expires > base + 121_000)).toBe(true);
+  });
+
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {
     const { admin, linkStore } = appFor(userDir);
     const link = linkStore.create({ kind: 'mcp', label: 'legacy' });
