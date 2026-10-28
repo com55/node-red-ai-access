@@ -858,22 +858,21 @@ function pageClientScriptPartATabs(): string {
       '<p id="link-ttl-warn" class="ttl-long-warn" hidden role="alert">' +
       'Long-lived tokens stay usable longer if they leak. Prefer the shortest expiry that works.' +
       '</p></form>' +
-      '<div id="token-once" class="token-once" hidden>' +
-      '<p id="token-kind-label" class="token-kind-label" hidden></p>' +
-      '<p id="token-docs-hint" class="muted"></p>' +
-      '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy GET link for AI chat</button>' +
-      '<div id="mcp-setup-panel" class="mcp-setup-panel" hidden>' +
-      '<p class="muted mcp-setup-fallback">If your AI app cannot add MCP servers, create a REST or GET link instead.</p>' +
-      '<div class="mcp-setup-tabs" role="tablist" aria-label="MCP client setup" id="mcp-setup-tabs"></div>' +
-      '<div id="mcp-setup-body" class="mcp-setup-body"></div>' +
+      '<div id="token-usage" class="token-usage" aria-live="polite">' +
+      '<p id="token-usage-title" class="token-kind-label"></p>' +
+      '<p id="token-usage-hint" class="muted"></p>' +
+      '<div id="token-usage-mcp" class="mcp-setup-panel" hidden>' +
+      '<div class="mcp-setup-tabs" role="tablist" aria-label="MCP client setup (example)" id="token-usage-tabs"></div>' +
+      '<div id="token-usage-body" class="mcp-setup-body"></div>' +
       '</div>' +
-      '<details class="advanced-block" id="token-dev-details">' +
-      '<summary>For developers</summary>' +
-      '<p id="token-dev-blurb" class="muted">Details reusable while this token is active — also available via Copy in the table.</p>' +
-      '<code id="token-value"></code>' +
-      '<pre id="token-copy-block" class="token-copy-block"></pre>' +
-      '</details></div>';
+      '<pre id="token-usage-block" class="token-copy-block"></pre>' +
+      '<p class="muted token-usage-note">Replace &lt;YOUR_TOKEN&gt; with the token shown once after you create it. ' +
+      'Tokens cannot be viewed again later — revoke and create a new one instead.</p>' +
+      '</div>';
     wireTtlControls();
+    var kindSel = $('link-kind');
+    if (kindSel) kindSel.addEventListener('change', renderTokenUsage);
+    renderTokenUsage();
     var createForm = $('create-link-form');
     if (createForm) {
       createForm.addEventListener('submit', onCreateLink);
@@ -912,12 +911,6 @@ function pageClientScriptPartA2(): string {
         '</tr></thead><tbody>' +
         links.map(function (l) {
           var kind = normalizeLinkKind(l.kind);
-          var material = linkCopyMaterial(kind, l.token || '', l.url || '');
-          var hasCopy = !!(material && material.primary);
-          var copyDisabled = hasCopy ? '' : ' disabled title="Copy unavailable — create a new token"';
-          var copyLabel = kind === 'get_link'
-            ? 'Copy GET link'
-            : (kind === 'rest' ? 'Copy REST prompt' : 'Copy MCP Bearer');
           return '<tr data-id="' + esc(l.id) + '" data-kind="' + esc(kind) + '">' +
             '<td>' + timeCell(l.createdAt) + '</td>' +
             '<td>' + kindBadgeHtml(kind) + '</td>' +
@@ -925,37 +918,9 @@ function pageClientScriptPartA2(): string {
             '<td>' + esc(l.label || '—') + '</td>' +
             '<td>' + timeCell(l.expiresAt) + '</td>' +
             '<td class="row-actions">' +
-            '<button type="button" class="action secondary copy-link" data-id="' + esc(l.id) + '"' +
-            ' data-kind="' + esc(kind) + '"' +
-            ' data-token="' + esc(l.token || '') + '"' +
-            ' data-url="' + esc(l.url || '') + '"' +
-            ' data-label="' + esc(copyLabel) + '"' +
-            copyDisabled + '>' + esc(copyLabel) + '</button> ' +
             '<button type="button" class="action danger revoke-link" data-id="' + esc(l.id) + '">Revoke</button>' +
             '</td></tr>';
         }).join('') + '</tbody></table>';
-      list.querySelectorAll('.copy-link').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var kind = normalizeLinkKind(btn.getAttribute('data-kind'));
-          var material = linkCopyMaterial(
-            kind,
-            btn.getAttribute('data-token') || '',
-            btn.getAttribute('data-url') || ''
-          );
-          var text = material.primary || '';
-          if (!text) {
-            showFlash(flash, 'Clipboard unavailable — create a new token to copy.', false);
-            return;
-          }
-          var okMsg = material.copiedOk || 'Copied.';
-          copyTextToClipboard(text).then(function () {
-            markCopied(btn, flash, okMsg);
-            showToast(okMsg, true);
-          }).catch(function () {
-            showFlash(flash, 'Clipboard unavailable — create a new token and copy from the flash block.', false);
-          });
-        });
-      });
       list.querySelectorAll('.revoke-link').forEach(function (btn) {
         btn.addEventListener('click', function () { revokeLink(btn.getAttribute('data-id')); });
       });
@@ -980,8 +945,6 @@ function pageClientScriptPartA2(): string {
       await api('/links/' + encodeURIComponent(id), { method: 'DELETE' });
       showFlash(flash, 'Link revoked.', true);
       showToast('Link revoked.', true);
-      var once = $('token-once');
-      if (once) once.hidden = true;
       loadLinks();
       loadLogs();
     } catch (e) {
@@ -1135,7 +1098,7 @@ function pageClientScriptPartB(): string {
       label: 'GET link (chat paste)',
       buttonLabel: 'Copy GET link for AI chat',
       primary: getLink,
-      hint: 'Paste this GET link in your AI chat. It is get_link only — REST and MCP need separate tokens from this page. While active you can copy it again from the table.',
+      hint: 'Paste this GET link in your AI chat. It is get_link only — REST and MCP need separate tokens from this page. It is shown only once.',
       flashOk: 'GET link created.',
       copiedOk: 'Copied GET link for AI chat.',
       block: [
@@ -1182,8 +1145,7 @@ function pageClientScriptPartB(): string {
       var created = await api('/links', { method: 'POST', body: JSON.stringify(payload) });
       var createdKind = normalizeLinkKind(created.kind || kind);
       var material = linkCopyMaterial(createdKind, created.token || '', created.url || '');
-      var box = $('token-once');
-      box.hidden = false;
+      var modal = openTokenModal(material.label);
       // Each new token starts with "For developers" collapsed.
       var devDetails = $('token-dev-details');
       if (devDetails) devDetails.open = false;
@@ -1205,11 +1167,11 @@ function pageClientScriptPartB(): string {
       var devBlurb = $('token-dev-blurb');
       if (devBlurb) {
         if (createdKind === 'rest') {
-          devBlurb.textContent = 'REST prompt + Bearer (reusable while active — also via Copy REST prompt in the table).';
+          devBlurb.textContent = 'REST prompt + Bearer token.';
         } else if (createdKind === 'mcp') {
-          devBlurb.textContent = 'MCP Bearer for /mcp/rpc (reusable while active — also via Copy MCP Bearer in the table).';
+          devBlurb.textContent = 'MCP Bearer for /mcp/rpc.';
         } else {
-          devBlurb.textContent = 'GET link details (reusable while active — also via Copy GET link in the table).';
+          devBlurb.textContent = 'GET link details.';
         }
       }
       var copyBtn = $('token-copy-btn');
@@ -1249,6 +1211,7 @@ function pageClientScriptPartB(): string {
         }
       }
       if (labelInput) labelInput.value = '';
+      showInPageDialog(modal);
       showFlash(flash, material.flashOk, true);
       showToast(material.flashOk, true);
       loadLinks();
@@ -1259,9 +1222,116 @@ function pageClientScriptPartB(): string {
     }
   }
 
-  function renderMcpSetupPanel(snippets, flash) {
-    var tabsHost = $('mcp-setup-tabs');
-    var body = $('mcp-setup-body');
+  var TOKEN_PLACEHOLDER = '<YOUR_TOKEN>';
+
+  /** Generic (placeholder-token) usage for the channel currently selected in the form. */
+  function renderTokenUsage() {
+    var kindSelect = $('link-kind');
+    var kind = normalizeLinkKind(kindSelect && kindSelect.value);
+    var material = linkCopyMaterial(kind, TOKEN_PLACEHOLDER, '');
+    var titles = {
+      get_link: 'How to use a GET link (chat paste)',
+      rest: 'How to use a REST Bearer token',
+      mcp: 'How to use an MCP token (/mcp/rpc)'
+    };
+    var hints = {
+      get_link: 'Paste the GET link into your AI chat. It works only as a GET link — REST and MCP need their own tokens.',
+      rest: 'Give your AI this prompt with the token filled in. The token works only for the REST API — not as a GET link or for /mcp/rpc.',
+      mcp: 'Add Node-RED to your MCP client with one of these configs. The token works only on POST /mcp/rpc. If your AI app cannot add MCP servers, use a REST or GET link instead.'
+    };
+    var title = $('token-usage-title');
+    if (title) title.textContent = titles[kind];
+    var hint = $('token-usage-hint');
+    if (hint) hint.textContent = hints[kind];
+    var block = $('token-usage-block');
+    var mcpPanel = $('token-usage-mcp');
+    if (kind === 'mcp') {
+      if (block) { block.textContent = ''; block.hidden = true; }
+      if (mcpPanel) mcpPanel.hidden = false;
+      renderMcpSetupPanel(material.mcpSnippets || {}, $('links-flash'), 'token-usage');
+    } else {
+      if (mcpPanel) mcpPanel.hidden = true;
+      var tabs = $('token-usage-tabs');
+      var tbody = $('token-usage-body');
+      if (tabs) tabs.innerHTML = '';
+      if (tbody) tbody.innerHTML = '';
+      if (block) { block.hidden = false; block.textContent = kind === 'rest' ? material.primary : material.block; }
+    }
+  }
+
+  /**
+   * One-time modal holding the real token. Closing it (button, Done, or Esc)
+   * empties the dialog so the token no longer exists in the DOM.
+   */
+  function openTokenModal(label) {
+    var old = $('token-modal');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var dialog = document.createElement('dialog');
+    dialog.id = 'token-modal';
+    dialog.className = 'token-modal';
+    dialog.setAttribute('aria-labelledby', 'token-modal-title');
+    dialog.setAttribute('aria-describedby', 'token-modal-warning');
+    dialog.innerHTML =
+      '<form method="dialog" class="token-modal-form">' +
+      '<div class="token-modal-head">' +
+      '<h3 id="token-modal-title">' + esc(label || 'Access token created') + '</h3>' +
+      '<button type="submit" value="close" class="action secondary token-modal-close" aria-label="Close">×</button>' +
+      '</div>' +
+      '<p id="token-modal-warning" class="token-modal-warning" role="alert"><strong>This is the only time the token is shown.</strong> ' +
+      'Copy it now — it cannot be viewed again. If you lose it, revoke it and create a new one.</p>' +
+      '<div id="token-once" class="token-once">' +
+      '<p id="token-kind-label" class="token-kind-label" hidden></p>' +
+      '<p id="token-docs-hint" class="muted"></p>' +
+      '<button type="button" class="action copy-ai-primary" id="token-copy-btn">Copy GET link for AI chat</button>' +
+      '<div id="mcp-setup-panel" class="mcp-setup-panel" hidden>' +
+      '<p class="muted mcp-setup-fallback">If your AI app cannot add MCP servers, create a REST or GET link instead.</p>' +
+      '<div class="mcp-setup-tabs" role="tablist" aria-label="MCP client setup" id="mcp-setup-tabs"></div>' +
+      '<div id="mcp-setup-body" class="mcp-setup-body"></div>' +
+      '</div>' +
+      '<details class="advanced-block" id="token-dev-details">' +
+      '<summary>For developers</summary>' +
+      '<p id="token-dev-blurb" class="muted"></p>' +
+      '<code id="token-value"></code>' +
+      '<pre id="token-copy-block" class="token-copy-block"></pre>' +
+      '</details></div>' +
+      '<div class="row dialog-actions"><button type="submit" value="done" class="action">Done</button></div>' +
+      '</form>';
+    var opener = document.activeElement;
+    var cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      dialog.innerHTML = '';
+      document.removeEventListener('keydown', onKey, true);
+      if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+      if (opener && typeof opener.focus === 'function') opener.focus();
+    }
+    function closeTokenModal() {
+      // Native <dialog>: close() fires 'close' -> cleanup. Fallback (open attribute): clean up directly.
+      if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+      cleanup();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        closeTokenModal();
+      }
+    }
+    dialog.addEventListener('close', cleanup);
+    dialog.addEventListener('cancel', function (e) { e.preventDefault(); closeTokenModal(); });
+    document.addEventListener('keydown', onKey, true);
+    var form = dialog.querySelector('form');
+    if (form) {
+      form.addEventListener('submit', function (e) { e.preventDefault(); closeTokenModal(); });
+    }
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  function renderMcpSetupPanel(snippets, flash, prefix) {
+    var idp = prefix || 'mcp-setup';
+    var tabsHost = $(idp + '-tabs');
+    var body = $(idp + '-body');
     if (!tabsHost || !body) return;
     var keys = Object.keys(snippets);
     if (!keys.length) {
@@ -1280,15 +1350,15 @@ function pageClientScriptPartB(): string {
       }).join('');
       var sn = snippets[active];
       body.innerHTML =
-        '<pre class="mcp-setup-snippet" id="mcp-setup-snippet">' + esc(sn.text) + '</pre>' +
-        '<button type="button" class="action" id="mcp-setup-copy">' + esc(sn.label) + '</button>';
+        '<pre class="mcp-setup-snippet" id="' + idp + '-snippet">' + esc(sn.text) + '</pre>' +
+        '<button type="button" class="action" id="' + idp + '-copy">' + esc(sn.label) + '</button>';
       tabsHost.querySelectorAll('[data-mcp-tab]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           active = btn.getAttribute('data-mcp-tab') || keys[0];
           paint();
         });
       });
-      var copyBtn = $('mcp-setup-copy');
+      var copyBtn = $(idp + '-copy');
       if (copyBtn) {
         copyBtn.onclick = function () {
           copyTextToClipboard(sn.text).then(function () {

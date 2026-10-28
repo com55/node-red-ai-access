@@ -217,48 +217,284 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
   }
 }
 
+/** One OAuth route collision, with enough detail for the editor to explain and link it. */
+export interface OAuthRouteCollision {
+  /** Path (or httpStatic file) that collides. */
+  path: string;
+  source: 'http-in' | 'route' | 'middleware' | 'httpStatic';
+  /** Express layer name for route/middleware sources. */
+  layer?: string | undefined;
+  nodeId?: string | undefined;
+  nodeName?: string | undefined;
+  /** Absolute filesystem path for httpStatic sources (admin-only detail). */
+  file?: string | undefined;
+}
+
+export interface FlowNodeLike {
+  id?: string;
+  type?: string;
+  url?: string;
+  name?: string;
+  z?: string;
+  d?: boolean;
+  disabled?: boolean;
+}
+
+/** Human readable one-line description of a collision (used for logs and string lists). */
+export function describeOAuthRouteCollision(c: OAuthRouteCollision): string {
+  switch (c.source) {
+    case 'http-in':
+      return `Route ${c.path} is already used by http-in node '${c.nodeName ?? c.nodeId ?? 'unnamed'}'`;
+    case 'httpStatic':
+      return `File ${c.path} is served by httpStatic`;
+    case 'middleware':
+      return `Path prefix is already handled by mounted middleware (${c.layer ?? 'unknown'})`;
+    default:
+      return `Route ${c.path} is already registered by another handler (${c.layer ?? 'route'})`;
+  }
+}
+
+const startsWithCi = (path: string, prefix: string) =>
+  path.toLowerCase().startsWith(prefix.toLowerCase());
+
+/** Normalized mount root ('' for '/'), or undefined when the root is disabled. */
+export function normalizeRoot(root: string | false | undefined): string | undefined {
+  if (root === false) return undefined;
+  const r = typeof root === 'string' ? root : '/';
+  return `/${r}`.replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+/**
+ * Prefix (relative to an app mounted at `root`) that reaches the absolute path
+ * prefix `target`, or undefined when that app cannot serve `target`.
+ */
+export function relativePrefix(root: string | undefined, target: string): string | undefined {
+  if (root === undefined) return undefined;
+  if (!root) return target;
+  if (!startsWithCi(target, `${root}/`)) return undefined;
+  return target.slice(root.length);
+}
+
+/** True when a node on flow `z` actually runs (tab enabled, or subflow with a running instance). */
+function makeLiveCheck(
+  all: FlowNodeLike[]
+): (z: string | undefined, seen?: Set<string>) => boolean {
+  const byId = new Map<string, FlowNodeLike>();
+  for (const n of all) if (n.id) byId.set(n.id, n);
+  const live = (z: string | undefined, seen = new Set<string>()): boolean => {
+    if (!z) return true;
+    const owner = byId.get(z);
+    if (!owner) return true;
+    if (owner.type === 'tab') return !owner.disabled && !owner.d;
+    if (owner.type !== 'subflow' || seen.has(z)) return false;
+    seen.add(z);
+    return all.some(n => n.type === `subflow:${z}` && !n.d && live(n.z, seen));
+  };
+  return live;
+}
+
+/**
+ * Running `http in` nodes whose URL starts with one of `prefixes` (case-insensitive,
+ * relative to httpNodeRoot). Disabled nodes, nodes on disabled tabs, and nodes in
+ * subflow templates without a running instance never register routes.
+ */
+export function findHttpInCollisions(
+  eachNode: ((listener: (node: FlowNodeLike) => void) => void) | undefined,
+  prefixes: string[]
+): OAuthRouteCollision[] {
+  if (!eachNode || !prefixes.length) return [];
+  const all: FlowNodeLike[] = [];
+  try {
+    eachNode(node => all.push(node));
+  } catch {
+    return []; // flow runtime not started
+  }
+  const live = makeLiveCheck(all);
+  const found: OAuthRouteCollision[] = [];
+  for (const node of all) {
+    if (node.type !== 'http in' || typeof node.url !== 'string' || node.d) continue;
+    const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
+    if (!prefixes.some(prefix => startsWithCi(path, prefix)) || !live(node.z)) continue;
+    found.push({
+      path,
+      source: 'http-in',
+      nodeId: node.id,
+      nodeName: node.name ? node.name : undefined,
+    });
+  }
+  return found;
+}
+
+/** Express route-dispatch layer names: 'bound dispatch' (Express 4), 'handle' (Express 5). */
+const ROUTE_DISPATCH_LAYERS = new Set(['bound dispatch', 'handle']);
+const AUTH_ENDPOINTS = ['authorize', 'token', 'register', 'revoke'];
+const METADATA_ENDPOINTS = ['authorization-server', 'protected-resource'];
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
+}
+
+/** One httpStatic mount: a directory served at `root` (httpStaticRoot or per-entry root). */
+export interface StaticMount {
+  path: string;
+  root?: string | undefined;
+}
+
+export interface OAuthRouteScanInput {
+  httpAdmin: unknown;
+  httpNode?: unknown;
+  httpAdminRoot?: string | undefined;
+  httpNodeRoot?: string | false | undefined;
+  /** Serve metadata under the admin /mcp path (httpNodeRoot disabled). */
+  metadataFallback: boolean;
+  eachNode?: ((listener: (node: FlowNodeLike) => void) => void) | undefined;
+  staticDirs?: (string | StaticMount)[];
+  /** Node-RED `httpStaticRoot` (default '/') for string entries of httpStatic. */
+  httpStaticRoot?: string | undefined;
+  fileExists?: (path: string) => boolean;
+}
+
+export interface OAuthRouteScan {
+  authorization: OAuthRouteCollision[];
+  metadata: OAuthRouteCollision[];
+}
+
+function dedupe(list: OAuthRouteCollision[]): OAuthRouteCollision[] {
+  const seen = new Set<string>();
+  return list.filter(c => {
+    const key = `${c.source}\u0000${c.path.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Collisions between the plugin's OAuth routes and other handlers, comparing real
+ * mounted paths (httpAdminRoot / httpNodeRoot) on both sides.
+ */
+export function scanOAuthRouteCollisions(input: OAuthRouteScanInput): OAuthRouteScan {
+  const adminRoot = normalizeRoot(input.httpAdminRoot);
+  const nodeRoot = input.httpNode ? normalizeRoot(input.httpNodeRoot) : undefined;
+  const authTarget = `${adminRoot ?? ''}/mcp/oauth/`;
+  const metaTarget = input.metadataFallback
+    ? `${adminRoot ?? ''}/mcp/.well-known/oauth-`
+    : `${nodeRoot ?? ''}/.well-known/oauth-`;
+  const scan = (target: string): OAuthRouteCollision[] => {
+    const adminPrefix = relativePrefix(adminRoot, target);
+    const nodePrefix = relativePrefix(nodeRoot, target);
+    const nodes = nodePrefix ? findHttpInCollisions(input.eachNode, [nodePrefix]) : [];
+    // A running http-in node also appears as an Express route on httpNode; report it as the node.
+    const nodePaths = new Set(nodes.map(c => c.path.toLowerCase()));
+    const fromNode = nodePrefix
+      ? detectOAuthRouteCollisionDetails(input.httpNode, [nodePrefix]).filter(
+          c =>
+            !(
+              c.source === 'route' &&
+              ROUTE_DISPATCH_LAYERS.has(c.layer ?? '') &&
+              nodePaths.has(c.path.toLowerCase())
+            )
+        )
+      : [];
+    const fromAdmin = adminPrefix
+      ? detectOAuthRouteCollisionDetails(input.httpAdmin, [adminPrefix])
+      : [];
+    return dedupe([...fromAdmin, ...fromNode, ...nodes]);
+  };
+  const authorization = scan(authTarget);
+  const metadata = scan(metaTarget);
+  const exists = input.fileExists ?? (() => false);
+  const mounts = (input.staticDirs ?? []).map(m =>
+    typeof m === 'string' ? { path: m, root: input.httpStaticRoot } : m
+  );
+  const checkStatic = (endpoints: string[], into: OAuthRouteCollision[]) => {
+    for (const mount of mounts) {
+      const root = normalizeRoot(mount.root);
+      const dir = trimTrailingSlashes(mount.path);
+      for (const abs of endpoints) {
+        const rel = relativePrefix(root, abs);
+        if (!rel || !exists(`${dir}${rel}`)) continue;
+        into.push({ path: abs, source: 'httpStatic', file: `${dir}${rel}` });
+      }
+    }
+  };
+  checkStatic(
+    AUTH_ENDPOINTS.map(e => `${authTarget}${e}`),
+    authorization
+  );
+  checkStatic(
+    METADATA_ENDPOINTS.map(e => `${metaTarget}${e}`),
+    metadata
+  );
+  return { authorization, metadata };
+}
+
 export function detectOAuthRouteCollisions(
   app: unknown,
   routes: string[] = ['/.well-known/oauth-', '/mcp/oauth/']
 ): string[] {
-  const found: string[] = [];
-  interface Layer {
-    route?: { path?: string | string[] };
-    name?: string;
-    handle?: { stack?: Layer[]; oauthOwned?: boolean };
-    matchers?: ((path: string) => unknown)[];
-    regexp?: RegExp;
-  }
-  // Express 4 throws from the deprecated `app.router` getter and creates
-  // `_router` lazily; Express 5 only exposes `router`. Read both defensively.
-  const read = (key: '_router' | 'router'): { stack?: Layer[] } | undefined => {
+  return detectOAuthRouteCollisionDetails(app, routes).map(c =>
+    c.source === 'middleware' ? `mounted middleware (${c.layer})` : `${c.path} (${c.layer})`
+  );
+}
+
+interface RouterLayer {
+  route?: { path?: string | string[] };
+  name?: string;
+  handle?: { stack?: RouterLayer[]; oauthOwned?: boolean };
+  matchers?: ((path: string) => unknown)[];
+  regexp?: RegExp;
+}
+
+// Express 4 throws from the deprecated `app.router` getter and creates
+// `_router` lazily; Express 5 only exposes `router`. Read both defensively.
+function routerStack(app: unknown): RouterLayer[] {
+  const read = (key: '_router' | 'router'): { stack?: RouterLayer[] } | undefined => {
     try {
-      return (app as Record<string, { stack?: Layer[] } | undefined> | undefined)?.[key];
+      return (app as Record<string, { stack?: RouterLayer[] } | undefined> | undefined)?.[key];
     } catch {
       return undefined;
     }
   };
-  const layers = read('_router')?.stack ?? read('router')?.stack ?? [];
-  for (const layer of layers) {
+  return read('_router')?.stack ?? read('router')?.stack ?? [];
+}
+
+function layerPaths(layer: RouterLayer): string[] {
+  const p = layer.route?.path;
+  if (!p) return [];
+  return (Array.isArray(p) ? p : [p]).map(String);
+}
+
+/** True when a non-route middleware is mounted specifically on one of `routes`. */
+function middlewareHits(layer: RouterLayer, routes: string[]): boolean {
+  if (layer.name === 'router') return false;
+  const regexp = layer.regexp;
+  const matchers = layer.matchers ?? (regexp ? [(path: string) => regexp.test(path)] : []);
+  if (!matchers.length) return false;
+  const matches = (path: string) => matchers.some(matcher => Boolean(matcher(path)));
+  if (matches('/unrelated-ai-access-collision-probe')) return false;
+  return routes.some(prefix => matches(`${prefix}token`) || matches(`${prefix}mcp`));
+}
+
+export function detectOAuthRouteCollisionDetails(
+  app: unknown,
+  routes: string[] = ['/.well-known/oauth-', '/mcp/oauth/']
+): OAuthRouteCollision[] {
+  const found: OAuthRouteCollision[] = [];
+  for (const layer of routerStack(app)) {
     if (layer.handle?.oauthOwned) continue;
-    const paths = layer.route?.path
-      ? Array.isArray(layer.route.path)
-        ? layer.route.path
-        : [layer.route.path]
-      : [];
+    const paths = layerPaths(layer);
     for (const path of paths)
-      if (routes.some(prefix => String(path).startsWith(prefix)))
-        found.push(`${String(path)} (${layer.name ?? 'route'})`);
-    const matchers =
-      layer.matchers ?? (layer.regexp ? [(path: string) => layer.regexp?.test(path)] : undefined);
-    if (!paths.length && matchers?.length && layer.name !== 'router') {
-      const matches = (path: string) => matchers.some(matcher => Boolean(matcher(path)));
-      const broad = matches('/unrelated-ai-access-collision-probe');
-      if (!broad && routes.some(prefix => matches(`${prefix}token`) || matches(`${prefix}mcp`)))
-        found.push(`mounted middleware (${layer.name ?? 'route'})`);
-    }
+      if (routes.some(prefix => startsWithCi(path, prefix)))
+        found.push({ path, source: 'route', layer: layer.name ?? 'route' });
+    if (!paths.length && middlewareHits(layer, routes))
+      found.push({ path: routes.join(', '), source: 'middleware', layer: layer.name ?? 'route' });
     if (layer.handle?.stack)
-      found.push(...detectOAuthRouteCollisions({ router: { stack: layer.handle.stack } }, routes));
+      found.push(
+        ...detectOAuthRouteCollisionDetails({ router: { stack: layer.handle.stack } }, routes)
+      );
   }
   return found;
 }

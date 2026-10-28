@@ -123,12 +123,17 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
       url: expect.stringMatching(/\/mcp\/a\/aia_/),
     });
 
+    expect(created.headers['cache-control']).toBe('no-store');
+    expect(created.headers.pragma).toBe('no-cache');
     const listed = await request(app).get('/mcp/api/v1/links');
     expect(listed.status).toBe(200);
     expect(listed.body.links).toHaveLength(1);
-    // get_link: raw `token` stays create-only; list exposes `url` for re-copy.
+    // Tokens are shown once at creation; the list never exposes `token` or `url`.
+    expect(listed.headers['cache-control']).toBe('no-store');
+    expect(listed.headers.pragma).toBe('no-cache');
     expect(listed.body.links[0]).not.toHaveProperty('token');
-    expect(listed.body.links[0].url).toMatch(new RegExp(`/mcp/a/${created.body.token}$`));
+    expect(listed.body.links[0]).not.toHaveProperty('url');
+    expect(JSON.stringify(listed.body)).not.toContain(created.body.token);
     expect(listed.body.links[0].kind).toBe('get_link');
 
     const revoked = await request(app).delete(`/mcp/api/v1/links/${created.body.id}`);
@@ -268,10 +273,10 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     );
     expect(byKind.rest.url).toBeUndefined();
     expect(byKind.mcp.url).toBeUndefined();
-    expect(byKind.get_link.url).toMatch(/\/mcp\/a\//);
-    // rest/mcp list rows expose token for admin Bearer re-copy (no URL).
-    expect(byKind.rest.token).toMatch(/^aia_/);
-    expect(byKind.mcp.token).toMatch(/^aia_/);
+    expect(byKind.get_link.url).toBeUndefined();
+    // Tokens are shown once at creation only; list rows never expose them.
+    expect(byKind.rest.token).toBeUndefined();
+    expect(byKind.mcp.token).toBeUndefined();
     expect(byKind.get_link.token).toBeUndefined();
 
     const logs = await request(app).get('/mcp/api/v1/logs?limit=50');

@@ -436,7 +436,7 @@ describe('ai-access-sidebar.js served tab', () => {
         expect($('#ai-access-lock-public-url').elements[0]!.props.visible).toBe(true);
         expect($('#ai-access-rate-ip').elements[0]!.props.disabled).toBe(!canEdit);
         expect($('#ai-access-cors').elements[0]!.props.value).toBe('https://browser.example');
-        expect($('#ai-access-trust-proxy').elements[0]!.textContent).toBe('loopback');
+        expect($('#ai-access-trust-proxy').elements[0]!.textContent).toBe('Trust proxy: loopback');
         expect($('#ai-access-check-public-url').elements[0]!.props.disabled).toBe(!canEdit);
         expect($('#ai-access-ttl').elements[0]!.props.value).toBe(2);
         if (canEdit) {
@@ -445,6 +445,7 @@ describe('ai-access-sidebar.js served tab', () => {
           expect($('#ai-access-check-result').elements[0]!.textContent).toContain(
             'OK: Discovery endpoint is reachable (HTTP 200)'
           );
+          expect($('#ai-access-check-result').elements[0]!.className).toContain('is-ok');
           $('#ai-access-rate-ip').elements[0]!.props.value = 20;
           $('#ai-access-rate-ip').elements[0]!.handlers.change![0]!();
           await vi.advanceTimersByTimeAsync(400);
@@ -485,6 +486,23 @@ describe('ai-access-sidebar.js served tab', () => {
           body = {
             authorization: ['/mcp/oauth/token (other plugin)'],
             metadata: [],
+            details: [
+              { kind: 'authorization', path: '/mcp/oauth/token', source: 'route', layer: 'x' },
+              {
+                kind: 'metadata',
+                path: '/.well-known/oauth-authorization-server',
+                source: 'http-in',
+                nodeId: 'abc',
+                nodeName: 'Meta in',
+              },
+              {
+                kind: 'metadata',
+                path: '/.well-known/oauth-<b>x</b>',
+                source: 'http-in',
+                nodeId: 'evil',
+                nodeName: '<img src=x onerror=alert(1)>',
+              },
+            ],
             httpNodeRootFallback: true,
           };
         if (url.endsWith('/oauth/clients'))
@@ -537,12 +555,52 @@ describe('ai-access-sidebar.js served tab', () => {
       });
       load();
       await vi.advanceTimersByTimeAsync(0);
-      expect($('#ai-access-oauth-route-warning').elements[0]!.textContent).toContain(
-        'httpNodeRoot is disabled'
-      );
-      expect($('#ai-access-oauth-route-warning').elements[0]!.textContent).toContain(
-        '/mcp/oauth/token (other plugin)'
-      );
+      interface TextNode {
+        textContent?: string;
+        children?: TextNode[];
+      }
+      const deepText = (el: TextNode): string =>
+        (el.textContent ?? '') + (el.children ?? []).map(deepText).join('');
+      const warningText = deepText($('#ai-access-oauth-route-warning').elements[0]!);
+      expect(warningText).toContain('httpNodeRoot is disabled');
+      expect(warningText).toContain('/mcp/oauth/token');
+      expect(warningText).toContain('already registered by another node or plugin');
+      expect(warningText).toContain("http-in node 'Meta in'");
+      expect(warningText).toContain('OAuth metadata disabled');
+      interface TagNode {
+        tag?: string;
+        textContent?: string;
+        children?: TagNode[];
+      }
+      const codes: string[] = [];
+      const walk = (el: TagNode): void => {
+        if (el.tag === 'code') codes.push(el.textContent ?? '');
+        (el.children ?? []).forEach(walk);
+      };
+      walk($('#ai-access-oauth-route-warning').elements[0]!);
+      expect(codes).toEqual([
+        '/mcp/oauth/token',
+        '/.well-known/oauth-authorization-server',
+        '/.well-known/oauth-<b>x</b>',
+      ]);
+      // Untrusted node names/paths are set as text: no element or raw HTML is created.
+      interface HtmlNode {
+        tag?: string;
+        htmlContent?: string;
+        children?: HtmlNode[];
+      }
+      const tags: string[] = [];
+      const html: string[] = [];
+      const collect = (el: HtmlNode): void => {
+        if (el.tag) tags.push(el.tag);
+        if (el.htmlContent) html.push(el.htmlContent);
+        (el.children ?? []).forEach(collect);
+      };
+      collect($('#ai-access-oauth-route-warning').elements[0]!);
+      expect(tags).not.toContain('img');
+      expect(tags).not.toContain('b');
+      expect(html).toEqual([]);
+      expect(warningText).toContain("'<img src=x onerror=alert(1)>'");
       expect(
         $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[0]!.textContent
       ).toContain('Test app');

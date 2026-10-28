@@ -305,6 +305,36 @@ th { color: var(--muted); font-weight: 600; }
 }
 .token-once #token-copy-btn { margin-top: 0.35rem; }
 .token-once #token-docs-hint { margin: 0.45rem 0 0; }
+.token-usage {
+  background: var(--panel-soft, #f7f8fa);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  margin: 0.75rem 0;
+}
+.token-usage .token-kind-label { font-weight: 600; margin: 0 0 0.25rem; }
+.token-usage .token-copy-block {
+  margin: 0.6rem 0;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.token-usage .token-usage-note { font-size: 0.85rem; margin: 0.4rem 0 0; }
+dialog.token-modal { width: min(720px, 94vw); max-width: min(720px, 94vw); max-height: 90vh; overflow: auto; }
+.token-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.token-modal-close { min-width: 2.2rem; font-size: 1.1rem; line-height: 1; }
+.token-modal-warning {
+  margin: 0.4rem 0 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #f0c36d;
+  background: #fff8e5;
+  border-radius: 6px;
+  color: #6b4a00;
+}
 .flash {
   margin: 0.5rem 0 0.85rem;
   padding: 0.55rem 0.7rem;

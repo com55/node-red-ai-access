@@ -45,8 +45,11 @@ export interface AccessLinkCreated extends AccessLinkPublic {
 export interface AccessLinkRecord {
   id: string;
   tokenHash: string;
-  /** Raw token kept in memory so admins can re-copy the GET URL. */
-  token: string;
+  /**
+   * @deprecated Legacy field: raw tokens are no longer kept. Only `tokenHash` is
+   * used for validation; any `token` on an inserted record is dropped.
+   */
+  token?: string;
   /**
    * Token surface. Optional for in-memory migration of pre-kind records
    * (treated as `get_link` by {@link resolveAccessLinkKind}).
@@ -206,7 +209,6 @@ export class AccessLinkStore {
     const record: AccessLinkRecord = {
       id,
       tokenHash: hashToken(token),
-      token,
       kind,
       createdAtMs: atMs,
       expiresAtMs: atMs + ttlSeconds * 1000,
@@ -224,18 +226,6 @@ export class AccessLinkStore {
       ...toPublic(record),
       token,
     };
-  }
-
-  /**
-   * Raw token for an active link (in-memory only). Used to rebuild the GET URL
-   * for admin "Copy link" — never logs the value.
-   */
-  peekToken(linkId: string): string | null {
-    const record = this.links.get(linkId);
-    if (!record || !this.isActive(record, this.now())) {
-      return null;
-    }
-    return record.token;
   }
 
   revoke(linkId: string): AccessLinkPublic {
@@ -316,6 +306,9 @@ export class AccessLinkStore {
    * Not for production use.
    */
   upsertRecordForTest(record: AccessLinkRecord): void {
-    this.links.set(record.id, record);
+    // Migrate legacy shape: keep only the hash, never the raw token.
+    const rest: AccessLinkRecord = { ...record };
+    delete rest.token;
+    this.links.set(record.id, rest);
   }
 }

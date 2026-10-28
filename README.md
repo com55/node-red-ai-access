@@ -287,9 +287,9 @@ a `code`. `token_expired` also includes `expiredAt` and `accessLinksUrl` (the
 
 Access links are **in memory** (default TTL **4h**, max 10). Caps: **get_link ≤
 24h**, **rest/mcp ≤ 30d**. Creating a link returns the raw `token` plus a
-self-contained `url` for `get_link` (`/mcp/a/<token>`). While the link remains
-active, `GET /links` includes `url` again so admins can re-copy from `/mcp` (the
-raw `token` field stays create-only). After a restart every old token is
+self-contained `url` for `get_link` (`/mcp/a/<token>`). The token is shown only
+once: `GET /links` never returns `token` or `url`, so to give access again
+revoke the link and create a new one. After a restart every old token is
 invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as

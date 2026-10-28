@@ -43,24 +43,19 @@ export function createConfiguredLinkStore(RED: NodeRedPluginAPI): AccessLinkStor
   });
 }
 
+/** Token-bearing responses must never be cached by browsers or proxies. */
+function noStore(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+}
+
 export function listLinksHandler(RED: NodeRedPluginAPI, store: AccessLinkStore) {
   return (req: AuthenticatedRequest, res: Response): void => {
     const linkStore = storeForRequest(RED, store);
-    const active = linkStore.list().map(link => {
-      const token = linkStore.peekToken(link.id);
-      if (!token) {
-        return link;
-      }
-      // get_link: rebuild /mcp/a/… URL for re-copy. rest/mcp: expose raw token
-      // for admin Bearer re-copy (token stays create-only for get_link rows).
-      if (link.kind === 'get_link') {
-        return {
-          ...link,
-          url: buildAccessLinkUrl(req, RED.settings.httpAdminRoot, token),
-        };
-      }
-      return { ...link, token };
-    });
+    // Tokens are shown once at creation only; the list never exposes token or URL
+    // (revoke and create a new one instead).
+    const active = linkStore.list();
+    noStore(res);
     res.json({ links: active });
   };
 }
@@ -121,6 +116,7 @@ export function createLinkHandler(RED: NodeRedPluginAPI, store: AccessLinkStore,
           ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
         });
       }
+      noStore(res);
       // Only get_link tokens get a self-contained /mcp/a/… URL (PR B polishes rest/mcp copy).
       if (kind === 'get_link') {
         const url = buildAccessLinkUrl(req, RED.settings.httpAdminRoot, created.token);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
-import { canonicalResource, detectOAuthRouteCollisions } from '../../src/plugin/oauth.js';
+import {
+  canonicalResource,
+  detectOAuthRouteCollisions,
+  findHttpInCollisions,
+  scanOAuthRouteCollisions,
+  type FlowNodeLike,
+} from '../../src/plugin/oauth.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 
@@ -38,6 +44,8 @@ function appFor(
     enabled?: boolean;
     refreshMax?: number;
     oauthFromDisk?: boolean;
+    flowNodes?: FlowNodeLike[];
+    httpStatic?: string;
   } = {}
 ) {
   const admin = express();
@@ -49,6 +57,7 @@ function appFor(
     settings: {
       userDir,
       httpNodeRoot: options.fallback ? false : '/',
+      ...(options.httpStatic ? { httpStatic: options.httpStatic } : {}),
       ...(options.session ? { adminAuth: { type: 'credentials' } } : {}),
       aiAccess: {
         ...(options.enabled === false ? { enabled: false } : {}),
@@ -72,6 +81,9 @@ function appFor(
     httpAdmin: admin,
     ...(node ? { httpNode: node } : {}),
     events,
+    ...(options.flowNodes
+      ? { nodes: { eachNode: fn => options.flowNodes?.forEach(n => fn(n)) } }
+      : {}),
     auth: {
       needsPermission: () => (req, res, next) => {
         const who = req.headers['x-test-user'];
@@ -789,6 +801,203 @@ describe('MCP OAuth backend', () => {
       (await request(later.admin).get('/mcp/api/v1/oauth/status')).body.authorization.join(' ')
     ).toContain('/mcp/oauth/revoke');
     rmSync(secondDir, { recursive: true, force: true });
+  });
+
+  it('ignores disabled http-in nodes and nodes on disabled tabs', () => {
+    const nodes: FlowNodeLike[] = [
+      { id: 't1', type: 'tab', disabled: true },
+      { id: 't2', type: 'tab' },
+      {
+        id: 'a',
+        type: 'http in',
+        url: '/.well-known/oauth-authorization-server',
+        z: 't2',
+        d: true,
+      },
+      { id: 'b', type: 'http in', url: '/.well-known/oauth-protected-resource', z: 't1' },
+      { id: 'c', type: 'http in', url: '.well-known/oauth-x', z: 't2', name: 'Mine' },
+    ];
+    expect(findHttpInCollisions(fn => nodes.forEach(fn), ['/.well-known/oauth-'])).toEqual([
+      { path: '/.well-known/oauth-x', source: 'http-in', nodeId: 'c', nodeName: 'Mine' },
+    ]);
+  });
+
+  it('re-evaluates http-in collisions on deploy and reports each node once with id and name', async () => {
+    const flowNodes: FlowNodeLike[] = [
+      { id: 't', type: 'tab' },
+      {
+        id: 'n1',
+        type: 'http in',
+        url: '/.well-known/oauth-authorization-server',
+        z: 't',
+        d: true,
+      },
+    ];
+    const app = appFor(userDir, { flowNodes });
+    app.events.emit('flows:started');
+    let status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.collisions).toEqual([]);
+    expect((await request(app.node!).get('/.well-known/oauth-authorization-server')).status).toBe(
+      200
+    );
+
+    // Enable it: Node-RED registers an Express route ('bound dispatch') and the node is live.
+    flowNodes[1] = { ...flowNodes[1], d: false, name: 'Meta' };
+    const handler = (_req: unknown, res: { send(b: string): void }) => res.send('flow');
+    app.node!.get('/.well-known/oauth-authorization-server', handler);
+    app.events.emit('flows:started');
+    status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.details).toEqual([
+      {
+        kind: 'metadata',
+        path: '/.well-known/oauth-authorization-server',
+        source: 'http-in',
+        nodeId: 'n1',
+        nodeName: 'Meta',
+      },
+    ]);
+    expect(status.metadata[0]).toContain("http-in node 'Meta'");
+
+    // Disable again: Node-RED removes the route on close; collision clears on next deploy.
+    flowNodes[1] = { ...flowNodes[1], d: true };
+    const stack = app.node as unknown as {
+      _router?: { stack: { route?: unknown }[] };
+      router?: { stack: { route?: unknown }[] };
+    };
+    const layers = (stack._router ?? stack.router)!.stack;
+    layers.splice(
+      layers.findIndex(l => l.route),
+      1
+    );
+    app.events.emit('flows:started');
+    status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.collisions).toEqual([]);
+  });
+
+  it('counts http-in nodes in subflow templates only when a running instance exists', () => {
+    const base: FlowNodeLike[] = [
+      { id: 'tab', type: 'tab' },
+      { id: 'off', type: 'tab', disabled: true },
+      { id: 'sf', type: 'subflow' },
+      { id: 'h', type: 'http in', url: '/mcp/oauth/token', z: 'sf' },
+    ];
+    const run = (extra: FlowNodeLike[]) =>
+      findHttpInCollisions(fn => [...base, ...extra].forEach(fn), ['/mcp/oauth/']);
+    expect(run([])).toEqual([]);
+    expect(run([{ id: 'i1', type: 'subflow:sf', z: 'tab', d: true }])).toEqual([]);
+    expect(run([{ id: 'i2', type: 'subflow:sf', z: 'off' }])).toEqual([]);
+    expect(run([{ id: 'i3', type: 'subflow:sf', z: 'tab' }])).toHaveLength(1);
+    // nested: subflow sf used inside subflow outer, which has an enabled instance
+    expect(
+      run([
+        { id: 'outer', type: 'subflow' },
+        { id: 'i4', type: 'subflow:sf', z: 'outer' },
+        { id: 'i5', type: 'subflow:outer', z: 'tab' },
+      ])
+    ).toHaveLength(1);
+  });
+
+  it('compares real mounted paths using httpAdminRoot and httpNodeRoot', () => {
+    const node = express();
+    node.get('/mcp/oauth/token', (_req, res) => res.end());
+    const nodes: FlowNodeLike[] = [
+      { id: 't', type: 'tab' },
+      { id: 'n', type: 'http in', url: '/mcp/oauth/token', z: 't' },
+    ];
+    const base = {
+      httpAdmin: express(),
+      httpNode: node,
+      metadataFallback: false,
+      eachNode: (fn: (n: FlowNodeLike) => void) => nodes.forEach(fn),
+    };
+    // httpNodeRoot '/api': node route is /api/mcp/oauth/token -> no collision
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/', httpNodeRoot: '/api' }).authorization
+    ).toEqual([]);
+    // Same roots -> collision, reported once as the node
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/', httpNodeRoot: '/' }).authorization
+    ).toEqual([{ path: '/mcp/oauth/token', source: 'http-in', nodeId: 'n', nodeName: undefined }]);
+    // httpAdminRoot '/admin' + httpNodeRoot '/admin' -> collision
+    expect(
+      scanOAuthRouteCollisions({ ...base, httpAdminRoot: '/admin', httpNodeRoot: '/admin/' })
+        .authorization
+    ).toHaveLength(1);
+    // httpAdminRoot '/admin', httpNodeRoot '/' + http-in /admin/mcp/oauth/x -> collision
+    const adminNodes: FlowNodeLike[] = [{ id: 'm', type: 'http in', url: '/ADMIN/mcp/OAuth/x' }];
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpNode: express(),
+        httpAdminRoot: '/admin',
+        httpNodeRoot: '/',
+        metadataFallback: false,
+        eachNode: fn => adminNodes.forEach(fn),
+      }).authorization
+    ).toHaveLength(1);
+  });
+
+  it('keeps different sources at the same path and survives eachNode throwing', () => {
+    const admin = express();
+    admin.get('/mcp/oauth/token', (_req, res) => res.end());
+    const node = express();
+    node.get('/MCP/oauth/token', (_req, res) => res.end());
+    const scan = scanOAuthRouteCollisions({
+      httpAdmin: admin,
+      httpNode: node,
+      httpAdminRoot: '/',
+      httpNodeRoot: '/',
+      metadataFallback: false,
+      eachNode: () => {
+        throw new Error('not started');
+      },
+      staticDirs: ['/srv/static'],
+      fileExists: p => p === '/srv/static/mcp/oauth/token',
+    });
+    expect(scan.authorization.map(c => c.source)).toEqual(['route', 'httpStatic']);
+    // httpStaticRoot '/static': files are served under /static, so no collision.
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpAdminRoot: '/',
+        metadataFallback: true,
+        staticDirs: ['/srv/static'],
+        httpStaticRoot: '/static',
+        fileExists: p => p === '/srv/static/mcp/oauth/token',
+      }).authorization
+    ).toEqual([]);
+    // per-entry root that reaches the OAuth path collides
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpAdminRoot: '/',
+        metadataFallback: true,
+        staticDirs: [{ path: '/srv/x', root: '/mcp' }],
+        httpStaticRoot: '/static',
+        fileExists: p => p === '/srv/x/oauth/token',
+      }).authorization
+    ).toEqual([{ path: '/mcp/oauth/token', source: 'httpStatic', file: '/srv/x/oauth/token' }]);
+    expect(scan.authorization[1]).toMatchObject({
+      path: '/mcp/oauth/token',
+      file: '/srv/static/mcp/oauth/token',
+    });
+  });
+
+  it('hides absolute httpStatic file paths from non-admin users in /oauth/status', async () => {
+    const staticDir = mkdtempSync(join(tmpdir(), 'ai-access-static-'));
+    mkdirSync(join(staticDir, '.well-known'), { recursive: true });
+    writeFileSync(join(staticDir, '.well-known', 'oauth-authorization-server'), '{}');
+    const app = appFor(userDir, { session: true, httpStatic: staticDir });
+    const admin = (
+      await request(app.admin).get('/mcp/api/v1/oauth/status').set('x-test-user', 'alice')
+    ).body;
+    const viewer = (
+      await request(app.admin).get('/mcp/api/v1/oauth/status').set('x-test-user', 'bob')
+    ).body;
+    expect(admin.details[0].file).toContain(staticDir);
+    expect(viewer.details[0].file).toBeUndefined();
+    expect(JSON.stringify(viewer)).not.toContain(staticDir);
+    rmSync(staticDir, { recursive: true, force: true });
   });
 
   it('normalizes scheme, host, and trailing slash for resource indicators', () => {

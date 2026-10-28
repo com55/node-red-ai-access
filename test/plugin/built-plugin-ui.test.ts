@@ -35,7 +35,8 @@ describe('built dist/plugin.cjs UI contracts', () => {
     expect(bundle).toMatch(/fmtClockHm/);
     expect(bundle).toMatch(/Enable MCP OAuth/);
     expect(bundle).toMatch(/Registered OAuth clients/);
-    expect(bundle).toMatch(/OAuth authorization routes collide with/);
+    expect(bundle).toMatch(/OAuth route conflict/);
+    expect(bundle).toMatch(/How to use MCP OAuth/);
     expect(bundle).toMatch(/Enable OAuth anyway/);
   });
 });

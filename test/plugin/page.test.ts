@@ -165,6 +165,23 @@ describe('/mcp admin page', () => {
       /If you cannot send HTTP requests with custom headers \(e\.g\. a web chat app\), stop and ask the user to create a GET link instead; do not retry\./
     );
     expect(res.text).toMatch(/mcp-setup-panel|renderMcpSetupPanel|mcpSetupSnippets/);
+    // Generic per-channel usage (placeholder token) that follows the Channel select.
+    expect(res.text).toMatch(/id="token-usage"/);
+    expect(res.text).toMatch(/kindSel\.addEventListener\('change', renderTokenUsage\)/);
+    expect(res.text).toMatch(/var TOKEN_PLACEHOLDER = '<YOUR_TOKEN>'/);
+    // Real token only in a one-time modal that is emptied on close.
+    expect(res.text).toMatch(/This is the only time the token is shown\./);
+    expect(res.text).toMatch(/aria-labelledby', 'token-modal-title'/);
+    expect(res.text).toMatch(/function cleanup\(\) \{[\s\S]*?dialog\.innerHTML = '';/);
+    expect(res.text).toMatch(/dialog\.addEventListener\('close', cleanup\)/);
+    // Fallback without native showModal: Esc and form submit still clear the token.
+    expect(res.text).toMatch(/document\.addEventListener\('keydown', onKey, true\)/);
+    expect(res.text).toMatch(/e\.preventDefault\(\);\s*closeTokenModal\(\);/);
+    // Labels are escaped in the links table.
+    expect(res.text).toMatch(/esc\(l\.label \|\| '—'\)/);
+    expect(res.text).toMatch(/esc\(label \|\| 'Access token created'\)/);
+    // The links table no longer offers copying existing tokens.
+    expect(res.text).not.toMatch(/class="action secondary copy-link"/);
     expect(res.text).toMatch(
       /Copy Claude Desktop JSON|Copy Cursor mcp\.json|Copy VS Code MCP JSON/
     );
