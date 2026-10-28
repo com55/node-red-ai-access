@@ -30,6 +30,15 @@ and this project adheres to
   status; loopback notes and the trust proxy state are moved into a muted,
   collapsible "About the check" section with human-readable wording.
 
+- `/mcp` page Access links: the area under the form now always shows generic
+  usage (with a `<YOUR_TOKEN>` placeholder) for the currently selected channel
+  and updates when the channel changes. The real token and client setup are
+  shown once in a modal right after creation; closing it removes the token from
+  the page.
+- Access tokens can no longer be viewed or copied after creation:
+  `GET /mcp/api/v1/links` no longer returns `token` or `url`, and the links
+  table only offers Revoke.
+
 ### Added
 
 - Editor sidebar: short "How to use MCP OAuth" help in the OAuth section.

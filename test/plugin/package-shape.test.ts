@@ -86,7 +86,7 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/localStorage\.setItem\(DIFF_MODE_KEY/);
     expect(client).toMatch(/isCollapsiblePresenceText|PRESENCE_SHORT_TEXT_MAX/);
     expect(client).toMatch(/presence-inline/);
-    expect(client).toMatch(/copy-link|Copy link/);
+    expect(client).toMatch(/token-copy-btn|openTokenModal/);
     expect(client).toMatch(/markCopied|Copied/);
     expect(client).toMatch(/fmtRelative|timeCell/);
     expect(client).toMatch(/openConfirmDialog|confirm-dialog/);

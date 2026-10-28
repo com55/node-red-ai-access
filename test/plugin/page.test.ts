@@ -165,6 +165,19 @@ describe('/mcp admin page', () => {
       /If you cannot send HTTP requests with custom headers \(e\.g\. a web chat app\), stop and ask the user to create a GET link instead; do not retry\./
     );
     expect(res.text).toMatch(/mcp-setup-panel|renderMcpSetupPanel|mcpSetupSnippets/);
+    // Generic per-channel usage (placeholder token) that follows the Channel select.
+    expect(res.text).toMatch(/id="token-usage"/);
+    expect(res.text).toMatch(/kindSel\.addEventListener\('change', renderTokenUsage\)/);
+    expect(res.text).toMatch(/var TOKEN_PLACEHOLDER = '<YOUR_TOKEN>'/);
+    // Real token only in a one-time modal that is emptied on close.
+    expect(res.text).toMatch(/This is the only time the token is shown\./);
+    expect(res.text).toMatch(/aria-labelledby', 'token-modal-title'/);
+    expect(res.text).toMatch(
+      /dialog\.addEventListener\('close', function \(\) \{\s*dialog\.innerHTML = '';/
+    );
+    expect(res.text).toMatch(/esc\(label \|\| 'Access token created'\)/);
+    // The links table no longer offers copying existing tokens.
+    expect(res.text).not.toMatch(/class="action secondary copy-link"/);
     expect(res.text).toMatch(
       /Copy Claude Desktop JSON|Copy Cursor mcp\.json|Copy VS Code MCP JSON/
     );

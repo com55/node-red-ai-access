@@ -46,21 +46,9 @@ export function createConfiguredLinkStore(RED: NodeRedPluginAPI): AccessLinkStor
 export function listLinksHandler(RED: NodeRedPluginAPI, store: AccessLinkStore) {
   return (req: AuthenticatedRequest, res: Response): void => {
     const linkStore = storeForRequest(RED, store);
-    const active = linkStore.list().map(link => {
-      const token = linkStore.peekToken(link.id);
-      if (!token) {
-        return link;
-      }
-      // get_link: rebuild /mcp/a/… URL for re-copy. rest/mcp: expose raw token
-      // for admin Bearer re-copy (token stays create-only for get_link rows).
-      if (link.kind === 'get_link') {
-        return {
-          ...link,
-          url: buildAccessLinkUrl(req, RED.settings.httpAdminRoot, token),
-        };
-      }
-      return { ...link, token };
-    });
+    // Tokens are shown once at creation only; the list never exposes token or URL
+    // (revoke and create a new one instead).
+    const active = linkStore.list();
     res.json({ links: active });
   };
 }
