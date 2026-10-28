@@ -309,7 +309,10 @@ describe('/mcp admin page', () => {
     const res = await request(app).get('/ai-access');
     expect(res.text).toMatch(/readEditorToken|localStorage\.getItem/);
     expect(res.text).toMatch(/showAuthGate|auth-gate/);
-    expect(res.text).toMatch(/Please sign in to Node-RED first/);
+    expect(res.text).toMatch(/Sign in to Node-RED/);
+    expect(res.text).toMatch(/id="auth-gate-login"/);
+    // Single signed-out message: no duplicate red boot banner.
+    expect(res.text).not.toMatch(/Please sign in to Node-RED first/);
     // Must not silently bounce to the editor.
     expect(res.text).not.toMatch(/redirectToEditorLogin/);
   });

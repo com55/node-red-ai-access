@@ -6,6 +6,7 @@
  * Bearer token (Node-RED does not use cookies). APIs remain protected.
  */
 
+import { LOGO } from './oauth-consent-page.js';
 import { pageClientScript } from './page-client.js';
 import { pageStyles } from './page-styles.js';
 
@@ -45,12 +46,24 @@ function renderMcpPageHeader(): string {
     </header>
     <div id="boot-flash" class="flash" hidden></div>
     <div id="auth-gate" class="auth-gate" hidden>
-      <h2>Please sign in to Node-RED first</h2>
-      <p>Open the editor, sign in, then return here to manage AI Access.</p>
-      <p class="row">
-        <a class="action" id="auth-gate-editor" href="/">Open Node-RED editor</a>
-        <a class="action secondary" id="auth-gate-return" href="/ai-access">Return to AI Access</a>
-      </p>
+      <main class="sg-card" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+        <div class="sg-head">${LOGO}<div class="sg-brand"><b>Node-RED AI Access</b><span>Dashboard</span></div></div>
+        <div class="sg-body">
+          <h1 id="auth-gate-title">Sign in to Node-RED</h1>
+          <p class="sg-sub">AI Access uses your Node-RED editor account. Signing in here also signs in the editor in this browser.</p>
+          <p id="auth-gate-status" class="sg-status" role="status" aria-live="polite">Checking how Node-RED signs you in…</p>
+          <form id="auth-gate-login" class="sg-login" hidden autocomplete="on">
+            <label>Username<input id="auth-gate-username" name="username" autocomplete="username" required></label>
+            <label>Password<input id="auth-gate-password" name="password" type="password" autocomplete="current-password" required></label>
+            <div class="sg-actions"><button id="auth-gate-submit" class="sg-primary" type="submit">Sign in</button></div>
+          </form>
+          <div class="sg-actions">
+            <button id="auth-gate-editor" class="sg-primary" type="button" hidden>Sign in with the Node-RED editor</button>
+            <button id="auth-gate-retry" class="sg-secondary" type="button" hidden>Retry</button>
+          </div>
+        </div>
+        <div class="sg-foot">You only need to sign in once — the dashboard continues automatically.</div>
+      </main>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
     <nav class="tabs" aria-label="Admin views" hidden id="main-nav">

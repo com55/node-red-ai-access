@@ -37,7 +37,7 @@ const SCOPE_TEXT: Record<string, [string, string]> = {
   ],
 };
 
-const LOGO =
+export const LOGO =
   '<svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#8f0000"/>' +
   '<path d="M11 15h9a4 4 0 0 1 4 4v10a4 4 0 0 0 4 4h9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>' +
   '<rect x="6" y="11" width="9" height="8" rx="2.5" fill="#fff"/><rect x="33" y="29" width="9" height="8" rx="2.5" fill="#fff"/>' +
