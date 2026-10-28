@@ -184,10 +184,22 @@ export function createSecretNameMatcher(patterns: readonly string[]): SecretName
   const cached = matcherCache.get(cacheKey);
   if (cached) return cached;
   const joined = [...new Set(patterns.map(p => tokenizeName(p).join('')).filter(Boolean))];
+  // Bounded memo: scans call matches() once per candidate key.
+  const memo = new Map<string, boolean>();
   const matcher: SecretNameMatcher = {
     patterns: [...patterns],
     matches(name: string): boolean {
       if (typeof name !== 'string' || name.length === 0 || joined.length === 0) return false;
+      const hit = memo.get(name);
+      if (hit !== undefined) return hit;
+      const result = matchUncached(name);
+      if (memo.size > 4096) memo.clear();
+      memo.set(name, result);
+      return result;
+    },
+  };
+  function matchUncached(name: string): boolean {
+    {
       const tokens = tokenizeName(name);
       const last = tokens[tokens.length - 1];
       if (!last || DESCRIPTOR_SUFFIXES.has(last)) return false;
@@ -208,8 +220,8 @@ export function createSecretNameMatcher(patterns: readonly string[]): SecretName
         }
       }
       return false;
-    },
-  };
+    }
+  }
   if (matcherCache.size > 32) matcherCache.clear();
   matcherCache.set(cacheKey, matcher);
   return matcher;
@@ -241,6 +253,8 @@ interface Span {
 
 interface ContentRule {
   re: RegExp;
+  /** Cheap pre-filter: skip the regex unless the text contains one of these. */
+  hints?: readonly string[];
   accept?: (secret: string, m: RegExpExecArray) => boolean;
 }
 
@@ -260,45 +274,68 @@ function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
   return [
     // Buffer.from("user:pw") / btoa('user:pw') basic-auth literals.
     {
+      hints: ['Buffer.from', 'btoa'],
       re: /\b(?:Buffer\.from|btoa)\([ \t]{0,8}(?<q>["'`])[^"'`:\s]{1,256}:(?<s>[^"'`\s]{1,1024})\k<q>/dg,
       accept: s => !s.includes('${'),
     },
     // PEM private key body (keeps BEGIN/END lines).
     {
+      hints: ['PRIVATE KEY-----'],
       re: /-----BEGIN ((?:[A-Z0-9]{1,16} ){0,4})PRIVATE KEY-----(?<s>[^-]{1,16384})-----END \1PRIVATE KEY-----/dg,
     },
-    { re: /(?<![A-Za-z0-9])(?<s>(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16})(?![A-Za-z0-9])/dg },
-    { re: /(?<![A-Za-z0-9_])(?<s>gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_])/dg },
-    { re: /(?<![A-Za-z0-9_])(?<s>github_pat_[A-Za-z0-9_]{22,255})(?![A-Za-z0-9_])/dg },
-    { re: /(?<![A-Za-z0-9_-])(?<s>xox[abposr]-[A-Za-z0-9-]{10,512})/dg },
-    { re: /hooks\.slack\.com\/services\/(?<s>[A-Za-z0-9_/]{16,512})/dg },
-    { re: /(?<![A-Za-z0-9_-])(?<s>sk-[A-Za-z0-9_-]{20,512})/dg },
-    { re: /(?<![A-Za-z0-9_])(?<s>[sr]k_(?:live|test)_[A-Za-z0-9]{16,512})/dg },
-    { re: /(?<![A-Za-z0-9_-])(?<s>AIza[0-9A-Za-z_-]{35})(?![A-Za-z0-9_-])/dg },
     {
+      hints: ['AKIA', 'ASIA', 'ABIA', 'ACCA'],
+      re: /(?<![A-Za-z0-9])(?<s>(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16})(?![A-Za-z0-9])/dg,
+    },
+    {
+      hints: ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'],
+      re: /(?<![A-Za-z0-9_])(?<s>gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_])/dg,
+    },
+    {
+      hints: ['github_pat_'],
+      re: /(?<![A-Za-z0-9_])(?<s>github_pat_[A-Za-z0-9_]{22,255})(?![A-Za-z0-9_])/dg,
+    },
+    { hints: ['xox'], re: /(?<![A-Za-z0-9_-])(?<s>xox[abposr]-[A-Za-z0-9-]{10,512})/dg },
+    {
+      hints: ['hooks.slack.com'],
+      re: /hooks\.slack\.com\/services\/(?<s>[A-Za-z0-9_/]{16,512})/dg,
+    },
+    { hints: ['sk-'], re: /(?<![A-Za-z0-9_-])(?<s>sk-[A-Za-z0-9_-]{20,512})/dg },
+    {
+      hints: ['k_live_', 'k_test_'],
+      re: /(?<![A-Za-z0-9_])(?<s>[sr]k_(?:live|test)_[A-Za-z0-9]{16,512})/dg,
+    },
+    { hints: ['AIza'], re: /(?<![A-Za-z0-9_-])(?<s>AIza[0-9A-Za-z_-]{35})(?![A-Za-z0-9_-])/dg },
+    {
+      hints: ['eyJ'],
       re: /(?<![A-Za-z0-9_-])(?<s>eyJ[A-Za-z0-9_-]{5,8192}\.[A-Za-z0-9_-]{5,8192}\.[A-Za-z0-9_-]{5,8192})/dg,
     },
     // `Bearer <token>` (token must contain a digit or symbol: skips prose).
     {
+      hints: ['earer'],
       re: /\b[Bb]earer[ \t]{1,8}(?<s>(?=[A-Za-z0-9\-._~+/]{0,4096}[0-9\-._~+/])[A-Za-z0-9\-._~+/]{16,4096}={0,3})/dg,
     },
     {
+      hints: ['asic'],
       re: /\b[Bb]asic[ \t]{1,8}(?<s>(?=[A-Za-z0-9+/]{0,4096}[0-9+/])[A-Za-z0-9+/]{8,4096}={0,2})(?![A-Za-z0-9+/])/dg,
     },
     // scheme://user:password@host
     {
+      hints: ['@'],
       re: /\b[A-Za-z][A-Za-z0-9+.-]{1,20}:\/\/[^\s:@/'"`<>]{1,256}:(?<s>[^\s@/'"`<>]{1,1024})@/dg,
       accept: s => !/^(?:\$\{|\{\{|<|%)/.test(s) && s !== REDACTED_PLACEHOLDER,
     },
     // URL query params: https://api.example/?key=abc123&x=1
     {
+      hints: ['?', '&'],
       re: /[?&](?<k>[A-Za-z_][\w.-]{0,63})=(?<s>[^&#\s"'`<>]{1,2048})/dg,
       accept: (s, m) =>
         matcher.matches(m.groups?.k ?? '') && isSecretLikeValue(decodeURIComponentSafe(s)),
     },
     // name = "literal" / name: 'literal' / "name": "literal" / ['name'] = `literal`
     {
-      re: /(?<q>["'`]?)(?<k>[A-Za-z_$][\w$-]{0,63})\k<q>\]?[ \t]{0,8}(?::|=(?![=>]))[ \t]{0,8}(?<vq>["'`])(?<s>(?:\\.|(?!\k<vq>)[^\\\r\n]){1,1024})\k<vq>/dg,
+      hints: [':', '='],
+      re: /(?<![\w$-])(?<q>["'`]?)(?<k>[A-Za-z_$][\w$-]{0,63})\k<q>\]?[ \t]{0,8}(?::|=(?![=>]))[ \t]{0,8}(?<vq>["'`])(?<s>(?:\\.|(?!\k<vq>)[^\\\r\n]){1,1024})\k<vq>/dg,
       accept: (s, m) => {
         const key = m.groups?.k ?? '';
         if (!matcher.matches(key)) return false;
@@ -313,6 +350,7 @@ function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
 /** Unquoted `password: hunter2` / `token=abc` (text and config fields, not JS code). */
 function unquotedRule(matcher: SecretNameMatcher): ContentRule {
   return {
+    hints: [':', '='],
     re: /(?<![\w$.-])(?<k>[A-Za-z_][\w-]{0,63})[ \t]{0,8}(?::(?!\/\/)|=)[ \t]{0,8}(?<s>[^\s;,'"`&<>(){}[\]]{3,1024})/dg,
     accept: (s, m) =>
       matcher.matches(m.groups?.k ?? '') &&
@@ -432,6 +470,7 @@ export function scanTextForSecrets(
   const started = performance.now();
   spans.push(...connectionStringSpans(text, matcher));
   for (const rule of rules) {
+    if (rule.hints && !rule.hints.some(h => text.includes(h))) continue;
     if (performance.now() - started > SCAN_TIME_BUDGET_MS) {
       return { text: REDACTED_PLACEHOLDER, secrets: [text] };
     }
