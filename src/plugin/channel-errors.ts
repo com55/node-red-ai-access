@@ -184,7 +184,7 @@ function hintFor(
         'List proposals and use an id from that response.'
       );
     case 'proposal_not_owned':
-      return 'Only the access link that created a pending proposal can withdraw it.';
+      return 'Only the access link that created an open proposal can withdraw it.';
     case 'proposal_not_pending':
       return 'Only open (pending or conflict) proposals can be withdrawn or rejected.';
     case 'confirm_required':
@@ -252,10 +252,19 @@ export function mapErrorForChannel(
   let mapped: ChannelErrorMapped | null = null;
 
   if (error instanceof ProposalConflictError) {
-    mapped = { statusCode: 409, body: { error: error.message, code: error.code, conflicts: error.conflicts } };
+    mapped = {
+      statusCode: 409,
+      body: { error: error.message, code: error.code, conflicts: error.conflicts },
+    };
   } else if (error instanceof ProposalRebaseAckRequiredError) {
-    mapped = { statusCode: 409, body: { error: error.message, code: error.code, mergedHash: error.mergedHash } };
-  } else if (error instanceof ProposalRebaseRaceError || error instanceof ProposalConcurrentApproveError) {
+    mapped = {
+      statusCode: 409,
+      body: { error: error.message, code: error.code, mergedHash: error.mergedHash },
+    };
+  } else if (
+    error instanceof ProposalRebaseRaceError ||
+    error instanceof ProposalConcurrentApproveError
+  ) {
     mapped = { statusCode: 409, body: { error: error.message, code: error.code } };
   } else if (error instanceof AiOpsValidationError) {
     mapped = {

@@ -34,7 +34,14 @@ describe('ProposalStore + ProposalService', () => {
     updateFlow = vi.fn(() => Promise.resolve({ flowId: 'tab-1', rev: 'rev-2' }));
     adapter = {
       kind: 'red',
-      getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [{ id: 'tab-1', type: 'tab', label: 'Old' }, { id: 'n1', type: 'inject', z: 'tab-1' }] }),
+      getFlows: () =>
+        Promise.resolve({
+          rev: 'rev-1',
+          flows: [
+            { id: 'tab-1', type: 'tab', label: 'Old' },
+            { id: 'n1', type: 'inject', z: 'tab-1' },
+          ],
+        }),
       getFlow: () =>
         Promise.resolve({ rev: 'rev-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } }),
       updateFlow,

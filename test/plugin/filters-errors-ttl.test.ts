@@ -486,12 +486,18 @@ describe('PR #74 follow-ups: whole-file ids, multi-status, messages, hints, mine
   });
 
   async function seedStatuses(h: Harness, token: string): Promise<void> {
-    // Expire a proposal by age, then create a fresh pending proposal.
-    expect((await submitRest(h.app, token, 'a')).status).toBe(201);
-    const now = Date.now();
-    const time = vi.spyOn(Date, 'now').mockReturnValue(now + 8 * 86_400_000);
-    await request(h.app).get('/mcp/api/v1/proposals').set('Authorization', `Bearer ${token}`);
-    time.mockRestore();
+    // Age only the proposal: advancing the global clock would also expire the token.
+    const created = await submitRest(h.app, token, 'a');
+    expect(created.status).toBe(201);
+    const path = join(userDir, '.ai-access', 'proposals', `${created.body.id}.json`);
+    const proposal = JSON.parse(readFileSync(path, 'utf8'));
+    proposal.createdAt = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    writeFileSync(path, JSON.stringify(proposal));
+    const listed = await request(h.app)
+      .get('/mcp/api/v1/proposals')
+      .set('Authorization', `Bearer ${token}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.proposals[0].status).toBe('expired');
   }
 
   it('status supports comma-separated and repeated values on REST and GET', async () => {
@@ -865,7 +871,7 @@ describe('/mcp page UI follow-ups', () => {
     expect(html).toContain('id="decided-load-more"');
     expect(html).toContain('Load more');
     expect(html).toContain('loadAllDecidedForSearch()');
-    expect(html).toContain("api('/proposals?status=pending')");
+    expect(html).toContain("api('/proposals?status=pending,conflict')");
   });
 
   it('copy short-id buttons have an accessible name', () => {

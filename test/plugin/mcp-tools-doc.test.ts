@@ -58,7 +58,10 @@ function createApp(userDir: string) {
   return { RED, services, linkStore };
 }
 
-async function liveToolsMarkdown(h: ReturnType<typeof createApp>, accessLink: NonNullable<AuthenticatedRequest['accessLink']>): Promise<string> {
+async function liveToolsMarkdown(
+  h: ReturnType<typeof createApp>,
+  accessLink: NonNullable<AuthenticatedRequest['accessLink']>
+): Promise<string> {
   const server = createAiMcpServer(h.RED, h.services, { accessLink } as AuthenticatedRequest);
   const client = new Client({ name: 'docs', version: '1' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

@@ -45,12 +45,48 @@ function e(
 }
 
 export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
-  e('proposal_conflict', 409, 'Editor and proposal changes conflict (conflicts contains field names only)', 'Read the current flow and resolve the proposal before approval', [...ALL, 'admin']),
-  e('rebase_ack_required', 409, 'The merged result needs review (mergedHash included)', 'Review the diff and approve with its mergedHash', ['admin']),
-  e('rebase_race', 409, 'Flows kept changing during approval', 'Recheck the proposal and retry approval', ['admin']),
-  e('conflict_not_found', 409, 'The requested conflict no longer exists', 'Reload the proposal and its conflicts', ['admin']),
-  e('invalid_choice', 400, 'Invalid manual conflict choice', 'Use an available live or proposed choice', ['admin']),
-  e('flow_id_mismatch', 400, 'Resolution tried to change the proposal flow id', 'Keep the same flowId or submit a new proposal', REST_MCP),
+  e(
+    'proposal_conflict',
+    409,
+    'Editor and proposal changes conflict (conflicts contains field names only)',
+    'Read the current flow and resolve the proposal before approval',
+    [...ALL, 'admin']
+  ),
+  e(
+    'rebase_ack_required',
+    409,
+    'The merged result needs review (mergedHash included)',
+    'Review the diff and approve with its mergedHash',
+    ['admin']
+  ),
+  e(
+    'rebase_race',
+    409,
+    'Flows kept changing during approval',
+    'Recheck the proposal and retry approval',
+    ['admin']
+  ),
+  e(
+    'conflict_not_found',
+    409,
+    'The requested conflict no longer exists',
+    'Reload the proposal and its conflicts',
+    ['admin']
+  ),
+  e(
+    'invalid_choice',
+    400,
+    'Invalid manual conflict choice',
+    'Use an available live or proposed choice',
+    ['admin']
+  ),
+  e(
+    'flow_id_mismatch',
+    400,
+    'Resolution tried to change the proposal flow id',
+    'Keep the same flowId or submit a new proposal',
+    REST_MCP
+  ),
   // --- Authentication / access links
   e(
     'access_link_missing',
@@ -174,13 +210,18 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'Proposal submitted without `expectedRev` / `rev`',
     'Read the flow and pass its `rev`'
   ),
-  e('version_mismatch', 409, 'Unknown or unavailable `rev` / `expectedRev` snapshot', 'Re-read flows and resubmit'),
+  e(
+    'version_mismatch',
+    409,
+    'Unknown or unavailable `rev` / `expectedRev` snapshot',
+    'Re-read flows and resubmit'
+  ),
   e('proposal_not_found', 404, 'Unknown proposal id', 'List proposals and use an existing id'),
   e(
     'proposal_not_pending',
     409,
-    'Action needs a pending proposal',
-    'Only pending can withdraw / decide'
+    'Action needs an open proposal',
+    'Only pending or conflict proposals can withdraw / decide'
   ),
   e(
     'proposal_not_owned',
@@ -361,7 +402,14 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'warning'
   ),
   // --- Proposal statuses
-  e('conflict', 200, 'Status: open proposal has conflicting editor changes; approval blocked', 'Read the current flow and resolve the proposal', ALL, 'status'),
+  e(
+    'conflict',
+    200,
+    'Status: open proposal has conflicting editor changes; approval blocked',
+    'Read the current flow and resolve the proposal',
+    ALL,
+    'status'
+  ),
   e(
     'expired',
     200,

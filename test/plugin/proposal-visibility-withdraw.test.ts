@@ -50,8 +50,8 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
         rev: 'rev-1',
         flows: [
           { id: 'tab-1', type: 'tab', label: 'Main' },
-          { id: 'n1', type: 'inject', z: 'tab-1' },
-          { id: 'n2', type: 'template', z: 'tab-1' },
+          { id: 'n1', type: 'inject', name: 'tick', z: 'tab-1', wires: [[]] },
+          { id: 'n2', type: 'template', name: 'tpl', z: 'tab-1', template: 'Hello', wires: [[]] },
         ],
       }),
     getFlow: (id: string) =>

@@ -702,6 +702,21 @@ export function redactFlowData<T>(
   return { value: redactValueInner(value, ctx) as T, count: ctx.count };
 }
 
+/** Conflict labels can contain the same secrets as node names in flow reads. */
+export function redactConflictLabels<T extends { nodeName?: string }>(
+  conflicts: readonly T[],
+  patterns: readonly string[] = currentSecretNamePatterns()
+): T[] {
+  return conflicts.map(conflict => {
+    if (conflict.nodeName === undefined) return { ...conflict };
+    const label = redactFlowData(
+      { id: 'conflict', type: 'node', name: conflict.nodeName },
+      patterns
+    );
+    return { ...conflict, nodeName: label.value.name };
+  });
+}
+
 /** Redact a stored proposal's flow bodies for AI presentation / diffs. */
 export function redactProposalForAi<P extends Proposal>(
   proposal: P,
@@ -713,6 +728,12 @@ export function redactProposalForAi<P extends Proposal>(
   };
   if (proposal.baseFlow !== undefined) {
     out.baseFlow = redactFlowData(proposal.baseFlow, patterns).value;
+  }
+  if (proposal.rebase) {
+    out.rebase = {
+      ...proposal.rebase,
+      conflicts: redactConflictLabels(proposal.rebase.conflicts, patterns),
+    };
   }
   return out;
 }

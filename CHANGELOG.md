@@ -14,10 +14,14 @@ and this project adheres to
 
 ### Added
 
-- Automatic three-way rebasing onto live flows, with a `conflict` status that blocks approval until resolved.
-- Configurable `proposalTtlDays` (1–365 days, default 7); only TTL expiry closes old open proposals.
-- Admin conflict-choice and recheck routes, AI REST resolution, and the MCP `resolve_proposal_conflict` tool.
-- Diffs include editor changes and the merged deployment; approval requires a `mergedHash` acknowledgement when live changes are merged.
+- Automatic three-way rebasing onto live flows, with a `conflict` status that
+  blocks approval until resolved.
+- Configurable `proposalTtlDays` (1–365 days, default 7); only TTL expiry closes
+  old open proposals.
+- Admin conflict-choice and recheck routes, AI REST resolution, and the MCP
+  `resolve_proposal_conflict` tool.
+- Diffs include editor changes and the merged deployment; approval requires a
+  `mergedHash` acknowledgement when live changes are merged.
 - Recent known stale revisions are accepted at submit and rebased immediately.
 
 ## [0.2.0-beta.5] - 2026-10-28

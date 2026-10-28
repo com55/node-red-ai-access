@@ -693,7 +693,7 @@ function registerProposalQueryTools(
     {
       description:
         'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
-        'pending proposals, conflictingProposals when other pending work touches the same flow. ' +
+        'open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. ' +
         'Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
         'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
@@ -769,7 +769,8 @@ function registerProposalActionTools(
   server.registerTool(
     'resolve_proposal_conflict',
     {
-      description: 'Replace your own open proposal with a resolution based on expectedRev. Revision changes auto-rebase; conflict blocks approval until resolved. Open proposals expire after the configured TTL (default 7 days). Read the current flow first; payload accepts a full flow or nodes ops as in submit_proposal.',
+      description:
+        'Replace your own open proposal with a resolution based on expectedRev. Revision changes auto-rebase; conflict blocks approval until resolved. Open proposals expire after the configured TTL (default 7 days). Read the current flow first; payload accepts a full flow or nodes ops as in submit_proposal.',
       inputSchema: {
         id: z.string().min(1),
         expectedRev: z.string().min(1),
@@ -783,9 +784,22 @@ function registerProposalActionTools(
     },
     async ({ id, ...body }) => {
       try {
-        const proposal = await resolveMyProposal(services.proposalStore, services.auditLog, accessLink, id, body, services.flowAdapter, presentOpts, services.nodeTypesAdapter);
-        return jsonResult(presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, presentOpts));
-      } catch (error) { return jsonError(error); }
+        const proposal = await resolveMyProposal(
+          services.proposalStore,
+          services.auditLog,
+          accessLink,
+          id,
+          body,
+          services.flowAdapter,
+          presentOpts,
+          services.nodeTypesAdapter
+        );
+        return jsonResult(
+          presentAccessibleProposalForApi(services.proposalStore, accessLink, proposal, presentOpts)
+        );
+      } catch (error) {
+        return jsonError(error);
+      }
     }
   );
 

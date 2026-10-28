@@ -302,6 +302,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
         rateLimitWindowMs: 10000,
         rateLimitMaxPerToken: 90,
         secretNamePatterns: ['PIN'],
+        proposalTtlDays: 9,
       },
     });
     const result = await request(app)
@@ -318,13 +319,15 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
         rateLimitWindowMs: 1,
         rateLimitMaxPerToken: 1,
         secretNamePatterns: ['not valid!'],
+        proposalTtlDays: 0,
       });
     expect(result.status).toBe(200);
     expect(result.body.settings.secretNamePatterns).toEqual(['PIN']);
     expect(Object.values(result.body.sources)).toEqual([
-      ...Array(11).fill('settings.js'),
+      ...Array(12).fill('settings.js'),
       'default',
     ]);
+    expect(result.body.settings.proposalTtlDays).toBe(9);
     expect(result.body.settings.publicBaseUrl).toBe('https://locked.example');
     expect(result.body.settings.enabled).toBe(true);
     expect(result.body.disk).toEqual({});

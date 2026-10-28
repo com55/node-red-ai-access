@@ -1537,9 +1537,9 @@ function pageClientScriptPartB(): string {
 
   function proposalIsStale(p) {
     if (!p || (p.status !== 'pending' && p.status !== 'conflict')) return false;
-    if (p.baseRevStale === true) return true;
     var cached = proposalDiffCache[p.id];
-    return !!(cached && cached.baseRevStale);
+    var rebase = (cached && cached.rebase) || p.rebase;
+    return p.status === 'conflict' || !!(rebase && rebase.state === 'conflict');
   }
 
   function formatPendingBadgeText(live, stale) {
@@ -2049,11 +2049,11 @@ function pageClientScriptPartBDiffView2(): string {
     );
     var vsCurrent = '';
     if (diff.vsCurrent) {
-      var vc = diff.vsCurrent.summary || {};
-      var places = (vc.added || 0) + (vc.removed || 0) + (vc.modified || 0);
-      if (places > 0) {
-        vsCurrent = '<p class="muted vs-current-plain">The flow also changed in ' +
-          places + ' other place' + (places === 1 ? '' : 's') + ' since then.</p>';
+      if (diff.rebase && diff.rebase.state === 'merged') {
+        vsCurrent = '<h4>Editor changes since submission</h4>' +
+          renderDiffSections(diff.liveChanges || {}, mode, 'No editor node changes.') +
+          '<h4>Changes approval will deploy</h4>' +
+          renderDiffSections(diff.vsCurrent, mode, 'No node changes compared with the live flow.');
       }
     }
     return missing + warnHtml + toolbar + sections + vsCurrent;
@@ -2736,14 +2736,18 @@ function pageClientScriptPartB2Apply(): string {
   }
 
   function applyDiffToProposalCard(id, diff) {
-    proposalDiffCache[id] = diff;
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var wasStale = p ? proposalIsStale(p) : false;
+    proposalDiffCache[id] = diff;
+    if (p && diff.rebase && (p.status === 'pending' || p.status === 'conflict')) {
+      p.rebase = diff.rebase;
+      p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
+    }
     if (p && typeof diff.baseRevStale === 'boolean') {
       p.baseRevStale = diff.baseRevStale;
     }
-    // Newly discovered stale → re-render into the Out of date group.
-    if (p && (p.status === 'pending' || p.status === 'conflict') && !wasStale && diff.baseRevStale) {
+    // Move cards between review and conflict groups when the rebase state changes.
+    if (p && (p.status === 'pending' || p.status === 'conflict') && wasStale !== proposalIsStale(p)) {
       renderProposalsList();
       return;
     }
@@ -2765,7 +2769,7 @@ function pageClientScriptPartB2Apply(): string {
       updatePendingBadges();
       return;
     }
-    if (diff.baseRevStale) article.setAttribute('data-stale', '1');
+    if (p && proposalIsStale(p)) article.setAttribute('data-stale', '1');
     else article.removeAttribute('data-stale');
 
     // Banner for any large delete (stale or live) — owners must see the risk.
@@ -3015,7 +3019,7 @@ function pageClientScriptPartC(): string {
       renderProposalsList();
       return;
     }
-    if (status && status !== 'pending' && proposalsFilter === 'pending') {
+    if (status && status !== 'pending' && status !== 'conflict' && proposalsFilter === 'pending') {
       var decidedMatches = countSearchMatchesInFilter('decided');
       if (decidedMatches > 0) {
         setProposalsFilter('decided');
@@ -3053,7 +3057,7 @@ function pageClientScriptPartC(): string {
     try {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
-        body: JSON.stringify({ deploymentType: deploymentType })
+        body: JSON.stringify({ deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash })
       });
       var viewOpts = { title: toastTitle, href: proposalViewHref(id), linkLabel: 'View' };
       if (result.status === 'rejected') {
@@ -3083,8 +3087,8 @@ function pageClientScriptPartC(): string {
       notifySidebarPendingRefresh();
       if (result.status !== 'rejected' && result.status !== 'failed' && peersBefore > 0) {
         var note = peersBefore === 1
-          ? '1 other proposal is now out of date'
-          : peersBefore + ' other proposals are now out of date';
+          ? '1 other proposal was rechecked'
+          : peersBefore + ' other proposals were rechecked';
         var priorOk = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
         showFlash(flash, (priorOk ? priorOk + ' ' : '') + note + '.', true);
         showToast(note + '.', true);
@@ -3103,8 +3107,8 @@ function pageClientScriptPartC(): string {
     var deploymentType = select ? select.value : defaultDeploy;
     var diff = proposalDiffCache[id];
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    if (diff && diff.baseRevStale) {
-      showToast('This proposal is out of date. Ask the AI to resubmit.', false);
+    if ((p && p.status === 'conflict') || (diff && diff.rebase && diff.rebase.state === 'conflict')) {
+      showToast('Resolve the conflicts before approving this proposal.', false);
       return;
     }
     if (needsApproveConfirm(diff, p)) {

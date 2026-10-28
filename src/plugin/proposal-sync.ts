@@ -212,7 +212,9 @@ export function createDebouncedSync(
 }
 
 /** Raw live flows snapshot, or undefined when the runtime is unavailable. */
-export async function tryRawLive(adapter: FlowAdapter | undefined): Promise<FlowsSnapshot | undefined> {
+export async function tryRawLive(
+  adapter: FlowAdapter | undefined
+): Promise<FlowsSnapshot | undefined> {
   if (!adapter) return undefined;
   try {
     return await rawFlowAdapter(adapter).getFlows();

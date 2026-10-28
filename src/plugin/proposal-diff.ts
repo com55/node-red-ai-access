@@ -14,7 +14,12 @@ import { diffLines, type LineDiffEntry } from './line-diff.js';
 import { nodeTypeText } from './proposal-present.js';
 import { nestedLiveTab, type RebaseResult } from './proposal-rebase.js';
 import { rebaseProposal } from './proposal-sync.js';
-import { rawFlowAdapter, redactFlowData, redactProposalForAi } from './secret-redaction.js';
+import {
+  rawFlowAdapter,
+  redactConflictLabels,
+  redactFlowData,
+  redactProposalForAi,
+} from './secret-redaction.js';
 
 /** Node property keys treated as multi-line text for line diffs. */
 const TEXT_PROPERTY_KEYS = new Set([
@@ -590,14 +595,27 @@ export async function computeProposalDiff(
     const view = ai ? redactProposalForAi(rawProposal) : rawProposal;
     const rawTab = nestedLiveTab(live.flows, flowId, rawProposal.baseFlow) ?? emptyTab;
     const currentTab = ai ? redactFlowData(rawTab).value : rawTab;
-    const result = buildProposalDiff(view, { rev: proposal.expectedRev, flow: view.baseFlow ?? currentTab }, {
-      currentRev: live.rev, compareAgainst: view.baseFlow ? 'base' : 'current',
-      baseSnapshotMissing: view.baseFlow === undefined, baseRevStale: proposal.expectedRev !== live.rev,
-    });
-    result.rebase = { state: rebase.state, conflicts: rebase.conflicts, ...(rebase.mergedHash ? { mergedHash: rebase.mergedHash } : {}) };
+    const result = buildProposalDiff(
+      view,
+      { rev: proposal.expectedRev, flow: view.baseFlow ?? currentTab },
+      {
+        currentRev: live.rev,
+        compareAgainst: view.baseFlow ? 'base' : 'current',
+        baseSnapshotMissing: view.baseFlow === undefined,
+        baseRevStale: proposal.expectedRev !== live.rev,
+      }
+    );
+    result.rebase = {
+      state: rebase.state,
+      conflicts: ai ? redactConflictLabels(rebase.conflicts) : rebase.conflicts,
+      ...(rebase.mergedHash ? { mergedHash: rebase.mergedHash } : {}),
+    };
     result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);
     if (rebase.state !== 'conflict' && rebase.merged) {
-      result.vsCurrent = buildDiffSections(ai ? redactFlowData(rebase.merged).value : rebase.merged, currentTab);
+      result.vsCurrent = buildDiffSections(
+        ai ? redactFlowData(rebase.merged).value : rebase.merged,
+        currentTab
+      );
     }
     return result;
   }

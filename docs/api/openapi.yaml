@@ -1274,7 +1274,7 @@ paths:
       tags: [Proposals]
       summary: Withdraw own pending proposal
       description: |
-        Access-link Bearer only. Withdraws a **open** (pending or conflict) proposal created by
+        Access-link Bearer only. Withdraws an **open** (pending or conflict) proposal created by
         this token. Status becomes `withdrawn` (not `rejected`). Optional
         JSON body `{ "reason": "…" }`.
       operationId: withdrawProposal
@@ -1462,8 +1462,8 @@ components:
                 code: access_link_invalid
     VersionConflict:
       description: |
-        `expectedRev` does not match the current flow revision
-        (`code: version_mismatch`). Re-read flows and resubmit.
+        `expectedRev` is unavailable in recent snapshot history and does not
+        match the live revision (`code: version_mismatch`). Re-read flows and resubmit.
       content:
         application/json:
           schema:
@@ -1582,7 +1582,7 @@ components:
         - `missing_expected_rev` (400): Proposal submitted without `expectedRev` / `rev`
         - `version_mismatch` (409): Unknown or unavailable `rev` / `expectedRev` snapshot
         - `proposal_not_found` (404): Unknown proposal id
-        - `proposal_not_pending` (409): Action needs a pending proposal
+        - `proposal_not_pending` (409): Action needs an open proposal
         - `proposal_not_owned` (403): Withdraw of another token’s proposal
         - `validation_failed` (400): Several validation errors at once (message `N validation errors`)
         - `duplicate_node_id` (400): The same node id appears more than once in a full tab or batch
@@ -2467,9 +2467,8 @@ components:
         reason:
           type: string
           description: |
-            Present when rejected, failed, or withdrawn. On revision conflict
-            after approve, explains that expectedRev is stale and the AI should
-            re-read flows and submit a new proposal.
+            Present when rejected, failed, withdrawn, or expired. Revision changes
+            keep open proposals pending or in conflict; they do not close them.
         resultRev:
           type: string
 

@@ -391,7 +391,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
 
   const merged: FlowTab = {
     id: flowId,
-    type: typeof proposed.type === 'string' ? proposed.type : (live.tab.type),
+    type: typeof proposed.type === 'string' ? proposed.type : live.tab.type,
     ...mergedTabProps,
     nodes,
   };

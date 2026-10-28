@@ -597,69 +597,64 @@ describe('Node-RED 4.x in-process plugin integration', { timeout: 30_000 }, () =
     }
   );
 
-  it('stale expectedRev at approve marks proposal rejected (not failed)', async () => {
+  it('an unrelated tab change keeps a stale proposal pending and approve succeeds', async () => {
     const link = linkStore.create({ kind: 'rest', label: 'stale-approve' });
-
     const snap = await request(RED.httpAdmin)
       .get('/mcp/api/v1/flows/tab1')
       .set('Authorization', `Bearer ${link.token}`);
-    const rev = snap.body.rev as string;
-
-    const staleCandidate = await request(RED.httpAdmin)
+    expect(snap.status).toBe(200);
+    const candidate = await request(RED.httpAdmin)
       .post('/mcp/api/v1/proposals')
       .set('Authorization', `Bearer ${link.token}`)
       .send({
         type: 'replace_flow',
-        expectedRev: rev,
+        expectedRev: snap.body.rev,
         payload: {
           flowId: 'tab1',
-          flow: {
-            id: 'tab1',
-            label: 'Should stay pending then reject',
-            nodes: [{ id: 'stale-n1', type: 'inject', z: 'tab1', wires: [[]] }],
-          },
+          flow: { ...snap.body.flow, label: 'Approved after unrelated edit' },
         },
       });
-    expect(staleCandidate.status).toBe(201);
+    expect(candidate.status).toBe(201);
 
-    // Bump live rev by approving a different proposal first.
-    const winner = await request(RED.httpAdmin)
-      .post('/mcp/api/v1/proposals')
-      .set('Authorization', `Bearer ${link.token}`)
-      .send({
-        type: 'replace_flow',
-        expectedRev: rev,
-        payload: {
-          flowId: 'tab1',
-          flow: {
-            id: 'tab1',
-            label: 'Winner deploy',
-            nodes: [{ id: 'win-n1', type: 'inject', z: 'tab1', wires: [[]] }],
-          },
-        },
-      });
-    expect(winner.status).toBe(201);
-
-    const winnerApproved = await request(RED.httpAdmin)
-      .post(`/mcp/api/v1/proposals/${winner.body.id}/approve`)
+    // Use the editor API to add another tab, moving the global revision.
+    const live = await request(RED.httpAdmin)
+      .get('/flows')
+      .set('Node-RED-API-Version', 'v2')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(live.status).toBe(200);
+    const deployed = await request(RED.httpAdmin)
+      .post('/flows')
+      .set('Node-RED-API-Version', 'v2')
+      .set('Node-RED-Deployment-Type', 'nodes')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({});
-    expect(winnerApproved.status).toBe(200);
-    expect(winnerApproved.body.status).toBe('approved');
+      .send({
+        rev: live.body.rev,
+        flows: [...live.body.flows, { id: 'unrelated-tab', type: 'tab', label: 'Unrelated' }],
+      });
+    expect(deployed.status).toBe(200);
 
-    // Approving the winner auto-closes other pending on the same flow as superseded.
-    const staleAfter = await request(RED.httpAdmin)
-      .get(`/mcp/api/v1/proposals/${staleCandidate.body.id}`)
+    const after = await request(RED.httpAdmin)
+      .get(`/mcp/api/v1/proposals/${candidate.body.id}`)
       .set('Authorization', `Bearer ${link.token}`);
-    expect(staleAfter.status).toBe(200);
-    expect(staleAfter.body.status).toBe('superseded');
-    expect(staleAfter.body.reason).toMatch(/superseded/i);
+    expect(after.status).toBe(200);
+    expect(after.body.status).toBe('pending');
+    expect(after.body.rebase).toMatchObject({ state: 'clean', rev: deployed.body.rev });
+    expect(after.body.expectedRev).not.toBe(deployed.body.rev);
 
-    const staleApproved = await request(RED.httpAdmin)
-      .post(`/mcp/api/v1/proposals/${staleCandidate.body.id}/approve`)
+    const approved = await request(RED.httpAdmin)
+      .post(`/mcp/api/v1/proposals/${candidate.body.id}/approve`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({});
-    expect(staleApproved.status).toBe(409);
-    expect(staleApproved.body.code).toBe('proposal_not_pending');
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe('approved');
+    const final = await request(RED.httpAdmin)
+      .get('/mcp/api/v1/flows')
+      .set('Authorization', `Bearer ${link.token}`);
+    expect(final.body.flows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'tab1', label: 'Approved after unrelated edit' }),
+        expect.objectContaining({ id: 'unrelated-tab', label: 'Unrelated' }),
+      ])
+    );
   });
 });

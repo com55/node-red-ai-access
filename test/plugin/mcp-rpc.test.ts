@@ -297,6 +297,7 @@ describe('MCP /mcp/rpc Streamable HTTP', () => {
         'search_palette',
         'submit_proposal',
         'withdraw_proposal',
+        'resolve_proposal_conflict',
       ].sort()
     );
     const tools = (res.body.result as { tools: { name: string; description?: string }[] }).tools;

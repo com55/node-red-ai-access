@@ -761,7 +761,11 @@ interface PreparedSubmission {
   head: FlowsSnapshot;
 }
 
-interface ProposalWarningLike { code: string; error: string; [key: string]: unknown }
+interface ProposalWarningLike {
+  code: string;
+  error: string;
+  [key: string]: unknown;
+}
 
 /**
  * Resolve, restore, and validate a replace_flow payload against the flows the

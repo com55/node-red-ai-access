@@ -132,7 +132,12 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
   ) {
     out.defaultLinkTtlSeconds = Math.floor(data.defaultLinkTtlSeconds);
   }
-  if (typeof data.proposalTtlDays === "number" && Number.isInteger(data.proposalTtlDays) && data.proposalTtlDays >= 1 && data.proposalTtlDays <= 365) {
+  if (
+    typeof data.proposalTtlDays === 'number' &&
+    Number.isInteger(data.proposalTtlDays) &&
+    data.proposalTtlDays >= 1 &&
+    data.proposalTtlDays <= 365
+  ) {
     out.proposalTtlDays = data.proposalTtlDays;
   }
   if (isDeploymentType(data.defaultDeploymentType)) {

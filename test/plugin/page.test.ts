@@ -220,7 +220,9 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Requested via link/);
     expect(res.text).toMatch(/Dismiss closes/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
-    expect(res.text).toMatch(/The flow also changed in/);
+    expect(res.text).toMatch(/Editor changes since submission/);
+    expect(res.text).toMatch(/Changes approval will deploy/);
+    expect(res.text).toMatch(/mergedHash/);
     // Proposal id chip (first 8 hex after prop-) + search matches short/full id.
     expect(res.text).toMatch(/id="proposals-search"/);
     expect(res.text).toMatch(/proposalIdChip|proposalShortId|data-copy-id/);

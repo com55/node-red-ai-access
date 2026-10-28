@@ -475,7 +475,14 @@ describe('proposals / flows / logs HTTP API', () => {
       authenticate: asUser('read', 'guest'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: liveRev, flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }, ...liveNodes.map(n => ({ ...n, z: 'tab-1' }))] }),
+        getFlows: () =>
+          Promise.resolve({
+            rev: liveRev,
+            flows: [
+              { id: 'tab-1', type: 'tab', label: 'Main' },
+              ...liveNodes.map(n => ({ ...n, z: 'tab-1' })),
+            ],
+          }),
         getFlow: () =>
           Promise.resolve({
             rev: liveRev,
@@ -560,7 +567,9 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(funcChange?.kind).toBe('text');
     expect(funcChange?.lines?.some((l: { op: string }) => l.op === 'add')).toBe(true);
     expect(asAdmin.body.rebase.state).toBe('merged');
-    expect(asAdmin.body.liveChanges.added).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'html20k' })]));
+    expect(asAdmin.body.liveChanges.added).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'html20k' })])
+    );
     expect(asAdmin.body.vsCurrent?.removed).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'html20k' })])
     );

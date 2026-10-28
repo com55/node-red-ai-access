@@ -46,7 +46,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `missing_expected_rev` | 400 | Proposal submitted without `expectedRev` / `rev` | Read the flow and pass its `rev` | GET, REST, MCP |
 | `version_mismatch` | 409 | Unknown or unavailable `rev` / `expectedRev` snapshot | Re-read flows and resubmit | GET, REST, MCP |
 | `proposal_not_found` | 404 | Unknown proposal id | List proposals and use an existing id | GET, REST, MCP |
-| `proposal_not_pending` | 409 | Action needs a pending proposal | Only pending can withdraw / decide | GET, REST, MCP |
+| `proposal_not_pending` | 409 | Action needs an open proposal | Only pending or conflict proposals can withdraw / decide | GET, REST, MCP |
 | `proposal_not_owned` | 403 | Withdraw of another token’s proposal | Only the creating token can withdraw | GET, REST, MCP |
 | `validation_failed` | 400 | Several validation errors at once (message `N validation errors`) | Fix every entry in errors[] and resubmit. | GET, REST, MCP |
 | `duplicate_node_id` | 400 | The same node id appears more than once in a full tab or batch | Give every node a unique id | GET, REST, MCP |

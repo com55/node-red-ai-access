@@ -67,7 +67,10 @@ function createApp(options: {
       getFlows: () =>
         Promise.resolve({
           rev: liveRev,
-          flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }],
+          flows: [
+            { id: 'tab-1', type: 'tab', label: 'Main' },
+            ...structuredClone(flow.nodes ?? []),
+          ],
         }),
       getFlow: (id: string) => {
         if (id !== 'tab-1') {

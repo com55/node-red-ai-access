@@ -45,7 +45,7 @@ Get detail for one installed node type: defaults (JSON), inputs/outputs (always 
 
 ## `get_proposal`
 
-Get any proposal by id (all tokens can read). Response includes mine:true|false and, for pending proposals, conflictingProposals when other pending work touches the same flow. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
+Get any proposal by id (all tokens can read). Response includes mine:true|false and, for open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

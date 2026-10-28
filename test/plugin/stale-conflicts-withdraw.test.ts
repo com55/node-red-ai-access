@@ -257,7 +257,13 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
       },
       createdBy: { kind: 'access-link', linkId: 'l1' },
     });
-    const summary = rebaseOpenProposalsWith(store, { rev: 'rev-2', flows: [{ id: 'tab-1', type: 'tab' }, { id: 'n1', type: 'inject', name: 'y', z: 'tab-1' }] });
+    const summary = rebaseOpenProposalsWith(store, {
+      rev: 'rev-2',
+      flows: [
+        { id: 'tab-1', type: 'tab' },
+        { id: 'n1', type: 'inject', name: 'y', z: 'tab-1' },
+      ],
+    });
     expect(summary).toMatchObject({ checked: 1, expired: 0, conflicts: 0 });
     expect(store.get(created.id).status).toBe('pending');
     expect(store.get(created.id).rebase?.state).toBe('clean');

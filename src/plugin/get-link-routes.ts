@@ -457,7 +457,10 @@ function registerGetLinkDiffRoute(
           return;
         }
         res.json(
-          applyDiffFormat(await computeProposalDiff(proposal, options.flowAdapter, options.proposalStore.get(id)), resolved.format)
+          applyDiffFormat(
+            await computeProposalDiff(proposal, options.flowAdapter, options.proposalStore.get(id)),
+            resolved.format
+          )
         );
       } catch (error) {
         const mapped = aiOpsErrorToHttp(error);

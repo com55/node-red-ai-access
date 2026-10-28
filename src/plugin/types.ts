@@ -178,7 +178,10 @@ export interface NodeRedPluginAPI {
       }) => void
     ): void;
   };
-  events?: { on(event: string, listener: () => void): void; removeListener?(event: string, listener: () => void): void };
+  events?: {
+    on(event: string, listener: () => void): void;
+    removeListener?(event: string, listener: () => void): void;
+  };
   auth: NodeRedAuthAPI;
   plugins: {
     registerPlugin: (id: string, definition?: Record<string, unknown>) => void;

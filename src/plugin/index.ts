@@ -191,7 +191,10 @@ export function registerRoutes(
 
   configureProposalTtl(() => services.settingsStore.getEffective().proposalTtlDays);
   syncCleanup.get(RED)?.();
-  const proposalSync = createDebouncedSync(() => syncOpenProposals(services.proposalStore, services.flowAdapter), 500);
+  const proposalSync = createDebouncedSync(
+    () => syncOpenProposals(services.proposalStore, services.flowAdapter),
+    500
+  );
   const cleanup = () => {
     proposalSync.cancel();
     RED.events?.removeListener?.('flows:started', proposalSync.trigger);
@@ -585,18 +588,38 @@ export function registerRoutes(
   );
 
   RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/resolve-conflict', ...linkGuards,
+    '/mcp/api/v1/proposals/:id/resolve-conflict',
+    ...linkGuards,
     requireJsonContentType('rest'),
-    asyncRoute(resolveProposalConflictHandler(services.proposalStore, services.auditLog, flows, httpAdminRoot))
+    asyncRoute(
+      resolveProposalConflictHandler(
+        services.proposalStore,
+        services.auditLog,
+        flows,
+        httpAdminRoot
+      )
+    )
   );
   RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/recheck', ...linkGuards,
+    '/mcp/api/v1/proposals/:id/recheck',
+    ...linkGuards,
     asyncRoute(recheckProposalHandler(services.proposalStore, flows, httpAdminRoot))
   );
   RED.httpAdmin.post(
-    '/mcp/api/v1/proposals/:id/resolve', limiter, tokenLimiter,
-    requireJsonContentType('rest'), requireAccessLink(RED, services.linkStore, 'rest'),
-    asyncRoute(resolveProposalHandler(services.proposalStore, services.auditLog, flows, httpAdminRoot, nodeTypes))
+    '/mcp/api/v1/proposals/:id/resolve',
+    limiter,
+    tokenLimiter,
+    requireJsonContentType('rest'),
+    requireAccessLink(RED, services.linkStore, 'rest'),
+    asyncRoute(
+      resolveProposalHandler(
+        services.proposalStore,
+        services.auditLog,
+        flows,
+        httpAdminRoot,
+        nodeTypes
+      )
+    )
   );
 
   const mcpRpcGuards = [
@@ -672,7 +695,10 @@ export function registerRoutes(
 function registerAiAccessPlugin(RED: NodeRedPluginAPI): void {
   RED.plugins.registerPlugin(PLUGIN_ID, {
     type: 'com55-ai-access',
-    onremove() { syncCleanup.get(RED)?.(); syncCleanup.delete(RED); },
+    onremove() {
+      syncCleanup.get(RED)?.();
+      syncCleanup.delete(RED);
+    },
     onadd() {
       registerRoutes(RED);
       RED.log?.info?.('Node-RED AI Access plugin loaded (dashboard /ai-access, MCP /mcp)');
