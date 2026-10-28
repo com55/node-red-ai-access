@@ -57,6 +57,7 @@ function renderMcpPageHeader(): string {
             <label>Password<input id="auth-gate-password" name="password" type="password" autocomplete="current-password" required></label>
             <div class="sg-actions"><button id="auth-gate-submit" class="sg-primary" type="submit">Sign in</button></div>
           </form>
+          <a id="auth-gate-editor-link" class="sg-editor-option" target="node-red-editor" rel="noopener" hidden>or sign in via the editor</a>
           <div class="sg-actions">
             <button id="auth-gate-editor" class="sg-primary" type="button" hidden>Sign in with the Node-RED editor</button>
             <button id="auth-gate-retry" class="sg-secondary" type="button" hidden>Retry</button>

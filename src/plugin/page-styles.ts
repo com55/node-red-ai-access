@@ -93,6 +93,8 @@ body.signed-out { overflow: hidden; }
 .auth-gate .sg-login { display: grid; gap: 10px; margin: 0 0 4px; }
 .auth-gate .sg-login label { display: grid; gap: 4px; font-size: 13px; color: var(--sg-muted); }
 .auth-gate .sg-login input { font: inherit; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--sg-line); background: var(--sg-soft); color: var(--sg-text); }
+.auth-gate .sg-editor-option { display: inline-block; margin: 10px 0 14px; font-size: 14px; }
+.auth-gate .sg-editor-option[hidden] { display: none; }
 .auth-gate .sg-foot { padding: 12px 22px; border-top: 1px solid var(--sg-line); font-size: 12px; color: var(--sg-muted); background: var(--sg-soft); }
 .auth-gate a { color: var(--sg-focus); }
 @media (max-width: 420px) { .auth-gate .sg-actions { flex-direction: column-reverse; } .auth-gate .sg-secondary { flex: 1; } }

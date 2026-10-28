@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 import { pageClientScript } from '../../src/plugin/page-client.js';
+import { renderMcpPage } from '../../src/plugin/page.js';
 
 type Listener = (ev: Record<string, unknown>) => void;
 
@@ -37,7 +38,7 @@ function extractFn(src: string, name: string): string {
 
 const flush = () => new Promise(r => setTimeout(r, 10));
 
-function gateHarness(loginType: string, tokenOk = true) {
+function gateHarness(loginType: string, tokenOk = true, editorRoot = '/') {
   const src = pageClientScript();
   const fns = [
     'readEditorToken',
@@ -48,6 +49,7 @@ function gateHarness(loginType: string, tokenOk = true) {
     'authGateTyping',
     'authGateAuto',
     'wireAuthGate',
+    'wireAuthGateEditor',
     'showAuthGate',
     'nrLoginType',
     'nrPasswordSignIn',
@@ -76,6 +78,7 @@ function gateHarness(loginType: string, tokenOk = true) {
   const fetches: { url: string; method: string; body?: string }[] = [];
   const opened: { url: string; name: string }[] = [];
   let reloads = 0;
+  let now = 2000;
   const win = Object.assign(emitter(), {
     open: (url: string, name: string) => opened.push({ url, name }),
   });
@@ -105,22 +108,58 @@ function gateHarness(loginType: string, tokenOk = true) {
     URL,
     URLSearchParams,
     JSON,
-    Date,
+    Date: { now: () => now },
     String,
     out: {} as Record<string, () => void>,
   };
   runInNewContext(
-    `var editorRoot = '/', authTokenKey = 'auth-tokens';
+    `var editorRoot = ${JSON.stringify(editorRoot)}, authTokenKey = 'auth-tokens';
      var $ = function (id) { return getEl(id); };
-     var authGateShown = false, authGateToken = null, authGateLastAuto = 0;
+     var authGateShown = false, authGateToken = null, authGateLastAuto = 0, authGateEditorOpened = false;
      ${fns}
      out.show = showAuthGate;`,
     Object.assign(ctx, { getEl: el })
   );
-  return { ctx, el, store, fetches, opened, win, doc, reloads: () => reloads };
+  return {
+    ctx,
+    el,
+    store,
+    fetches,
+    opened,
+    win,
+    doc,
+    reloads: () => reloads,
+    advance: () => {
+      now += 2000;
+    },
+  };
 }
 
 describe('dashboard signed-out card', () => {
+  it('renders the optional editor link below the inline form, hidden until credentials are detected', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    expect(html).toMatch(
+      /<\/form>\s*<a id="auth-gate-editor-link"[^>]*hidden>or sign in via the editor<\/a>/
+    );
+  });
+
+  it.each(['credentials', 'strategy'])(
+    '%s: editor handoff respects a custom admin root',
+    async type => {
+      const h = gateHarness(type, true, '/red/');
+      h.ctx.out.show!();
+      await flush();
+      const control = type === 'credentials' ? 'auth-gate-editor-link' : 'auth-gate-editor';
+      h.el(control).emit('click', { preventDefault() {} });
+      expect(h.opened).toEqual([{ url: '/red/', name: 'node-red-editor' }]);
+      expect(h.el('auth-gate-editor-link').href).toBe('/red/');
+    }
+  );
+
   it('credentials: inline form posts to /auth/token, stores editor token, reloads', async () => {
     const h = gateHarness('credentials');
     h.ctx.out.show!();
@@ -166,7 +205,7 @@ describe('dashboard signed-out card', () => {
     expect(h.el('auth-gate-login').hidden).toBe(true);
     expect(h.el('auth-gate-editor').hidden).toBe(false);
     expect(h.el('auth-gate-retry').hidden).toBe(false);
-    h.el('auth-gate-editor').emit('click');
+    h.el('auth-gate-editor').emit('click', { preventDefault() {} });
     expect(h.opened).toEqual([{ url: '/', name: 'node-red-editor' }]);
     h.win.emit('focus');
     h.el('auth-gate-retry').emit('click');
@@ -180,16 +219,88 @@ describe('dashboard signed-out card', () => {
     expect(h.fetches.some(f => f.method === 'POST')).toBe(false);
   });
 
-  it('focus continues only with a new token (stale rejected token does not loop)', async () => {
-    const h = gateHarness('strategy');
-    h.store.set('auth-tokens', '{"access_token":"stale"}');
+  it.each(['credentials', 'strategy', 'unknown'])(
+    '%s: shows the secondary editor link only for credentials',
+    async type => {
+      const h = gateHarness(type);
+      h.ctx.out.show!();
+      await flush();
+      expect(h.el('auth-gate-editor-link').hidden).toBe(type !== 'credentials');
+      expect(h.el('auth-gate-editor-link').href).toBe('/');
+    }
+  );
+
+  it('credentials: editor link opens the named window and continues on storage, even with a partial form', async () => {
+    const h = gateHarness('credentials');
+    h.ctx.out.show!();
     h.ctx.out.show!();
     await flush();
-    h.win.emit('focus');
-    h.doc.emit('visibilitychange');
+    h.el('auth-gate-username').value = 'admin';
+    let prevented = false;
+    h.el('auth-gate-editor-link').emit('click', {
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    expect(prevented).toBe(true);
+    expect(h.opened).toEqual([{ url: '/', name: 'node-red-editor' }]);
+    expect(h.el('auth-gate-login').hidden).toBe(false);
+    expect(h.el('auth-gate-retry').hidden).toBe(false);
+    h.el('auth-gate-retry').emit('click');
     expect(h.reloads()).toBe(0);
+    expect(h.el('auth-gate-status').textContent).toMatch(/Not signed in yet/);
     h.store.set('auth-tokens', '{"access_token":"fresh"}');
-    h.win.emit('focus');
+    h.win.emit('storage', { key: 'auth-tokens', newValue: '{"access_token":"fresh"}' });
+    expect(h.reloads()).toBe(1);
+    expect(h.fetches.some(f => f.method === 'POST')).toBe(false);
+  });
+
+  it.each(['focus', 'visibilitychange'])(
+    'credentials: editor handoff continues on %s with a new token despite a partial form',
+    async event => {
+      const h = gateHarness('credentials');
+      h.ctx.out.show!();
+      await flush();
+      h.el('auth-gate-username').value = 'admin';
+      h.store.set('auth-tokens', '{"access_token":"fresh"}');
+      h.win.emit('focus');
+      expect(h.reloads()).toBe(0); // Preserve typing until the editor is explicitly chosen.
+      h.el('auth-gate-editor-link').emit('click', { preventDefault() {} });
+      if (event === 'focus') h.win.emit(event);
+      else h.doc.emit(event);
+      expect(h.reloads()).toBe(1);
+    }
+  );
+
+  it('credentials: Retry continues after editor sign-in when automatic events are unavailable', async () => {
+    const h = gateHarness('credentials');
+    h.ctx.out.show!();
+    await flush();
+    h.el('auth-gate-editor-link').emit('click', { preventDefault() {} });
+    h.store.set('auth-tokens', '{"access_token":"fresh"}');
+    h.el('auth-gate-retry').emit('click');
     expect(h.reloads()).toBe(1);
   });
+
+  it.each(['credentials', 'strategy'])(
+    '%s: stale rejected token does not loop on storage, focus or visibility',
+    async type => {
+      const h = gateHarness(type);
+      h.store.set('auth-tokens', '{"access_token":"stale"}');
+      h.ctx.out.show!();
+      await flush();
+      const control = type === 'credentials' ? 'auth-gate-editor-link' : 'auth-gate-editor';
+      h.el(control).emit('click', { preventDefault() {} });
+      for (let i = 0; i < 2; i++) {
+        h.win.emit('storage', { key: 'auth-tokens', newValue: '{"access_token":"stale"}' });
+        h.win.emit('focus');
+        h.doc.emit('visibilitychange');
+        h.advance(); // Stale tokens stay rejected even beyond the event throttle.
+      }
+      expect(h.reloads()).toBe(0);
+      h.store.set('auth-tokens', '{"access_token":"fresh"}');
+      h.win.emit('focus');
+      expect(h.reloads()).toBe(1);
+    }
+  );
 });

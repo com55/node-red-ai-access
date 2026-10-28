@@ -130,6 +130,7 @@ function pageClientScriptPartA(): string {
   var authGateShown = false;
   var authGateToken = null;
   var authGateLastAuto = 0;
+  var authGateEditorOpened = false;
   function authGateAdminHref() {
     var root = editorLoginUrl();
     if (root.charAt(root.length - 1) !== '/') root += '/';
@@ -154,10 +155,10 @@ function pageClientScriptPartA(): string {
   function authGateAuto(fromStorage) {
     if (!authGateShown) return;
     var tok = readEditorToken();
-    if (!tok) return;
-    // Focus / visibility only continue with a token we have not tried yet and
-    // never over a half-typed inline sign-in; a storage write is definitive.
-    if (!fromStorage && (tok === authGateToken || authGateTyping())) return;
+    if (!tok || tok === authGateToken) return;
+    // Leave a half-typed form alone unless the user chose the editor handoff;
+    // a new token written by another tab is definitive.
+    if (!fromStorage && !authGateEditorOpened && authGateTyping()) return;
     if (Date.now() - authGateLastAuto < 1000) return;
     authGateLastAuto = Date.now();
     authGateContinue();
@@ -178,10 +179,21 @@ function pageClientScriptPartA(): string {
         })
         .catch(function (e) { btn.disabled = false; authGateStatus('Error: ' + (e.message || String(e)), true); });
     });
-    var ed = $('auth-gate-editor');
-    if (ed) ed.addEventListener('click', function () {
-      window.open(editorLoginUrl(), 'node-red-editor');
-      authGateStatus('Sign in in the Node-RED editor window. This page continues automatically.');
+    wireAuthGateEditor();
+  }
+  // Both the strategy button and the optional credentials link use this handoff.
+  function wireAuthGateEditor() {
+    ['auth-gate-editor', 'auth-gate-editor-link'].forEach(function (id) {
+      var ed = $(id);
+      if (!ed) return;
+      if (id === 'auth-gate-editor-link') ed.href = editorLoginUrl();
+      ed.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        authGateEditorOpened = true;
+        window.open(editorLoginUrl(), 'node-red-editor');
+        $('auth-gate-retry').hidden = false;
+        authGateStatus('Sign in in the Node-RED editor window. This page continues automatically.');
+      });
     });
     var retry = $('auth-gate-retry');
     if (retry) retry.addEventListener('click', function () {
@@ -215,6 +227,7 @@ function pageClientScriptPartA(): string {
       if (type === 'credentials') {
         authGateStatus('Sign in with your Node-RED account to continue.');
         $('auth-gate-login').hidden = false;
+        $('auth-gate-editor-link').hidden = false;
         $('auth-gate-username').focus();
       } else {
         authGateStatus('Sign in with the Node-RED editor in this browser. This page continues automatically.');
