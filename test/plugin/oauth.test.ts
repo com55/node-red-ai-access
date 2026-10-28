@@ -12,6 +12,7 @@ import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import {
   canonicalResource,
+  consentAdminRoot,
   detectOAuthRouteCollisions,
   findHttpInCollisions,
   scanOAuthRouteCollisions,
@@ -454,6 +455,12 @@ describe('MCP OAuth backend', () => {
       .set('Accept', 'application/json, text/event-stream')
       .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(rpc.status).toBe(403);
+    const mcpAlias = await request(off)
+      .post('/mcp')
+      .set('Authorization', `Bearer ${issued.access_token as string}`)
+      .set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(mcpAlias.status).toBe(403);
     expect((await authorize(off, id)).page.status).toBe(403);
     expect((await exchange(off, id, pending)).status).toBe(403);
     const refresh = await request(off).post('/mcp/oauth/token').type('form').send({
@@ -723,6 +730,7 @@ describe('MCP OAuth backend', () => {
     expect(page.text).toContain('Node-RED AI Access');
     expect(page.text).not.toMatch(/(src|href)="https?:/);
     expect(page.text).toContain('id="login"');
+    expect(page.text).toContain('data-admin-root="/"');
     expect(page.text).toContain('Propose flow changes');
     expect(
       (await request(admin).post('/mcp/oauth/authorize').type('form').send({})).status
@@ -1065,6 +1073,81 @@ describe('MCP OAuth backend', () => {
     expect(viewer.details[0].file).toBeUndefined();
     expect(JSON.stringify(viewer)).not.toContain(staticDir);
     rmSync(staticDir, { recursive: true, force: true });
+  });
+
+  it('routes /mcp by Accept header: browsers get the page, MCP clients the endpoint', async () => {
+    const { admin } = appFor(userDir);
+    const cases: [string | undefined, 'page' | 'mcp'][] = [
+      [undefined, 'page'],
+      ['*/*', 'page'],
+      ['text/html', 'page'],
+      ['text/html,application/xhtml+xml,*/*;q=0.8', 'page'],
+      ['text/html, text/event-stream', 'page'],
+      ['text/event-stream', 'mcp'],
+      ['application/json, text/event-stream', 'mcp'],
+    ];
+    for (const [accept, expected] of cases) {
+      const req = request(admin).get('/mcp');
+      const res = await (accept ? req.set('Accept', accept) : req);
+      if (expected === 'page') {
+        expect(res.status, String(accept)).toBe(200);
+        expect(res.type, String(accept)).toBe('text/html');
+      } else {
+        expect(res.status, String(accept)).toBe(401);
+        expect(res.headers['www-authenticate'], String(accept)).toContain('resource_metadata=');
+      }
+    }
+  });
+
+  it('rejects non-JSON POST /mcp with 415 and keeps JSON-RPC errors on /mcp', async () => {
+    const { admin } = appFor(userDir);
+    const id = (await register(admin)).body.client_id as string;
+    const code = (await authorize(admin, id)).code!;
+    const token = (await exchange(admin, id, code)).body.access_token as string;
+    const plain = await request(admin)
+      .post('/mcp')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Content-Type', 'text/plain')
+      .send('hello');
+    expect(plain.status).toBe(415);
+    const bad = await request(admin)
+      .post('/mcp')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Content-Type', 'application/json')
+      .send('{not json');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error?.code).toBe(-32700);
+  });
+
+  it('keeps existing clients working above the client cap but refuses new registrations', async () => {
+    const first = appFor(userDir, { cap: 10 });
+    const tokens: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const cid = (await register(first.admin)).body.client_id as string;
+      const c = (await authorize(first.admin, cid)).code!;
+      tokens.push((await exchange(first.admin, cid, c)).body.access_token as string);
+    }
+    // "Upgrade": same oauth.json, now with the default cap of 5.
+    const upgraded = appFor(userDir, { cap: 5 });
+    for (const t of tokens) {
+      const rpc = await request(upgraded.admin)
+        .post('/mcp')
+        .set('Authorization', `Bearer ${t}`)
+        .set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      expect(rpc.status).toBe(200);
+    }
+    const refused = await register(upgraded.admin);
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.body)).toContain('Maximum active OAuth clients reached');
+  });
+
+  it('passes a normalized httpAdminRoot to the consent page', () => {
+    expect(consentAdminRoot(undefined)).toBe('/');
+    expect(consentAdminRoot('/')).toBe('/');
+    expect(consentAdminRoot('/admin')).toBe('/admin/');
+    expect(consentAdminRoot('/admin/')).toBe('/admin/');
+    expect(consentAdminRoot('admin//')).toBe('/admin/');
   });
 
   it('normalizes scheme, host, and trailing slash for resource indicators', () => {

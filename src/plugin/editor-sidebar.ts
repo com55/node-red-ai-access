@@ -954,6 +954,9 @@ function editorSidebarScriptPartB(): string {
         $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
         var line = $('<div class="ai-access-duration"></div>').appendTo(oauthRow);
         $('<input type="number" step="1">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(line).on('change', scheduleAutoSave);
+        if (field[0] === 'dcr-cap') {
+          $('<p class="form-tips"></p>').text('Applies to new registrations: existing clients keep working, but new apps are refused while the number of clients is at or above this limit. Revoke unused clients to make room.').appendTo(oauthRow);
+        }
         if (!field[2]) return;
         var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
           .appendTo(line).on('change', scheduleAutoSave);

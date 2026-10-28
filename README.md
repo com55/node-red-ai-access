@@ -191,6 +191,23 @@ use. Reusing a rotated refresh token revokes its token family. Tokens are stored
 as SHA-256 hashes in `<userDir>/.ai-access/oauth.json`. Access-link `aia_`
 bearer tokens continue to work. See [MCP client setup](docs/mcp-clients.md).
 
+Add `{publicBaseUrl}/mcp` as the server URL in ChatGPT, Claude and other MCP
+clients; `/mcp` and `/mcp/rpc` serve the same MCP endpoint (browsers opening
+`/mcp` get the dashboard). At most `oauth.dcrMaxClients` (default 5) approved
+clients are kept: lowering the limit removes none, but new registrations are
+refused with `400` until clients are revoked.
+
+When you are signed out and Node-RED uses `credentials` login, the consent page
+shows its own sign-in form. It calls Node-RED's `/auth/token` endpoint and
+stores the resulting editor token in `localStorage` under the editor's key, so
+this also signs you in to the Node-RED editor in that browser.
+
+> **Exposing Node-RED publicly:** Node-RED's own `/auth/token` login endpoint is
+> not rate limited (neither by Node-RED nor by this plugin). Before exposing
+> Node-RED to the internet for OAuth, put it behind a reverse proxy or other
+> limiter that throttles `POST {httpAdminRoot}/auth/token` (and preferably the
+> whole admin path), and use strong passwords.
+
 Public URL **Check** uses `POST /mcp/api/v1/settings/check-public-url` and
 requires `*` permission because it performs an outbound request. It validates
 the form URL, fetches only `{publicBaseUrl}{httpAdminRoot}/mcp/api/v1`

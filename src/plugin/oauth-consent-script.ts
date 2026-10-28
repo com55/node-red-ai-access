@@ -13,7 +13,7 @@ export const consentScript = `(function () {
   var $ = function (x) { return document.getElementById(x); };
   var status = $('status'), grant = $('grant'), allow = $('allow'), deny = $('deny'), retry = $('retry');
   var login = $('login'), user = $('user');
-  var adminRoot = new URL('../../', window.location.href);
+  var adminRoot = new URL(main.getAttribute('data-admin-root') || '/', window.location.href);
   var csrf = null;
   function headers() {
     var h = { 'Content-Type': 'application/json', 'Node-RED-API-Version': 'v2' };

@@ -6,6 +6,8 @@
 export interface ConsentPageInput {
   requestId: string;
   tokenKey: string;
+  /** httpAdminRoot with exactly one trailing slash (e.g. `/` or `/admin/`). */
+  adminRoot: string;
   nonce: string;
   redirectHost: string;
   loopbackRedirect: boolean;
@@ -96,7 +98,7 @@ export function renderConsentPage(input: ConsentPageInput): string {
     `<meta name="referrer" content="no-referrer">` +
     `<title>Authorize MCP client · Node-RED AI Access</title>` +
     `<style>${CONSENT_PAGE_STYLES}</style></head><body>` +
-    `<main class="card" data-request="${esc(input.requestId)}" data-token-key="${esc(input.tokenKey)}">` +
+    `<main class="card" data-request="${esc(input.requestId)}" data-token-key="${esc(input.tokenKey)}" data-admin-root="${esc(input.adminRoot)}">` +
     `<div class="head">${LOGO}<div class="brand"><b>Node-RED AI Access</b><span>Authorization request</span></div></div>` +
     `<div class="body">` +
     // The redirect host is what really receives tokens, so it leads; the client name is unverified.

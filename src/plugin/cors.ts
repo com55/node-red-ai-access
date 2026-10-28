@@ -1,5 +1,5 @@
 /**
- * CORS policy for the AI-facing surfaces (`/mcp/a/*`, `/mcp/api/*`, `/mcp/rpc`).
+ * CORS policy for the AI-facing surfaces (`/mcp/a/*`, `/mcp/api/*`, `/mcp/rpc`, `/mcp`).
  *
  * Node-RED's admin app sends `Access-Control-Allow-Origin: *` for every admin
  * route. For AI-facing routes the plugin replaces that with an explicit
@@ -12,7 +12,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 /** Paths (relative to httpAdminRoot) covered by this policy. */
-export const AI_CORS_PATH = /^\/mcp\/(?:a(?:\/|$)|api(?:\/|$)|rpc\/?$)/;
+export const AI_CORS_PATH = /^\/mcp(?:\/?$|\/(?:a(?:\/|$)|api(?:\/|$)|rpc\/?$))/;
 
 export const CORS_ALLOWED_METHODS = 'GET, POST, DELETE, OPTIONS';
 export const CORS_ALLOWED_HEADERS =

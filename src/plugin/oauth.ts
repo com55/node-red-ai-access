@@ -71,7 +71,7 @@ const secret = () => randomBytes(32).toString('base64url');
 /** Registered clients that never got consent are dropped after this long. */
 const UNCONSENTED_CLIENT_TTL_MS = 3_600_000;
 /** Hard bound on clients awaiting consent (registration is also rate limited per IP). */
-const MAX_UNCONSENTED_CLIENTS = 100;
+const MAX_UNCONSENTED_CLIENTS = 25;
 const MAX_PENDING_PER_CLIENT = 5;
 const MAX_PENDING_TOTAL = 500;
 const emptyDb = (): OAuthDb => ({ clients: [], codes: [], tokens: [] });
@@ -708,6 +708,11 @@ export function canonicalResource(value: string): string {
 }
 
 const oauthScopes = ['read', 'propose'];
+/** httpAdminRoot normalized to start and end with exactly one slash. */
+export function consentAdminRoot(root: string | undefined): string {
+  const trimmed = (root ?? '/').split('/').filter(Boolean).join('/');
+  return trimmed ? `/${trimmed}/` : '/';
+}
 const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
 function value(raw: unknown): string {
   return typeof raw === 'string' ? raw : '';
@@ -860,6 +865,7 @@ export function makeOAuthHandlers(
         renderConsentPage({
           requestId: id,
           tokenKey,
+          adminRoot: consentAdminRoot(RED.settings.httpAdminRoot),
           nonce,
           redirectHost,
           loopbackRedirect: loopback.has(new URL(redirect).hostname),

@@ -25,7 +25,12 @@ and this project adheres to
 ### Changed
 
 - Default "Maximum registered OAuth clients" (`oauth.dcrMaxClients`) is now 5
-  (was 20).
+  (was 20). Upgrading with more than 5 approved clients removes none of them:
+  existing clients keep working, but new registrations get `400` (Maximum active
+  OAuth clients reached) until clients are revoked below the limit or the limit
+  is raised.
+- At most 25 OAuth clients may await consent at once (was 100).
+- AI-facing CORS policy now also covers `/mcp`.
 - Redesigned OAuth consent page: branded card, redirect host first, permission
   list with descriptions, signed-in user, prominent Allow / secondary Deny,
   responsive and dark-mode friendly, no external assets. When signed out with
