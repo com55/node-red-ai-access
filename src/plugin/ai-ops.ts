@@ -51,7 +51,7 @@ import {
   type PresentProposalApiOptions,
   type PresentProposalOptions,
 } from './proposal-present.js';
-import { applyConflictChoice, type ConflictChoice } from './proposal-rebase.js';
+import { applyConflictChoice } from './proposal-rebase.js';
 import { rebaseOpenProposalsWith, syncOneProposal, syncOpenProposals } from './proposal-sync.js';
 import {
   aiRedactingAdapter,
@@ -1055,7 +1055,7 @@ export async function resolveConflictChoice(
       'invalid_choice'
     );
   }
-  let next: { base: Partial<FlowTab>; proposed: Partial<FlowTab> };
+  let next: ReturnType<typeof applyConflictChoice>;
   try {
     next = applyConflictChoice({
       flowId: checked.payload.flowId,
@@ -1071,6 +1071,12 @@ export async function resolveConflictChoice(
   const updated = store.updateBody(id, {
     baseFlow: sanitizeFlowTab(next.base),
     flow: sanitizeFlowTab(next.proposed),
+    warnings: [
+      ...(checked.warnings ?? []).filter(
+        w => w.code !== 'secret_may_revert' || w.nodeId !== nodeId
+      ),
+      ...next.warnings,
+    ],
   });
   const result = syncOneProposal(store, updated, live).proposal;
   audit.append('proposal.conflict_resolved', actor, {

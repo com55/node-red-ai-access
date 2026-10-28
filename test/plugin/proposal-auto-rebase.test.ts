@@ -11,6 +11,7 @@ import { AccessLinkStore } from '../../src/access/index.js';
 import { adapterAtRev, submitReplaceFlowProposal } from '../../src/plugin/ai-ops.js';
 import {
   ProposalRebaseAckRequiredError,
+  ProposalDeployTimeoutError,
   ProposalService,
 } from '../../src/plugin/proposal-service.js';
 import { registerRoutes } from '../../src/plugin/index.js';
@@ -140,6 +141,33 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
   });
 
+  it('keeps literal docs text and a real secret on their original lines through submit and approve', async () => {
+    const source = "// see [REDACTED] docs\nconst password = 'S3CRETVAL';\nreturn msg;";
+    Object.assign(
+      head.flows.find(n => n.id === 'a')!,
+      { func: source }
+    );
+    const read = await request(app).get('/mcp/api/v1/flows/tab').set(auth());
+    const flow = read.body.flow;
+    expect(flow.nodes.find((n: FlowNode) => n.id === 'a').func).toBe(
+      source.replace('S3CRETVAL', '[REDACTED]')
+    );
+    flow.nodes.find((n: FlowNode) => n.id === 'a').func = source
+      .replace('S3CRETVAL', '[REDACTED]')
+      .replace('return msg;', 'return null;');
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({ type: 'replace_flow', expectedRev: read.body.rev, payload: { flowId: 'tab', flow } });
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(201);
+    const expected = source.replace('return msg;', 'return null;');
+    expect(store.get(submitted.body.id).payload.flow.nodes!.find(n => n.id === 'a')!.func).toBe(
+      expected
+    );
+    expect((await approve(submitted.body.id)).body.status).toBe('approved');
+    expect(head.flows.find(n => n.id === 'a')!.func).toBe(expected);
+  });
+
   it('submits, stays pending, and approves a same-node edit retaining a literal live placeholder', async () => {
     Object.assign(
       head.flows.find(n => n.id === 'a')!,
@@ -246,6 +274,72 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
     expect(head.flows.find(n => n.id === 'b')!.name).toBe('second');
     expect(updateFlow.mock.calls.map(c => c[0].expectedRev)).toEqual(['r1', 'r1-deploy']);
+  });
+
+  it('times out a hung deploy, keeps pending, releases the global queue and ignores late completion', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'second' });
+    vi.useFakeTimers();
+    let finish!: (value: { flowId: string; rev: string }) => void;
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    const first = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 100,
+    });
+    const second = new ProposalService(store, audit, adapter, () => 'nodes');
+    const timedOut = expect(first.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+      statusCode: 504,
+    });
+    const queued = second.approve(b.body.id, { kind: 'admin' });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await timedOut;
+    expect((await queued).status).toBe('approved');
+    expect(store.get(a.body.id).status).toBe('pending');
+    expect(store.isApproving(a.body.id)).toBe(false);
+    expect(store.isApproving(b.body.id)).toBe(false);
+    finish({ flowId: 'tab', rev: 'late' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get(a.body.id).status).toBe('pending');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the default 60 second deadline for a never-resolving deployment', async () => {
+    const p = await submit();
+    vi.useFakeTimers();
+    updateFlow.mockImplementationOnce(() => new Promise(() => {}));
+    const service = new ProposalService(store, audit, adapter, () => 'nodes');
+    const timedOut = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(store.isApproving(p.body.id)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await timedOut;
+    expect(store.get(p.body.id).status).toBe('pending');
+    expect(store.isApproving(p.body.id)).toBe(false);
+    expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('returns a clear deploy_timeout HTTP 504 without closing the proposal', async () => {
+    const p = await submit();
+    vi.spyOn(ProposalService.prototype, 'approve').mockRejectedValueOnce(
+      new ProposalDeployTimeoutError()
+    );
+    const response = await approve(p.body.id);
+    expect(response.status).toBe(504);
+    expect(response.body).toMatchObject({
+      code: 'deploy_timeout',
+      error: expect.stringMatching(/pending/i),
+    });
+    expect(store.get(p.body.id).status).toBe('pending');
   });
 
   it.each(['read', 'deployment setting'])(
@@ -529,6 +623,26 @@ describe('auto-rebase service and HTTP API', () => {
     const service = new ProposalService(store, audit, adapter, () => 'nodes');
     expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
     expect(store.isApproving(p.body.id)).toBe(false);
+  });
+
+  it('persists secret alignment warnings on the proposal card after choosing proposed', async () => {
+    edit('a', { func: "const password = 'OLDPW';\nreturn msg;" });
+    const p = await submit('a', head.rev, { func: "let password = 'OLDPW';\nreturn null;" });
+    expect(p.status).toBe(201);
+    edit('a', { func: "const password = 'NEWPW';\nreturn msg;" });
+    const resolved = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'proposed' });
+    expect(resolved.status, JSON.stringify(resolved.body)).toBe(200);
+    expect(store.get(p.body.id).warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'secret_may_revert', property: 'func' }),
+      ])
+    );
+    const listed = await list();
+    expect(listed.body.proposals.find((x: { id: string }) => x.id === p.body.id).warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'secret_may_revert' })])
+    );
   });
 
   it('restores secrets and keeps warning metadata and restoration audit on AI resolution', async () => {

@@ -13,6 +13,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
+| `deploy_timeout` | 504 | Deployment exceeded the 60 second deadline; proposal remains pending and the approval queue is released | Check live flows before retrying: the runtime operation cannot be cancelled and may still complete | admin |
 | `proposal_conflict` | 409 | Editor and proposal changes conflict (conflicts contains field names only) | Read the current flow and resolve the proposal before approval | GET, REST, MCP, admin |
 | `rebase_ack_required` | 409 | The merged result needs review (mergedHash included) | Review the diff and approve with its mergedHash | admin |
 | `rebase_race` | 409 | Flows kept changing during approval | Recheck the proposal and retry approval | admin |
@@ -78,6 +79,7 @@ Returned in `warnings[]` on a successful propose/submit; they never block.
 
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
+| `secret_may_revert` | 200 | Secret spans could not be aligned during proposed conflict resolution; proposed values were kept | Review the warned field against live flows before approval; an editor secret change may be reverted | GET, REST, MCP, admin |
 | `missing_config_node` | 201 | Warning: node has no (or an unresolved) config node yet | Configure before deploy if needed; see `candidates` | GET, REST, MCP |
 | `unwired_node` | 201 | Warning: node has outputs but no wires | Wire it, or ignore while scaffolding | GET, REST, MCP |
 | `incomplete_wires` | 201 | Warning: fewer wire ports than outputs | Add ports if outputs should connect | GET, REST, MCP |

@@ -46,6 +46,21 @@ function e(
 
 export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   e(
+    'deploy_timeout',
+    504,
+    'Deployment exceeded the 60 second deadline; proposal remains pending and the approval queue is released',
+    'Check live flows before retrying: the runtime operation cannot be cancelled and may still complete',
+    ADMIN
+  ),
+  e(
+    'secret_may_revert',
+    200,
+    'Secret spans could not be aligned during proposed conflict resolution; proposed values were kept',
+    'Review the warned field against live flows before approval; an editor secret change may be reverted',
+    [...ALL, 'admin'],
+    'warning'
+  ),
+  e(
     'proposal_conflict',
     409,
     'Editor and proposal changes conflict (conflicts contains field names only)',

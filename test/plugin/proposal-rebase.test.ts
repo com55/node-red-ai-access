@@ -485,6 +485,117 @@ describe('secrets during rebase', () => {
       }
     }
   );
+  it('preserves each live rotated span while keeping edits on other function lines', () => {
+    const b = clone(base);
+    b.nodes![0]!.func =
+      "// see [REDACTED] docs\nconst password = 'OLDPW'; const token = 'OLDTOKEN';\nreturn msg;";
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.func = (p.nodes![0]!.func as string).replace('return msg;', 'return null;');
+    c.nodes![0]!.func = (c.nodes![0]!.func as string)
+      .replace('OLDPW', 'NEWPW')
+      .replace('OLDTOKEN', 'NEWTOKEN');
+    const next = applyConflictChoice({
+      flowId: 'tab',
+      base: b,
+      proposed: p,
+      liveFlows: flat(c),
+      nodeId: 'a',
+      choice: 'proposed',
+    });
+    expect(next.proposed.nodes!.find(n => n.id === 'a')!.func).toBe(
+      "// see [REDACTED] docs\nconst password = 'NEWPW'; const token = 'NEWTOKEN';\nreturn null;"
+    );
+    expect(next.warnings).toEqual([]);
+  });
+
+  it('keeps an intentionally edited secret while preserving other live rotated spans', () => {
+    const b = clone(base);
+    b.nodes![0]!.func = "const password = 'OLDPW';\nconst token = 'OLDTOKEN';\nreturn msg;";
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.func = (p.nodes![0]!.func as string)
+      .replace('OLDPW', 'PROPOSEDPW')
+      .replace('return msg;', 'return null;');
+    c.nodes![0]!.func = (c.nodes![0]!.func as string)
+      .replace('OLDPW', 'NEWPW')
+      .replace('OLDTOKEN', 'NEWTOKEN');
+    const next = applyConflictChoice({
+      flowId: 'tab',
+      base: b,
+      proposed: p,
+      liveFlows: flat(c),
+      nodeId: 'a',
+      choice: 'proposed',
+    });
+    expect(next.proposed.nodes!.find(n => n.id === 'a')!.func).toBe(
+      "const password = 'PROPOSEDPW';\nconst token = 'NEWTOKEN';\nreturn null;"
+    );
+    expect(next.warnings).toEqual([]);
+  });
+
+  it.each(['changed context', 'duplicate context', 'missing live secret'])(
+    'keeps proposed values with a warning when secret spans cannot align: %s',
+    mode => {
+      const b = clone(base);
+      b.nodes![0]!.func = "const password = 'OLDPW';\nreturn msg;";
+      const p = clone(b),
+        c = clone(b);
+      p.nodes![0]!.func =
+        mode === 'changed context'
+          ? "let password = 'OLDPW';\nreturn null;"
+          : mode === 'duplicate context'
+            ? "const password = 'OLDPW';\nconst password = 'OTHERPW';\nreturn null;"
+            : "const password = 'OLDPW';\nreturn null;";
+      c.nodes![0]!.func =
+        mode === 'missing live secret' ? 'return msg;' : "const password = 'NEWPW';\nreturn msg;";
+      const next = applyConflictChoice({
+        flowId: 'tab',
+        base: b,
+        proposed: p,
+        liveFlows: flat(c),
+        nodeId: 'a',
+        choice: 'proposed',
+      });
+      expect(next.proposed.nodes!.find(n => n.id === 'a')!.func).toBe(p.nodes![0]!.func);
+      expect(next.warnings).toEqual([
+        expect.objectContaining({ code: 'secret_may_revert', nodeId: 'a', property: 'func' }),
+      ]);
+      expect(JSON.stringify(next.warnings)).not.toMatch(/OLDPW|NEWPW|OTHERPW/);
+    }
+  );
+
+  it.each(['env', 'headers'])(
+    'matches literal placeholder entries by name/key across reordered %s',
+    field => {
+      const b = clone(base);
+      b.nodes![0]![field] =
+        field === 'env'
+          ? [
+              { name: 'MODE', value: 'dev' },
+              { name: 'PASSWORD', value: '[REDACTED]' },
+            ]
+          : [
+              { key: 'Accept', value: 'json' },
+              { key: 'Authorization', value: '[REDACTED]' },
+            ];
+      const p = clone(b);
+      (p.nodes![0]![field] as unknown[]).reverse();
+      expect(rebase(p, b, { base: b }).state).toBe('clean');
+      (p.nodes![0]![field] as Record<string, unknown>[])[0]![field === 'env' ? 'name' : 'key'] =
+        'renamed';
+      expectConflict(rebase(p, b, { base: b }), 'redacted_placeholder');
+    }
+  );
+
+  it('rejects a new literal placeholder occurrence even when the field already has one', () => {
+    const b = clone(base);
+    b.nodes![0]!.func = '// [REDACTED] docs\nreturn msg;';
+    const p = clone(b);
+    p.nodes![0]!.func += '\n// [REDACTED] docs';
+    expectConflict(rebase(p, b, { base: b }), 'redacted_placeholder');
+  });
+
   it.each(['content', 'position'])(
     'conflicts if the editor changes a secret and the proposal touches the node (%s)',
     mode => {

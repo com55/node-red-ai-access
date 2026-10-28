@@ -52,6 +52,8 @@ describe('error registry', () => {
   });
 
   it.each([
+    ['deploy_timeout', 504, 'error'],
+    ['secret_may_revert', 200, 'warning'],
     ['confirm_required', 400, 'error'],
     ['missing_expected_rev', 400, 'error'],
     ['missing_node_type', 400, 'error'],

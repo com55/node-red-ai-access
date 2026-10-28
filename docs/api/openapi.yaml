@@ -1549,6 +1549,7 @@ components:
       description: |
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
+        - `deploy_timeout` (504): Deployment exceeded the 60 second deadline; proposal remains pending and the approval queue is released
         - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
         - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
         - `rebase_race` (409): Flows kept changing during approval
@@ -1608,6 +1609,7 @@ components:
         - `upstream_error` (502): Node-RED runtime/flows error
         - `internal_error` (500): Unexpected server error
       enum:
+        - deploy_timeout
         - proposal_conflict
         - rebase_ack_required
         - rebase_race

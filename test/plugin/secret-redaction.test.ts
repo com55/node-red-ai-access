@@ -376,6 +376,74 @@ describe('restoreRedactedPlaceholders', () => {
   });
 });
 
+describe('mixed literal and secret placeholders', () => {
+  const source = "// see [REDACTED] docs\nconst password = 'S3CRETVAL';\nreturn msg;";
+  const live = [
+    { id: 't', type: 'tab' },
+    { id: 'n', type: 'function', z: 't', func: source },
+  ];
+  const tab = { id: 't', type: 'tab', nodes: [live[1]!] };
+
+  it.each(['unchanged', 'return edit', 'reordered', 'literal only', 'secret only'])(
+    'restores only classified secret occurrences: %s',
+    edit => {
+      const ai = redactFlowData(tab).value;
+      const redacted = ai.nodes[0]!.func!;
+      let expected = source;
+      if (edit === 'return edit') {
+        ai.nodes[0]!.func = redacted.replace('return msg;', 'return null;');
+        expected = source.replace('return msg;', 'return null;');
+      }
+      if (edit === 'reordered') {
+        ai.nodes[0]!.func = redacted.split('\n').reverse().join('\n');
+        expected = source.split('\n').reverse().join('\n');
+      }
+      if (edit === 'literal only') {
+        ai.nodes[0]!.func = '// see [REDACTED] docs\nreturn null;';
+        expected = ai.nodes[0]!.func;
+      }
+      if (edit === 'secret only') {
+        ai.nodes[0]!.func = redacted.split('\n').slice(1).join('\n');
+        expected = source.split('\n').slice(1).join('\n');
+      }
+      const result = restoreRedactedPlaceholders(ai, live);
+      expect(result.unresolved).toEqual([]);
+      expect(result.flow.nodes![0]!.func).toBe(expected);
+      expect(result.restored).toBe(edit === 'literal only' ? 0 : 1);
+      expect(result.restoredFields).toHaveLength(edit === 'literal only' ? 0 : 1);
+    }
+  );
+
+  it.each([
+    "const password = 'S3CRETVAL'; // see [REDACTED] docs\nreturn msg;",
+    "// [REDACTED] docs\nconst password = 'S3CRETVAL'; // see [REDACTED] docs\nreturn msg;",
+  ])('classifies literal occurrences on the same line as a secret: %s', func => {
+    const raw = [
+      { id: 't', type: 'tab' },
+      { id: 'n', type: 'function', func },
+    ];
+    const ai = redactFlowData({ id: 't', type: 'tab', nodes: [raw[1]!] }).value;
+    ai.nodes[0]!.func = ai.nodes[0]!.func!.replace('return msg;', 'return null;');
+    const result = restoreRedactedPlaceholders(ai, raw);
+    expect(result.unresolved).toEqual([]);
+    expect(result.flow.nodes![0]!.func).toBe(func.replace('return msg;', 'return null;'));
+    expect(result.restored).toBe(1);
+  });
+
+  it('rejects ambiguous identical literal/secret lines after an edit', () => {
+    const func = "const password = '[REDACTED]';\nconst password = 'S3CRETVAL';\nreturn msg;";
+    const raw = [
+      { id: 't', type: 'tab' },
+      { id: 'n', type: 'function', func },
+    ];
+    const ai = redactFlowData({ id: 't', type: 'tab', nodes: [raw[1]!] }).value;
+    ai.nodes[0]!.func = ai.nodes[0]!.func!.replace('return msg;', 'return null;');
+    const result = restoreRedactedPlaceholders(ai, raw);
+    expect(result.unresolved).toHaveLength(1);
+    expect(JSON.stringify(result.flow)).not.toContain('S3CRETVAL');
+  });
+});
+
 describe('restore literal placeholders', () => {
   const literalFunc = `// literal ${R}\nreturn msg;`;
   const live: FlowNode[] = [

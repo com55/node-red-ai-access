@@ -72,6 +72,23 @@ export class ProposalRebaseRaceError extends Error {
   }
 }
 
+/** Deployment did not finish in time; the proposal stays pending for review/retry. */
+export class ProposalDeployTimeoutError extends Error {
+  readonly code = 'deploy_timeout' as const;
+  readonly statusCode = 504;
+  constructor() {
+    super(
+      'Deployment timed out. The proposal is still pending. Check the live flows before retrying; the runtime may still complete the deployment.'
+    );
+    this.name = 'ProposalDeployTimeoutError';
+  }
+}
+
+export interface ProposalServiceOptions {
+  /** Maximum time to await updateFlow (default 60 seconds). Does not cancel the runtime operation. */
+  deployTimeoutMs?: number;
+}
+
 const MAX_APPROVE_ATTEMPTS = 3;
 
 // Shared by every service/entry point: adapter revision checks are not atomic
@@ -92,7 +109,8 @@ export class ProposalService {
     private readonly proposals: ProposalStore,
     private readonly audit: AuditLog,
     private readonly adapter: FlowAdapter,
-    private readonly getDeploymentType: () => DeploymentType
+    private readonly getDeploymentType: () => DeploymentType,
+    private readonly serviceOptions: ProposalServiceOptions = {}
   ) {}
 
   async approve(
@@ -163,13 +181,16 @@ export class ProposalService {
         if (needsAck && options.mergedHash !== result.mergedHash) {
           throw new ProposalRebaseAckRequiredError(id, result.mergedHash, result.state);
         }
+        const merged = result.merged;
         try {
-          const applied = await raw.updateFlow({
-            flowId: current.payload.flowId,
-            flow: result.merged,
-            expectedRev: live.rev,
-            deploymentType,
-          });
+          const applied = await this.withDeployDeadline(() =>
+            raw.updateFlow({
+              flowId: current.payload.flowId,
+              flow: merged,
+              expectedRev: live.rev,
+              deploymentType,
+            })
+          );
           approved = this.proposals.markApproved(id, decidedBy, applied.rev);
           this.audit.append('proposal.approved', decidedBy, {
             ...meta,
@@ -183,6 +204,10 @@ export class ProposalService {
         } catch (error) {
           if (error instanceof FlowRevisionConflictError) {
             continue; // flows moved between read and deploy — rebase again
+          }
+          if (error instanceof ProposalDeployTimeoutError) {
+            this.audit.append('proposal.deploy_timeout', decidedBy, { ...meta, code: error.code });
+            throw error;
           }
           const message = error instanceof Error ? error.message : String(error);
           const failed = this.proposals.markFailed(id, decidedBy, message);
@@ -208,6 +233,26 @@ export class ProposalService {
       // best-effort
     }
     return approved;
+  }
+
+  private async withDeployDeadline<T>(deploy: () => Promise<T>): Promise<T> {
+    const configured = this.serviceOptions.deployTimeoutMs;
+    const timeoutMs =
+      configured !== undefined && Number.isFinite(configured) && configured > 0
+        ? configured
+        : 60_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new ProposalDeployTimeoutError()), timeoutMs);
+          timer.unref?.();
+        }),
+        deploy(),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   reject(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {

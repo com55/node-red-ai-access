@@ -23,9 +23,15 @@
 import { createHash } from 'node:crypto';
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
+import type { ProposalWarning } from '../storage/proposals.js';
 
 import { REDACTED_PLACEHOLDER } from './secret-patterns.js';
-import { preserveLiveSecrets, secretValuesChanged } from './secret-redaction.js';
+import {
+  hasNewLiteralPlaceholder,
+  preserveLiveSecrets,
+  secretValuesChanged,
+  stableElementKey,
+} from './secret-redaction.js';
 
 export type RebaseState = 'clean' | 'merged' | 'conflict';
 
@@ -196,20 +202,30 @@ export function nestedLiveTab(
 }
 
 function containsNewPlaceholder(value: unknown, live: unknown): boolean {
-  const pending: [unknown, unknown][] = [[value, live]];
-  while (pending.length > 0) {
-    const [next, current] = pending.pop() ?? [];
-    if (
-      typeof next === 'string' &&
-      next.includes(REDACTED_PLACEHOLDER) &&
-      !(typeof current === 'string' && current.includes(REDACTED_PLACEHOLDER))
-    )
-      return true;
-    if (next && typeof next === 'object') {
-      const liveFields = current && typeof current === 'object' ? current : {};
-      for (const [key, child] of Object.entries(next))
-        pending.push([child, (liveFields as Record<string, unknown>)[key]]);
-    }
+  if (typeof value === 'string') {
+    return (
+      value.includes(REDACTED_PLACEHOLDER) &&
+      (typeof live !== 'string' || hasNewLiteralPlaceholder(value, live))
+    );
+  }
+  if (Array.isArray(value)) {
+    const current = Array.isArray(live) ? live : [];
+    const used = new Set<number>();
+    return value.some((child, i) => {
+      const key = stableElementKey(child);
+      const j =
+        key === undefined
+          ? i
+          : current.findIndex((entry, k) => !used.has(k) && stableElementKey(entry) === key);
+      used.add(j);
+      return containsNewPlaceholder(child, current[j]);
+    });
+  }
+  if (value && typeof value === 'object') {
+    const current = live && typeof live === 'object' ? (live as Record<string, unknown>) : {};
+    return Object.entries(value).some(([key, child]) =>
+      containsNewPlaceholder(child, current[key])
+    );
   }
   return false;
 }
@@ -557,14 +573,15 @@ export function applyConflictChoice(input: {
   liveFlows: readonly FlowNode[];
   nodeId: string;
   choice: ConflictChoice;
-}): { base: Partial<FlowTab>; proposed: Partial<FlowTab> } {
+}): { base: Partial<FlowTab>; proposed: Partial<FlowTab>; warnings: ProposalWarning[] } {
   const { flowId, nodeId, choice, liveFlows } = input;
+  const warnings: ProposalWarning[] = [];
   const current = nestedLiveTab(liveFlows, flowId, input.proposed);
   if (!current) throw new Error('flow tab deleted');
   if (input.base === undefined) {
     if (choice !== 'proposed') throw new Error('invalid choice');
     // Apply the proposal as-is over the current tab.
-    return { base: clone(current), proposed: clone(input.proposed) };
+    return { base: clone(current), proposed: clone(input.proposed), warnings };
   }
   const base = clone(input.base);
   const proposed = clone(input.proposed);
@@ -575,7 +592,8 @@ export function applyConflictChoice(input: {
         ? preserveLiveSecrets(
             { id: flowId, type: current.type ?? 'tab', ...tabProps(base) },
             { id: flowId, type: current.type ?? 'tab', ...tabProps(proposed) },
-            { id: flowId, type: current.type ?? 'tab', ...live }
+            { id: flowId, type: current.type ?? 'tab', ...live },
+            warnings
           )
         : live;
     for (const key of TAB_FIELDS) {
@@ -585,7 +603,7 @@ export function applyConflictChoice(input: {
       if (chosen[key] !== undefined)
         (proposed as Record<string, unknown>)[key] = clone(chosen[key]);
     }
-    return { base, proposed };
+    return { base, proposed, warnings };
   }
   const liveMap = mapTab(current);
   const liveNode = liveMap.get(nodeId);
@@ -594,14 +612,14 @@ export function applyConflictChoice(input: {
   if (choice === 'proposed' && baseNode && proposedNode && liveNode) {
     setNode(proposed, nodeId, {
       ...proposedNode,
-      node: preserveLiveSecrets(baseNode.node, proposedNode.node, liveNode.node),
+      node: preserveLiveSecrets(baseNode.node, proposedNode.node, liveNode.node, warnings),
     });
   }
   setNode(base, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
   if (choice === 'live') {
     setNode(proposed, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
   }
-  return { base, proposed };
+  return { base, proposed, warnings };
 }
 
 function setNode(

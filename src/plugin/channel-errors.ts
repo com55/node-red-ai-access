@@ -23,7 +23,11 @@ import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { AiOpsValidationError } from './ai-ops.js';
 import { registryHint } from './error-registry.js';
-import { ProposalRebaseAckRequiredError, ProposalRebaseRaceError } from './proposal-service.js';
+import {
+  ProposalRebaseAckRequiredError,
+  ProposalRebaseRaceError,
+  ProposalDeployTimeoutError,
+} from './proposal-service.js';
 
 export type ErrorChannel = 'get' | 'rest' | 'mcp';
 
@@ -47,6 +51,8 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   proposal_conflict: 'Proposal conflicts with current editor changes',
   rebase_ack_required: 'Review and acknowledge the merged proposal',
   rebase_race: 'Flows kept changing during approval',
+  deploy_timeout:
+    'Deployment timed out; the proposal is still pending. Check live flows before retrying because the runtime may still complete the deployment.',
   conflict_not_found: 'Conflict no longer exists',
   invalid_choice: 'Invalid conflict choice',
   flow_id_mismatch: 'Proposal flow id cannot change',
@@ -263,9 +269,10 @@ export function mapErrorForChannel(
     };
   } else if (
     error instanceof ProposalRebaseRaceError ||
+    error instanceof ProposalDeployTimeoutError ||
     error instanceof ProposalConcurrentApproveError
   ) {
-    mapped = { statusCode: 409, body: { error: error.message, code: error.code } };
+    mapped = { statusCode: error.statusCode, body: { error: error.message, code: error.code } };
   } else if (error instanceof AiOpsValidationError) {
     mapped = {
       statusCode: error.statusCode,

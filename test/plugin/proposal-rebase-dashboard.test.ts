@@ -30,7 +30,7 @@ function dashboard() {
       `
     globalThis.dashboard = {
       proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
-      renderConflictPanel, updateProposalConflict, renderPendingActions, renderRebaseChip, countPendingBuckets,
+      renderConflictPanel, updateProposalConflict, renderPendingActions, renderRebaseChip, countPendingBuckets, renderProposalCard,
       setCanApprove: function (value) { canApprove = value; },
       setReload: function (reload, diff) { loadProposals = reload; loadProposalDiff = diff; },
       setProposal: function (proposal, diff) {
@@ -132,6 +132,26 @@ describe('dashboard rebase controls', () => {
       );
     }
   );
+
+  it('shows secret_may_revert on the proposal card before the diff loads', () => {
+    const ui = dashboard();
+    const html = ui.renderProposalCard({
+      id: 'p',
+      status: 'pending',
+      title: 'Function edit',
+      payload: { flowId: 'tab', flow: { nodes: [] } },
+      warnings: [
+        {
+          code: 'secret_may_revert',
+          error: 'Review the proposed secret against live flows.',
+          nodeId: 'a',
+          property: 'func',
+        },
+      ],
+    });
+    expect(html).toContain('secret_may_revert');
+    expect(html).toContain('Review the proposed secret against live flows.');
+  });
 
   it('escapes conflict details and offers only the available choices', () => {
     const ui = dashboard();

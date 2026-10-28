@@ -58,6 +58,7 @@ import {
 import {
   ProposalRebaseAckRequiredError,
   ProposalRebaseRaceError,
+  ProposalDeployTimeoutError,
   type ProposalService,
 } from './proposal-service.js';
 import {
@@ -334,8 +335,8 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
         });
         return;
       }
-      if (error instanceof ProposalRebaseRaceError) {
-        sendSafeJsonError(res, 409, error.code);
+      if (error instanceof ProposalRebaseRaceError || error instanceof ProposalDeployTimeoutError) {
+        sendSafeJsonError(res, error.statusCode, error.code);
         return;
       }
       if (
