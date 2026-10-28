@@ -445,6 +445,7 @@ describe('ai-access-sidebar.js served tab', () => {
           expect($('#ai-access-check-result').elements[0]!.textContent).toContain(
             'OK: Discovery endpoint is reachable (HTTP 200)'
           );
+          expect($('#ai-access-check-result').elements[0]!.className).toContain('is-ok');
           $('#ai-access-rate-ip').elements[0]!.props.value = 20;
           $('#ai-access-rate-ip').elements[0]!.handlers.change![0]!();
           await vi.advanceTimersByTimeAsync(400);

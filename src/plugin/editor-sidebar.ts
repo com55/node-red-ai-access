@@ -74,6 +74,12 @@ function editorSidebarStyles(): string {
 }
 #red-ui-sidebar-ai-access .ai-access-oauth-warning code {
   font-size: 0.95em;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: normal;
+}
+#red-ui-sidebar-ai-access .ai-access-url-warning {
+  color: #8a5a00;
 }
 #red-ui-sidebar-ai-access .ai-access-oauth-warning a {
   text-decoration: underline;
@@ -750,9 +756,8 @@ function editorSidebarScriptPartA(): string {
       api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
         .then(function (data) {
           applyForm(data);
-          if (data.warnings && data.warnings.length) {
-            setCheckResult('fail', data.warnings.join(' '));
-          }
+          var urlWarnings = (data.warnings && data.warnings.length) ? data.warnings.join(' ') : '';
+          $('#ai-access-public-url-warning').text(urlWarnings).toggle(!!urlWarnings);
           if (silent) showSavedToast();
           else setFlash($('#ai-access-flash'), 'Settings saved.', true);
           refreshPending();
@@ -901,6 +906,7 @@ function editorSidebarScriptPartB(): string {
                   setCheckResult(result.ok ? 'ok' : 'fail', (result.ok ? '✓ OK: ' : '✗ Failed: ') + (result.message || result.error) + (result.status ? ' (HTTP ' + result.status + ')' : ''));
                 }).catch(function (err) { setCheckResult('fail', '✗ ' + err.message); });
             });
+          $('<div id="ai-access-public-url-warning" class="ai-access-muted ai-access-url-warning" role="status" style="display:none"></div>').appendTo(fieldRow);
           $('<div id="ai-access-check-result" class="ai-access-check-result" aria-live="polite"></div>').appendTo(fieldRow);
           var notes = $('<details class="ai-access-muted"></details>').appendTo(fieldRow);
           $('<summary></summary>').text('About the check').appendTo(notes);
