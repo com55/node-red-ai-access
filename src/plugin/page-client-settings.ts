@@ -381,9 +381,14 @@ function settingsPartOAuth(): string {
     box.hidden = !html;
   }
 
+  var oauthStatusGen = 0;
+  var oauthClientsGen = 0;
   async function loadOAuthStatus() {
+    var gen = ++oauthStatusGen;
     try {
-      renderOAuthRouteWarning(await api('/oauth/status'));
+      var st = await api('/oauth/status');
+      if (gen !== oauthStatusGen) return; // superseded by a newer refresh
+      renderOAuthRouteWarning(st);
     } catch (e) {
       var box = $('oauth-route-warning');
       box.textContent = 'OAuth route status unavailable: ' + (e.message || String(e));
@@ -393,8 +398,10 @@ function settingsPartOAuth(): string {
 
   async function loadOAuthClients() {
     var list = $('oauth-clients');
+    var gen = ++oauthClientsGen;
     try {
       var data = await api('/oauth/clients');
+      if (gen !== oauthClientsGen) return;
       var clients = (data && data.clients) || [];
       if (!clients.length) {
         list.innerHTML = '<p class="muted">No registered OAuth clients.</p>';
