@@ -361,3 +361,19 @@ describe('dashboard → editor jump links', () => {
     expect(h.toasts[0]).toMatch(/Not found/);
   });
 });
+
+describe('consent auto-retry vs inline sign-in typing', () => {
+  it('focus does not reload while the inline form has input; storage event does', async () => {
+    const h = consentHarness('credentials');
+    await flush();
+    h.el('username').value = 'adm';
+    h.store.set('auth-tokens', JSON.stringify({ access_token: 't' }));
+    h.win.emit('focus');
+    await flush();
+    expect(h.consentCalls()).toBe(1);
+    h.win.emit('storage', { key: 'auth-tokens', newValue: '{"access_token":"t"}' });
+    await flush();
+    expect(h.consentCalls()).toBe(2);
+    expect(h.el('allow').hidden).toBe(false);
+  });
+});

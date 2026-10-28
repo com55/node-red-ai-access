@@ -129,15 +129,20 @@ export const consentScript = `(function () {
     try { var t = JSON.parse(localStorage.getItem(key) || 'null'); return !!(t && t.access_token); } catch (e) { return false; }
   }
   var lastAuto = 0;
-  function autoRetry() {
+  function typingInLogin() {
+    return !login.hidden && !!($('username').value || $('password').value);
+  }
+  function autoRetry(fromStorage) {
     if (!signedOut() || !hasToken()) return;
-    if (login.contains(document.activeElement)) return;
+    // A token written by another tab is definitive; on focus / visibility only,
+    // leave a half-typed inline sign-in alone.
+    if (!fromStorage && typingInLogin()) return;
     if (Date.now() - lastAuto < 1000) return;
     lastAuto = Date.now();
     load();
   }
-  window.addEventListener('storage', function (ev) { if (ev.key === key && ev.newValue) autoRetry(); });
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') autoRetry(); });
-  window.addEventListener('focus', autoRetry);
+  window.addEventListener('storage', function (ev) { if (ev.key === key && ev.newValue) autoRetry(true); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') autoRetry(false); });
+  window.addEventListener('focus', function () { autoRetry(false); });
   load();
 })();`;
