@@ -83,6 +83,8 @@ export function accessLinkAuditActor(req: AuthenticatedRequest): AuditActor | un
  */
 export function redactionAuditMiddleware(audit: AuditLog) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    // Only AI-facing REST under /mcp/; MCP JSON-RPC audits itself via
+    // runWithRedactionAudit. Everything else passes through untouched.
     if (!req.path.startsWith('/mcp/') || req.path.startsWith('/mcp/rpc')) {
       next();
       return;

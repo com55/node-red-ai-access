@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Security
 
+- Strict placeholder restore on proposal submit: `[REDACTED]` becomes the real
+  secret only in its original node/field/line, env and header entries matched by
+  exact name (never by index); added, duplicated, moved or renamed placeholders
+  reject the submit (`redacted_placeholder_mismatch`). Approve cards list
+  restored-secret fields and warn loudly (`secret_destination_changed`,
+  `secret_node_code_changed`) when such a node's destination or code changes.
+- Detection also covers DSN/connection strings, unquoted `password: x`,
+  `Buffer.from("user:pw")`, the `PW` pattern, and content of node
+  `name`/`label`/`info`; string fields over 256 KB are fully redacted for AI.
+  The dashboard warns when the pattern list is empty, and the REST redaction
+  audit middleware only acts on AI REST routes under `/mcp/`.
 - Likely secrets are redacted from everything AI clients receive: MCP tools
   (`list_flows`, `get_flow`, `get_node`, `get_node_field`, `search_flows`,
   proposal tools and diffs), REST with an access link or OAuth token, and GET

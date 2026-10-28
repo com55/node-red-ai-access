@@ -55,6 +55,7 @@ import {
   rawFlowAdapter,
   redactProposalForAi,
   restoreRedactedPlaceholders,
+  secretChangeWarnings,
 } from './secret-redaction.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
@@ -716,6 +717,34 @@ function assertSafeRevAndFlowId(
   }
 }
 
+/**
+ * Strictly restore `[REDACTED]` placeholders from the live flows; reject the
+ * submit when any placeholder is not exactly where the AI was shown it.
+ */
+function strictRestoreOrThrow(
+  flow: Record<string, unknown>,
+  liveFlows: readonly Record<string, unknown>[]
+): ReturnType<typeof restoreRedactedPlaceholders> {
+  const restoration = restoreRedactedPlaceholders(sanitizeFlowTab(flow), liveFlows);
+  if (restoration.unresolved.length > 0) {
+    // Never store a placeholder and never move a secret: reject with details.
+    throwValidationIssues(
+      restoration.unresolved.map(miss => ({
+        code: 'redacted_placeholder_mismatch',
+        error:
+          `Node ${miss.nodeId} field ${miss.property}: ${miss.reason}. ` +
+          '[REDACTED] placeholders are restored only when left exactly where they were shown ' +
+          '(same node, field, env/header name, and unchanged line). Do not copy, move, or add ' +
+          'placeholders; keep those lines unchanged or supply a real new value.',
+        nodeId: miss.nodeId,
+        property: miss.property,
+        statusCode: 400,
+      }))
+    );
+  }
+  return restoration;
+}
+
 export async function submitReplaceFlowProposal(
   store: ProposalStore,
   audit: AuditLog,
@@ -775,7 +804,7 @@ export async function submitReplaceFlowProposal(
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
   }
   // Keep secrets the AI only saw as `[REDACTED]` (never store the placeholder).
-  const restoration = restoreRedactedPlaceholders(sanitizeFlowTab(flow), current.flows);
+  const restoration = strictRestoreOrThrow(flow as Record<string, unknown>, current.flows);
   const safeFlow = sanitizeFlowTab(restoration.flow) as Partial<FlowTab>;
   throwValidationIssues(collectCrossFlowDuplicateIssues(safeFlow, safeFlowId, current.flows));
 
@@ -797,17 +826,11 @@ export async function submitReplaceFlowProposal(
     ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
   });
   throwValidationIssues(flowErrors);
-  for (const miss of restoration.unresolved) {
-    flowWarnings.push({
-      code: 'redacted_placeholder_unresolved',
-      error:
-        `Node ${miss.nodeId} property ${miss.property} contains the literal "[REDACTED]" placeholder ` +
-        'that could not be matched to an original secret; it will be stored as-is. ' +
-        'Keep the placeholder exactly where it was shown, or provide the real value.',
-      nodeId: miss.nodeId,
-      property: miss.property,
-    });
-  }
+  flowWarnings.unshift(
+    ...secretChangeWarnings(restoration.restoredFields, safeFlow, current.flows).map(w => ({
+      ...w,
+    }))
+  );
 
   const auditActor: {
     kind: 'access-link';
@@ -836,6 +859,9 @@ export async function submitReplaceFlowProposal(
       flow: safeFlow,
     },
     baseFlow: safeBaseFlow,
+    ...(restoration.restoredFields.length > 0
+      ? { restoredSecrets: restoration.restoredFields }
+      : {}),
     title,
     createdBy,
     ...(flowWarnings.length > 0 ? { warnings: flowWarnings } : {}),

@@ -135,8 +135,6 @@ const STRUCTURAL_KEYS = new Set([
   'w',
   'h',
   'wires',
-  'name',
-  'label',
   'inputs',
   'outputs',
   'links',
@@ -150,6 +148,15 @@ const STRUCTURAL_KEYS = new Set([
   'out',
   'rev',
 ]);
+
+/** Free-text fields: content scan only, never key-name redaction. */
+const SCAN_ONLY_KEYS = new Set(['name', 'label', 'info']);
+
+/** JavaScript code fields: unquoted `name = value` is an expression, not a literal. */
+const CODE_KEYS = new Set(['func', 'initialize', 'finalize']);
+
+/** Fields larger than this are not scanned; AI sees the whole field as redacted. */
+export const MAX_SCAN_FIELD_CHARS = 256 * 1024;
 
 const CHILD_ENTITY_KEYS = new Set(['nodes', 'configs', 'subflows']);
 
@@ -250,7 +257,20 @@ function contentRules(matcher: SecretNameMatcher): ContentRule[] {
 }
 
 function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
+  const keyAccepts = (s: string, m: RegExpExecArray): boolean =>
+    matcher.matches(m.groups?.k ?? '') && s.length >= 1 && isSecretLikeValue(s);
   return [
+    // Buffer.from("user:pw") / btoa('user:pw') basic-auth literals.
+    {
+      re: /\b(?:Buffer\.from|btoa)\(\s*(?<q>["'`])[^"'`:\s]+:(?<s>[^"'`\s]+)\k<q>/dg,
+      accept: s => !s.includes('${'),
+    },
+    // Connection strings: `Server=x;User Id=sa;Password=p@ss;` (2+ key=value pairs).
+    {
+      re: /(?<=^|[;"'`\s])(?<k>[A-Za-z][A-Za-z0-9 _-]{0,40}?)\s*=\s*(?<s>[^;"'`\r\n]+)(?=;[A-Za-z ]|;?["'`]|;?\s*$)/dgm,
+      accept: (s, m) =>
+        keyAccepts(s.trim(), m) && /[A-Za-z][\w ]*=[^;=\r\n]*;\s*[A-Za-z][\w ]*=/.test(m.input),
+    },
     // PEM private key body (keeps BEGIN/END lines).
     {
       re: /-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----(?<s>[\s\S]+?)-----END \1PRIVATE KEY-----/dg,
@@ -292,16 +312,51 @@ function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
   ];
 }
 
+/** Unquoted `password: hunter2` / `token=abc` (text and config fields, not JS code). */
+function unquotedRule(matcher: SecretNameMatcher): ContentRule {
+  return {
+    re: /(?<![\w$.-])(?<k>[A-Za-z_][\w-]{0,63})[ \t]*(?::|=)[ \t]*(?<s>[^\s;,'"`&<>(){}[\]]{3,})/dg,
+    accept: (s, m) =>
+      matcher.matches(m.groups?.k ?? '') &&
+      isSecretLikeValue(s) &&
+      !s.startsWith('$') &&
+      !s.startsWith('{{') &&
+      // Skip code-ish references: `msg.password`, `env.get(`, `flow.get(...)`.
+      !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(s) &&
+      m.input.charAt(m.indices?.groups?.s?.[1] ?? 0) !== '(',
+  };
+}
+
+const unquotedCache = new WeakMap<SecretNameMatcher, ContentRule>();
+
+export interface ScanOptions {
+  /** JavaScript source: skip the unquoted assignment rule. */
+  code?: boolean;
+}
+
 export interface ScanResult {
   text: string;
   /** Original secret literals, one per placeholder in `text`, in order. */
   secrets: string[];
 }
 
-export function scanTextForSecrets(text: string, matcher: SecretNameMatcher): ScanResult {
+export function scanTextForSecrets(
+  text: string,
+  matcher: SecretNameMatcher,
+  options: ScanOptions = {}
+): ScanResult {
   if (text.length === 0) return { text, secrets: [] };
   const spans: Span[] = [];
-  for (const rule of contentRules(matcher)) {
+  let rules = contentRules(matcher);
+  if (!options.code) {
+    let extra = unquotedCache.get(matcher);
+    if (!extra) {
+      extra = unquotedRule(matcher);
+      unquotedCache.set(matcher, extra);
+    }
+    rules = [...rules, extra];
+  }
+  for (const rule of rules) {
     rule.re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = rule.re.exec(text)) !== null) {
@@ -373,11 +428,13 @@ class EntityRedactor {
 
   /** Whole-value redaction when `nameSensitive`, else content scan. */
   string(value: string, path: string, nameSensitive: boolean): string {
-    if (nameSensitive && isSecretLikeValue(value)) {
+    if ((nameSensitive && isSecretLikeValue(value)) || value.length > MAX_SCAN_FIELD_CHARS) {
+      // Oversized fields are never scanned: safest is to hide them entirely.
       this.record(path, [value]);
       return REDACTED_PLACEHOLDER;
     }
-    const scanned = scanTextForSecrets(value, this.ctx.matcher);
+    const topKey = path.split(/[.[]/, 1)[0] ?? '';
+    const scanned = scanTextForSecrets(value, this.ctx.matcher, { code: CODE_KEYS.has(topKey) });
     if (scanned.secrets.length > 0) {
       this.record(path, scanned.secrets);
       return scanned.text;
@@ -402,6 +459,7 @@ class EntityRedactor {
 
   value(value: unknown, path: string, key: string, siblings?: Record<string, unknown>): unknown {
     if (typeof value === 'string') {
+      if (SCAN_ONLY_KEYS.has(key)) return this.string(value, path, false);
       const typeSibling = siblings?.[`${key}Type`];
       const isReference = typeof typeSibling === 'string' && REFERENCE_TYPES.has(typeSibling);
       return this.string(value, path, !isReference && this.ctx.matcher.matches(key));
@@ -579,28 +637,46 @@ export function countRedactionPlaceholders(text: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Restore placeholders on proposal submit
+// Restore placeholders on proposal submit (strict)
+//
+// A placeholder is only turned back into the real secret when the AI left it
+// exactly where it was shown: same node id, same field path, env / name-value
+// entries matched by their exact name (never by array index), and the text
+// around the placeholder on its line identical to the original occurrence.
+// Anything else (extra placeholders, renamed env vars, swapped headers, edited
+// lines) is reported as unresolved and the submit is rejected, so an approved
+// proposal can never carry a secret to a place the AI chose.
+
+export interface RestoredField {
+  nodeId: string;
+  property: string;
+}
 
 export interface RestoreResult {
   flow: Partial<FlowTab>;
   /** Placeholders replaced with the original secret. */
   restored: number;
-  /** Placeholders that could not be matched to an original (left as-is). */
-  unresolved: { nodeId: string; property: string }[];
+  /** Fields where a secret was restored (for the human reviewer). */
+  restoredFields: RestoredField[];
+  /** Placeholders that could not be strictly matched (submit must be rejected). */
+  unresolved: (RestoredField & { reason: string })[];
 }
 
-const CONTEXT_WINDOW = 32;
-
-function commonSuffixLen(a: string, b: string): number {
-  let n = 0;
-  while (n < a.length && n < b.length && a[a.length - 1 - n] === b[b.length - 1 - n]) n++;
-  return n;
-}
-
-function commonPrefixLen(a: string, b: string): number {
-  let n = 0;
-  while (n < a.length && n < b.length && a[n] === b[n]) n++;
-  return n;
+/** Line-local context around each placeholder occurrence. */
+function placeholderContexts(text: string): { before: string; after: string }[] {
+  const parts = text.split(REDACTED_PLACEHOLDER);
+  const out: { before: string; after: string }[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    const prev = parts[i - 1] ?? '';
+    const next = parts[i] ?? '';
+    const nl = prev.lastIndexOf('\n');
+    const endNl = next.indexOf('\n');
+    out.push({
+      before: nl >= 0 ? prev.slice(nl + 1) : prev,
+      after: endNl >= 0 ? next.slice(0, endNl) : next,
+    });
+  }
+  return out;
 }
 
 function restoreString(
@@ -608,52 +684,52 @@ function restoreString(
   redacted: string,
   original: string,
   secrets: string[]
-): { text: string; restored: number; unresolved: number } {
+): { text: string; restored: number } | { error: string } {
   if (ai === redacted) {
-    return { text: original, restored: countRedactionPlaceholders(ai), unresolved: 0 };
+    return { text: original, restored: countRedactionPlaceholders(ai) };
   }
-  const distinct = [...new Set(secrets)];
-  if (distinct.length === 1) {
-    const n = countRedactionPlaceholders(ai);
-    return { text: ai.split(REDACTED_PLACEHOLDER).join(distinct[0]), restored: n, unresolved: 0 };
+  const aiCtx = placeholderContexts(ai);
+  const origCtx = placeholderContexts(redacted);
+  if (aiCtx.length > origCtx.length) {
+    return {
+      error: `contains ${aiCtx.length} [REDACTED] placeholders but the original had ${origCtx.length}`,
+    };
   }
-  // Several different secrets: match each AI placeholder to the original
-  // placeholder with the most similar surrounding text.
-  const segs = redacted.split(REDACTED_PLACEHOLDER);
+  const used = new Set<number>();
   const parts = ai.split(REDACTED_PLACEHOLDER);
   let text = parts[0] ?? '';
-  let restored = 0;
-  let unresolved = 0;
-  for (let i = 1; i < parts.length; i++) {
-    const before = (parts[i - 1] ?? '').slice(-CONTEXT_WINDOW);
-    const after = (parts[i] ?? '').slice(0, CONTEXT_WINDOW);
-    let best = -1;
-    let bestScore = 0;
-    for (let k = 0; k < secrets.length; k++) {
-      // Text before a placeholder (the variable / key name) weighs double.
-      const score =
-        2 * commonSuffixLen(before, (segs[k] ?? '').slice(-CONTEXT_WINDOW)) +
-        commonPrefixLen(after, (segs[k + 1] ?? '').slice(0, CONTEXT_WINDOW));
-      if (score > bestScore) {
-        bestScore = score;
-        best = k;
-      }
+  for (let i = 0; i < aiCtx.length; i++) {
+    const c = aiCtx[i];
+    if (!c) break;
+    const k = origCtx.findIndex(
+      (o, idx) => !used.has(idx) && o.before === c.before && o.after === c.after
+    );
+    if (k < 0) {
+      return { error: 'a [REDACTED] placeholder is not on an unchanged original line' };
     }
-    if (best >= 0) {
-      text += (secrets[best] ?? REDACTED_PLACEHOLDER) + (parts[i] ?? '');
-      restored++;
-    } else {
-      text += REDACTED_PLACEHOLDER + (parts[i] ?? '');
-      unresolved++;
-    }
+    used.add(k);
+    text += (secrets[k] ?? REDACTED_PLACEHOLDER) + (parts[i + 1] ?? '');
   }
-  return { text, restored, unresolved };
+  return { text, restored: aiCtx.length };
 }
 
 interface RestoreCtx {
   secrets: Map<string, string[]>;
   restored: number;
-  unresolved: { nodeId: string; property: string }[];
+  restoredFields: RestoredField[];
+  unresolved: (RestoredField & { reason: string })[];
+}
+
+const STABLE_ELEMENT_KEYS = ['name', 'keyValue', 'p', 'property', 'key', 'k'] as const;
+
+/** Stable identity of an array element: `<key>=<value>` from a name-like field. */
+function stableElementKey(value: unknown): string | undefined {
+  if (!isPlainObject(value)) return undefined;
+  for (const k of STABLE_ELEMENT_KEYS) {
+    const v = value[k];
+    if (typeof v === 'string' && v.length > 0) return `${k}=${v}`;
+  }
+  return undefined;
 }
 
 function restoreWalk(
@@ -662,7 +738,6 @@ function restoreWalk(
   original: unknown,
   entityId: string,
   path: string,
-  key: string,
   ctx: RestoreCtx
 ): unknown {
   if (typeof ai === 'string') {
@@ -670,39 +745,46 @@ function restoreWalk(
     const secrets = ctx.secrets.get(`${entityId}\u0000${path}`);
     if (typeof redacted === 'string' && typeof original === 'string' && secrets?.length) {
       const r = restoreString(ai, redacted, original, secrets);
+      if ('error' in r) {
+        ctx.unresolved.push({ nodeId: entityId, property: path, reason: r.error });
+        return ai;
+      }
       ctx.restored += r.restored;
-      if (r.unresolved > 0) ctx.unresolved.push({ nodeId: entityId, property: path });
+      ctx.restoredFields.push({ nodeId: entityId, property: path });
       return r.text;
     }
-    ctx.unresolved.push({ nodeId: entityId, property: path });
+    ctx.unresolved.push({
+      nodeId: entityId,
+      property: path,
+      reason: 'no redacted secret exists at this node id and field',
+    });
     return ai;
   }
   if (Array.isArray(ai)) {
     const redArr: unknown[] = Array.isArray(redacted) ? redacted : [];
     const origArr: unknown[] = Array.isArray(original) ? original : [];
-    const items = ai as unknown[];
-    if (key === 'env') {
-      return items.map((entry, i) => {
-        if (!isPlainObject(entry)) return entry;
-        const clean = withoutKey(entry, 'redacted');
-        const byName =
-          typeof entry.name === 'string'
-            ? origArr.findIndex(o => isPlainObject(o) && o.name === entry.name)
-            : -1;
-        const j = byName >= 0 ? byName : i;
-        return restoreWalk(clean, redArr[j], origArr[j], entityId, `${path}[${j}]`, '', ctx);
-      });
-    }
-    return items.map((item, i) =>
-      restoreWalk(item, redArr[i], origArr[i], entityId, `${path}[${i}]`, '', ctx)
-    );
+    return (ai as unknown[]).map(item => {
+      const clean =
+        isPlainObject(item) && item.redacted === true ? withoutKey(item, 'redacted') : item;
+      // Match elements by exact name-like key only — never by position.
+      const key = stableElementKey(clean);
+      const matches =
+        key === undefined
+          ? []
+          : origArr.map((o, j) => (stableElementKey(o) === key ? j : -1)).filter(j => j >= 0);
+      const j = matches.length === 1 ? matches[0] : undefined;
+      if (j !== undefined) {
+        return restoreWalk(clean, redArr[j], origArr[j], entityId, `${path}[${j}]`, ctx);
+      }
+      return restoreWalk(clean, undefined, undefined, entityId, `${path}[?]`, ctx);
+    });
   }
   if (isPlainObject(ai)) {
     const redObj = isPlainObject(redacted) ? redacted : {};
     const origObj = isPlainObject(original) ? original : {};
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(ai)) {
-      out[k] = restoreWalk(v, redObj[k], origObj[k], entityId, path ? `${path}.${k}` : k, k, ctx);
+      out[k] = restoreWalk(v, redObj[k], origObj[k], entityId, path ? `${path}.${k}` : k, ctx);
     }
     return out;
   }
@@ -748,16 +830,16 @@ function restoreEntity(
       out[k] = v;
       continue;
     }
-    out[k] = restoreWalk(v, redacted?.[k], original?.[k], id, k, k, ctx);
+    out[k] = restoreWalk(v, redacted?.[k], original?.[k], id, k, ctx);
   }
   return stripMarkers(out);
 }
 
 /**
- * Replace `[REDACTED]` placeholders in an AI-submitted tab with the original
- * secret values from the live flows (looked up by node id). Fields that the AI
- * changed to a new literal are kept; `_aiRedactions` / env `redacted` markers
- * are stripped.
+ * Strictly replace `[REDACTED]` placeholders in an AI-submitted tab with the
+ * original secrets from the live flows (by node id). See the section comment
+ * for the matching rules; callers must reject the submit when `unresolved` is
+ * non-empty.
  */
 export function restoreRedactedPlaceholders(
   aiFlow: Record<string, unknown>,
@@ -770,7 +852,100 @@ export function restoreRedactedPlaceholders(
   }
   const secrets = new Map<string, string[]>();
   const rctx: RedactCtx = { matcher: createSecretNameMatcher(patterns), count: 0, secrets };
-  const ctx: RestoreCtx = { secrets, restored: 0, unresolved: [] };
+  const ctx: RestoreCtx = { secrets, restored: 0, restoredFields: [], unresolved: [] };
   const flow = restoreEntity(aiFlow, originals, ctx, rctx);
-  return { flow, restored: ctx.restored, unresolved: ctx.unresolved };
+  return {
+    flow,
+    restored: ctx.restored,
+    restoredFields: ctx.restoredFields,
+    unresolved: ctx.unresolved,
+  };
+}
+
+/** Node fields that decide where data (and therefore a secret) is sent. */
+const DESTINATION_KEYS = [
+  'type',
+  'url',
+  'host',
+  'hostname',
+  'server',
+  'broker',
+  'port',
+  'path',
+  'method',
+  'headers',
+  'endpoint',
+  'uri',
+  'protocol',
+  'proxy',
+  'tls',
+  'to',
+  'ret',
+];
+
+export interface SecretChangeWarning {
+  code: 'secret_destination_changed' | 'secret_node_code_changed';
+  error: string;
+  nodeId: string;
+  property: string;
+}
+
+/**
+ * For every node that had a secret restored, warn when its destination
+ * (url / host / method / headers / type …) or its code changed versus the
+ * live flow — the reviewer must check the secret is not being sent elsewhere.
+ */
+export function secretChangeWarnings(
+  restoredFields: readonly RestoredField[],
+  flow: Record<string, unknown>,
+  liveFlows: readonly Record<string, unknown>[]
+): SecretChangeWarning[] {
+  const ids = [...new Set(restoredFields.map(f => f.nodeId))];
+  const live = new Map<string, Record<string, unknown>>();
+  for (const n of liveFlows) if (isPlainObject(n) && typeof n.id === 'string') live.set(n.id, n);
+  const proposed = new Map<string, Record<string, unknown>>();
+  proposed.set(String(flow.id), flow);
+  for (const key of ['nodes', 'configs'] as const) {
+    const list = flow[key];
+    if (Array.isArray(list)) {
+      for (const n of list as unknown[]) {
+        if (isPlainObject(n) && typeof n.id === 'string') proposed.set(n.id, n);
+      }
+    }
+  }
+  const out: SecretChangeWarning[] = [];
+  for (const id of ids) {
+    const before = live.get(id);
+    const after = proposed.get(id);
+    if (!before || !after) continue;
+    const fields = restoredFields
+      .filter(f => f.nodeId === id)
+      .map(f => f.property)
+      .join(', ');
+    const changed = DESTINATION_KEYS.filter(
+      k => JSON.stringify(before[k]) !== JSON.stringify(after[k])
+    );
+    if (changed.length > 0) {
+      out.push({
+        code: 'secret_destination_changed',
+        error:
+          `SECURITY: node ${id} holds a secret (${fields}) restored from the live flow, and this proposal ` +
+          `changes where it sends data (${changed.join(', ')}). Verify the new destination before approving.`,
+        nodeId: id,
+        property: changed.join(','),
+      });
+    }
+    const code = [...CODE_KEYS].filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+    if (code.length > 0) {
+      out.push({
+        code: 'secret_node_code_changed',
+        error:
+          `Node ${id} holds a secret (${fields}) and its code changed (${code.join(', ')}). ` +
+          'Check the new code does not send the secret anywhere unexpected.',
+        nodeId: id,
+        property: code.join(','),
+      });
+    }
+  }
+  return out;
 }

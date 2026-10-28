@@ -859,7 +859,18 @@ button.id-copy:focus {
   font-weight: 650;
   font-size: 0.92rem;
 }
-.proposal-warnings {
+.secret-patterns-empty-warning {
+    list-style: none;
+    color: #b42318;
+    font-weight: 600;
+  }
+  .restored-secrets-danger {
+    border-color: #b42318 !important;
+    background: #fef3f2 !important;
+    color: #7a271a;
+  }
+  .restored-secrets-danger .proposal-warnings-title { color: #b42318; font-weight: 700; }
+  .proposal-warnings {
   margin: 0 0 0.55rem;
   padding: 0.55rem 0.7rem;
   background: #fff8e8;

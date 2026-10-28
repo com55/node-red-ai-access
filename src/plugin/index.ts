@@ -349,6 +349,8 @@ export function registerRoutes(
   // Self-contained GET access links for headerless HTTP clients (`/mcp/a/<token>/…`).
   // Reuse the same IP+token limiter instances as REST/MCP so one token shares one bucket.
   // Audit `[REDACTED]` counts on AI (access-link) JSON responses under /mcp/.
+  // Path-scoped inside the middleware (AI routes under /mcp/ only); a mounted
+  // `use('/mcp', …)` would trip the plugin's own http-in collision detector.
   RED.httpAdmin.use(redactionAuditMiddleware(services.auditLog));
 
   registerGetLinkRoutes(RED, {

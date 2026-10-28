@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aiRedactingAdapter,
   createSecretNameMatcher,
+  MAX_SCAN_FIELD_CHARS,
   DEFAULT_SECRET_NAME_PATTERNS,
   normalizeSecretNamePatterns,
   rawFlowAdapter,
@@ -11,6 +12,7 @@ import {
   REDACTED_PLACEHOLDER,
   restoreRedactedPlaceholders,
   scanTextForSecrets,
+  secretChangeWarnings,
 } from '../../src/plugin/secret-redaction.js';
 import type { FlowAdapter, FlowNode, FlowTab } from '../../src/runtime/types.js';
 import type { Proposal } from '../../src/storage/proposals.js';
@@ -358,7 +360,9 @@ describe('restoreRedactedPlaceholders', () => {
       },
     ];
     const result = restoreRedactedPlaceholders(ai, flat);
-    expect(result.unresolved).toEqual([{ nodeId: 'new1', property: 'func' }]);
+    expect(result.unresolved).toEqual([
+      expect.objectContaining({ nodeId: 'new1', property: 'func' }),
+    ]);
     expect(find(result.flow, 'new1')._aiRedactions).toBeUndefined();
   });
 
@@ -403,5 +407,177 @@ describe('aiRedactingAdapter', () => {
     const red = redactProposalForAi(proposal);
     expect(JSON.stringify(red)).not.toContain('hunter22');
     expect(JSON.stringify(proposal)).toContain('hunter22');
+  });
+});
+
+describe('strict restore — exploit cases', () => {
+  const TOK = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  const live: FlowNode[] = [
+    { id: 't9', type: 'tab', label: 'x' },
+    {
+      id: 'h1',
+      type: 'http request',
+      z: 't9',
+      method: 'GET',
+      url: 'https://api.good.example/v1',
+      headers: [
+        {
+          keyType: 'other',
+          keyValue: 'Authorization',
+          valueType: 'other',
+          valueValue: `Bearer ${TOK}`,
+        },
+        {
+          keyType: 'other',
+          keyValue: 'Accept',
+          valueType: 'other',
+          valueValue: 'application/json',
+        },
+      ],
+      wires: [],
+    },
+    {
+      id: 'g1',
+      type: 'group',
+      z: 't9',
+      env: [
+        { name: 'DB_PASSWORD', value: 'hunter2-real', type: 'str' },
+        { name: 'API_TOKEN', value: 'tok-real-value', type: 'str' },
+      ],
+    },
+  ];
+  const tab = (): Partial<FlowTab> => {
+    const red = redactFlowData(
+      { id: 't9', type: 'tab', label: 'x', nodes: structuredClone(live.slice(1)) },
+      DEFAULT_SECRET_NAME_PATTERNS
+    ).value as Partial<FlowTab>;
+    return structuredClone(red);
+  };
+  const node = (f: Partial<FlowTab>, id: string) =>
+    (f.nodes ?? []).find(n => n.id === id) as unknown as Record<string, unknown>;
+
+  it('unchanged round trip restores exactly', () => {
+    const r = restoreRedactedPlaceholders(tab(), live);
+    expect(r.unresolved).toEqual([]);
+    expect(JSON.stringify(r.flow)).toContain(TOK);
+    expect(JSON.stringify(r.flow)).toContain('hunter2-real');
+    expect(r.restoredFields.map(f => f.nodeId).sort()).toEqual(['g1', 'g1', 'h1']);
+  });
+
+  it('header swap (X-Leak takes the Bearer value) is not restored', () => {
+    const f = tab();
+    const h = node(f, 'h1').headers as Record<string, unknown>[];
+    h[0]!.keyValue = 'X-Leak';
+    const r = restoreRedactedPlaceholders(f, live);
+    expect(r.unresolved.length).toBeGreaterThan(0);
+    expect(JSON.stringify(r.flow)).not.toContain(TOK);
+  });
+
+  it('header reorder still restores by key, not index', () => {
+    const f = tab();
+    const n = node(f, 'h1');
+    n.headers = [...(n.headers as unknown[])].reverse();
+    const r = restoreRedactedPlaceholders(f, live);
+    expect(r.unresolved).toEqual([]);
+    const hs = (r.flow.nodes ?? []).find(x => x.id === 'h1') as unknown as {
+      headers: Record<string, string>[];
+    };
+    expect(hs.headers[1]!.valueValue).toBe(`Bearer ${TOK}`);
+  });
+
+  it('host change restores but raises secret_destination_changed', () => {
+    const f = tab();
+    node(f, 'h1').url = 'https://evil.example/c';
+    const r = restoreRedactedPlaceholders(f, live);
+    expect(r.unresolved).toEqual([]);
+    const w = secretChangeWarnings(r.restoredFields, r.flow, live);
+    expect(w).toEqual([
+      expect.objectContaining({ code: 'secret_destination_changed', nodeId: 'h1' }),
+    ]);
+  });
+
+  it('env swap of names does not cross values; rename is unresolved', () => {
+    const f = tab();
+    const env = node(f, 'g1').env as { name: string }[];
+    env[0]!.name = 'LEAK_TO_URL';
+    const r = restoreRedactedPlaceholders(f, live);
+    expect(r.unresolved).toEqual([expect.objectContaining({ nodeId: 'g1' })]);
+    expect(JSON.stringify(r.flow)).not.toContain('hunter2-real');
+  });
+
+  it('duplicate placeholder in a field is rejected', () => {
+    const f = tab();
+    const h = node(f, 'h1').headers as Record<string, unknown>[];
+    h[0]!.valueValue = `${String(h[0]!.valueValue)} ${R}`;
+    const r = restoreRedactedPlaceholders(f, live);
+    expect(r.unresolved.length).toBe(1);
+    expect(JSON.stringify(r.flow)).not.toContain(TOK);
+  });
+
+  it('placeholder moved to a different line is rejected', () => {
+    const fnLive: FlowNode[] = [
+      {
+        id: 'f9',
+        type: 'function',
+        z: 't9',
+        func: `const token = "${TOK}";\nreturn msg;`,
+      },
+    ];
+    const red = redactFlowData(
+      { id: 't9', nodes: structuredClone(fnLive) },
+      DEFAULT_SECRET_NAME_PATTERNS
+    ).value as Partial<FlowTab>;
+    const n = (red.nodes ?? [])[0] as unknown as Record<string, string>;
+    n.func = `const token = "x";\nsend("${R}");\nreturn msg;`;
+    const r = restoreRedactedPlaceholders(red, fnLive);
+    expect(r.unresolved.length).toBe(1);
+    expect(JSON.stringify(r.flow)).not.toContain(TOK);
+  });
+});
+
+describe('S1/S2 detection', () => {
+  const m = createSecretNameMatcher(DEFAULT_SECRET_NAME_PATTERNS);
+  it('redacts a token in a node name / info (value scan only)', () => {
+    const tok = 'ghp_' + 'Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8';
+    const out = redactFlowData(
+      {
+        id: 't',
+        type: 'tab',
+        nodes: [{ id: 'n', type: 'debug', name: `key ${tok}`, info: `use ${tok}` }],
+      },
+      DEFAULT_SECRET_NAME_PATTERNS
+    );
+    expect(JSON.stringify(out.value)).not.toContain(tok);
+    const plain = redactFlowData(
+      { id: 't', type: 'tab', nodes: [{ id: 'n', type: 'debug', name: 'password reset' }] },
+      DEFAULT_SECRET_NAME_PATTERNS
+    );
+    expect(JSON.stringify(plain.value)).toContain('password reset');
+  });
+  it('catches DSN Password=...; , unquoted password: x, PW=, Buffer.from basic auth', () => {
+    expect(scanTextForSecrets('Server=db;User Id=sa;Password=S3cretDsn!;', m).secrets).toContain(
+      'S3cretDsn!'
+    );
+    expect(scanTextForSecrets('password: s3cr3tUnq', m).secrets).toContain('s3cr3tUnq');
+    expect(scanTextForSecrets('PW=zz9pwvalue', m).secrets).toContain('zz9pwvalue');
+    const b = scanTextForSecrets(
+      'const h = Buffer.from("admin:hunter2pw").toString("base64");',
+      m,
+      { code: true }
+    );
+    expect(b.text).not.toContain('hunter2pw');
+  });
+  it('large input: oversized field is fully redacted fast', () => {
+    const big = 'a=b '.repeat(MAX_SCAN_FIELD_CHARS / 3);
+    const t0 = Date.now();
+    const out = redactFlowData(
+      { id: 't', type: 'tab', nodes: [{ id: 'n', type: 'function', func: big }] },
+      DEFAULT_SECRET_NAME_PATTERNS
+    ).value as { nodes: { func: string }[] };
+    expect(out.nodes[0]!.func).toBe(R);
+    const near = `${'x'.repeat(MAX_SCAN_FIELD_CHARS - 10)}`;
+    scanTextForSecrets(near, m);
+    scanTextForSecrets('password = "'.repeat(20000), m);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 });

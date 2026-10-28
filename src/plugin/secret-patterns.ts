@@ -11,6 +11,7 @@ export const DEFAULT_SECRET_NAME_PATTERNS: readonly string[] = Object.freeze([
   'PASSWD',
   'PASS',
   'PWD',
+  'PW',
   'PASSPHRASE',
   'SECRET',
   'CLIENT_SECRET',

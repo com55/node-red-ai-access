@@ -165,8 +165,11 @@ function settingsPartSecrets(): string {
     while (list.firstChild) list.removeChild(list.firstChild);
     if (!patterns.length) {
       var empty = document.createElement('li');
-      empty.className = 'chip-empty muted';
-      empty.textContent = 'No patterns: name-based redaction is off.';
+      empty.className = 'chip-empty secret-patterns-empty-warning';
+      empty.setAttribute('role', 'alert');
+      empty.textContent = 'Warning: the pattern list is empty, so secrets are no longer redacted by ' +
+        'name (env vars, password/token fields). Only known token formats are still hidden from AI. ' +
+        'Use "Reset to defaults" to restore protection.';
       list.appendChild(empty);
     }
     patterns.forEach(function (p) {
