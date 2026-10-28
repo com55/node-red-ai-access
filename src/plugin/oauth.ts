@@ -109,6 +109,7 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     );
   }
   prune(now = Date.now()): void {
+    const before = this.db.clients.length + this.db.codes.length + this.db.tokens.length;
     const active = new Set(
       this.db.clients
         .filter(c =>
@@ -121,7 +122,8 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     this.db.clients = this.db.clients.filter(c => active.has(c.client_id));
     this.db.codes = this.db.codes.filter(c => c.expires > now && active.has(c.clientId));
     this.db.tokens = this.db.tokens.filter(t => active.has(t.clientId) && t.expires > now);
-    this.save();
+    if (this.db.clients.length + this.db.codes.length + this.db.tokens.length !== before)
+      this.save();
   }
   getClient(id: string): OAuthClientInformationFull | undefined {
     this.prune();
@@ -185,7 +187,21 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     return this.db;
   }
   persist(): void {
+    if (this.touchTimer) {
+      clearTimeout(this.touchTimer);
+      this.touchTimer = undefined;
+    }
     this.save();
+  }
+  private touchTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Coalesces lastUsedAt-only changes into one write per few seconds. */
+  touch(): void {
+    if (this.touchTimer) return;
+    this.touchTimer = setTimeout(() => {
+      this.touchTimer = undefined;
+      this.save();
+    }, 5_000);
+    this.touchTimer.unref?.();
   }
   revokeClient(id: string): boolean {
     const before = this.db.clients.length;
@@ -330,7 +346,7 @@ export class LocalOAuthProvider implements OAuthServerProvider {
     const client = this.clientsStore.data.clients.find(c => c.client_id === item.clientId);
     if (!client) throw new InvalidTokenError('Invalid client');
     client.lastUsedAt = Date.now();
-    this.clientsStore.persist();
+    this.clientsStore.touch();
     return {
       token,
       clientId: item.clientId,
