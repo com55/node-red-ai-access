@@ -393,14 +393,17 @@ function editorSidebarScriptPartA(): string {
       $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled);
       setDuration('access-ttl', oauth.accessTokenTtlSec || 3600, OAUTH_ACCESS_UNITS);
       setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
+      $('#ai-access-oauth-refresh-max').val(Math.round((oauth.refreshMaxLifetimeSec || 0) / 86400));
+      $('#ai-access-oauth-refresh-max-unit').val('days');
       $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
       var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
-      $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
+      $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-refresh-max, #ai-access-oauth-refresh-max-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
       $('#ai-access-oauth-lock').toggle(!!(data.sources && data.sources.oauth === 'settings.js'));
     }
 
     var OAUTH_ACCESS_UNITS = [['minutes', 60, 'Minutes'], ['hours', 3600, 'Hours']];
     var OAUTH_REFRESH_UNITS = [['hours', 3600, 'Hours'], ['days', 86400, 'Days']];
+    var OAUTH_MAX_UNITS = [['days', 86400, 'Days']];
 
     // Show seconds as the largest unit that divides them evenly (smallest unit otherwise).
     function setDuration(field, seconds, units) {
@@ -561,6 +564,7 @@ function editorSidebarScriptPartA(): string {
           enabled: $('#ai-access-oauth-enabled').is(':checked'),
           accessTokenTtlSec: readDuration('access-ttl', OAUTH_ACCESS_UNITS),
           refreshIdleTtlSec: readDuration('refresh-ttl', OAUTH_REFRESH_UNITS),
+          refreshMaxLifetimeSec: readDuration('refresh-max', OAUTH_MAX_UNITS),
           dcrMaxClients: Number($('#ai-access-oauth-dcr-cap').val()),
         },
       };
@@ -753,12 +757,13 @@ function editorSidebarScriptPartB(): string {
       [
         ['access-ttl', 'Access token lifetime', OAUTH_ACCESS_UNITS],
         ['refresh-ttl', 'Refresh token idle lifetime', OAUTH_REFRESH_UNITS],
+        ['refresh-max', 'Refresh token max lifetime (0 = unlimited, default)', OAUTH_MAX_UNITS],
         ['dcr-cap', 'Maximum registered OAuth clients', null]
       ].forEach(function (field) {
         var id = 'ai-access-oauth-' + field[0];
         var oauthRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
         $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
-        $('<input type="number" min="1" step="1" style="width:80px">').attr('id', id).appendTo(oauthRow).on('change', scheduleAutoSave);
+        $('<input type="number" step="1" style="width:80px">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(oauthRow).on('change', scheduleAutoSave);
         if (!field[2]) return;
         var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
           .appendTo(oauthRow).on('change', scheduleAutoSave);

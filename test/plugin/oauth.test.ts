@@ -36,6 +36,7 @@ function appFor(
     session?: boolean;
     publicUrl?: string;
     enabled?: boolean;
+    refreshMax?: number;
   } = {}
 ) {
   const admin = express();
@@ -57,6 +58,9 @@ function appFor(
           dcrMaxClients: options.cap ?? 20,
           accessTokenTtlSec: options.accessTtl ?? 3600,
           refreshIdleTtlSec: options.refreshTtl ?? 2_592_000,
+          ...(options.refreshMax !== undefined
+            ? { refreshMaxLifetimeSec: options.refreshMax }
+            : {}),
         },
       },
     },
@@ -397,6 +401,26 @@ describe('MCP OAuth backend', () => {
       resource,
     });
     expect(refresh.status).toBe(403);
+  });
+
+  it('enforces the optional refresh max lifetime across rotations', async () => {
+    const { admin } = appFor(userDir, { refreshTtl: 120, refreshMax: 100 });
+    const id = (await register(admin)).body.client_id as string;
+    const base = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    clock.mockReturnValue(base);
+    const code = (await authorize(admin, id)).code!;
+    const issued = (await exchange(admin, id, code)).body;
+    const refresh = (token: string) =>
+      request(admin)
+        .post('/mcp/oauth/token')
+        .type('form')
+        .send({ grant_type: 'refresh_token', client_id: id, refresh_token: token, resource });
+    clock.mockReturnValue(base + 60_000);
+    const rotated = await refresh(issued.refresh_token as string);
+    expect(rotated.status).toBe(200);
+    clock.mockReturnValue(base + 101_000);
+    expect((await refresh(rotated.body.refresh_token as string)).status).toBe(400);
   });
 
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {

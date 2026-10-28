@@ -167,6 +167,12 @@ export function putSettingsHandler(
             oauth[key] = value[key];
           }
         }
+        const max = value.refreshMaxLifetimeSec;
+        if (max !== undefined) {
+          if (typeof max !== 'number' || !Number.isInteger(max) || max < 0 || max > 315_360_000)
+            throw new Error('oauth.refreshMaxLifetimeSec must be a non-negative integer');
+          oauth.refreshMaxLifetimeSec = max;
+        }
         patch.oauth = oauth;
       }
       parseBooleanField(body, 'enabled', patch);

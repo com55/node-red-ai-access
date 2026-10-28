@@ -62,6 +62,8 @@ interface Token {
   expires: number;
   user: string;
   rotated: boolean;
+  /** When the refresh family was first issued (ms); used by the optional max lifetime. */
+  familyStart?: number;
 }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
@@ -266,7 +268,8 @@ export class LocalOAuthProvider implements OAuthServerProvider {
     readonly clientsStore: OAuthStore,
     private readonly resource: () => string,
     private readonly accessTtl: () => number,
-    private readonly refreshTtl: () => number
+    private readonly refreshTtl: () => number,
+    private readonly refreshMax: () => number = () => 0
   ) {}
   async authorize(
     _client: OAuthClientInformationFull,
@@ -325,6 +328,11 @@ export class LocalOAuthProvider implements OAuthServerProvider {
       this.clientsStore.persist();
       throw new InvalidGrantError('Refresh token reuse detected');
     }
+    const max = this.refreshMax() * 1000;
+    // Families issued before this setting existed start their clock at first refresh.
+    const familyStart = item.familyStart ?? Date.now();
+    if (max > 0 && familyStart + max <= Date.now())
+      throw new InvalidGrantError('Refresh token family reached its maximum lifetime');
     if (resource && canonicalResource(resource.href) !== item.resource)
       throw new InvalidGrantError('Resource mismatch');
     if (scopes?.some(s => !item.scopes.includes(s))) throw new InvalidGrantError('Invalid scope');
@@ -334,7 +342,8 @@ export class LocalOAuthProvider implements OAuthServerProvider {
       scopes ?? item.scopes,
       item.resource,
       item.user,
-      item.family
+      item.family,
+      familyStart
     );
   }
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -403,11 +412,17 @@ export class LocalOAuthProvider implements OAuthServerProvider {
     scopes: string[],
     resource: string,
     user: string,
-    family = secret()
+    family = secret(),
+    familyStart = Date.now()
   ): OAuthTokens {
     const access = secret(),
       refresh = secret(),
       now = Date.now();
+    const max = this.refreshMax() * 1000;
+    const refreshExpires = Math.min(
+      now + this.refreshTtl() * 1000,
+      max > 0 ? familyStart + max : Infinity
+    );
     const db = this.clientsStore.data;
     const client = db.clients.find(c => c.client_id === clientId);
     if (client) client.lastUsedAt = now;
@@ -430,9 +445,10 @@ export class LocalOAuthProvider implements OAuthServerProvider {
         family,
         scopes,
         resource,
-        expires: now + this.refreshTtl() * 1000,
+        expires: refreshExpires,
         user,
         rotated: false,
+        familyStart,
       }
     );
     this.clientsStore.persist();

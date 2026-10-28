@@ -188,7 +188,8 @@ export function registerRoutes(
     oauthStore,
     mcpUrl,
     () => services.settingsStore.getEffective().oauth.accessTokenTtlSec,
-    () => services.settingsStore.getEffective().oauth.refreshIdleTtlSec
+    () => services.settingsStore.getEffective().oauth.refreshIdleTtlSec,
+    () => services.settingsStore.getEffective().oauth.refreshMaxLifetimeSec
   );
   const oauth = makeOAuthHandlers(RED, oauthProvider, publicBase, mcpUrl);
 

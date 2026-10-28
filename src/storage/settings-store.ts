@@ -43,6 +43,7 @@ export interface PersistedAiAccessSettings {
     enabled?: boolean;
     accessTokenTtlSec?: number;
     refreshIdleTtlSec?: number;
+    refreshMaxLifetimeSec?: number;
     dcrMaxClients?: number;
   };
 }
@@ -62,6 +63,7 @@ export interface EffectiveAiAccessSettings {
     enabled: boolean;
     accessTokenTtlSec: number;
     refreshIdleTtlSec: number;
+    refreshMaxLifetimeSec: number;
     dcrMaxClients: number;
   };
 }
@@ -76,6 +78,7 @@ const DEFAULT_OAUTH = {
   enabled: false,
   accessTokenTtlSec: 3600,
   refreshIdleTtlSec: 2_592_000,
+  refreshMaxLifetimeSec: 0,
   dcrMaxClients: 20,
 };
 
@@ -163,6 +166,9 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
       if (typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 31_536_000)
         out.oauth[key] = value;
     }
+    const max = oauth.refreshMaxLifetimeSec;
+    if (typeof max === 'number' && Number.isInteger(max) && max >= 0 && max <= 315_360_000)
+      out.oauth.refreshMaxLifetimeSec = max;
   }
   return out;
 }

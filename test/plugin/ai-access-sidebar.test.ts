@@ -550,6 +550,8 @@ describe('ai-access-sidebar.js served tab', () => {
       expect($('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value).toBe('hours');
       expect($('#ai-access-oauth-refresh-ttl').elements[0]!.props.value).toBe(30);
       expect($('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value).toBe('days');
+      expect($('#ai-access-oauth-refresh-max').elements[0]!.props.value).toBe(0);
+      $('#ai-access-oauth-refresh-max').elements[0]!.props.value = 90;
       $('#ai-access-oauth-access-ttl').elements[0]!.props.value = 90;
       $('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value = 'minutes';
       $('#ai-access-oauth-refresh-ttl').elements[0]!.props.value = 12;
@@ -574,6 +576,7 @@ describe('ai-access-sidebar.js served tab', () => {
           dcrMaxClients: 20,
           accessTokenTtlSec: 5400,
           refreshIdleTtlSec: 43200,
+          refreshMaxLifetimeSec: 7_776_000,
         },
       });
       const button = $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[1]!;
