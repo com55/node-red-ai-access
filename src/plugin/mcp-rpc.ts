@@ -835,7 +835,7 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
         enableJsonResponse: true,
       });
 
-      await server.connect(transport as Parameters<typeof server.connect>[0]);
+      await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
 
       res.on('close', () => {
