@@ -88,6 +88,8 @@ function classifyIpv6(address: string): AddressClass {
     first > 0x3fff ||
     (first === 0x2001 && second <= 0x1ff) ||
     (first === 0x2001 && second === 0x0db8) ||
+    // 3fff::/20 documentation range (RFC 9637).
+    (first === 0x3fff && second <= 0x0fff) ||
     first === 0x2002;
   return blocked ? 'blocked' : 'public';
 }
@@ -112,10 +114,18 @@ export function isMetadataHostname(host: string): boolean {
   ].some(blocked => name === blocked || name.endsWith(`.${blocked}`));
 }
 
-export interface PublicUrlCheckTarget {
-  origin: string;
+export interface PublicUrlCheckAddress {
   address: string;
   family: 4 | 6;
+}
+
+export interface PublicUrlCheckTarget extends PublicUrlCheckAddress {
+  origin: string;
+  /**
+   * Every vetted address, in connection order (first equals `address`).
+   * The probe tries them in turn and never resolves the hostname again.
+   */
+  addresses?: PublicUrlCheckAddress[];
 }
 
 /** Saving remains permissive; only Check resolves and enforces network boundaries. */
@@ -174,20 +184,28 @@ export async function preparePublicUrlCheck(
   signal.throwIfAborted();
   if (!addresses.length) throw new Error('Public URL Check hostname has no addresses');
   for (const result of addresses) validateAddress(result.address);
-  const firstAddress = addresses[0]?.address;
-  if (!firstAddress) throw new Error('Public URL Check hostname has no addresses');
-  const address = canonicalizeIp(firstAddress);
-  if (!address) throw new Error('Public URL Check returned an invalid address');
-  return { origin, address, family: isIP(address) as 4 | 6 };
+  const vetted: PublicUrlCheckAddress[] = [];
+  for (const result of addresses) {
+    const address = canonicalizeIp(result.address);
+    if (!address) throw new Error('Public URL Check returned an invalid address');
+    if (!vetted.some(v => v.address === address)) {
+      vetted.push({ address, family: isIP(address) as 4 | 6 });
+    }
+  }
+  // `localhost` often resolves to ::1 first while Node-RED listens on IPv4
+  // only; prefer IPv4 for loopback so the check does not fail falsely.
+  if (local) vetted.sort((a, b) => a.family - b.family);
+  const first = vetted[0];
+  if (!first) throw new Error('Public URL Check hostname has no addresses');
+  return { origin, ...first, addresses: vetted };
 }
 
 /** Native requests never follow redirects (equivalent to redirect: 'manual'). */
-export function requestPublicUrlCheck(
-  target: PublicUrlCheckTarget,
-  path: string,
+function requestPinned(
+  url: URL,
+  pinned: PublicUrlCheckAddress,
   signal: AbortSignal
 ): Promise<number> {
-  const url = new URL(target.origin + path);
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   return new Promise((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http;
@@ -201,8 +219,8 @@ export function requestPublicUrlCheck(
         ...(isIP(hostname) ? {} : { servername: hostname }),
         // Return only the vetted address; never perform another DNS resolution.
         lookup: (_hostname, options, callback) => {
-          if (options.all) callback(null, [{ address: target.address, family: target.family }]);
-          else callback(null, target.address, target.family);
+          if (options.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
+          else callback(null, pinned.address, pinned.family);
         },
       },
       response => {
@@ -213,4 +231,31 @@ export function requestPublicUrlCheck(
     req.on('error', reject);
     req.end();
   });
+}
+
+/**
+ * Probe the vetted addresses in order, falling through to the next one only
+ * when a connection cannot be made (e.g. ::1 refused while Node-RED listens
+ * on IPv4). Each attempt stays pinned to a single pre-validated address.
+ */
+export async function requestPublicUrlCheck(
+  target: PublicUrlCheckTarget,
+  path: string,
+  signal: AbortSignal
+): Promise<number> {
+  const url = new URL(target.origin + path);
+  const candidates = target.addresses?.length
+    ? target.addresses
+    : [{ address: target.address, family: target.family }];
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    signal.throwIfAborted();
+    try {
+      return await requestPinned(url, candidate, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Public URL Check request failed');
 }
