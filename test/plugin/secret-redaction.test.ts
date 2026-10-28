@@ -376,6 +376,136 @@ describe('restoreRedactedPlaceholders', () => {
   });
 });
 
+describe('restore literal placeholders', () => {
+  const literalFunc = `// literal ${R}\nreturn msg;`;
+  const live: FlowNode[] = [
+    { id: 't', type: 'tab', label: 'Main' },
+    { id: 'n', type: 'function', z: 't', name: 'Original', password: R, func: literalFunc },
+  ];
+  const proposal = () =>
+    redactFlowData({ id: 't', type: 'tab', nodes: structuredClone(live.slice(1)) }).value;
+
+  it('keeps literal placeholders at the same node and path without restoring secrets', () => {
+    const ai = proposal();
+    ai.nodes[0]!.name = 'Renamed';
+    const result = restoreRedactedPlaceholders(ai, live);
+    expect(result.flow).toEqual(ai);
+    expect(result.unresolved).toEqual([]);
+    expect(result.restored).toBe(0);
+    expect(result.restoredFields).toEqual([]);
+  });
+
+  it('accepts edits on other lines while retaining the literal placeholder line', () => {
+    const ai = proposal();
+    ai.nodes[0]!.func = `// added\n// literal ${R}\nreturn null;`;
+    const result = restoreRedactedPlaceholders(ai, live);
+    expect(result.flow).toEqual(ai);
+    expect(result.unresolved).toEqual([]);
+    expect(result.restored).toBe(0);
+    expect(result.restoredFields).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a different node',
+      (n: FlowNode) => {
+        n.id = 'new';
+      },
+      'new',
+      'password',
+    ],
+    [
+      'a different field',
+      (n: FlowNode) => {
+        delete n.password;
+        n.label = R;
+      },
+      'n',
+      'label',
+    ],
+    [
+      'a copied field',
+      (n: FlowNode) => {
+        n.label = R;
+      },
+      'n',
+      'label',
+    ],
+    [
+      'an extra occurrence',
+      (n: FlowNode) => {
+        n.func = `${literalFunc}\n// literal ${R}`;
+      },
+      'n',
+      'func',
+    ],
+    [
+      'changed surrounding text',
+      (n: FlowNode) => {
+        n.func = `// moved ${R}\nreturn msg;`;
+      },
+      'n',
+      'func',
+    ],
+  ])('rejects literal placeholders with %s', (_label, mutate, nodeId, property) => {
+    const ai = proposal();
+    mutate(ai.nodes[0]!);
+    const result = restoreRedactedPlaceholders(ai, live);
+    expect(result.unresolved).toContainEqual(expect.objectContaining({ nodeId, property }));
+    expect(result.restored).toBe(0);
+    expect(result.restoredFields).toEqual([]);
+  });
+
+  it('matches literal env placeholders by exact name and rejects renamed entries', () => {
+    const raw = [
+      {
+        id: 't',
+        type: 'tab',
+        env: [
+          { name: 'PASSWORD', type: 'str', value: R },
+          { name: 'MODE', type: 'str', value: 'test' },
+        ],
+      },
+    ];
+    const ai = structuredClone(raw[0]!);
+    ai.env.reverse();
+    const result = restoreRedactedPlaceholders(ai, raw);
+    expect(result.flow).toEqual(ai);
+    expect(result.unresolved).toEqual([]);
+    expect(result.restored).toBe(0);
+    expect(result.restoredFields).toEqual([]);
+    ai.env[1]!.name = 'RENAMED_PASSWORD';
+    expect(restoreRedactedPlaceholders(ai, raw).unresolved).toEqual([
+      expect.objectContaining({ nodeId: 't', property: 'env[?].value' }),
+    ]);
+  });
+
+  it('still restores real secrets and emits their destination warnings', () => {
+    const raw = [
+      ...live,
+      {
+        id: 'h',
+        type: 'http request',
+        z: 't',
+        password: 'real-secret',
+        url: 'https://original.example',
+      },
+    ];
+    const ai = redactFlowData({ id: 't', type: 'tab', nodes: structuredClone(raw.slice(1)) }).value;
+    ai.nodes.find(n => n.id === 'h')!.url = 'https://changed.example';
+    const result = restoreRedactedPlaceholders(ai, raw);
+    expect(result.unresolved).toEqual([]);
+    expect(result.restored).toBe(1);
+    expect(result.restoredFields).toEqual([{ nodeId: 'h', property: 'password' }]);
+    expect(find(result.flow, 'h').password).toBe('real-secret');
+    expect(secretChangeWarnings(result.restoredFields, result.flow, raw)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'secret_destination_changed', nodeId: 'h' }),
+      ])
+    );
+  });
+});
+
 describe('aiRedactingAdapter', () => {
   const inner: FlowAdapter = {
     kind: 'red',

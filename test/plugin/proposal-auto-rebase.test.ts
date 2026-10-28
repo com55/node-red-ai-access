@@ -140,6 +140,49 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
   });
 
+  it('submits, stays pending, and approves a same-node edit retaining a literal live placeholder', async () => {
+    Object.assign(
+      head.flows.find(n => n.id === 'a')!,
+      { name: 'Literal target', password: '[REDACTED]' }
+    );
+    const read = await request(app).get('/mcp/api/v1/flows/tab').set(auth());
+    expect(read.status).toBe(200);
+    const flow = read.body.flow;
+    expect(flow.nodes.find((n: FlowNode) => n.id === 'a').password).toBe('[REDACTED]');
+    flow.nodes.find((n: FlowNode) => n.id === 'a').name = 'Literal target proposed';
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: read.body.rev,
+        payload: { flowId: 'tab', flow },
+      });
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(201);
+    expect(submitted.body.status).toBe('pending');
+    const id = submitted.body.id;
+    expect(store.get(id).payload.flow?.nodes?.find(n => n.id === 'a')).toMatchObject({
+      name: 'Literal target proposed',
+      password: '[REDACTED]',
+    });
+    const listed = await list();
+    expect(listed.status).toBe(200);
+    expect(listed.body.proposals.find((p: { id: string }) => p.id === id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'clean', conflicts: [] },
+    });
+    expect(updateFlow).not.toHaveBeenCalled();
+    const approved = await approve(id);
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe('approved');
+    expect(store.get(id).status).toBe('approved');
+    expect(head.flows.find(n => n.id === 'a')).toMatchObject({
+      name: 'Literal target proposed',
+      password: '[REDACTED]',
+      func: 'return msg;',
+    });
+  });
+
   it('requires and accepts mergedHash acknowledgement and retains disjoint live edits', async () => {
     const p = await submit();
     edit('b', { name: 'live' });

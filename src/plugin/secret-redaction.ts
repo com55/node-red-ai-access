@@ -1005,14 +1005,21 @@ function restoreWalk(
   if (typeof ai === 'string') {
     if (!ai.includes(REDACTED_PLACEHOLDER)) return ai;
     const secrets = ctx.secrets.get(`${entityId}\u0000${path}`);
-    if (typeof redacted === 'string' && typeof original === 'string' && secrets?.length) {
-      const r = restoreString(ai, redacted, original, secrets);
+    if (
+      typeof redacted === 'string' &&
+      typeof original === 'string' &&
+      (secrets?.length || original.includes(REDACTED_PLACEHOLDER))
+    ) {
+      const r = restoreString(ai, redacted, original, secrets ?? []);
       if ('error' in r) {
         ctx.unresolved.push({ nodeId: entityId, property: path, reason: r.error });
         return ai;
       }
-      ctx.restored += r.restored;
-      ctx.restoredFields.push({ nodeId: entityId, property: path });
+      // An existing literal placeholder is retained, not a restored secret.
+      if (secrets?.length) {
+        ctx.restored += r.restored;
+        ctx.restoredFields.push({ nodeId: entityId, property: path });
+      }
       return r.text;
     }
     ctx.unresolved.push({
