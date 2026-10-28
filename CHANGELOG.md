@@ -15,7 +15,11 @@ and this project adheres to
   now answers `302` → `/ai-access`; MCP traffic on `/mcp` and `/mcp/rpc` (OAuth
   resource, ChatGPT/Claude) is unchanged. Proposal `reviewPath` / `reviewUrl`,
   `accessLinksUrl`, settings `mcpPageUrl`, error hints and docs now point at
-  `/ai-access` (`#proposal=<id>`, `#links`). Update bookmarks.
+  `/ai-access` (`#proposal=<id>`, `#links`). Old dashboard URLs and bookmarks
+  (`<httpAdminRoot>/mcp`, including `#proposal=<id>` / `#links` fragments) keep
+  working through the redirect (browsers carry the fragment across a `302`), but
+  update bookmarks to `/ai-access`: the redirect is only for browsers and `/mcp`
+  is the MCP endpoint.
 - **Settings moved out of the editor sidebar.** The sidebar now holds only the
   Enable AI Access toggle (or the local-only opt-in without adminAuth), the
   Enable MCP OAuth toggle, the OAuth route-conflict warning (with reveal links,

@@ -1,5 +1,5 @@
 /**
- * Build a human-readable proposal diff for the /mcp UI.
+ * Build a human-readable proposal diff for the /ai-access dashboard.
  *
  * Primary compare is proposal.payload.flow vs the stored baseFlow snapshot
  * (captured at submit). Live flow is only used for the stale-rev warning and

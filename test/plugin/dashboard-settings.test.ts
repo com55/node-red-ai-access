@@ -12,8 +12,10 @@ import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerRoutes } from '../../src/plugin/index.js';
+import { normalizeHttpAdminRoot } from '../../src/plugin/auth.js';
+import { acceptedMediaTypes, registerRoutes } from '../../src/plugin/index.js';
 import { pageClientSettingsScript } from '../../src/plugin/page-client-settings.js';
+import { pageClientScript } from '../../src/plugin/page-client.js';
 import { renderMcpPage } from '../../src/plugin/page.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 
@@ -69,6 +71,73 @@ describe('dashboard routing', () => {
     expect(redirect.status).toBe(302);
     expect(redirect.headers.location).toBe('/admin/ai-access');
   });
+
+  it.each([
+    [undefined, true],
+    ['*/*', true],
+    ['text/html', true],
+    ['text/html,application/xhtml+xml,*/*;q=0.8', true],
+    ['text/html, text/event-stream', true],
+    ['text/event-stream, text/html;q=0.5', true],
+    ['text/event-stream', false],
+    ['application/json, text/event-stream', false],
+    ['text/event-stream, text/html;q=0', false],
+    ['text/html;q=0.0, text/event-stream', false],
+    ['TEXT/EVENT-STREAM', false],
+    ['text/event-stream;q=0, text/html', true],
+  ] as const)(
+    'GET /mcp Accept=%s redirect=%s (with and without Bearer)',
+    async (accept, redirects) => {
+      const app = appFor(userDir);
+      for (const bearer of [undefined, 'Bearer aia_invalid', 'Bearer not-a-token']) {
+        let req = request(app).get('/mcp');
+        if (accept) req = req.set('Accept', accept);
+        if (bearer) req = req.set('Authorization', bearer);
+        const res = await req;
+        const label = `${String(accept)} / ${String(bearer)}`;
+        if (redirects) {
+          expect(res.status, label).toBe(302);
+          expect(res.headers.location, label).toBe('/ai-access');
+        } else {
+          expect(res.status, label).not.toBe(302);
+          expect(res.headers.location, label).toBeUndefined();
+          expect([401, 403, 405], label).toContain(res.status);
+        }
+      }
+    }
+  );
+
+  it('HEAD follows GET negotiation; OPTIONS never redirects', async () => {
+    const app = appFor(userDir);
+    const head = await request(app).head('/mcp').set('Accept', 'text/html');
+    expect(head.status).toBe(302);
+    expect(head.headers.location).toBe('/ai-access');
+    const headSse = await request(app).head('/mcp').set('Accept', 'text/event-stream');
+    expect(headSse.status).not.toBe(302);
+    const opts = await request(app)
+      .options('/mcp')
+      .set('Origin', 'https://client.example')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(opts.status).not.toBe(302);
+    expect(opts.headers.location).toBeUndefined();
+  });
+
+  it.each([
+    ['/admin', '/admin/ai-access'],
+    ['/admin/', '/admin/ai-access'],
+    ['admin', '/admin/ai-access'],
+    ['//evil.com', '/evil.com/ai-access'],
+    ['///evil.com//x/', '/evil.com/x/ai-access'],
+  ])(
+    'redirect target for httpAdminRoot %s is %s (never protocol-relative)',
+    async (root, target) => {
+      const app = appFor(userDir, root);
+      const res = await request(app).get('/mcp').set('Accept', 'text/html');
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe(target);
+      expect(res.headers.location!.startsWith('//')).toBe(false);
+    }
+  );
 
   it('renders number + unit inputs and lock badges without leaking config into HTML', () => {
     const html = renderMcpPage({
@@ -172,6 +241,23 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
   return { dom, calls, out: ctx.out, confirm };
 }
 
+describe('helpers', () => {
+  it('normalizeHttpAdminRoot collapses duplicate slashes', () => {
+    expect(normalizeHttpAdminRoot(undefined)).toBe('/');
+    expect(normalizeHttpAdminRoot('/')).toBe('/');
+    expect(normalizeHttpAdminRoot('//')).toBe('/');
+    expect(normalizeHttpAdminRoot('//evil.com')).toBe('/evil.com');
+    expect(normalizeHttpAdminRoot('/a//b/')).toBe('/a/b');
+  });
+  it('acceptedMediaTypes drops q=0 ranges', () => {
+    expect([...acceptedMediaTypes('text/html;q=0, text/event-stream;q=0.9')]).toEqual([
+      'text/event-stream',
+    ]);
+    expect([...acceptedMediaTypes('text/html; q=0.001')]).toEqual(['text/html']);
+    expect([...acceptedMediaTypes('')]).toEqual([]);
+  });
+});
+
 describe('dashboard settings client', () => {
   it('escapes untrusted collision paths/names and links http-in nodes to the editor', () => {
     const { dom, out } = loadSettingsClient({}, '/admin');
@@ -199,6 +285,58 @@ describe('dashboard settings client', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(html).toContain('href="/admin/#node/n%221"');
     expect(html).toContain('href="/admin/#flow/tab1"');
+  });
+
+  it('escapes collision hrefs (quotes, angle brackets, javascript: ids)', () => {
+    const { dom, out } = loadSettingsClient({}, '/a"b');
+    out.renderOAuthRouteWarning!({
+      details: [
+        { kind: 'metadata', path: '/p', source: 'http-in', nodeId: 'javascript:alert(1)' },
+        { kind: 'metadata', path: '/p', source: 'http-in', nodeId: '"><svg onload=1>' },
+        { kind: 'metadata', path: '/p', source: 'http-in', flowId: "t' onmouseover='x" },
+      ],
+    });
+    const html = dom.get('oauth-route-warning').innerHTML;
+    const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map(m => m[1]);
+    expect(hrefs).toEqual([
+      '/a&quot;b/#node/javascript%3Aalert(1)',
+      '/a&quot;b/#node/%22%3E%3Csvg%20onload%3D1%3E',
+      "/a&quot;b/#flow/t'%20onmouseover%3D'x",
+    ]);
+    expect(html).not.toMatch(/<svg|href="javascript:/);
+    // Every href stays relative to the editor root (no scheme injection).
+    for (const h of hrefs) expect(h!.startsWith('/')).toBe(true);
+  });
+
+  it('openConfirmDialog renders title/message (client_name) via textContent only', () => {
+    const script = pageClientScript();
+    const fn = /function openConfirmDialog\(opts\) \{[\s\S]*?\n {2}\}/.exec(script)![0];
+    expect(fn).toMatch(/title\.textContent = opts\.title/);
+    expect(fn).toMatch(/msg\.textContent = opts\.message/);
+    expect(fn).not.toMatch(/innerHTML/);
+    // The revoke confirm passes the untrusted name as a plain message string.
+    expect(pageClientSettingsScript()).toMatch(
+      /message: 'Revoke OAuth client "' \+ \(c\.client_name \|\| c\.client_id\)/
+    );
+  });
+
+  it('locks settings.js fields individually', () => {
+    const { dom, out } = loadSettingsClient({});
+    out.applySettings!({
+      canEdit: true,
+      adminAuthEnabled: true,
+      settings: {},
+      sources: { corsAllowedOrigins: 'settings.js', rateLimitMaxPerIp: 'settings.js' },
+    });
+    expect(dom.get('set-cors').disabled).toBe(true);
+    expect(dom.get('set-rate-ip').disabled).toBe(true);
+    expect(dom.get('lock-cors').hidden).toBe(false);
+    expect(dom.get('lock-rate-ip').hidden).toBe(false);
+    for (const id of ['public-url', 'rate-window', 'rate-token', 'max-links', 'ttl', 'deploy']) {
+      expect(dom.get('set-' + id).disabled, id).toBe(false);
+      expect(dom.get('lock-' + id).hidden, id).toBe(true);
+    }
+    expect(dom.get('oauth-access-ttl').disabled).toBe(false);
   });
 
   it('hides the conflict box when there are no conflicts', () => {

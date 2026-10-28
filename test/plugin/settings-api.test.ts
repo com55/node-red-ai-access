@@ -156,6 +156,30 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(put.status).toBe(403);
   });
 
+  it('rejects every dashboard settings/OAuth mutation for read users with 403', async () => {
+    const { app } = createApp({ userDir, authenticate: asUser('read', 'guest') });
+    const json = { 'content-type': 'application/json' };
+    const cases = [
+      request(app).put('/mcp/api/v1/settings').set(json).send({ enabled: false }),
+      request(app)
+        .put('/mcp/api/v1/settings')
+        .set(json)
+        .send({ oauth: { enabled: true } }),
+      request(app).put('/mcp/api/v1/settings').set(json).send({ rateLimitMaxPerIp: 1 }),
+      request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .set(json)
+        .send({ publicBaseUrl: 'https://x.example' }),
+      request(app).delete('/mcp/api/v1/oauth/clients/some-client'),
+      request(app).post('/mcp/api/v1/links').set(json).send({ kind: 'rest' }),
+    ];
+    for (const res of await Promise.all(cases)) {
+      expect(res.status, `${res.req.method} ${res.req.path}`).toBe(403);
+    }
+    const after = await request(app).get('/mcp/api/v1/settings');
+    expect(after.body.settings.enabled).not.toBe(false);
+  });
+
   it('lets * users PUT and persists to disk; runtime picks up without restart', async () => {
     const { app, RED } = createApp({ userDir, authenticate: asUser('*', 'admin') });
 

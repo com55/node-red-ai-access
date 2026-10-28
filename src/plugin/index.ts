@@ -122,9 +122,22 @@ const PLUGIN_ID = 'com55-ai-access';
  * True for MCP Streamable HTTP GET requests (they ask for `text/event-stream`
  * and not HTML). Browsers opening `/mcp` are redirected to `/ai-access`.
  */
+/** Media ranges from an Accept header with q > 0 (q=0 means "not acceptable"). */
+export function acceptedMediaTypes(accept: string | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const part of String(accept ?? '').split(',')) {
+    const [type, ...params] = part.split(';').map(s => s.trim().toLowerCase());
+    if (!type) continue;
+    const q = params.find(p => p.startsWith('q='));
+    const value = q ? Number(q.slice(2)) : 1;
+    if (Number.isFinite(value) && value > 0) out.add(type);
+  }
+  return out;
+}
+
 export function isMcpStreamRequest(req: Request): boolean {
-  const accept = String(req.headers.accept ?? '').toLowerCase();
-  return accept.includes('text/event-stream') && !accept.includes('text/html');
+  const types = acceptedMediaTypes(req.headers.accept);
+  return types.has('text/event-stream') && !types.has('text/html');
 }
 
 /** Public shell + discovery (no authorization middleware — safe to extract). */
