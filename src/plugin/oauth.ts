@@ -330,6 +330,12 @@ const ROUTE_DISPATCH_LAYERS = new Set(['bound dispatch', 'handle']);
 const AUTH_ENDPOINTS = ['authorize', 'token', 'register', 'revoke'];
 const METADATA_ENDPOINTS = ['authorization-server', 'protected-resource'];
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
+}
+
 /** One httpStatic mount: a directory served at `root` (httpStaticRoot or per-entry root). */
 export interface StaticMount {
   path: string;
@@ -406,7 +412,7 @@ export function scanOAuthRouteCollisions(input: OAuthRouteScanInput): OAuthRoute
   const checkStatic = (endpoints: string[], into: OAuthRouteCollision[]) => {
     for (const mount of mounts) {
       const root = normalizeRoot(mount.root);
-      const dir = mount.path.replace(/\/+$/, '');
+      const dir = trimTrailingSlashes(mount.path);
       for (const abs of endpoints) {
         const rel = relativePrefix(root, abs);
         if (!rel || !exists(`${dir}${rel}`)) continue;
