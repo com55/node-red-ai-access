@@ -16,19 +16,24 @@ import type { NodeRedPluginAPI } from './types.js';
 
 const ATTACHED = Symbol.for('com55.ai-access.mcpJsonErrorHandler');
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * JSON-RPC endpoints: `<root>/mcp/rpc` and its alias `<root>/mcp`. The handler runs
  * on the plugin app (paths relative to httpAdminRoot) and on the parent app (paths
  * include httpAdminRoot), so both forms are anchored.
  */
 function mcpRpcMatcher(httpAdminRoot?: string): (path: string) => boolean {
-  const root = (httpAdminRoot ?? '/').replace(/\/+$/, '');
-  const re = new RegExp(`^(?:${escapeRegExp(root)})?/mcp(?:/rpc)?/?$`);
-  return path => re.test(path);
+  let root = httpAdminRoot ?? '/';
+  while (root.endsWith('/')) {
+    root = root.slice(0, -1);
+  }
+  const targets = new Set<string>();
+  for (const base of root ? ['', root] : ['']) {
+    for (const p of ['/mcp', '/mcp/rpc']) {
+      targets.add(base + p);
+      targets.add(`${base + p}/`);
+    }
+  }
+  return path => targets.has(path);
 }
 
 function isMcpPath(path: string): boolean {
