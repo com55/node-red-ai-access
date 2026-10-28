@@ -44,8 +44,7 @@ const LOGO =
   '<circle cx="37.5" cy="16" r="5" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M37.5 13.5v5M35 16h5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>';
 
 export const CONSENT_PAGE_STYLES = `
-:root{color-scheme:light dark;--bg:#f3f4f6;--card:#fff;--text:#111827;--muted:#4b5563;--line:#e5e7eb;--soft:#f9fafb;--brand:#8f0000;--brand-2:#b91c1c;--ok:#0f766e;--warn-bg:#fff7ed;--warn:#9a3412;--focus:#2563eb}
-@media (prefers-color-scheme:dark){:root{--bg:#0b0f14;--card:#151b23;--text:#e5e7eb;--muted:#9ca3af;--line:#273140;--soft:#1b2330;--brand:#c0262d;--brand-2:#ef4444;--warn-bg:#2a1a0e;--warn:#fdba74;--focus:#60a5fa}}
+:root{color-scheme:light;--bg:#f3f4f6;--card:#fff;--text:#111827;--muted:#4b5563;--line:#e5e7eb;--soft:#f9fafb;--brand:#8f0000;--brand-2:#b91c1c;--ok:#0f766e;--warn-bg:#fff7ed;--warn:#9a3412;--focus:#2563eb}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .card{width:100%;max-width:440px;background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);overflow:hidden}

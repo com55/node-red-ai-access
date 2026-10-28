@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.4] - 2026-10-28
+
+### Changed
+
+- Removed dark-mode support from the `/ai-access` dashboard and the OAuth
+  consent / sign-in pages. They always use the light theme
+  (`color-scheme: light`), even when the OS prefers dark. The beta.3 dark
+  variant left some components unreadable (e.g. removed-node diff rows in
+  proposal cards).
+
 ## [0.2.0-beta.3] - 2026-10-28
 
 ### Breaking

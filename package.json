@@ -1,6 +1,6 @@
 {
   "name": "@com55/node-red-ai-access",
-  "version": "0.2.0-beta.3",
+  "version": "0.2.0-beta.4",
   "description": "Node-RED plugin that gives AI agents temporary, owner-approved access via REST and MCP",
   "main": "dist/plugin.cjs",
   "types": "dist/plugin.d.cts",
