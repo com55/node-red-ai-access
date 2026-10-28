@@ -153,6 +153,32 @@ describe('dashboard rebase controls', () => {
     expect(html).toContain('Review the proposed secret against live flows.');
   });
 
+  it('shows an unknown deployment outcome on the card before the diff loads', () => {
+    const ui = dashboard();
+    const html = ui.renderProposalCard({
+      id: 'p',
+      status: 'pending',
+      title: 'Late deployment',
+      payload: { flowId: 'tab', flow: { nodes: [] } },
+      deployPending: { mergedHash: 'abc', reason: 'Approvals wait until the runtime settles.' },
+    });
+    expect(html).toContain('Deploy outcome unknown');
+    expect(html).toContain('Approvals wait until the runtime settles.');
+  });
+
+  it('shows ambiguous duplicate env pairing on the card', () => {
+    const ui = dashboard();
+    const html = ui.renderProposalCard({
+      id: 'p',
+      status: 'conflict',
+      title: 'Env edit',
+      payload: { flowId: 'tab', flow: { nodes: [] } },
+      warnings: [{ code: 'duplicate_env_keys', error: 'Pairing by name is ambiguous.' }],
+    });
+    expect(html).toContain('duplicate_env_keys');
+    expect(html).toContain('Pairing by name is ambiguous.');
+  });
+
   it('escapes conflict details and offers only the available choices', () => {
     const ui = dashboard();
     ui.setCanApprove(true);

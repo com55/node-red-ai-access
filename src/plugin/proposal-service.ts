@@ -15,6 +15,7 @@ import {
 } from '../storage/proposals.js';
 
 import { presentProposal, resolveFlowLabel } from './proposal-present.js';
+import { hashFlowTab, nestedLiveTab } from './proposal-rebase.js';
 import {
   expireByTtl,
   isPastTtl,
@@ -72,13 +73,13 @@ export class ProposalRebaseRaceError extends Error {
   }
 }
 
-/** Deployment did not finish in time; the proposal stays pending for review/retry. */
+/** The caller deadline elapsed; deployment still holds the approval queue. */
 export class ProposalDeployTimeoutError extends Error {
   readonly code = 'deploy_timeout' as const;
   readonly statusCode = 504;
   constructor() {
     super(
-      'Deployment timed out. The proposal is still pending. Check the live flows before retrying; the runtime may still complete the deployment.'
+      'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set, and approvals wait until the runtime settles. A late success marks it approved; a late failure keeps it pending for retry.'
     );
     this.name = 'ProposalDeployTimeoutError';
   }
@@ -118,111 +119,164 @@ export class ProposalService {
     decidedBy: ProposalDecisionBy,
     options: ApproveOptions = {}
   ): Promise<Proposal> {
-    // Keep the per-proposal guard immediate, including while queued globally.
-    const proposal = this.proposals.beginApprove(id);
+    // Ordinary concurrent clicks still fail immediately. After a timeout, a
+    // retry joins the queue and re-reads the outcome when the deploy settles.
+    const waitingForOutcome = this.proposals.get(id).deployPending !== undefined;
+    if (!waitingForOutcome) this.proposals.beginApprove(id);
     const previous = approveQueue;
     let release!: () => void;
     approveQueue = new Promise<void>(resolve => {
       release = resolve;
     });
-    try {
-      await previous;
-      return await this.approveLocked(proposal, decidedBy, options);
-    } finally {
-      release();
-    }
+    return new Promise<Proposal>((resolve, reject) => {
+      let ownsLock = !waitingForOutcome;
+      const run = async () => {
+        try {
+          await previous;
+          const current = this.proposals.get(id);
+          if (waitingForOutcome) {
+            if (current.status === 'approved') return current;
+            this.proposals.beginApprove(id);
+            ownsLock = true;
+          }
+          return await this.approveLocked(current, decidedBy, options, reject);
+        } finally {
+          if (ownsLock) this.proposals.releaseLock(id);
+          release();
+        }
+      };
+      // A timeout rejects only the caller's promise. run still owns the queue
+      // and proposal lock until updateFlow and its outcome bookkeeping finish.
+      void run().then(resolve, reject);
+    });
   }
 
   private async approveLocked(
     proposal: Proposal,
     decidedBy: ProposalDecisionBy,
-    options: ApproveOptions
+    options: ApproveOptions,
+    onTimeout: (error: ProposalDeployTimeoutError) => void
   ): Promise<Proposal> {
     const id = proposal.id;
     let approved: Proposal | undefined;
-    try {
-      const meta = auditProposalMeta(proposal);
-      const deploymentType = options.deploymentType ?? this.getDeploymentType();
-      // Guard for future proposal types (today only replace_flow exists).
-      const proposalType: string = proposal.type;
-      if (proposalType !== 'replace_flow') {
-        const failed = this.proposals.markFailed(
-          id,
-          decidedBy,
-          `Unsupported proposal type '${proposalType}'`
-        );
-        this.audit.append('proposal.failed', decidedBy, {
-          ...meta,
-          reason: failed.reason,
-        });
-        return failed;
-      }
-      if (isPastTtl(proposal)) {
-        this.proposals.releaseLock(id);
-        expireByTtl(this.proposals, { flowId: proposal.payload.flowId });
-        throw new ProposalNotPendingError(id, this.proposals.get(id).status);
-      }
+    const meta = auditProposalMeta(proposal);
+    const deploymentType = options.deploymentType ?? this.getDeploymentType();
+    // Guard for future proposal types (today only replace_flow exists).
+    const proposalType: string = proposal.type;
+    if (proposalType !== 'replace_flow') {
+      const failed = this.proposals.markFailed(
+        id,
+        decidedBy,
+        `Unsupported proposal type '${proposalType}'`
+      );
+      this.audit.append('proposal.failed', decidedBy, {
+        ...meta,
+        reason: failed.reason,
+      });
+      return failed;
+    }
+    if (isPastTtl(proposal)) {
+      this.proposals.releaseLock(id);
+      expireByTtl(this.proposals, { flowId: proposal.payload.flowId });
+      throw new ProposalNotPendingError(id, this.proposals.get(id).status);
+    }
 
-      const raw = rawFlowAdapter(this.adapter);
-      for (let attempt = 0; attempt < MAX_APPROVE_ATTEMPTS; attempt++) {
-        // Re-check atomically against the live flows right before deploying.
-        const live = await raw.getFlows();
-        const current = this.proposals.get(id);
-        const { result } = syncOneProposal(this.proposals, current, live, { duringApprove: true });
-        if (result.state === 'conflict' || !result.merged || !result.mergedHash) {
-          this.audit.append('proposal.conflict', decidedBy, {
-            ...meta,
-            liveRev: live.rev,
-            conflictCount: result.conflicts.length,
-          });
-          throw new ProposalConflictError(id, rebaseInfoFrom(result).conflicts);
-        }
-        const needsAck = result.state === 'merged' || options.mergedHash !== undefined;
-        if (needsAck && options.mergedHash !== result.mergedHash) {
-          throw new ProposalRebaseAckRequiredError(id, result.mergedHash, result.state);
-        }
-        const merged = result.merged;
-        try {
-          const applied = await this.withDeployDeadline(() =>
+    const raw = rawFlowAdapter(this.adapter);
+    const markAlreadyApplied = (current: Proposal, rev: string): Proposal => {
+      const applied = this.proposals.markApproved(id, decidedBy, rev);
+      this.audit.append('proposal.approved', decidedBy, {
+        ...meta,
+        resultRev: rev,
+        liveRev: rev,
+        baseRev: current.expectedRev,
+        alreadyApplied: true,
+      });
+      return applied;
+    };
+    for (let attempt = 0; attempt < MAX_APPROVE_ATTEMPTS; attempt++) {
+      // Re-check atomically against the live flows right before deploying.
+      const live = await raw.getFlows();
+      const current = this.proposals.get(id);
+      const liveTab = nestedLiveTab(live.flows, current.payload.flowId, current.payload.flow);
+      const liveHash = liveTab && hashFlowTab(liveTab);
+      if (
+        liveHash &&
+        (liveHash === current.deployPending?.mergedHash ||
+          liveHash === hashFlowTab(current.payload.flow))
+      ) {
+        approved = markAlreadyApplied(current, live.rev);
+        break;
+      }
+      const { result } = syncOneProposal(this.proposals, current, live, { duringApprove: true });
+      if (result.state === 'conflict' || !result.merged || !result.mergedHash) {
+        this.audit.append('proposal.conflict', decidedBy, {
+          ...meta,
+          liveRev: live.rev,
+          conflictCount: result.conflicts.length,
+        });
+        throw new ProposalConflictError(id, rebaseInfoFrom(result).conflicts);
+      }
+      if (liveHash === result.mergedHash) {
+        approved = markAlreadyApplied(current, live.rev);
+        break;
+      }
+      const needsAck = result.state === 'merged' || options.mergedHash !== undefined;
+      if (needsAck && options.mergedHash !== result.mergedHash) {
+        throw new ProposalRebaseAckRequiredError(id, result.mergedHash, result.state);
+      }
+      const merged = result.merged;
+      const mergedHash = result.mergedHash;
+      let timedOut = false;
+      try {
+        const applied = await this.withDeployDeadline(
+          () =>
             raw.updateFlow({
               flowId: current.payload.flowId,
               flow: merged,
               expectedRev: live.rev,
               deploymentType,
-            })
-          );
-          approved = this.proposals.markApproved(id, decidedBy, applied.rev);
-          this.audit.append('proposal.approved', decidedBy, {
-            ...meta,
-            resultRev: applied.rev,
-            flowId: current.payload.flowId,
-            baseRev: current.expectedRev,
-            liveRev: live.rev,
-            rebaseState: result.state,
-          });
-          break;
-        } catch (error) {
-          if (error instanceof FlowRevisionConflictError) {
-            continue; // flows moved between read and deploy — rebase again
-          }
-          if (error instanceof ProposalDeployTimeoutError) {
+            }),
+          () => {
+            timedOut = true;
+            const error = new ProposalDeployTimeoutError();
+            this.proposals.recordDeployPending(id, {
+              mergedHash,
+              reason: 'Deploy outcome unknown: the runtime has not settled. Approvals are waiting.',
+            });
             this.audit.append('proposal.deploy_timeout', decidedBy, { ...meta, code: error.code });
-            throw error;
+            onTimeout(error);
           }
-          const message = error instanceof Error ? error.message : String(error);
-          const failed = this.proposals.markFailed(id, decidedBy, message);
-          this.audit.append('proposal.failed', decidedBy, {
-            ...meta,
-            reason: message,
-          });
-          return failed;
+        );
+        approved = this.proposals.markApproved(id, decidedBy, applied.rev);
+        this.audit.append('proposal.approved', decidedBy, {
+          ...meta,
+          resultRev: applied.rev,
+          flowId: current.payload.flowId,
+          baseRev: current.expectedRev,
+          liveRev: live.rev,
+          rebaseState: result.state,
+        });
+        break;
+      } catch (error) {
+        if (approved) throw error; // an audit error must not undo a recorded success
+        if (timedOut) {
+          this.proposals.recordDeployPending(id, undefined);
+          throw error; // caller already received 504; leave the proposal pending
         }
+        if (error instanceof FlowRevisionConflictError) {
+          continue; // flows moved between read and deploy — rebase again
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const failed = this.proposals.markFailed(id, decidedBy, message);
+        this.audit.append('proposal.failed', decidedBy, {
+          ...meta,
+          reason: message,
+        });
+        return failed;
       }
-      if (!approved) {
-        throw new ProposalRebaseRaceError(id);
-      }
-    } finally {
-      this.proposals.releaseLock(id);
+    }
+    if (!approved) {
+      throw new ProposalRebaseRaceError(id);
     }
     // Other open proposals on this flow are rebased onto the new rev (not superseded).
     try {
@@ -235,23 +289,18 @@ export class ProposalService {
     return approved;
   }
 
-  private async withDeployDeadline<T>(deploy: () => Promise<T>): Promise<T> {
+  private async withDeployDeadline<T>(deploy: () => Promise<T>, onTimeout: () => void): Promise<T> {
     const configured = this.serviceOptions.deployTimeoutMs;
     const timeoutMs =
       configured !== undefined && Number.isFinite(configured) && configured > 0
         ? configured
         : 60_000;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(onTimeout, timeoutMs);
+    timer.unref?.();
     try {
-      return await Promise.race([
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new ProposalDeployTimeoutError()), timeoutMs);
-          timer.unref?.();
-        }),
-        deploy(),
-      ]);
+      return await deploy();
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 

@@ -409,11 +409,17 @@ Call `list_flows` or `get_flow` first and pass the returned `rev` as
 `expectedRev`. Recent known stale revisions are accepted and auto-rebased;
 unknown revisions return **409** `version_mismatch`. Human approval waits up to
 60 seconds for deployment. A timeout returns **504** `deploy_timeout`, leaves
-the proposal pending, and releases the approval queue. Check the live flows
-before retrying: the runtime operation cannot be cancelled and may still finish.
-When choosing **proposed** during conflict resolution, unchanged secret spans
-keep their live editor values. If spans cannot be aligned safely, proposed
-values are retained with a `secret_may_revert` warning on the dashboard card.
+the proposal pending with a persisted `deployPending` reason shown in the API
+and dashboard, and holds the approval queue until the runtime settles. A late
+success marks the proposal approved with its `resultRev`; a late failure clears
+`deployPending` and keeps it pending for retry. Queued approvals then re-read
+live flows before rebasing and deploying. When choosing **proposed** during
+conflict resolution, unchanged secret spans keep their live editor values. If
+spans cannot be aligned safely, proposed values are retained with a
+`secret_may_revert` warning on the dashboard card. Deliberately deleted secret
+spans do not raise this warning. Changed env arrays with duplicate names show
+`duplicate_env_keys`, since pairing by name is ambiguous when entries are
+reordered.
 
 Open proposals auto-rebase on editor changes. A `conflict` blocks approval until
 resolved using REST `POST /proposals/:id/resolve`, admin

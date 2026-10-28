@@ -112,6 +112,8 @@ export interface Proposal {
   warnings?: ProposalWarning[];
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
+  /** Persisted while a timed-out runtime deployment has an unknown outcome. */
+  deployPending?: { mergedHash: string; reason: string };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
   /**
@@ -408,6 +410,13 @@ export class ProposalStore {
     if (restored) {
       record.restoredSecrets = restored;
     }
+    if (proposal.deployPending && isOpenProposalStatus(record.status)) {
+      const mergedHash = cleanText(proposal.deployPending.mergedHash, 64);
+      const reason = cleanText(proposal.deployPending.reason, 500);
+      if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
+        record.deployPending = { mergedHash, reason };
+      }
+    }
     const rebase = sanitizeRebaseInfo(proposal.rebase);
     if (rebase && isOpenProposalStatus(record.status)) {
       record.rebase = rebase;
@@ -542,9 +551,23 @@ export class ProposalStore {
     this.inFlight.delete(id);
   }
 
+  recordDeployPending(id: string, pending: Proposal['deployPending']): Proposal {
+    const proposal = this.get(id);
+    if (!isOpenProposalStatus(proposal.status)) {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+    if (pending) proposal.deployPending = pending;
+    else delete proposal.deployPending;
+    proposal.status = 'pending';
+    proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
   markApproved(id: string, decidedBy: ProposalDecisionBy, resultRev: string): Proposal {
     const proposal = this.get(id);
     proposal.status = 'approved';
+    delete proposal.deployPending;
     proposal.decidedBy = decidedBy;
     proposal.resultRev = resultRev;
     proposal.updatedAt = new Date(this.now()).toISOString();

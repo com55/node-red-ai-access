@@ -1549,7 +1549,7 @@ components:
       description: |
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
-        - `deploy_timeout` (504): Deployment exceeded the 60 second deadline; proposal remains pending and the approval queue is released
+        - `deploy_timeout` (504): Deployment exceeded the 60 second deadline; deployPending records an unknown outcome and approvals wait for the runtime to settle
         - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
         - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
         - `rebase_race` (409): Flows kept changing during approval
@@ -2353,6 +2353,15 @@ components:
         - reviewUrl
         - reviewPath
       properties:
+        deployPending:
+          type: object
+          description: Timed-out deployment has an unknown outcome; approvals wait until the runtime settles.
+          required: [mergedHash, reason]
+          properties:
+            mergedHash:
+              type: string
+            reason:
+              type: string
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:

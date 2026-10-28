@@ -28,6 +28,7 @@ import type { ProposalWarning } from '../storage/proposals.js';
 import { REDACTED_PLACEHOLDER } from './secret-patterns.js';
 import {
   hasNewLiteralPlaceholder,
+  duplicateEnvWarnings,
   preserveLiveSecrets,
   secretValuesChanged,
   stableElementKey,
@@ -531,8 +532,8 @@ function finish(
   conflicts: RebaseConflict[],
   liveChangedIds: string[]
 ): RebaseResult {
-  const mergedHash = hashTab(normalizeForHash(merged));
-  const clean = mergedHash === hashTab(normalizeForHash(proposed));
+  const mergedHash = hashFlowTab(merged);
+  const clean = mergedHash === hashFlowTab(proposed);
   return {
     state: clean ? 'clean' : 'merged',
     rev,
@@ -541,6 +542,11 @@ function finish(
     mergedHash,
     liveChangedIds,
   };
+}
+
+/** Tab content hash independent of node order, config classification and z. */
+export function hashFlowTab(tab: Partial<FlowTab>): string {
+  return hashTab(normalizeForHash(tab));
 }
 
 /** Hash input independent of nodes/configs ordering and `z`. */
@@ -585,6 +591,14 @@ export function applyConflictChoice(input: {
   }
   const base = clone(input.base);
   const proposed = clone(input.proposed);
+  if (choice === 'proposed') {
+    warnings.push(...duplicateEnvWarnings(base, proposed).filter(w => w.nodeId === nodeId));
+    warnings.push(
+      ...duplicateEnvWarnings(current, proposed).filter(
+        w => w.nodeId === nodeId && !warnings.some(existing => existing.nodeId === w.nodeId)
+      )
+    );
+  }
   if (nodeId === flowId) {
     const live = tabProps(current);
     const chosen =

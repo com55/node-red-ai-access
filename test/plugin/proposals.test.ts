@@ -146,7 +146,10 @@ describe('proposals / flows / logs HTTP API', () => {
       .send({
         type: 'replace_flow',
         expectedRev: 'rev-1',
-        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
+        payload: {
+          flowId: 'tab-1',
+          flow: { id: 'tab-1', type: 'tab', label: 'Proposed', nodes: [] },
+        },
       });
     expect(created.status).toBe(201);
 
@@ -452,7 +455,10 @@ describe('proposals / flows / logs HTTP API', () => {
       .send({
         type: 'replace_flow',
         expectedRev: 'r',
-        payload: { flowId: 'tab-1', flow: { id: 'tab-1', type: 'tab', nodes: [] } },
+        payload: {
+          flowId: 'tab-1',
+          flow: { id: 'tab-1', type: 'tab', label: 'Proposed', nodes: [] },
+        },
       });
     expect(created.status).toBe(201);
 

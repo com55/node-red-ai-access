@@ -46,10 +46,18 @@ function e(
 
 export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   e(
+    'duplicate_env_keys',
+    200,
+    'Changed env arrays contain duplicate names; pairing by name is ambiguous when entries are reordered',
+    'Review the env values before approval',
+    [...ALL, 'admin'],
+    'warning'
+  ),
+  e(
     'deploy_timeout',
     504,
-    'Deployment exceeded the 60 second deadline; proposal remains pending and the approval queue is released',
-    'Check live flows before retrying: the runtime operation cannot be cancelled and may still complete',
+    'Deployment exceeded the 60 second deadline; deployPending records an unknown outcome and approvals wait for the runtime to settle',
+    'A late success marks the proposal approved with resultRev; a late failure clears deployPending and keeps it pending for retry',
     ADMIN
   ),
   e(

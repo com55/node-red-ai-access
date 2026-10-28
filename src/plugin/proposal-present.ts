@@ -95,6 +95,7 @@ export interface PresentedProposalApi {
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
+  deployPending?: Proposal['deployPending'];
   /** Soft validation notes (missing config, unwired, …) — not blocking. */
   warnings?: Proposal['warnings'];
   baseRevStale?: boolean;
@@ -753,6 +754,7 @@ export function presentProposalForApi(
   if (proposal.restoredSecrets && proposal.restoredSecrets.length > 0) {
     lean.restoredSecrets = proposal.restoredSecrets;
   }
+  if (full.deployPending) lean.deployPending = full.deployPending;
   if (full.rebase) {
     lean.rebase = full.rebase;
   }

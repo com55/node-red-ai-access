@@ -11,7 +11,6 @@ import { AccessLinkStore } from '../../src/access/index.js';
 import { adapterAtRev, submitReplaceFlowProposal } from '../../src/plugin/ai-ops.js';
 import {
   ProposalRebaseAckRequiredError,
-  ProposalDeployTimeoutError,
   ProposalService,
 } from '../../src/plugin/proposal-service.js';
 import { registerRoutes } from '../../src/plugin/index.js';
@@ -20,6 +19,8 @@ import {
   syncOneProposal,
   syncOpenProposals,
 } from '../../src/plugin/proposal-sync.js';
+import { hashFlowTab } from '../../src/plugin/proposal-rebase.js';
+import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
 import { aiRedactingAdapter } from '../../src/plugin/secret-redaction.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import { FlowRevisionConflictError } from '../../src/runtime/errors.js';
@@ -276,17 +277,15 @@ describe('auto-rebase service and HTTP API', () => {
     expect(updateFlow.mock.calls.map(c => c[0].expectedRev)).toEqual(['r1', 'r1-deploy']);
   });
 
-  it('times out a hung deploy, keeps pending, releases the global queue and ignores late completion', async () => {
+  it('returns 504 promptly but holds all approvals until a late success lands', async () => {
     const a = await submit(),
       b = await submit('b', 'r1', { name: 'second' });
     vi.useFakeTimers();
-    let finish!: (value: { flowId: string; rev: string }) => void;
-    updateFlow.mockImplementationOnce(
-      () =>
-        new Promise(resolve => {
-          finish = resolve;
-        })
-    );
+    let finish!: () => void;
+    beforeUpdate = () =>
+      new Promise<void>(resolve => {
+        finish = resolve;
+      });
     const first = new ProposalService(store, audit, adapter, () => 'nodes', {
       deployTimeoutMs: 100,
     });
@@ -296,50 +295,197 @@ describe('auto-rebase service and HTTP API', () => {
       statusCode: 504,
     });
     const queued = second.approve(b.body.id, { kind: 'admin' });
-    await vi.advanceTimersByTimeAsync(99);
-    expect(updateFlow).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
+    const queuedOutcome = queued.catch(error => error);
+    const read = vi.spyOn(adapter, 'getFlows');
+    await vi.advanceTimersByTimeAsync(100);
     await timedOut;
-    expect((await queued).status).toBe('approved');
-    expect(store.get(a.body.id).status).toBe('pending');
-    expect(store.isApproving(a.body.id)).toBe(false);
-    expect(store.isApproving(b.body.id)).toBe(false);
-    finish({ flowId: 'tab', rev: 'late' });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.get(a.body.id).status).toBe('pending');
+    const pending = store.get(a.body.id);
+    expect(pending).toMatchObject({
+      status: 'pending',
+      deployPending: {
+        reason: expect.stringContaining('outcome unknown'),
+        mergedHash: expect.any(String),
+      },
+    });
+    expect(new ProposalStore(resolveAiAccessPaths(dir)).get(a.body.id).deployPending).toEqual(
+      pending.deployPending
+    );
+    expect(presentProposalForApi(pending).deployPending).toEqual(pending.deployPending);
+    const sameProposal = second.approve(a.body.id, { kind: 'admin' });
+    let sameSettled = false;
+    void sameProposal.then(() => {
+      sameSettled = true;
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(sameSettled).toBe(false);
+    expect(store.isApproving(a.body.id)).toBe(true);
+    await syncOpenProposals(store, adapter);
+    expect(store.get(a.body.id).deployPending).toEqual(pending.deployPending);
+    expect(() => store.markRejected(a.body.id, { kind: 'admin' }, 'no')).toThrow(
+      expect.objectContaining({ code: 'proposal_approve_in_progress' })
+    );
+    beforeUpdate = undefined;
+    finish(); // the original updateFlow now actually lands on the live flows
+    const acknowledgement = await queuedOutcome;
+    expect(acknowledgement).toBeInstanceOf(ProposalRebaseAckRequiredError);
+    expect((await sameProposal).status).toBe('approved');
+    expect(store.get(a.body.id)).toMatchObject({ status: 'approved', resultRev: 'r1-deploy' });
+    expect(store.get(a.body.id).deployPending).toBeUndefined();
+    expect(audit.list().find(e => e.action === 'proposal.approved')!.details).toMatchObject({
+      resultRev: 'r1-deploy',
+    });
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await second.approve(
+          b.body.id,
+          { kind: 'admin' },
+          { mergedHash: acknowledgement.mergedHash }
+        )
+      ).status
+    ).toBe('approved');
+    expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
+    expect(head.flows.find(n => n.id === 'b')!.name).toBe('second');
+    expect(updateFlow.mock.calls.map(c => c[0].expectedRev)).toEqual(['r1', 'r1-deploy']);
+    await expect(second.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'proposal_not_pending',
+    });
+    expect(updateFlow).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('uses the default 60 second deadline for a never-resolving deployment', async () => {
+  it('clears an unknown deploy outcome after late failure, then lets queued approvals run', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'second' });
+    vi.useFakeTimers();
+    let fail!: (error: Error) => void;
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        })
+    );
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 100,
+    });
+    const timedOut = expect(service.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+      statusCode: 504,
+    });
+    const queued = service.approve(b.body.id, { kind: 'admin' });
+    await vi.advanceTimersByTimeAsync(100);
+    await timedOut;
+    expect(store.get(a.body.id).deployPending).toBeDefined();
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    fail(new Error('late runtime failure'));
+    expect((await queued).status).toBe('approved');
+    expect(store.get(a.body.id).status).toBe('pending');
+    expect(store.get(a.body.id).deployPending).toBeUndefined();
+    expect(store.isApproving(a.body.id)).toBe(false);
+    expect(head.flows.find(n => n.id === 'a')!.func).toBe('return msg;');
+    expect(audit.list().filter(e => e.action === 'proposal.approved')).toHaveLength(1);
+    const retry = await service.approve(a.body.id, { kind: 'admin' }).catch(error => error);
+    expect(retry).toBeInstanceOf(ProposalRebaseAckRequiredError);
+    expect(
+      (await service.approve(a.body.id, { kind: 'admin' }, { mergedHash: retry.mergedHash })).status
+    ).toBe('approved');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the default 60 second caller deadline while keeping a never-yet-settled deploy locked', async () => {
     const p = await submit();
     vi.useFakeTimers();
-    updateFlow.mockImplementationOnce(() => new Promise(() => {}));
+    let finish!: () => void;
+    beforeUpdate = () =>
+      new Promise<void>(resolve => {
+        finish = resolve;
+      });
     const service = new ProposalService(store, audit, adapter, () => 'nodes');
     const timedOut = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
       code: 'deploy_timeout',
     });
     await vi.advanceTimersByTimeAsync(59_999);
     expect(store.isApproving(p.body.id)).toBe(true);
+    expect(store.get(p.body.id).deployPending).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
     await timedOut;
     expect(store.get(p.body.id).status).toBe('pending');
+    expect(store.isApproving(p.body.id)).toBe(true);
+    const retry = service.approve(p.body.id, { kind: 'admin' });
+    beforeUpdate = undefined;
+    finish();
+    expect((await retry).status).toBe('approved');
     expect(store.isApproving(p.body.id)).toBe(false);
-    expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
+    expect(updateFlow).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('returns a clear deploy_timeout HTTP 504 without closing the proposal', async () => {
+  it('marks an already-live result approved without deploying again', async () => {
     const p = await submit();
-    vi.spyOn(ProposalService.prototype, 'approve').mockRejectedValueOnce(
-      new ProposalDeployTimeoutError()
-    );
-    const response = await approve(p.body.id);
+    const proposal = store.get(p.body.id);
+    head.flows = replaceFlowTabInFlatFlows(head.flows, 'tab', proposal.payload.flow);
+    head.rev = 'already-landed';
+    store.recordDeployPending(p.body.id, {
+      mergedHash: hashFlowTab(proposal.payload.flow),
+      reason: 'Unknown after timeout',
+    });
+    const service = new ProposalService(store, audit, adapter, () => 'nodes');
+    expect((await service.approve(p.body.id, { kind: 'admin' })).resultRev).toBe('already-landed');
+    expect(store.get(p.body.id).deployPending).toBeUndefined();
+    expect(updateFlow).not.toHaveBeenCalled();
+  });
+
+  it('does not deploy when a merged result already matches live with unrelated editor edits', async () => {
+    const flow = (await adapter.getFlow('tab')).flow;
+    flow.nodes = flow.nodes!.filter(node => node.id !== 'a');
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: head.rev,
+        payload: { flowId: 'tab', flow },
+      });
+    expect(submitted.status).toBe(201);
+    head.flows = head.flows.filter(node => node.id !== 'a');
+    edit('b', { name: 'editor change' });
+    const approved = await approve(submitted.body.id);
+    expect(approved.body).toMatchObject({ status: 'approved', resultRev: head.rev });
+    expect(updateFlow).not.toHaveBeenCalled();
+    expect(head.flows.find(node => node.id === 'b')!.name).toBe('editor change');
+  });
+
+  it('returns a real deploy_timeout HTTP 504 while exposing the persisted unknown outcome', async () => {
+    const p = await submit();
+    vi.useFakeTimers();
+    let finish!: () => void;
+    beforeUpdate = () =>
+      new Promise<void>(resolve => {
+        finish = resolve;
+      });
+    const responsePromise = approve(p.body.id).then(response => response);
+    await vi.waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(60_000);
+    const response = await responsePromise;
     expect(response.status).toBe(504);
     expect(response.body).toMatchObject({
       code: 'deploy_timeout',
-      error: expect.stringMatching(/pending/i),
+      error: expect.stringMatching(/outcome is unknown/i),
     });
-    expect(store.get(p.body.id).status).toBe('pending');
+    const listed = await list();
+    expect(
+      listed.body.proposals.find((proposal: { id: string }) => proposal.id === p.body.id)
+    ).toMatchObject({
+      status: 'pending',
+      deployPending: { reason: expect.stringContaining('outcome unknown') },
+    });
+    beforeUpdate = undefined;
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get(p.body.id).status).toBe('approved');
+    expect(store.get(p.body.id).deployPending).toBeUndefined();
   });
 
   it.each(['read', 'deployment setting'])(
@@ -623,6 +769,30 @@ describe('auto-rebase service and HTTP API', () => {
     const service = new ProposalService(store, audit, adapter, () => 'nodes');
     expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
     expect(store.isApproving(p.body.id)).toBe(false);
+  });
+
+  it('persists duplicate env reorder warnings in the submit API', async () => {
+    const env = [
+      { name: 'MODE', value: 'first', type: 'str' },
+      { name: 'MODE', value: 'second', type: 'str' },
+    ];
+    edit('tab', { env });
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: head.rev,
+        payload: {
+          flowId: 'tab',
+          flow: { ...(await adapter.getFlow('tab')).flow, env: [...env].reverse() },
+        },
+      });
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(201);
+    expect(submitted.body.warnings).toContainEqual(
+      expect.objectContaining({ code: 'duplicate_env_keys', nodeId: 'tab', property: 'env' })
+    );
+    expect(store.get(submitted.body.id).warnings).toEqual(submitted.body.warnings);
   });
 
   it('persists secret alignment warnings on the proposal card after choosing proposed', async () => {

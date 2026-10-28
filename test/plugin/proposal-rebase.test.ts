@@ -534,6 +534,67 @@ describe('secrets during rebase', () => {
     expect(next.warnings).toEqual([]);
   });
 
+  it.each(['none', 'distinct value', 'same value'])(
+    'does not warn when a proposed secret line was deleted (retained secret: %s)',
+    retained => {
+      const retainOther = retained !== 'none';
+      const oldToken = retained === 'same value' ? 'OLDPW' : 'OLDTOKEN';
+      const b = clone(base);
+      b.nodes![0]!.func = `const password = 'OLDPW';\nconst token = '${oldToken}';\nreturn msg;`;
+      const p = clone(b),
+        c = clone(b);
+      p.nodes![0]!.func = retainOther
+        ? `const token = '${oldToken}';\nreturn null;`
+        : 'return null;';
+      c.nodes![0]!.func = "const password = 'NEWPW';\nconst token = 'NEWTOKEN';\nreturn msg;";
+      const next = applyConflictChoice({
+        flowId: 'tab',
+        base: b,
+        proposed: p,
+        liveFlows: flat(c),
+        nodeId: 'a',
+        choice: 'proposed',
+      });
+      expect(next.warnings).toEqual([]);
+      expect(next.proposed.nodes!.find(n => n.id === 'a')!.func).toBe(
+        retainOther ? "const token = 'NEWTOKEN';\nreturn null;" : 'return null;'
+      );
+    }
+  );
+
+  it.each(['tab', 'a'])(
+    'warns when duplicate env keys are reordered on %s during conflict resolution',
+    nodeId => {
+      const b = clone(base);
+      const entity = nodeId === 'tab' ? b : b.nodes![0]!;
+      entity.env = [
+        { name: 'PASSWORD', value: 'FIRST' },
+        { name: 'PASSWORD', value: 'SECOND' },
+      ];
+      const p = clone(b),
+        c = clone(b);
+      const proposedEntity = nodeId === 'tab' ? p : p.nodes![0]!;
+      (proposedEntity.env as unknown[]).reverse();
+      const next = applyConflictChoice({
+        flowId: 'tab',
+        base: b,
+        proposed: p,
+        liveFlows: flat(c),
+        nodeId,
+        choice: 'proposed',
+      });
+      expect(next.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'duplicate_env_keys',
+          nodeId,
+          property: 'env',
+          error: expect.stringContaining('ambiguous'),
+        })
+      );
+      expect(JSON.stringify(next.warnings)).not.toMatch(/FIRST|SECOND/);
+    }
+  );
+
   it.each(['changed context', 'duplicate context', 'missing live secret'])(
     'keeps proposed values with a warning when secret spans cannot align: %s',
     mode => {

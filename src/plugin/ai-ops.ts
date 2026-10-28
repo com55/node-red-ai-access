@@ -59,6 +59,7 @@ import {
   redactProposalForAi,
   restoreRedactedPlaceholders,
   secretChangeWarnings,
+  duplicateEnvWarnings,
 } from './secret-redaction.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
@@ -864,6 +865,7 @@ async function prepareReplaceFlowSubmission(
   });
   throwValidationIssues(flowErrors);
   flowWarnings.unshift(
+    ...duplicateEnvWarnings(safeBaseFlow, safeFlow).map(w => ({ ...w })),
     ...secretChangeWarnings(restoration.restoredFields, safeFlow, current.flows).map(w => ({
       ...w,
     }))

@@ -1016,6 +1016,39 @@ export function stableElementKey(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Warn when changed env arrays contain names that cannot be paired uniquely. */
+export function duplicateEnvWarnings(
+  before: Partial<FlowTab>,
+  after: Partial<FlowTab>
+): ProposalWarning[] {
+  const entities = (tab: Partial<FlowTab>) => [tab, ...(tab.nodes ?? []), ...(tab.configs ?? [])];
+  const previous = new Map(entities(before).map(node => [node.id, node]));
+  const warnings: ProposalWarning[] = [];
+  for (const node of entities(after)) {
+    const old = previous.get(node.id);
+    if (JSON.stringify(old?.env) === JSON.stringify(node.env)) continue;
+    const hasDuplicates = (env: unknown) => {
+      const names = new Set<string>();
+      if (!Array.isArray(env)) return false;
+      return env.some(entry => {
+        if (!isPlainObject(entry) || typeof entry.name !== 'string' || !entry.name) return false;
+        if (names.has(entry.name)) return true;
+        names.add(entry.name);
+        return false;
+      });
+    };
+    if (!hasDuplicates(old?.env) && !hasDuplicates(node.env)) continue;
+    warnings.push({
+      code: 'duplicate_env_keys',
+      ...(node.id ? { nodeId: node.id } : {}),
+      property: 'env',
+      error:
+        'Duplicate env names make pairing by name ambiguous when entries are reordered. Review the env values before approval.',
+    });
+  }
+  return warnings;
+}
+
 /** Keep each unchanged proposed secret span at its live value, preserving other edits. */
 export function preserveLiveSecrets(
   base: FlowNode,
@@ -1046,6 +1079,11 @@ export function preserveLiveSecrets(
       const proposedIndex = pf ? indexOccurrences(pf) : new Map<string, number[]>();
       const liveIndex = cf ? indexOccurrences(cf) : new Map<string, number[]>();
       const values = pf?.occurrences.map(o => o.value) ?? [];
+      const proposedContexts = pf ? placeholderContexts(pf.text) : [];
+      const unmatchedProposedSecret = pf?.occurrences.some((o, j) => {
+        const pc = proposedContexts[j];
+        return o.kind === 'secret' && pc && !baseIndex.has(contextKey(pc));
+      });
       let ambiguous = false;
       bf.occurrences.forEach((occurrence, i) => {
         if (occurrence.kind !== 'secret') return;
@@ -1064,6 +1102,9 @@ export function preserveLiveSecrets(
         const bi = matches(baseIndex, bf),
           pi = matches(proposedIndex, pf),
           ci = matches(liveIndex, cf);
+        // A removed secret span cannot restore an old value. Keep warning for
+        // retained secrets whose surrounding code changed or became ambiguous.
+        if (!proposedIndex.has(key) && !unmatchedProposedSecret) return;
         if (bi === undefined || pi === undefined || ci === undefined) {
           ambiguous = true;
           return;

@@ -2501,7 +2501,11 @@ function pageClientScriptPartB2Cards(): string {
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
     var cardWarns = proposalWarnings(p, cached);
-    var warnBanner = renderRestoredSecrets(p) + (cardWarns.length && !cached
+    var deployBanner = p.deployPending
+      ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
+        esc(p.deployPending.reason) + '</p></div>'
+      : '';
+    var warnBanner = deployBanner + renderRestoredSecrets(p) + (cardWarns.length && !cached
       ? renderValidationWarnings(cardWarns)
       : '');
     var stale = proposalIsStale(p);
