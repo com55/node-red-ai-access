@@ -1379,13 +1379,17 @@ function pageClientScriptPartB(): string {
     paint();
   }
 
+  function proposalFlowId(p) {
+    return (p && (p.flowId || (p.payload && p.payload.flowId))) || '';
+  }
+
   function flowLabelOf(p) {
     if (p && p.flowLabel) return String(p.flowLabel);
     var flow = (p && p.payload && p.payload.flow) || {};
     var base = (p && p.baseFlow) || {};
     if (flow.label) return String(flow.label);
     if (base.label) return String(base.label);
-    var flowId = p && p.payload && p.payload.flowId;
+    var flowId = proposalFlowId(p);
     if (flowId && cachedFlowLabels[flowId]) return String(cachedFlowLabels[flowId]);
     return '';
   }
@@ -2325,7 +2329,7 @@ function pageClientScriptPartB2Cards(): string {
     return '<span class="proposal-meta-line">' +
       (flowLabel
         ? '<span class="proposal-flow">' +
-          (p.payload && p.payload.flowId ? editorJumpLink('flow', p.payload.flowId, flowLabel) : esc(flowLabel)) +
+          (proposalFlowId(p) ? editorJumpLink('flow', proposalFlowId(p), flowLabel) : esc(flowLabel)) +
           '</span> · '
         : '') +
       timeHtml +

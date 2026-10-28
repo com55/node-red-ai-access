@@ -72,6 +72,8 @@ export interface PresentProposalApiOptions extends PresentProposalOptions {
 
 /** Lean proposal shape returned by default from create/get/list/propose. */
 export interface PresentedProposalApi {
+  /** Target flow/tab id (for editor jump links). */
+  flowId?: string;
   /** Field refs (node id + path) whose `[REDACTED]` was restored at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
   id: string;
@@ -743,6 +745,9 @@ export function presentProposalForApi(
   }
   if (full.warnings && full.warnings.length > 0) {
     lean.warnings = full.warnings;
+  }
+  if (typeof proposal.payload?.flowId === 'string') {
+    lean.flowId = proposal.payload.flowId;
   }
   if (proposal.restoredSecrets && proposal.restoredSecrets.length > 0) {
     lean.restoredSecrets = proposal.restoredSecrets;
