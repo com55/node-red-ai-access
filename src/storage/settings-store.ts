@@ -1,9 +1,9 @@
 /**
- * Persisted AI Access settings under `<userDir>/.ai-access/settings.json`.
+ * Persisted AI Access settings under `<userDir>/.ai-access/config.json`.
  *
  * Precedence for effective values (highest wins):
- * 1. Disk file keys present in `.ai-access/settings.json` (sidebar AI Access UI)
- * 2. `settings.js` `aiAccess` block
+ * 1. `settings.js` `aiAccess` block (locked keys)
+ * 2. Disk file keys present in `.ai-access/config.json` (sidebar AI Access UI)
  * 3. Built-in defaults
  *
  * Changes via PUT /mcp/api/v1/settings update memory + disk immediately
@@ -13,6 +13,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { validateSettingsPublicBaseUrl } from '../plugin/access-path.js';
+import { canonicalOrigin } from '../plugin/cors.js';
 import type { DeploymentType } from '../runtime/types.js';
 
 import type { AiAccessPaths } from './paths.js';
@@ -22,7 +24,7 @@ import {
   writeTrustedAtomic,
 } from './trusted-write.js';
 
-/** Max size for settings.json (pretty-printed). */
+/** Max size for config.json (pretty-printed). */
 export const MAX_SETTINGS_JSON_BYTES = 16_384;
 
 export interface PersistedAiAccessSettings {
@@ -32,6 +34,11 @@ export interface PersistedAiAccessSettings {
   defaultLinkTtlSeconds?: number;
   defaultDeploymentType?: DeploymentType;
   maxActiveLinks?: number;
+  publicBaseUrl?: string;
+  corsAllowedOrigins?: string[];
+  rateLimitWindowMs?: number;
+  rateLimitMaxPerIp?: number;
+  rateLimitMaxPerToken?: number;
 }
 
 export interface EffectiveAiAccessSettings {
@@ -40,6 +47,11 @@ export interface EffectiveAiAccessSettings {
   defaultLinkTtlSeconds: number;
   defaultDeploymentType: DeploymentType;
   maxActiveLinks: number;
+  publicBaseUrl: string;
+  corsAllowedOrigins: string[];
+  rateLimitWindowMs: number;
+  rateLimitMaxPerIp: number;
+  rateLimitMaxPerToken: number;
 }
 
 export type SettingsSource = 'default' | 'settings.js' | 'disk';
@@ -54,13 +66,20 @@ const BUILTIN: EffectiveAiAccessSettings = {
   defaultLinkTtlSeconds: 14_400,
   maxActiveLinks: 10,
   defaultDeploymentType: 'nodes',
+  publicBaseUrl: '',
+  corsAllowedOrigins: [],
+  rateLimitWindowMs: 60_000,
+  rateLimitMaxPerIp: 600,
+  rateLimitMaxPerToken: 300,
 };
 
 function isDeploymentType(value: unknown): value is DeploymentType {
   return value === 'nodes' || value === 'flows' || value === 'full';
 }
 
-function sanitizePartial(raw: unknown): PersistedAiAccessSettings {
+type Warn = (message: string) => void;
+
+function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {};
   }
@@ -89,66 +108,81 @@ function sanitizePartial(raw: unknown): PersistedAiAccessSettings {
   ) {
     out.maxActiveLinks = Math.floor(data.maxActiveLinks);
   }
+  if (typeof data.publicBaseUrl === 'string') {
+    try {
+      out.publicBaseUrl = validateSettingsPublicBaseUrl(data.publicBaseUrl);
+    } catch {
+      warn?.(
+        `AI Access: invalid publicBaseUrl value ${JSON.stringify(data.publicBaseUrl)} was dropped`
+      );
+    }
+  }
+  if (Array.isArray(data.corsAllowedOrigins)) {
+    const origins = new Set<string>();
+    for (const value of data.corsAllowedOrigins) {
+      const canonical = canonicalOrigin(value);
+      if (canonical) origins.add(canonical);
+      else warn?.(`AI Access: invalid CORS origin value ${JSON.stringify(value)} was dropped`);
+    }
+    out.corsAllowedOrigins = [...origins];
+  }
+  for (const key of ['rateLimitWindowMs', 'rateLimitMaxPerIp', 'rateLimitMaxPerToken'] as const) {
+    const value = data[key];
+    const min = key === 'rateLimitWindowMs' ? 100 : 1;
+    const max = key === 'rateLimitWindowMs' ? 3_600_000 : 1_000_000;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max) {
+      out[key] = value;
+    }
+  }
   return out;
 }
 
-function readDiskFile(filePath: string): PersistedAiAccessSettings {
+function readDiskFile(filePath: string, warn?: Warn): PersistedAiAccessSettings {
   if (!existsSync(filePath)) {
     return {};
   }
   try {
     const text = readFileSync(filePath, 'utf8');
-    return sanitizePartial(JSON.parse(text) as unknown);
-  } catch {
+    return sanitizePartial(JSON.parse(text) as unknown, warn);
+  } catch (error) {
+    warn?.(`AI Access: config.json is corrupt or unreadable; defaults are used (${String(error)})`);
     return {};
   }
 }
 
 /**
- * Merge defaults ← settings.js ← disk (disk wins for keys it defines).
+ * Merge defaults ← disk ← settings.js (settings.js keys are locked).
  */
 export function mergeAiAccessSettings(
   fromSettingsJs: PersistedAiAccessSettings,
   fromDisk: PersistedAiAccessSettings
 ): EffectiveAiAccessSettingsWithMeta {
-  const sources: EffectiveAiAccessSettingsWithMeta['sources'] = {
-    enabled: 'default',
-    allowWithoutAdminAuth: 'default',
-    defaultLinkTtlSeconds: 'default',
-    defaultDeploymentType: 'default',
-    maxActiveLinks: 'default',
-  };
-
-  const pick = <K extends keyof EffectiveAiAccessSettings>(
-    key: K,
-    fallback: EffectiveAiAccessSettings[K]
-  ): EffectiveAiAccessSettings[K] => {
-    if (fromDisk[key] !== undefined) {
-      sources[key] = 'disk';
-      return fromDisk[key] as EffectiveAiAccessSettings[K];
-    }
-    if (fromSettingsJs[key] !== undefined) {
-      sources[key] = 'settings.js';
-      return fromSettingsJs[key] as EffectiveAiAccessSettings[K];
-    }
-    sources[key] = 'default';
-    return fallback;
-  };
-
-  return {
-    enabled: pick('enabled', BUILTIN.enabled),
-    allowWithoutAdminAuth: pick('allowWithoutAdminAuth', BUILTIN.allowWithoutAdminAuth),
-    defaultLinkTtlSeconds: pick('defaultLinkTtlSeconds', BUILTIN.defaultLinkTtlSeconds),
-    defaultDeploymentType: pick('defaultDeploymentType', BUILTIN.defaultDeploymentType),
-    maxActiveLinks: pick('maxActiveLinks', BUILTIN.maxActiveLinks),
-    sources,
-  };
+  const sources = {} as EffectiveAiAccessSettingsWithMeta['sources'];
+  const effective = { ...BUILTIN };
+  for (const key of Object.keys(BUILTIN) as (keyof EffectiveAiAccessSettings)[]) {
+    sources[key] =
+      fromSettingsJs[key] !== undefined
+        ? 'settings.js'
+        : fromDisk[key] !== undefined
+          ? 'disk'
+          : 'default';
+    Object.assign(effective, { [key]: fromSettingsJs[key] ?? fromDisk[key] ?? BUILTIN[key] });
+  }
+  return { ...effective, sources };
 }
 
 export function settingsJsPartial(
-  aiAccess: PersistedAiAccessSettings | undefined
+  aiAccess: PersistedAiAccessSettings | undefined,
+  warn?: Warn
 ): PersistedAiAccessSettings {
-  return sanitizePartial(aiAccess ?? {});
+  const sanitized = sanitizePartial(aiAccess ?? {}, warn);
+  // A present settings.js key is always locked, even if its invalid value needs a default.
+  for (const key of Object.keys(BUILTIN) as (keyof EffectiveAiAccessSettings)[]) {
+    if (aiAccess && Object.hasOwn(aiAccess, key) && sanitized[key] === undefined) {
+      Object.assign(sanitized, { [key]: BUILTIN[key] });
+    }
+  }
+  return sanitized;
 }
 
 export class SettingsStore {
@@ -159,11 +193,15 @@ export class SettingsStore {
 
   constructor(
     private readonly paths: AiAccessPaths,
-    settingsJsAiAccess?: PersistedAiAccessSettings
+    settingsJsAiAccess?: PersistedAiAccessSettings,
+    warn?: Warn
   ) {
-    this.filePath = join(paths.root, 'settings.json');
-    this.settingsJs = settingsJsPartial(settingsJsAiAccess);
-    this.disk = readDiskFile(this.filePath);
+    this.filePath = join(paths.root, 'config.json');
+    this.settingsJs = settingsJsPartial(settingsJsAiAccess, warn);
+    this.disk = readDiskFile(
+      existsSync(this.filePath) ? this.filePath : join(paths.root, 'settings.json'),
+      warn
+    );
     this.cached = mergeAiAccessSettings(this.settingsJs, this.disk);
   }
 
@@ -181,8 +219,11 @@ export class SettingsStore {
    */
   update(partial: PersistedAiAccessSettings): EffectiveAiAccessSettingsWithMeta {
     const next = sanitizePartial(partial);
+    for (const key of Object.keys(this.settingsJs) as (keyof PersistedAiAccessSettings)[]) {
+      delete next[key];
+    }
+    this.persist(next);
     this.disk = next;
-    this.persist();
     this.cached = mergeAiAccessSettings(this.settingsJs, this.disk);
     return this.cached;
   }
@@ -192,8 +233,8 @@ export class SettingsStore {
     return this.update({ ...this.disk, ...sanitizePartial(partial) });
   }
 
-  private persist(): void {
-    const payload: TrustedStoragePayload = encodeTrustedJson(this.disk, MAX_SETTINGS_JSON_BYTES, {
+  private persist(next: PersistedAiAccessSettings): void {
+    const payload: TrustedStoragePayload = encodeTrustedJson(next, MAX_SETTINGS_JSON_BYTES, {
       kind: 'settings',
       pretty: true,
     });

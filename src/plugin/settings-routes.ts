@@ -8,7 +8,14 @@ import type { AccessLinkStore } from '../access/link-store.js';
 import type { PersistedAiAccessSettings, SettingsStore } from '../storage/settings-store.js';
 import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
-import { mcpApiBase, normalizeHttpAdminRoot, resolvePermission } from './auth.js';
+import { bindPublicBaseUrl, canonicalizeIp, validateSettingsPublicBaseUrl } from './access-path.js';
+import { describeAccess, mcpApiBase, normalizeHttpAdminRoot } from './auth.js';
+import { canonicalOrigin } from './cors.js';
+import {
+  classifyPublicUrlAddress,
+  preparePublicUrlCheck,
+  requestPublicUrlCheck,
+} from './public-url-check.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -18,9 +25,16 @@ function mcpPageUrl(RED: NodeRedPluginAPI): string {
   return root === '/' ? '/mcp' : `${root}/mcp`;
 }
 
+function normalizeTrustProxy(value: unknown): boolean | number | string {
+  if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string')
+    return value;
+  if (Array.isArray(value)) return value.join(', ');
+  return typeof value === 'function' ? 'custom function' : false;
+}
+
 function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: AuthenticatedRequest) {
-  const effective = store.getEffective();
-  const permission = resolvePermission(req);
+  const { sources, ...settings } = store.getEffective();
+  const { permission } = describeAccess(RED, req);
   const adminAuthEnabled = isAdminAuthEnabled(RED.settings);
   return {
     ok: true,
@@ -29,27 +43,71 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     permission,
     mcpPageUrl: mcpPageUrl(RED),
     apiBase: mcpApiBase(RED.settings.httpAdminRoot),
-    settings: {
-      enabled: effective.enabled,
-      allowWithoutAdminAuth: effective.allowWithoutAdminAuth,
-      defaultLinkTtlSeconds: effective.defaultLinkTtlSeconds,
-      defaultDeploymentType: effective.defaultDeploymentType,
-      maxActiveLinks: effective.maxActiveLinks,
-    },
-    sources: effective.sources,
+    // Add future settings to the shared effective type; sources also drives locks.
+    settings,
+    sources,
     disk: store.getDisk(),
-    /**
-     * Precedence (highest wins): disk `.ai-access/settings.json` →
-     * `settings.js` `aiAccess` → built-in defaults.
-     */
-    precedence: ['disk', 'settings.js', 'default'] as const,
+    trustProxy: normalizeTrustProxy(req.app.get('trust proxy')),
+    precedence: ['settings.js', 'disk', 'default'] as const,
   };
 }
+
+/** Shared sidebar settings surface; extend the effective settings and sources together. */
+export type SettingsApiResponse = ReturnType<typeof settingsResponse>;
 
 export function getSettingsHandler(RED: NodeRedPluginAPI, store: SettingsStore) {
   return (req: AuthenticatedRequest, res: Response): void => {
     res.json(settingsResponse(RED, store, req));
   };
+}
+
+function parseBooleanField(
+  body: Record<string, unknown>,
+  key: 'enabled' | 'allowWithoutAdminAuth',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`);
+  patch[key] = value;
+}
+
+function parsePositiveIntField(
+  body: Record<string, unknown>,
+  key: 'defaultLinkTtlSeconds' | 'maxActiveLinks',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new Error(`${key} must be a positive number`);
+  patch[key] = Math.floor(value);
+}
+
+function parseRateLimitField(
+  body: Record<string, unknown>,
+  key: 'rateLimitWindowMs' | 'rateLimitMaxPerIp' | 'rateLimitMaxPerToken',
+  patch: PersistedAiAccessSettings
+): void {
+  const value = body[key];
+  if (value === undefined) return;
+  const min = key === 'rateLimitWindowMs' ? 100 : 1;
+  const max = key === 'rateLimitWindowMs' ? 3_600_000 : 1_000_000;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max)
+    throw new Error(`${key} must be an integer between ${min} and ${max}`);
+  patch[key] = value;
+}
+
+function parseCorsField(body: Record<string, unknown>, patch: PersistedAiAccessSettings): void {
+  if (body.corsAllowedOrigins === undefined) return;
+  if (!Array.isArray(body.corsAllowedOrigins))
+    throw new Error('corsAllowedOrigins must be a list of HTTP(S) origins');
+  const origins = body.corsAllowedOrigins.map(entry => canonicalOrigin(entry));
+  if (origins.some(origin => origin === undefined))
+    throw new Error(
+      'corsAllowedOrigins must contain only HTTP(S) origins without paths, credentials, queries, or fragments'
+    );
+  patch.corsAllowedOrigins = [...new Set(origins as string[])];
 }
 
 export function putSettingsHandler(
@@ -65,37 +123,20 @@ export function putSettingsHandler(
         .json({ error: 'Request body must be a settings object', code: 'invalid_body' });
       return;
     }
-    const body = raw as Record<string, unknown>;
+    const body = { ...(raw as Record<string, unknown>) };
+    for (const [key, source] of Object.entries(store.getEffective().sources)) {
+      if (source === 'settings.js') delete body[key];
+    }
 
     const patch: PersistedAiAccessSettings = {};
-    if (body.enabled !== undefined) {
-      if (typeof body.enabled !== 'boolean') {
-        res.status(400).json({ error: 'enabled must be a boolean', code: 'invalid_body' });
-        return;
-      }
-      patch.enabled = body.enabled;
-    }
-    if (body.allowWithoutAdminAuth !== undefined) {
-      if (typeof body.allowWithoutAdminAuth !== 'boolean') {
-        res
-          .status(400)
-          .json({ error: 'allowWithoutAdminAuth must be a boolean', code: 'invalid_body' });
-        return;
-      }
-      patch.allowWithoutAdminAuth = body.allowWithoutAdminAuth;
-    }
-    if (body.defaultLinkTtlSeconds !== undefined) {
-      if (
-        typeof body.defaultLinkTtlSeconds !== 'number' ||
-        !Number.isFinite(body.defaultLinkTtlSeconds) ||
-        body.defaultLinkTtlSeconds <= 0
-      ) {
-        res
-          .status(400)
-          .json({ error: 'defaultLinkTtlSeconds must be a positive number', code: 'invalid_body' });
-        return;
-      }
-      patch.defaultLinkTtlSeconds = Math.floor(body.defaultLinkTtlSeconds);
+    try {
+      parseBooleanField(body, 'enabled', patch);
+      parseBooleanField(body, 'allowWithoutAdminAuth', patch);
+      parsePositiveIntField(body, 'defaultLinkTtlSeconds', patch);
+      parsePositiveIntField(body, 'maxActiveLinks', patch);
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
+      return;
     }
     if (body.defaultDeploymentType !== undefined) {
       const deploy = body.defaultDeploymentType;
@@ -108,27 +149,41 @@ export function putSettingsHandler(
       }
       patch.defaultDeploymentType = deploy;
     }
-    if (body.maxActiveLinks !== undefined) {
-      if (
-        typeof body.maxActiveLinks !== 'number' ||
-        !Number.isFinite(body.maxActiveLinks) ||
-        body.maxActiveLinks <= 0
-      ) {
-        res
-          .status(400)
-          .json({ error: 'maxActiveLinks must be a positive number', code: 'invalid_body' });
-        return;
+    try {
+      if (body.publicBaseUrl !== undefined)
+        patch.publicBaseUrl = validateSettingsPublicBaseUrl(body.publicBaseUrl);
+      parseCorsField(body, patch);
+      for (const key of [
+        'rateLimitWindowMs',
+        'rateLimitMaxPerIp',
+        'rateLimitMaxPerToken',
+      ] as const) {
+        parseRateLimitField(body, key, patch);
       }
-      patch.maxActiveLinks = Math.floor(body.maxActiveLinks);
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
+      return;
     }
 
     try {
       const effective = store.patch(patch);
+      bindPublicBaseUrl(effective.publicBaseUrl);
       linkStore.configureDefaults({
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,
         maxActiveLinks: effective.maxActiveLinks,
       });
-      res.json(settingsResponse(RED, store, req));
+      const response = settingsResponse(RED, store, req);
+      const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
+      const literal = publicUrl
+        ? canonicalizeIp(publicUrl.hostname.replace(/^\[|\]$/g, ''))
+        : undefined;
+      const addressClass = literal ? classifyPublicUrlAddress(literal) : undefined;
+      res.json({
+        ...response,
+        ...(addressClass !== undefined && addressClass !== 'public'
+          ? { warnings: ['Public URL uses a private or non-public IP address.'] }
+          : {}),
+      });
     } catch (error) {
       if (error instanceof StoragePayloadTooLargeError) {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
@@ -136,6 +191,75 @@ export function putSettingsHandler(
       }
       sendCaughtRouteError(res, error);
       return;
+    }
+  };
+}
+
+/** Star-only outbound probe; never follow redirects or fetch a caller-supplied path. */
+export function checkPublicUrlHandler(RED: NodeRedPluginAPI) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    let url: string | undefined;
+    try {
+      let target;
+      try {
+        const settings = RED.settings as { uiPort?: number };
+        const server = (
+          RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
+        ).server;
+        const address = server?.address();
+        const value = (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl;
+        const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
+        const loopback =
+          host
+            .toLowerCase()
+            .replace(/^\[|\]$/g, '')
+            .replace(/\.$/, '') === 'localhost' ||
+          classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
+        if (loopback && typeof address === 'string') {
+          throw new Error(
+            'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
+          );
+        }
+        const port =
+          address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
+        target = await preparePublicUrlCheck(
+          (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl,
+          port,
+          controller.signal
+        );
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
+        return;
+      }
+      url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
+      const status = await requestPublicUrlCheck(
+        target,
+        mcpApiBase(RED.settings.httpAdminRoot),
+        controller.signal
+      );
+      const result = { status, ok: status >= 200 && status < 300 };
+      res.json({
+        ok: result.ok,
+        status: result.status,
+        url,
+        message: result.ok
+          ? 'Discovery endpoint is reachable'
+          : `Discovery endpoint returned HTTP ${result.status}`,
+      });
+    } catch {
+      res.json({
+        ok: false,
+        status: null,
+        url,
+        error: controller.signal.aborted
+          ? 'Public URL check timed out after 5 seconds'
+          : 'Could not reach the discovery endpoint',
+      });
+    } finally {
+      clearTimeout(timer);
     }
   };
 }

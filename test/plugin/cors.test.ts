@@ -57,7 +57,7 @@ describe('AI-facing CORS', () => {
   });
 
   it('echoes an allow-listed origin with Vary: Origin', async () => {
-    const app = nodeRedLikeApp(['https://App.example/']);
+    const app = nodeRedLikeApp(['https://App.example']);
     const res = await request(app).get('/mcp/api/v1/status').set('Origin', 'https://app.example');
     expect(res.headers['access-control-allow-origin']).toBe('https://app.example');
     expect(res.headers.vary).toMatch(/Origin/);
@@ -163,7 +163,7 @@ describe('AI-facing CORS', () => {
   it('normalizeCorsOrigins keeps valid http(s) origins only', () => {
     expect(
       normalizeCorsOrigins(['https://a.example/path', '*', 'ftp://x', 'nope', 'http://b:8080'])
-    ).toEqual(['https://a.example', 'http://b:8080']);
+    ).toEqual(['http://b:8080']);
     expect(normalizeCorsOrigins(undefined)).toEqual([]);
   });
 });

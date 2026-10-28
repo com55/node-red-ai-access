@@ -8,6 +8,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import rateLimit, {
   ipKeyGenerator,
+  MemoryStore,
   type Options,
   type RateLimitRequestHandler,
 } from 'express-rate-limit';
@@ -27,7 +28,7 @@ export interface RateLimitConfig {
 
 function positiveInt(value: unknown, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
+    return Math.max(1, Math.floor(value));
   }
   return fallback;
 }
@@ -186,4 +187,85 @@ export function createGetLinkRateLimiter(
     cfg.windowMs,
     (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
   );
+}
+
+/** Stable middleware references with fresh buckets whenever live configuration changes. */
+export function createLiveAiAccessDualRateLimiters(getSettings: () => AiAccessSettings) {
+  let currentWindowMs = resolveRateLimitConfig(getSettings()).windowMs;
+  let currentMaxPerIp = resolveRateLimitConfig(getSettings()).maxPerIp;
+  let currentMaxPerToken = resolveRateLimitConfig(getSettings()).maxPerToken;
+  const ipStore = new MemoryStore();
+  const tokenStore = new MemoryStore();
+
+  const refreshWindow = () => {
+    const cfg = resolveRateLimitConfig(getSettings());
+    if (
+      cfg.windowMs !== currentWindowMs ||
+      cfg.maxPerIp !== currentMaxPerIp ||
+      cfg.maxPerToken !== currentMaxPerToken
+    ) {
+      const windowChanged = cfg.windowMs !== currentWindowMs;
+      currentWindowMs = cfg.windowMs;
+      currentMaxPerIp = cfg.maxPerIp;
+      currentMaxPerToken = cfg.maxPerToken;
+      // Reinitialize the existing stores so their expiry timers and counters
+      // use the new window without replacing the limiter instances.
+      void ipStore.resetAll();
+      void tokenStore.resetAll();
+      if (windowChanged) {
+        ipStore.init?.({ windowMs: currentWindowMs } as Options);
+        tokenStore.init?.({ windowMs: currentWindowMs } as Options);
+      }
+    }
+    return cfg;
+  };
+
+  // The limiter instances live for the plugin lifetime, so express-rate-limit
+  // would advertise its creation-time window in RateLimit-Policy. Rewrite the
+  // `w=` parameter with the live window as the header is set.
+  const policyPatched = new WeakSet<Response>();
+  const useLiveWindowPolicy = (res: Response) => {
+    if (policyPatched.has(res)) return;
+    policyPatched.add(res);
+    const setHeader = res.setHeader.bind(res);
+    res.setHeader = ((name: string, value: number | string | readonly string[]) => {
+      if (name.toLowerCase() === 'ratelimit-policy' && typeof value === 'string') {
+        value = value.replace(/;w=\d+/, `;w=${Math.ceil(currentWindowMs / 1000)}`);
+      }
+      return setHeader(name, value);
+    }) as Response['setHeader'];
+  };
+
+  const make = (token: boolean, store: MemoryStore): RateLimitRequestHandler =>
+    rateLimit({
+      store,
+      windowMs: currentWindowMs,
+      limit: () => {
+        const cfg = resolveRateLimitConfig(getSettings());
+        return token ? cfg.maxPerToken : cfg.maxPerIp;
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+      keyGenerator: token
+        ? (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
+        : clientIpKey,
+      skip: (req: Request) => token && accessTokenRateLimitKey(req) == null,
+      handler: (req: Request, res: Response, _next: NextFunction) => {
+        sendRateLimited(req, res, resolveRateLimitConfig(getSettings()).windowMs);
+      },
+    });
+
+  const ipLimiter = make(false, ipStore);
+  const tokenLimiter = make(true, tokenStore);
+  const ip = (req: Request, res: Response, next: NextFunction) => {
+    refreshWindow();
+    useLiveWindowPolicy(res);
+    return ipLimiter(req, res, next);
+  };
+  const token = (req: Request, res: Response, next: NextFunction) => {
+    refreshWindow();
+    useLiveWindowPolicy(res);
+    return tokenLimiter(req, res, next);
+  };
+  return { ip, token };
 }

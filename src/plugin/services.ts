@@ -80,12 +80,14 @@ export function createPluginServices(
   const aiPaths = resolveAiAccessPaths(RED.settings.userDir);
   ensureAiAccessDirs(aiPaths);
 
-  const settingsStore = options.settingsStore ?? new SettingsStore(aiPaths, RED.settings.aiAccess);
+  const settingsStore =
+    options.settingsStore ??
+    new SettingsStore(aiPaths, RED.settings.aiAccess, message => RED.log?.warn?.(message));
   if (options.bindSettings !== false) {
     bindSettingsStore(settingsStore);
   }
 
-  bindPublicBaseUrl(RED.settings.aiAccess?.publicBaseUrl);
+  bindPublicBaseUrl(settingsStore.getEffective().publicBaseUrl);
 
   const linkStore = options.linkStore ?? createConfiguredLinkStore(RED);
   linkStore.configureDefaults({

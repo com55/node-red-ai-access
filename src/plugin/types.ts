@@ -41,13 +41,13 @@ export interface AiAccessSettings {
   /**
    * Explicit public base URL (e.g. `https://nodered.example.com`) used for
    * absolute URLs (access-link `url`, proposal `reviewUrl`, `accessLinksUrl`).
-   * Overrides `Host` / `X-Forwarded-*`. settings.js only.
+   * Overrides `Host` / `X-Forwarded-*`. Editable in the AI Access settings sidebar unless locked by settings.js.
    */
   publicBaseUrl?: string;
   /**
    * Browser origins allowed to call the AI-facing endpoints (`/mcp/a`,
    * `/mcp/api`, `/mcp/rpc`) cross-origin, e.g. `['https://app.example.com']`.
-   * Default: none (no CORS headers). settings.js only.
+   * Default: none (no CORS headers). Editable in the AI Access settings sidebar unless locked by settings.js.
    */
   corsAllowedOrigins?: string[];
 }

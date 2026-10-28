@@ -2,6 +2,8 @@
  * Paths and absolute URLs for self-contained GET access links (`/mcp/a/<token>`).
  */
 
+import { isIP } from 'node:net';
+
 import type { Request } from 'express';
 
 import { normalizeHttpAdminRoot } from './auth.js';
@@ -66,6 +68,61 @@ export function normalizePublicBaseUrl(value: unknown): string | undefined {
     return undefined;
   }
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
+/** WHATWG URL parsing expands abbreviated, decimal and hexadecimal IPv4 forms. */
+export function canonicalizeIp(host: string): string | undefined {
+  try {
+    const hostname = new URL(
+      `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}`
+    ).hostname;
+    const address = hostname.replace(/^\[|\]$/g, '');
+    if (!isIP(address)) return undefined;
+    if (address.startsWith('::ffff:')) {
+      const mapped = address.slice(7);
+      if (isIP(mapped) === 4) return mapped;
+      const words = mapped.split(':');
+      if (words.length === 2) {
+        const value = parseInt(words[0]!, 16) * 65536 + parseInt(words[1]!, 16);
+        return [24, 16, 8, 0].map(shift => (value >>> shift) & 255).join('.');
+      }
+    }
+    return address;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Settings Public URL: an HTTPS origin, or HTTP loopback for local development. */
+export function validateSettingsPublicBaseUrl(value: unknown): string {
+  if (value === '') return '';
+  const message =
+    'publicBaseUrl must be an HTTPS origin with no path, query, fragment, or credentials (HTTP localhost is allowed)';
+  if (typeof value !== 'string') throw new Error(message);
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error(message);
+  }
+  const address = canonicalizeIp(url.hostname);
+  const local =
+    url.hostname.toLowerCase().replace(/\.$/, '') === 'localhost' ||
+    address === '::1' ||
+    address?.startsWith('127.');
+  if (
+    (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+    !/^https?:\/\/[^/?#]+\/?$/i.test(value.trim()) ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password ||
+    value.includes('?') ||
+    value.includes('#')
+  )
+    throw new Error(message);
+  return url.origin;
 }
 
 /** Bind (or clear) the explicit public base URL used for absolute URLs. */

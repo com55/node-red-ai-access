@@ -6,11 +6,15 @@ import {
   absolutizePath,
   bindPublicBaseUrl,
   buildAccessLinkUrl,
+  canonicalizeIp,
+  validateSettingsPublicBaseUrl,
   isTrustProxyEnabled,
   isValidHostHeader,
   normalizePublicBaseUrl,
   requestPublicOrigin,
 } from '../../src/plugin/access-path.js';
+
+import { classifyPublicUrlAddress, isMetadataHostname } from '../../src/plugin/public-url-check.js';
 
 function mockReq(options: {
   trustProxy?: boolean | number;
@@ -223,5 +227,58 @@ describe('requestPublicOrigin validates forwarded and Host values', () => {
     ]) {
       expect(isValidHostHeader(bad)).toBe(false);
     }
+  });
+});
+
+// Check-specific network policy is independent from configuration storage.
+describe('Public URL Check address policy', () => {
+  it('validates a trailing-dot localhost as an HTTP loopback origin', () => {
+    expect(validateSettingsPublicBaseUrl('http://localhost.:1880')).toBe('http://localhost.:1880');
+  });
+  it.each(['127.1', '2130706433', '0x7f000001', '::ffff:127.0.0.1', '[::ffff:7f00:1]'])(
+    'canonicalizes loopback %s',
+    host => {
+      expect(canonicalizeIp(host)).toBe('127.0.0.1');
+      expect(classifyPublicUrlAddress(host)).toBe('loopback');
+    }
+  );
+
+  it.each([
+    '0.0.0.0',
+    '10.0.0.1',
+    '172.16.0.1',
+    '172.31.255.255',
+    '192.168.0.1',
+    '169.254.169.254',
+    '100.64.0.1',
+    '100.127.255.255',
+    '168.63.129.16',
+    '::',
+    'fc00::1',
+    'fdff::1',
+    'fe80::1',
+    '::ffff:192.168.0.1',
+    '::ffff:0.0.0.0',
+    'ff02::1',
+  ])('blocks %s', host => {
+    expect(classifyPublicUrlAddress(host)).toBe('blocked');
+  });
+
+  it.each(['8.8.8.8', '100.128.0.1', '172.32.0.1', '2606:4700:4700::1111'])(
+    'allows public IP %s',
+    host => expect(classifyPublicUrlAddress(host)).toBe('public')
+  );
+
+  it.each([
+    'metadata.google.internal',
+    'METADATA.GOOGLE.COM.',
+    'instance-data.ec2.internal',
+    'metadata',
+  ])('blocks metadata hostname %s', host => {
+    expect(isMetadataHostname(host)).toBe(true);
+  });
+
+  it('does not mistake a public hostname for metadata', () => {
+    expect(isMetadataHostname('metadata.google.com.example.org')).toBe(false);
   });
 });

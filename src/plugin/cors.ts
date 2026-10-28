@@ -29,15 +29,8 @@ export function normalizeCorsOrigins(value: unknown): string[] {
   const list = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
   const out = new Set<string>();
   for (const entry of list) {
-    if (typeof entry !== 'string' || entry.trim().length === 0) continue;
-    try {
-      const url = new URL(entry.trim());
-      if (url.protocol === 'http:' || url.protocol === 'https:') {
-        out.add(url.origin.toLowerCase());
-      }
-    } catch {
-      // ignore invalid origin
-    }
+    const canonical = canonicalOrigin(entry);
+    if (canonical) out.add(canonical);
   }
   return [...out];
 }
