@@ -1,7 +1,7 @@
 # Node-RED AI Access
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.19.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7%2B-blue.svg)](https://www.typescriptlang.org/)
 [![CI](https://github.com/com55/node-red-ai-access/actions/workflows/ci.yml/badge.svg)](https://github.com/com55/node-red-ai-access/actions)
 
@@ -24,7 +24,7 @@ Derived from
 
 ## Install (Node-RED plugin)
 
-Requirements: **Node-RED 4.x or newer**, Node.js 20+ (tested: Node-RED 4.1 on
+Requirements: **Node-RED 4.x or newer**, Node.js 20.19+ (tested: Node-RED 4.1 on
 Node 20/22, Node-RED 5.0 on Node 22/24), and **`adminAuth` enabled**
 (recommended). Without `adminAuth`, AI features stay off unless you opt in (see
 Configuration).

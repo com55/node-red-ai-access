@@ -686,7 +686,7 @@ describe('PR #74 follow-ups: whole-file ids, multi-status, messages, hints, mine
     expect(pkg.files).toContain('docs');
     expect(pkg.files).toContain('!dist/**/*.map');
     expect(pkg.files.some(f => f.startsWith('!docs'))).toBe(false);
-    expect(pkg.engines.node).toBe('>=20.0.0');
+    expect(pkg.engines.node).toBe('>=20.19.0');
     expect(pkg.keywords).toEqual(expect.arrayContaining(['node-red', 'mcp', 'ai']));
     expect(pkg.scripts.prepublishOnly).toMatch(/quality.*test.*build:prod/);
   });
