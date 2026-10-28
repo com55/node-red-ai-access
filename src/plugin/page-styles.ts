@@ -488,6 +488,10 @@ function pageStylesPartD(): string {
   color: #fff;
 }
 .diff-summary { margin: 0 0 0.35rem; }
+.status-pill.conflict { background: #fff1df; color: #9a4700; border: 1px solid #edbd80; }
+.rebase-chip { font-size: 0.8rem; color: #245d46; background: #eaf5ee; border-radius: 4px; padding: 0.2rem 0.4rem; }
+.proposal-conflicts { background: #fff8ee; border: 1px solid #edbd80; border-radius: 6px; padding: 1rem; margin: 0.75rem 0; overflow-wrap: anywhere; }
+.proposal-conflict { border-bottom: 1px solid #edbd80; padding-bottom: 0.75rem; margin-bottom: 0.75rem; }
 .stale-banner {
   margin: 0 0 0.55rem;
   padding: 0.45rem 0.6rem;

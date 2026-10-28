@@ -15,7 +15,7 @@ function settingsPartForm(): string {
   var SETTINGS_FIELDS = {
     enabled: 'enabled', allowWithoutAdminAuth: 'allow-without',
     defaultLinkTtlSeconds: 'ttl', defaultDeploymentType: 'deploy',
-    maxActiveLinks: 'max-links', publicBaseUrl: 'public-url',
+    proposalTtlDays: 'proposal-ttl', maxActiveLinks: 'max-links', publicBaseUrl: 'public-url',
     corsAllowedOrigins: 'cors', rateLimitWindowMs: 'rate-window',
     rateLimitMaxPerIp: 'rate-ip', rateLimitMaxPerToken: 'rate-token'
   };
@@ -69,6 +69,7 @@ function settingsPartForm(): string {
     $('set-deploy').value = s.defaultDeploymentType || 'nodes';
     $('set-deploy-full-warn').hidden = $('set-deploy').value !== 'full';
     $('set-ttl').value = String(Math.max(1, Math.round((s.defaultLinkTtlSeconds || 14400) / 3600)));
+    $('set-proposal-ttl').value = String(s.proposalTtlDays == null ? 7 : s.proposalTtlDays);
     $('set-max-links').value = s.maxActiveLinks == null ? '' : String(s.maxActiveLinks);
     $('set-public-url').value = s.publicBaseUrl || '';
     $('set-cors').value = (s.corsAllowedOrigins || []).join(', ');
@@ -120,6 +121,7 @@ function settingsPartForm(): string {
       allowWithoutAdminAuth: $('set-allow-without').checked,
       defaultLinkTtlSeconds: Math.max(1, Math.floor(Number($('set-ttl').value || 4) * 3600)),
       defaultDeploymentType: $('set-deploy').value,
+      proposalTtlDays: Math.min(365, Math.max(1, Math.floor(Number($('set-proposal-ttl').value) || 7))),
       maxActiveLinks: Number($('set-max-links').value),
       publicBaseUrl: String($('set-public-url').value).trim(),
       corsAllowedOrigins: String($('set-cors').value).split(',').map(function (x) { return x.trim(); }).filter(Boolean),

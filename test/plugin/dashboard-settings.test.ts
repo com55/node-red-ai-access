@@ -262,6 +262,7 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       var editorRoot = ${JSON.stringify(editorRoot)};
       var mcpRpc = '/mcp/rpc';
       ${pageClientSettingsScript()}
+      out.collectSettingsPayload = collectSettingsPayload;
       out.applySettings = applySettings;
       out.renderOAuthRouteWarning = renderOAuthRouteWarning;
       out.loadOAuthClients = loadOAuthClients;
@@ -310,6 +311,28 @@ describe('helpers', () => {
 });
 
 describe('dashboard settings client', () => {
+  it('loads, saves, bounds and locks proposal expiry days', () => {
+    const { dom, out } = loadSettingsClient({});
+    out.applySettings!({ canEdit: true, settings: {}, sources: {} });
+    expect(dom.get('set-proposal-ttl').value).toBe('7');
+    dom.get('set-proposal-ttl').value = '30';
+    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 30 });
+    dom.get('set-proposal-ttl').value = '999';
+    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 365 });
+    dom.get('set-proposal-ttl').value = '-1';
+    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 1 });
+    out.applySettings!({
+      canEdit: true,
+      settings: { proposalTtlDays: 14 },
+      sources: { proposalTtlDays: 'settings.js' },
+    });
+    expect(dom.get('set-proposal-ttl').value).toBe('14');
+    expect(dom.get('set-proposal-ttl').disabled).toBe(true);
+    expect(dom.get('lock-proposal-ttl').hidden).toBe(false);
+    expect(out.collectSettingsPayload!()).not.toHaveProperty('proposalTtlDays');
+    out.applySettings!({ canEdit: false, settings: {}, sources: {} });
+    expect(dom.get('set-proposal-ttl').disabled).toBe(true);
+  });
   it('escapes untrusted collision paths/names and links http-in nodes to the editor', () => {
     const { dom, out } = loadSettingsClient({}, '/admin');
     out.renderOAuthRouteWarning!({
