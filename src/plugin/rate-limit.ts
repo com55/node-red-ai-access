@@ -10,6 +10,7 @@ import rateLimit, {
   ipKeyGenerator,
   MemoryStore,
   type Options,
+  type RateLimitInfo,
   type RateLimitRequestHandler,
 } from 'express-rate-limit';
 
@@ -220,6 +221,22 @@ export function createLiveAiAccessDualRateLimiters(getSettings: () => AiAccessSe
     return cfg;
   };
 
+  // The limiter instances live for the plugin lifetime, so express-rate-limit
+  // would advertise the creation-time window in RateLimit-Policy. Emit the
+  // draft-6 headers ourselves from the live window instead.
+  const writeHeaders = (req: Request, res: Response) => {
+    const info = (req as Request & { rateLimit?: RateLimitInfo }).rateLimit;
+    if (!info || res.headersSent) return;
+    const windowSeconds = Math.ceil(currentWindowMs / 1000);
+    const resetSeconds = info.resetTime
+      ? Math.max(0, Math.ceil((info.resetTime.getTime() - Date.now()) / 1000))
+      : windowSeconds;
+    res.setHeader('RateLimit-Policy', `${info.limit};w=${windowSeconds}`);
+    res.setHeader('RateLimit-Limit', String(info.limit));
+    res.setHeader('RateLimit-Remaining', String(info.remaining));
+    res.setHeader('RateLimit-Reset', String(resetSeconds));
+  };
+
   const make = (token: boolean, store: MemoryStore): RateLimitRequestHandler =>
     rateLimit({
       store,
@@ -228,26 +245,29 @@ export function createLiveAiAccessDualRateLimiters(getSettings: () => AiAccessSe
         const cfg = resolveRateLimitConfig(getSettings());
         return token ? cfg.maxPerToken : cfg.maxPerIp;
       },
-      standardHeaders: true,
+      standardHeaders: false,
       legacyHeaders: false,
       keyGenerator: token
         ? (req: Request) => accessTokenRateLimitKey(req) ?? clientIpKey(req)
         : clientIpKey,
       skip: (req: Request) => token && accessTokenRateLimitKey(req) == null,
       handler: (req: Request, res: Response, _next: NextFunction) => {
+        writeHeaders(req, res);
         sendRateLimited(req, res, resolveRateLimitConfig(getSettings()).windowMs);
       },
     });
 
   const ipLimiter = make(false, ipStore);
   const tokenLimiter = make(true, tokenStore);
-  const ip = (req: Request, res: Response, next: NextFunction) => {
-    refreshWindow();
-    return ipLimiter(req, res, next);
-  };
-  const token = (req: Request, res: Response, next: NextFunction) => {
-    refreshWindow();
-    return tokenLimiter(req, res, next);
-  };
+  const wrap =
+    (limiter: RateLimitRequestHandler) => (req: Request, res: Response, next: NextFunction) => {
+      refreshWindow();
+      return limiter(req, res, (err?: unknown) => {
+        if (err === undefined) writeHeaders(req, res);
+        next(err);
+      });
+    };
+  const ip = wrap(ipLimiter);
+  const token = wrap(tokenLimiter);
   return { ip, token };
 }

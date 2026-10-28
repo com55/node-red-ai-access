@@ -39,4 +39,31 @@ describe('createLiveAiAccessDualRateLimiters', () => {
     max = 5;
     expect((await request(app).get('/x')).status).toBe(200);
   });
+
+  it('advertises the live window in RateLimit headers after a window change', async () => {
+    let windowMs = 60_000;
+    const app = makeApp(() => ({ rateLimitWindowMs: windowMs, rateLimitMaxPerIp: 5 }));
+    const first = await request(app).get('/x');
+    expect(first.headers['ratelimit-policy']).toBe('5;w=60');
+    expect(first.headers['ratelimit-limit']).toBe('5');
+    expect(first.headers['ratelimit-remaining']).toBe('4');
+    expect(Number(first.headers['ratelimit-reset'])).toBeLessThanOrEqual(60);
+
+    windowMs = 10_000;
+    const second = await request(app).get('/x');
+    expect(second.headers['ratelimit-policy']).toBe('5;w=10');
+    expect(second.headers['ratelimit-remaining']).toBe('4');
+    expect(Number(second.headers['ratelimit-reset'])).toBeLessThanOrEqual(10);
+  });
+
+  it('sends RateLimit headers on 429 with the live window', async () => {
+    let windowMs = 60_000;
+    const app = makeApp(() => ({ rateLimitWindowMs: windowMs, rateLimitMaxPerIp: 1 }));
+    windowMs = 30_000;
+    expect((await request(app).get('/x')).status).toBe(200);
+    const blocked = await request(app).get('/x');
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers['ratelimit-policy']).toBe('1;w=30');
+    expect(blocked.headers['ratelimit-remaining']).toBe('0');
+  });
 });
