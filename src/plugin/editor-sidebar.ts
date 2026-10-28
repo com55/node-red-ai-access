@@ -571,6 +571,12 @@ function editorSidebarScriptPartA(): string {
       Object.keys(payload).forEach(function (key) {
         if (LAST && LAST.sources && LAST.sources[key] === 'settings.js') delete payload[key];
       });
+      // Persist the max lifetime only when the user changed it, so the default can evolve.
+      var loadedOauth = (LAST && LAST.settings && LAST.settings.oauth) || {};
+      var loadedMax = typeof loadedOauth.refreshMaxLifetimeSec === 'number' ? loadedOauth.refreshMaxLifetimeSec : 7776000;
+      if (payload.oauth && Math.round(payload.oauth.refreshMaxLifetimeSec / 86400) === Math.round(loadedMax / 86400)) {
+        delete payload.oauth.refreshMaxLifetimeSec;
+      }
       if (LAST && LAST.settings && !(LAST.settings.oauth && LAST.settings.oauth.enabled) && payload.oauth && payload.oauth.enabled) {
         var warning = oauthPublicUrlWarning(payload.publicBaseUrl === undefined ? LAST.settings.publicBaseUrl : payload.publicBaseUrl);
         if (warning) {

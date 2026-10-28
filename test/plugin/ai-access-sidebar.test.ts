@@ -551,7 +551,6 @@ describe('ai-access-sidebar.js served tab', () => {
       expect($('#ai-access-oauth-refresh-ttl').elements[0]!.props.value).toBe(30);
       expect($('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value).toBe('days');
       expect($('#ai-access-oauth-refresh-max').elements[0]!.props.value).toBe(90);
-      $('#ai-access-oauth-refresh-max').elements[0]!.props.value = 0;
       $('#ai-access-oauth-access-ttl').elements[0]!.props.value = 90;
       $('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value = 'minutes';
       $('#ai-access-oauth-refresh-ttl').elements[0]!.props.value = 12;
@@ -576,9 +575,9 @@ describe('ai-access-sidebar.js served tab', () => {
           dcrMaxClients: 20,
           accessTokenTtlSec: 5400,
           refreshIdleTtlSec: 43200,
-          refreshMaxLifetimeSec: 0,
         },
       });
+      expect(JSON.parse(put![1]!.body!).oauth).not.toHaveProperty('refreshMaxLifetimeSec');
       const button = $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[1]!;
       button.handlers.click![0]!();
       $('#ai-access-dialog-allow').elements[0]!.handlers.click![0]!();
@@ -588,6 +587,11 @@ describe('ai-access-sidebar.js served tab', () => {
           call => call[0].endsWith('/oauth/clients/client-id') && call[1]?.method === 'DELETE'
         )
       ).toBe(true);
+      $('#ai-access-oauth-refresh-max').elements[0]!.props.value = 0;
+      $('#ai-access-oauth-refresh-max').elements[0]!.handlers.change![0]!();
+      await vi.advanceTimersByTimeAsync(400);
+      const puts = fetcher.mock.calls.filter(call => call[1]?.method === 'PUT');
+      expect(JSON.parse(puts.at(-1)![1]!.body!).oauth.refreshMaxLifetimeSec).toBe(0);
       settings.oauth.enabled = false;
       settings.publicBaseUrl = 'http://node.example';
       load();
