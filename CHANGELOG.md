@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.5] - 2026-10-28
+
+### Security
+
+- Likely secrets are redacted from everything AI clients receive: MCP tools
+  (`list_flows`, `get_flow`, `get_node`, `get_node_field`, `search_flows`,
+  proposal tools and diffs), REST with an access link or OAuth token, and GET
+  links. Previously `list_flows` returned plaintext env values such as a group
+  `OAUTH_POC_PASSWORD` to OAuth read clients. Admin-session (dashboard) reads
+  are unchanged and show real values.
+  - Env entries (tab, group, subflow, subflow instance, node, `global-config`)
+    whose name matches a secret pattern get `value: "[REDACTED]"` and
+    `redacted: true`; secret-named node settings and name/value pairs in node
+    config (change rules, inject props, http headers) are redacted too.
+  - Function `func`/`initialize`/`finalize` and all other string fields are
+    scanned for known token formats (AWS, GitHub, Slack, OpenAI, Stripe, Google,
+    JWT, PEM private keys, Bearer/Basic headers, URL passwords) and
+    `name = "literal"` assignments; only the literal is replaced. Redacted nodes
+    carry `_aiRedactions` (field paths).
+  - Proposals restore `[REDACTED]` placeholders to the original secret on submit
+    (full tab or node ops), so AI edits never overwrite a secret with the
+    placeholder; unmatched placeholders produce a
+    `redacted_placeholder_unresolved` warning.
+  - The audit log records `ai.redacted` with the count per response and the
+    operation (never values); `proposal.created` adds `restoredRedactions`.
+
+### Added
+
+- `secretNamePatterns` setting (dashboard Settings → Secret redaction: add,
+  remove, reset to defaults; `PUT /settings` accepts a list or `null` to reset).
+  Lockable via `settings.js` `aiAccess.secretNamePatterns`.
+
 ## [0.2.0-beta.4] - 2026-10-28
 
 ### Changed

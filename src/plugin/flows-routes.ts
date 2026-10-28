@@ -8,6 +8,7 @@ import type { FlowAdapter } from '../runtime/types.js';
 
 import { aiOpsErrorToHttp, getFlow, listFlows } from './ai-ops.js';
 import { CANONICAL_ERROR_TEXT } from './channel-errors.js';
+import { adapterForRequest } from './secret-redaction.js';
 import type { AuthenticatedRequest } from './types.js';
 
 /** Fixed JSON error text — never echo exception / path segments (CodeQL XSS). */
@@ -40,9 +41,9 @@ function sendMappedFlowError(res: Response, error: unknown): boolean {
 }
 
 export function listFlowsHandler(adapter: FlowAdapter) {
-  return async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
-      res.json(await listFlows(adapter));
+      res.json(await listFlows(adapterForRequest(req, adapter)));
     } catch (error) {
       if (sendMappedFlowError(res, error)) {
         return;
@@ -62,7 +63,7 @@ export function getFlowHandler(adapter: FlowAdapter) {
       return;
     }
     try {
-      res.json(await getFlow(adapter, flowId));
+      res.json(await getFlow(adapterForRequest(req, adapter), flowId));
     } catch (error) {
       if (sendMappedFlowError(res, error)) {
         return;

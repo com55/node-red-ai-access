@@ -1173,6 +1173,18 @@ function pageStylesDashboard(): string {
   font-size: 0.8rem; color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap;
 }
+.chip-list { list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 0.6rem; padding: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.25rem 0.15rem 0.55rem;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--soft); font-size: 0.85rem;
+}
+.chip code { background: none; padding: 0; }
+.chip-remove {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 1rem;
+  line-height: 1; padding: 0.1rem 0.35rem; border-radius: 999px;
+}
+.chip-remove:hover, .chip-remove:focus-visible { color: var(--danger); background: #fdecec; }
+.chip-empty { font-size: 0.88rem; }
 .notice { padding: 0.6rem 0.8rem; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); }
 .check-result { margin: 0.6rem 0 0; padding: 0.6rem 0.8rem; border-radius: 8px; font-weight: 600; overflow-wrap: anywhere; }
 .check-result.is-ok { color: var(--ok); background: #e8f6ef; border: 1px solid #a8d8b4; }

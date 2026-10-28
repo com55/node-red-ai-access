@@ -52,6 +52,7 @@ import {
 } from './proposal-present.js';
 import type { ProposalService } from './proposal-service.js';
 import { sendCaughtRouteError } from './route-errors.js';
+import { adapterForRequest } from './secret-redaction.js';
 import type { AuthenticatedRequest } from './types.js';
 
 /** JSON + nosniff — never put raw exception text in the body (CodeQL XSS). */
@@ -434,7 +435,10 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
         });
         return;
       }
-      const diff = applyDiffFormat(await computeProposalDiff(proposal, adapter), resolved.format);
+      const diff = applyDiffFormat(
+        await computeProposalDiff(proposal, adapterForRequest(req, adapter)),
+        resolved.format
+      );
       res.json(diff);
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {

@@ -248,6 +248,44 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const got = await request(app).get('/mcp/api/v1/settings');
     expect(got.status).toBe(401);
   });
+  it('edits, validates, and resets secretNamePatterns', async () => {
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const initial = await request(app).get('/mcp/api/v1/settings');
+    expect(initial.body.settings.secretNamePatterns).toContain('PASSWORD');
+    expect(initial.body.defaults.secretNamePatterns).toEqual(
+      initial.body.settings.secretNamePatterns
+    );
+    expect(initial.body.sources.secretNamePatterns).toBe('default');
+
+    const saved = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ secretNamePatterns: ['pin', ' API_KEY ', 'PIN'] });
+    expect(saved.status).toBe(200);
+    expect(saved.body.settings.secretNamePatterns).toEqual(['PIN', 'API_KEY']);
+    expect(saved.body.sources.secretNamePatterns).toBe('disk');
+    const disk = JSON.parse(
+      readFileSync(join(resolveAiAccessPaths(userDir).root, 'config.json'), 'utf8')
+    ) as Record<string, unknown>;
+    expect(disk.secretNamePatterns).toEqual(['PIN', 'API_KEY']);
+
+    for (const bad of [['<script>'], 'PASSWORD', [1], ['a b']]) {
+      const res = await request(app).put('/mcp/api/v1/settings').send({ secretNamePatterns: bad });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('invalid_body');
+    }
+
+    const empty = await request(app).put('/mcp/api/v1/settings').send({ secretNamePatterns: [] });
+    expect(empty.body.settings.secretNamePatterns).toEqual([]);
+
+    const reset = await request(app).put('/mcp/api/v1/settings').send({ secretNamePatterns: null });
+    expect(reset.status).toBe(200);
+    expect(reset.body.sources.secretNamePatterns).toBe('default');
+    expect(reset.body.settings.secretNamePatterns).toEqual(
+      initial.body.settings.secretNamePatterns
+    );
+    expect(reset.body.disk.secretNamePatterns).toBeUndefined();
+  });
+
   it('ignores every locked key, including invalid submitted values', async () => {
     const { app } = createApp({
       userDir,
@@ -263,6 +301,7 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
         allowWithoutAdminAuth: false,
         rateLimitWindowMs: 10000,
         rateLimitMaxPerToken: 90,
+        secretNamePatterns: ['PIN'],
       },
     });
     const result = await request(app)
@@ -278,10 +317,12 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
         corsAllowedOrigins: ['bad'],
         rateLimitWindowMs: 1,
         rateLimitMaxPerToken: 1,
+        secretNamePatterns: ['not valid!'],
       });
     expect(result.status).toBe(200);
+    expect(result.body.settings.secretNamePatterns).toEqual(['PIN']);
     expect(Object.values(result.body.sources)).toEqual([
-      ...Array(10).fill('settings.js'),
+      ...Array(11).fill('settings.js'),
       'default',
     ]);
     expect(result.body.settings.publicBaseUrl).toBe('https://locked.example');

@@ -19,6 +19,7 @@ function settingsPartForm(): string {
     corsAllowedOrigins: 'cors', rateLimitWindowMs: 'rate-window',
     rateLimitMaxPerIp: 'rate-ip', rateLimitMaxPerToken: 'rate-token'
   };
+  var SECRET_PATTERN_RE = /^[A-Za-z0-9_-]{2,40}$/;
   var OAUTH_ACCESS_UNITS = [['minutes', 60], ['hours', 3600]];
   var OAUTH_REFRESH_UNITS = [['hours', 3600], ['days', 86400]];
 
@@ -86,6 +87,7 @@ function settingsPartForm(): string {
       if (badge) badge.hidden = !locked;
     });
     $('set-check-public-url').disabled = ro;
+    renderSecretPatterns(data);
 
     var o = s.oauth || {};
     var oauthLocked = fieldLocked('oauth');
@@ -140,6 +142,95 @@ function settingsPartForm(): string {
       delete payload.oauth.refreshMaxLifetimeSec;
     }
     return payload;
+  }
+
+`;
+}
+
+function settingsPartSecrets(): string {
+  return `
+  function secretPatternsEditable() {
+    return settingsCanEdit() && !fieldLocked('secretNamePatterns');
+  }
+
+  // Chips are built with createElement/textContent only (pattern text is never HTML).
+  function renderSecretPatterns(data) {
+    var list = $('secret-patterns');
+    var s = (data && data.settings) || {};
+    var patterns = Array.isArray(s.secretNamePatterns) ? s.secretNamePatterns : [];
+    var editable = secretPatternsEditable();
+    var source = data && data.sources ? data.sources.secretNamePatterns : 'default';
+    $('secret-patterns-source').textContent = source === 'settings.js' ? '(set in settings.js)'
+      : source === 'disk' ? '(customized)' : '(defaults)';
+    while (list.firstChild) list.removeChild(list.firstChild);
+    if (!patterns.length) {
+      var empty = document.createElement('li');
+      empty.className = 'chip-empty muted';
+      empty.textContent = 'No patterns: name-based redaction is off.';
+      list.appendChild(empty);
+    }
+    patterns.forEach(function (p) {
+      var li = document.createElement('li');
+      li.className = 'chip';
+      var label = document.createElement('code');
+      label.textContent = String(p);
+      li.appendChild(label);
+      if (editable) {
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'chip-remove';
+        rm.setAttribute('aria-label', 'Remove ' + String(p));
+        rm.title = 'Remove';
+        rm.textContent = '×';
+        rm.addEventListener('click', function () {
+          saveSecretPatterns(patterns.filter(function (x) { return x !== p; }));
+        });
+        li.appendChild(rm);
+      }
+      list.appendChild(li);
+    });
+    $('set-secret-new').disabled = !editable;
+    $('set-secret-add').disabled = !editable;
+    $('set-secret-reset').disabled = !editable || source !== 'disk';
+    $('lock-secret-patterns').hidden = !fieldLocked('secretNamePatterns');
+  }
+
+  function currentSecretPatterns() {
+    var s = (settingsData && settingsData.settings) || {};
+    return Array.isArray(s.secretNamePatterns) ? s.secretNamePatterns.slice() : [];
+  }
+
+  function saveSecretPatterns(next) {
+    if (!secretPatternsEditable() || settingsSaving) return;
+    persistSettings({ secretNamePatterns: next });
+  }
+
+  function addSecretPattern() {
+    var input = $('set-secret-new');
+    var value = String(input.value || '').trim().toUpperCase();
+    if (!value) return;
+    if (!SECRET_PATTERN_RE.test(value)) {
+      settingsFlash('Pattern must be 2-40 letters, digits, "_" or "-".', false);
+      return;
+    }
+    var list = currentSecretPatterns();
+    if (list.indexOf(value) !== -1) {
+      settingsFlash('Pattern ' + value + ' is already in the list.', false);
+      return;
+    }
+    list.push(value);
+    input.value = '';
+    saveSecretPatterns(list);
+  }
+
+  function resetSecretPatterns() {
+    if (!secretPatternsEditable()) return;
+    openConfirmDialog({
+      title: 'Reset secret name patterns',
+      message: 'Replace the list with the built-in defaults?',
+      confirmLabel: 'Reset',
+      onConfirm: function () { persistSettings({ secretNamePatterns: null }); }
+    });
   }
 
 `;
@@ -356,7 +447,7 @@ function settingsPartWire(): string {
     [sec, oauthSec].forEach(function (host) {
       if (!host) return;
       host.querySelectorAll('input, select').forEach(function (el) {
-        if (el.id === 'set-public-url') return;
+        if (el.id === 'set-public-url' || el.getAttribute('data-no-autosave')) return;
         el.addEventListener('change', scheduleSettingsSave);
       });
     });
@@ -365,6 +456,11 @@ function settingsPartWire(): string {
       $('set-deploy-full-warn').hidden = $('set-deploy').value !== 'full';
     });
     $('set-check-public-url').addEventListener('click', checkPublicUrl);
+    $('set-secret-add').addEventListener('click', addSecretPattern);
+    $('set-secret-new').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); addSecretPattern(); }
+    });
+    $('set-secret-reset').addEventListener('click', resetSecretPatterns);
     $('oauth-refresh').addEventListener('click', function () { loadOAuthStatus(); loadOAuthClients(); });
     $('oauth-copy-url').addEventListener('click', function () {
       copyTextToClipboard($('oauth-server-url').textContent || '');
@@ -375,5 +471,11 @@ function settingsPartWire(): string {
 }
 
 export function pageClientSettingsScript(): string {
-  return settingsPartForm() + settingsPartSave() + settingsPartOAuth() + settingsPartWire();
+  return (
+    settingsPartForm() +
+    settingsPartSecrets() +
+    settingsPartSave() +
+    settingsPartOAuth() +
+    settingsPartWire()
+  );
 }

@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { NextFunction, Response } from 'express';
 import { z } from 'zod';
 
+import type { AuditActor } from '../storage/audit-log.js';
 import { oauthOwnerId } from '../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../storage/trusted-write.js';
 
@@ -42,7 +43,14 @@ import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js
 import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
+import {
+  accessLinkAuditActor,
+  mcpOperationName,
+  noteResponseRedactions,
+  runWithRedactionAudit,
+} from './redaction-audit.js';
 import { sendCaughtRouteError } from './route-errors.js';
+import { aiRedactingAdapter } from './secret-redaction.js';
 import type { PluginServices } from './services.js';
 import { buildStatus } from './status.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
@@ -65,8 +73,10 @@ async function tryLiveRev(adapter: PluginServices['flowAdapter']): Promise<strin
 }
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
+  const text = JSON.stringify(data);
+  noteResponseRedactions(text);
   return {
-    content: [{ type: 'text', text: JSON.stringify(data) }],
+    content: [{ type: 'text', text }],
   };
 }
 
@@ -230,6 +240,7 @@ function registerReadTools(
     {
       description:
         'List all flows as a flat Admin API v2 array plus the current rev string. ' +
+        'Likely secrets are shown as "[REDACTED]" (nodes list redacted paths in _aiRedactions). ' +
         'Returns { rev, flows }. Call this (or get_flow) before submit_proposal so expectedRev matches.',
     },
     async () => {
@@ -432,6 +443,8 @@ function registerProposalTools(
         'expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), ' +
         'optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. ' +
         'Do not nest expectedRev inside payload. ' +
+        'Secret values appear as "[REDACTED]" in reads; leave the placeholder unchanged to keep the stored secret ' +
+        '(it is restored on submit), or replace it with a new value to change it. ' +
         `Payload size limit is ${MAX_PROPOSAL_JSON_BYTES} bytes (413 if exceeded). ` +
         'expectedRev is checked against the live rev at submit time (409 if stale). ' +
         'replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. ' +
@@ -815,6 +828,14 @@ function createAiMcpServer(
   return server;
 }
 
+function mcpAuditActor(req: AuthenticatedRequest): AuditActor {
+  const link = accessLinkAuditActor(req);
+  if (link) return link;
+  const clientId = req.auth?.clientId ?? '';
+  const user = typeof req.auth?.extra?.user === 'string' ? req.auth.extra.user : 'owner';
+  return { kind: 'access-link', linkId: oauthOwnerId(clientId, user), label: 'oauth' };
+}
+
 /**
  * POST /mcp/rpc — Streamable HTTP (stateless JSON responses).
  */
@@ -830,15 +851,25 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
         return;
       }
 
+      // Every MCP caller is an AI client: flow reads go through the redacting view.
+      const aiServices: PluginServices = {
+        ...services,
+        flowAdapter: aiRedactingAdapter(services.flowAdapter),
+      };
       const server = req.accessLink
-        ? createAiMcpServer(RED, services, req)
-        : createOAuthMcpServer(RED, services, req);
+        ? createAiMcpServer(RED, aiServices, req)
+        : createOAuthMcpServer(RED, aiServices, req);
       const transport = new StreamableHTTPServerTransport({
         enableJsonResponse: true,
       });
 
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await runWithRedactionAudit(
+        services.auditLog,
+        mcpAuditActor(req),
+        mcpOperationName(req.body),
+        () => transport.handleRequest(req, res, req.body)
+      );
 
       res.on('close', () => {
         void transport.close();

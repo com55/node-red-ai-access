@@ -84,6 +84,9 @@ module.exports = {
     // Browser origins allowed to call /mcp/a, /mcp/api, and /mcp/rpc
     // cross-origin (default: none — no CORS headers are sent)
     // corsAllowedOrigins: ['https://app.example.com'],
+    // Secret-like names redacted from AI responses (default list below;
+    // [] turns off name matching — token formats are always redacted)
+    // secretNamePatterns: ['PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'KEY'],
     // MCP OAuth (disabled by default; publicBaseUrl is the issuer)
     // oauth: {
     //   enabled: true,
@@ -141,6 +144,41 @@ match case-insensitively and the configured origin is echoed; malformed origins
 are rejected. Exposed headers include `Mcp-Session-Id`, `WWW-Authenticate`,
 `Retry-After`, and the `RateLimit*` headers. Other origins get no CORS headers.
 
+### Secret redaction
+
+Every AI-facing response (MCP tools, REST with an access link or OAuth token,
+GET links, and proposal bodies/diffs shown to AI) has likely secrets replaced
+with `[REDACTED]`. The dashboard (admin session) always shows real values.
+
+- **By name**: env entries on tabs, groups, subflows, subflow instances, and
+  `global-config`, secret-named node settings (e.g. `password`), and name/value
+  pairs inside node config (change rules, inject props, http request headers)
+  whose name matches a pattern. Redacted env entries get `redacted: true`.
+- **By content**: all other string fields, including function
+  `func`/`initialize`/`finalize`, are scanned for AWS (`AKIA…`), GitHub
+  (`ghp_…`, `github_pat_…`), Slack (`xox…`, webhook URLs), OpenAI (`sk-…`),
+  Stripe, Google (`AIza…`), JWTs, PEM private keys, `Bearer`/`Basic` headers,
+  `scheme://user:password@` URLs, and `name = "literal"` / `name: 'literal'`
+  assignments whose name matches a pattern. Only the literal is replaced.
+- Redacted nodes list the redacted field paths in `_aiRedactions`.
+- **Proposals**: a `[REDACTED]` placeholder left in a field that was redacted is
+  restored to the original secret on submit (also for node ops), so AI edits
+  never overwrite a secret with the placeholder. A placeholder that cannot be
+  matched (e.g. on a new node) is kept and reported as a
+  `redacted_placeholder_unresolved` warning.
+- Node-RED credentials (and `cred` env entries) are never part of flow output.
+- The audit log records `ai.redacted` with the count per response (never
+  values).
+
+Default patterns (case-insensitive whole words; a trailing `S` is allowed, and
+patterns of 6+ letters also match glued names like `DBPASSWORD`):
+`PASSWORD PASSWD PASS PWD PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY KEY PRIVATE CREDENTIAL AUTH AUTHORIZATION BEARER SESSION COOKIE CONNECTION_STRING CONN_STR CONN DSN`.
+`KEY` matches `API_KEY` / `apiKey` but not `KEYBOARD` or `MONKEY`; `AUTH` does
+not match `AUTHOR` or `OAUTH`. Names ending in a descriptor word (`TOKEN_URL`,
+`AUTH_TYPE`, `SESSION_TIMEOUT`, `keyType`) are not redacted. Edit the list on
+the dashboard **Settings** tab (add, remove, reset to defaults) or lock it with
+`aiAccess.secretNamePatterns`.
+
 ### Settings precedence
 
 Effective values are resolved **without restart** in this order (highest wins):
@@ -165,15 +203,15 @@ and an **Open AI Access dashboard** button.
 
 Everything else is on the dashboard. The **Settings** tab lets `*` admins change
 default deploy type, access-token TTL, maximum active tokens, Public URL (with a
-reachability **Check**), CORS origins, and the three rate limits, and shows
-Express's effective `trust proxy` setting. The **OAuth** tab configures token
-lifetimes and the client limit, lists registered clients with revoke buttons,
-and reports route collisions (linking `http in` nodes to the editor) and the
-`httpNodeRoot: false` metadata fallback. `read` users see the same values
-read-only; writes need `*`, exactly as before. Changes apply immediately;
-changing limits starts fresh rate-limit buckets. Enabling OAuth with no Public
-URL or an HTTP non-loopback URL shows a warning confirmation; it does not block
-the change. Fields set in `settings.js` are locked.
+reachability **Check**), CORS origins, secret redaction patterns, and the three
+rate limits, and shows Express's effective `trust proxy` setting. The **OAuth**
+tab configures token lifetimes and the client limit, lists registered clients
+with revoke buttons, and reports route collisions (linking `http in` nodes to
+the editor) and the `httpNodeRoot: false` metadata fallback. `read` users see
+the same values read-only; writes need `*`, exactly as before. Changes apply
+immediately; changing limits starts fresh rate-limit buckets. Enabling OAuth
+with no Public URL or an HTTP non-loopback URL shows a warning confirmation; it
+does not block the change. Fields set in `settings.js` are locked.
 
 ### MCP OAuth
 

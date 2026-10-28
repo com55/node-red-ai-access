@@ -20,6 +20,7 @@ import {
   isTruthyQueryFlag,
   searchFlows,
 } from './layered-read.js';
+import { adapterForRequest } from './secret-redaction.js';
 import type { AuthenticatedRequest } from './types.js';
 
 function layeredReadErrorHint(
@@ -105,10 +106,10 @@ export function getFlowOrSummaryHandler(adapter: FlowAdapter, channel: ErrorChan
     const summary = isTruthyQueryFlag(queryString(req.query, 'summary'));
     try {
       if (summary) {
-        sendJson(res, 200, await getFlowSummary(adapter, flowId));
+        sendJson(res, 200, await getFlowSummary(adapterForRequest(req, adapter), flowId));
         return;
       }
-      sendJson(res, 200, await getFlow(adapter, flowId));
+      sendJson(res, 200, await getFlow(adapterForRequest(req, adapter), flowId));
     } catch (error) {
       // Channel-aware flow_not_found hint (GET → ./flows; REST → GET /flows).
       if (sendMappedError(res, error, channel)) {
@@ -131,7 +132,7 @@ export function getNodeHandler(adapter: FlowAdapter, channel: ErrorChannel = 're
     }
     const flowId = queryString(req.query, 'flow');
     try {
-      sendJson(res, 200, await getNodeById(adapter, nodeId, flowId));
+      sendJson(res, 200, await getNodeById(adapterForRequest(req, adapter), nodeId, flowId));
     } catch (error) {
       const notFoundHint =
         channel === 'get'
@@ -171,7 +172,7 @@ export function getNodeFieldHandler(adapter: FlowAdapter, channel: ErrorChannel 
       sendJson(
         res,
         200,
-        await getNodeField(adapter, nodeId, field, {
+        await getNodeField(adapterForRequest(req, adapter), nodeId, field, {
           ...(flowId ? { flowId } : {}),
           ...(lines ? { lines } : {}),
         })
@@ -203,7 +204,11 @@ export function searchFlowsHandler(adapter: FlowAdapter, channel: ErrorChannel =
     }
     const flowId = queryString(req.query, 'flow');
     try {
-      sendJson(res, 200, await searchFlows(adapter, q, flowId ? { flowId } : {}));
+      sendJson(
+        res,
+        200,
+        await searchFlows(adapterForRequest(req, adapter), q, flowId ? { flowId } : {})
+      );
     } catch (error) {
       if (sendMappedError(res, error, channel)) {
         return;
