@@ -46,8 +46,12 @@ Configuration).
 The `/ai-access` HTML shell is served without adminAuth so the page can read the
 editor token from browser `localStorage` (Node-RED does not use cookies) and
 call APIs with `Authorization: Bearer`. If no valid token is present, the page
-redirects to the editor login. All data and actions stay behind permission
-checks.
+shows a sign-in card. With credentials login, it posts to
+`<httpAdminRoot>/auth/token` as client `node-red-editor` using the password
+grant. The token is shared with the editor, stored under the editor's
+`localStorage` key (`auth-tokens` at `/`, or e.g. `auth-tokens-admin` at
+`/admin`). Other login strategies open the editor to sign in. All data and
+actions stay behind permission checks.
 
 The dashboard has tabs for **Overview** (status and diagnostics), **Settings**,
 **Access tokens**, **OAuth**, **Proposals** and **Audit log**. You can create
