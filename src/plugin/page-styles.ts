@@ -1161,7 +1161,7 @@ function pageStylesDashboard(): string {
 .field-line { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.5rem; min-width: 0; }
 .field-line .grow { flex: 1 1 auto; min-width: 0; }
 .field-line input.num { width: 7.5rem; flex: 0 0 auto; }
-.field-line select { flex: 0 0 auto; width: auto; }
+.field-line select { flex: 0 1 auto; width: auto; max-width: 100%; min-width: 0; }
 .field-line .unit { color: var(--muted); white-space: nowrap; }
 .field-line code { overflow-wrap: anywhere; padding: 0.35rem 0.5rem; background: var(--soft); border-radius: 6px; }
 .hint { display: block; color: var(--muted); font-size: 0.88rem; font-weight: 400; margin: 0.25rem 0 0; line-height: 1.4; }
