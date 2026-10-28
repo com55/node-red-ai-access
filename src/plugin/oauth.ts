@@ -184,10 +184,18 @@ export function detectOAuthRouteCollisions(
     name?: string;
     handle?: { stack?: Layer[]; oauthOwned?: boolean };
     matchers?: ((path: string) => unknown)[];
+    regexp?: RegExp;
   }
-  const expressApp = app as
-    { _router?: { stack?: Layer[] }; router?: { stack?: Layer[] } } | undefined;
-  const layers = expressApp?._router?.stack ?? expressApp?.router?.stack ?? [];
+  // Express 4 throws from the deprecated `app.router` getter and creates
+  // `_router` lazily; Express 5 only exposes `router`. Read both defensively.
+  const read = (key: '_router' | 'router'): { stack?: Layer[] } | undefined => {
+    try {
+      return (app as Record<string, { stack?: Layer[] } | undefined> | undefined)?.[key];
+    } catch {
+      return undefined;
+    }
+  };
+  const layers = read('_router')?.stack ?? read('router')?.stack ?? [];
   for (const layer of layers) {
     if (layer.handle?.oauthOwned) continue;
     const paths = layer.route?.path
@@ -198,8 +206,10 @@ export function detectOAuthRouteCollisions(
     for (const path of paths)
       if (routes.some(prefix => String(path).startsWith(prefix)))
         found.push(`${String(path)} (${layer.name ?? 'route'})`);
-    if (!paths.length && layer.matchers?.length && layer.name !== 'router') {
-      const matches = (path: string) => layer.matchers?.some(matcher => Boolean(matcher(path)));
+    const matchers =
+      layer.matchers ?? (layer.regexp ? [(path: string) => layer.regexp?.test(path)] : undefined);
+    if (!paths.length && matchers?.length && layer.name !== 'router') {
+      const matches = (path: string) => matchers.some(matcher => Boolean(matcher(path)));
       const broad = matches('/unrelated-ai-access-collision-probe');
       if (!broad && routes.some(prefix => matches(`${prefix}token`) || matches(`${prefix}mcp`)))
         found.push(`mounted middleware (${layer.name ?? 'route'})`);

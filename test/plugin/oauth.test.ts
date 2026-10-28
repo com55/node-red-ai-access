@@ -429,6 +429,28 @@ describe('MCP OAuth backend', () => {
     expect(denied.headers['www-authenticate']).toContain('resource_metadata=');
   });
 
+  it('detects collisions on Express 4 style apps without touching the deprecated router getter', () => {
+    const express4 = {
+      _router: {
+        stack: [
+          { name: 'bound dispatch', route: { path: '/.well-known/oauth-authorization-server' } },
+          { name: 'mounted', regexp: /^\/mcp\/oauth\/?(?=\/|$)/i },
+          { name: 'query', regexp: /^\/?(?=\/|$)/i },
+        ],
+      },
+      get router(): never {
+        throw new Error("'app.router' is deprecated!");
+      },
+    };
+    expect(detectOAuthRouteCollisions(express4)).toHaveLength(2);
+    const lazy = {
+      get router(): never {
+        throw new Error("'app.router' is deprecated!");
+      },
+    };
+    expect(detectOAuthRouteCollisions(lazy)).toEqual([]);
+  });
+
   it('reports collisions and includes OAuth discovery on unauthenticated MCP responses', async () => {
     const app = express();
     app.get('/mcp/oauth/token', (_req, res) => res.end());
