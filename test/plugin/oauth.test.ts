@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,6 +37,7 @@ function appFor(
     publicUrl?: string;
     enabled?: boolean;
     refreshMax?: number;
+    oauthFromDisk?: boolean;
   } = {}
 ) {
   const admin = express();
@@ -53,15 +54,19 @@ function appFor(
         ...(options.enabled === false ? { enabled: false } : {}),
         allowWithoutAdminAuth: true,
         publicBaseUrl: options.publicUrl ?? issuer,
-        oauth: {
-          enabled: true,
-          dcrMaxClients: options.cap ?? 20,
-          accessTokenTtlSec: options.accessTtl ?? 3600,
-          refreshIdleTtlSec: options.refreshTtl ?? 2_592_000,
-          ...(options.refreshMax !== undefined
-            ? { refreshMaxLifetimeSec: options.refreshMax }
-            : {}),
-        },
+        ...(options.oauthFromDisk
+          ? {}
+          : {
+              oauth: {
+                enabled: true,
+                dcrMaxClients: options.cap ?? 20,
+                accessTokenTtlSec: options.accessTtl ?? 3600,
+                refreshIdleTtlSec: options.refreshTtl ?? 2_592_000,
+                ...(options.refreshMax !== undefined
+                  ? { refreshMaxLifetimeSec: options.refreshMax }
+                  : {}),
+              },
+            }),
       },
     },
     httpAdmin: admin,
@@ -439,6 +444,103 @@ describe('MCP OAuth backend', () => {
     expect(statuses).toContain(429);
     expect((await approve(admin, victimPage)).code).toBeTruthy();
     expect((await approve(admin, first)).details.status).toBe(404);
+  });
+
+  it('rejects cross-origin consent decisions without consuming the request', async () => {
+    const { admin } = appFor(userDir, { session: true });
+    const id = (await register(admin)).body.client_id as string;
+    const page = await request(admin).get('/mcp/oauth/authorize').query(consentParams(id));
+    const reqId = /data-request="([^"]+)"/.exec(page.text)![1]!;
+    const details = await request(admin)
+      .get(`/mcp/oauth/consent/${reqId}`)
+      .set('x-test-user', 'alice');
+    const forged = await request(admin)
+      .post(`/mcp/oauth/consent/${reqId}`)
+      .set('x-test-user', 'alice')
+      .set('Origin', 'https://attacker.example')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .send({ csrf: details.body.csrf, decision: 'allow' });
+    expect(forged.status).toBe(403);
+    expect(forged.body.redirect).toBeUndefined();
+    const legit = await request(admin)
+      .post(`/mcp/oauth/consent/${reqId}`)
+      .set('x-test-user', 'alice')
+      .set('Origin', issuer)
+      .set('Sec-Fetch-Site', 'same-origin')
+      .send({ csrf: details.body.csrf, decision: 'allow' });
+    expect(legit.status).toBe(200);
+  });
+
+  it('rejects access and refresh tokens after revocation', async () => {
+    const { admin } = appFor(userDir);
+    const id = (await register(admin)).body.client_id as string;
+    const code = (await authorize(admin, id)).code!;
+    const tokens = (await exchange(admin, id, code)).body;
+    const revoke = await request(admin)
+      .post('/mcp/oauth/revoke')
+      .type('form')
+      .send({ client_id: id, token: tokens.access_token });
+    expect(revoke.status).toBe(200);
+    const rpc = await request(admin)
+      .post('/mcp/rpc')
+      .set('Authorization', `Bearer ${tokens.access_token as string}`)
+      .set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(rpc.status).toBe(401);
+    const refresh = await request(admin).post('/mcp/oauth/token').type('form').send({
+      grant_type: 'refresh_token',
+      client_id: id,
+      refresh_token: tokens.refresh_token,
+      resource,
+    });
+    expect(refresh.status).toBe(400);
+  });
+
+  it('rejects invalid refreshMaxLifetimeSec values on PUT /settings', async () => {
+    const { admin } = appFor(userDir, { oauthFromDisk: true });
+    for (const bad of [-1, 1.5, '30', 315_360_001, null]) {
+      const res = await request(admin)
+        .put('/mcp/api/v1/settings')
+        .send({ oauth: { refreshMaxLifetimeSec: bad } });
+      expect(res.status, String(bad)).toBe(400);
+    }
+    const ok = await request(admin)
+      .put('/mcp/api/v1/settings')
+      .send({ oauth: { refreshMaxLifetimeSec: 0 } });
+    expect(ok.status).toBe(200);
+  });
+
+  it('starts the max lifetime clock for legacy families without familyStart at first refresh', async () => {
+    const base = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    clock.mockReturnValue(base);
+    const first = appFor(userDir, { refreshMax: 100, refreshTtl: 3600 }).admin;
+    const id = (await register(first)).body.client_id as string;
+    const code = (await authorize(first, id)).code!;
+    const issued = (await exchange(first, id, code)).body;
+    const file = join(userDir, '.ai-access', 'oauth.json');
+    const db = JSON.parse(readFileSync(file, 'utf8')) as {
+      tokens: { familyStart?: number; expires: number; type: string }[];
+    };
+    for (const t of db.tokens) {
+      delete t.familyStart;
+      if (t.type === 'refresh') t.expires = base + 3_600_000;
+    }
+    writeFileSync(file, JSON.stringify(db));
+    const admin = appFor(userDir, { refreshMax: 100, refreshTtl: 3600 }).admin;
+    const refresh = (token: string) =>
+      request(admin)
+        .post('/mcp/oauth/token')
+        .type('form')
+        .send({ grant_type: 'refresh_token', client_id: id, refresh_token: token, resource });
+    clock.mockReturnValue(base + 500_000);
+    const rotated = await refresh(issued.refresh_token as string);
+    expect(rotated.status).toBe(200);
+    clock.mockReturnValue(base + 550_000);
+    const again = await refresh(rotated.body.refresh_token as string);
+    expect(again.status).toBe(200);
+    clock.mockReturnValue(base + 601_000);
+    expect((await refresh(again.body.refresh_token as string)).status).toBe(400);
   });
 
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {
