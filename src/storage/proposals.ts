@@ -2,7 +2,7 @@
  * Proposal JSON store under `.ai-access/proposals/`.
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -22,10 +22,20 @@ export type ProposalStatus =
 
 export type ProposalType = 'replace_flow';
 
-export interface ProposalCreator {
+export interface AccessLinkProposalCreator {
   kind: 'access-link';
   linkId: string;
   label?: string;
+}
+export type ProposalCreator =
+  AccessLinkProposalCreator | { kind: 'oauth'; clientId: string; user: string };
+
+export function oauthOwnerId(clientId: string, user: string): string {
+  return `oauth-${createHash('sha256').update(`${clientId}\0${user}`).digest('hex')}`;
+}
+
+export function proposalOwnerId(creator: ProposalCreator): string {
+  return creator.kind === 'oauth' ? oauthOwnerId(creator.clientId, creator.user) : creator.linkId;
 }
 
 export type ProposalDecisionBy =
@@ -224,13 +234,23 @@ export class ProposalStore {
         ? (sanitizeFlowTab(proposal.baseFlow) as Partial<FlowTab>)
         : undefined;
 
-    const createdBy: ProposalCreator = {
-      kind: 'access-link',
-      linkId: assertSafeSegment(String(proposal.createdBy.linkId).slice(0, 200), 'linkId'),
-    };
-    if (typeof proposal.createdBy.label === 'string') {
-      createdBy.label = proposal.createdBy.label.replace(/\0/g, '').slice(0, 200);
-    }
+    const createdBy: ProposalCreator =
+      proposal.createdBy.kind === 'oauth'
+        ? {
+            kind: 'oauth',
+            clientId: assertSafeSegment(
+              String(proposal.createdBy.clientId).slice(0, 200),
+              'clientId'
+            ),
+            user: String(proposal.createdBy.user).replace(/\0/g, '').slice(0, 200),
+          }
+        : {
+            kind: 'access-link',
+            linkId: assertSafeSegment(String(proposal.createdBy.linkId).slice(0, 200), 'linkId'),
+            ...(typeof proposal.createdBy.label === 'string'
+              ? { label: proposal.createdBy.label.replace(/\0/g, '').slice(0, 200) }
+              : {}),
+          };
 
     const record: Proposal = {
       id,
@@ -342,7 +362,7 @@ export class ProposalStore {
         const proposal = JSON.parse(
           readFileSync(resolveUnderDir(this.paths.proposals, base), 'utf8')
         ) as Proposal;
-        if (filter?.linkId && proposal.createdBy.linkId !== filter.linkId) {
+        if (filter?.linkId && proposalOwnerId(proposal.createdBy) !== filter.linkId) {
           continue;
         }
         if (filter?.status && proposal.status !== filter.status) {

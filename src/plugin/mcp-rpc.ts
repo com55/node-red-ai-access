@@ -2,14 +2,14 @@
  * MCP JSON-RPC endpoint at `/mcp/rpc` (Streamable HTTP).
  *
  * Thin adapter over the same AI operations used by `/mcp/api/v1`.
- * Access-link Bearer only — no approve/reject/link tools (those stay on `/mcp`).
+ * Access-link and OAuth Bearer tokens — no approve/reject/link tools (those stay on `/mcp`).
  */
-
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { NextFunction, Response } from 'express';
 import { z } from 'zod';
 
+import { oauthOwnerId } from '../storage/proposals.js';
 import { MAX_PROPOSAL_JSON_BYTES } from '../storage/trusted-write.js';
 
 import {
@@ -821,7 +821,7 @@ function createAiMcpServer(
 export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginServices) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      if (!req.accessLink) {
+      if (!req.accessLink && !req.auth) {
         res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
         res.status(401).json({
           error: ACCESS_LINK_MISSING_MESSAGE,
@@ -830,7 +830,9 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
         return;
       }
 
-      const server = createAiMcpServer(RED, services, req);
+      const server = req.accessLink
+        ? createAiMcpServer(RED, services, req)
+        : createOAuthMcpServer(RED, services, req);
       const transport = new StreamableHTTPServerTransport({
         enableJsonResponse: true,
       });
@@ -851,6 +853,33 @@ export function mcpRpcPostHandler(RED: NodeRedPluginAPI, services: PluginService
       next(error instanceof Error ? error : new Error(String(error)));
     }
   };
+}
+
+function createOAuthMcpServer(
+  RED: NodeRedPluginAPI,
+  services: PluginServices,
+  req: AuthenticatedRequest
+): McpServer {
+  const server = new McpServer({ name: 'node-red-ai-access', version: pluginVersion() });
+  installMcpArgumentErrorMapping(server);
+  registerReadTools(server, RED, services, req);
+  const scopes = req.auth?.scopes ?? [];
+  if (scopes.includes('propose')) {
+    const user = typeof req.auth?.extra?.user === 'string' ? req.auth.extra.user : 'owner';
+    const clientId = req.auth?.clientId ?? '';
+    const ownerId = oauthOwnerId(clientId, user);
+    const synthetic = {
+      id: ownerId,
+      kind: 'mcp' as const,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date((req.auth?.expiresAt ?? 0) * 1000).toISOString(),
+      createdBy: user,
+      oauthClientId: clientId,
+      oauthUser: user,
+    };
+    registerProposalTools(server, RED, services, req, synthetic);
+  }
+  return server;
 }
 
 /** GET/DELETE /mcp/rpc — not used in this stateless deployment. */

@@ -39,6 +39,13 @@ export interface PersistedAiAccessSettings {
   rateLimitWindowMs?: number;
   rateLimitMaxPerIp?: number;
   rateLimitMaxPerToken?: number;
+  oauth?: {
+    enabled?: boolean;
+    accessTokenTtlSec?: number;
+    refreshIdleTtlSec?: number;
+    refreshMaxLifetimeSec?: number;
+    dcrMaxClients?: number;
+  };
 }
 
 export interface EffectiveAiAccessSettings {
@@ -52,6 +59,13 @@ export interface EffectiveAiAccessSettings {
   rateLimitWindowMs: number;
   rateLimitMaxPerIp: number;
   rateLimitMaxPerToken: number;
+  oauth: {
+    enabled: boolean;
+    accessTokenTtlSec: number;
+    refreshIdleTtlSec: number;
+    refreshMaxLifetimeSec: number;
+    dcrMaxClients: number;
+  };
 }
 
 export type SettingsSource = 'default' | 'settings.js' | 'disk';
@@ -59,6 +73,14 @@ export type SettingsSource = 'default' | 'settings.js' | 'disk';
 export interface EffectiveAiAccessSettingsWithMeta extends EffectiveAiAccessSettings {
   sources: Record<keyof EffectiveAiAccessSettings, SettingsSource>;
 }
+
+const DEFAULT_OAUTH = {
+  enabled: false,
+  accessTokenTtlSec: 3600,
+  refreshIdleTtlSec: 2_592_000,
+  refreshMaxLifetimeSec: 7_776_000,
+  dcrMaxClients: 20,
+};
 
 const BUILTIN: EffectiveAiAccessSettings = {
   enabled: true,
@@ -71,6 +93,7 @@ const BUILTIN: EffectiveAiAccessSettings = {
   rateLimitWindowMs: 60_000,
   rateLimitMaxPerIp: 600,
   rateLimitMaxPerToken: 300,
+  oauth: { ...DEFAULT_OAUTH },
 };
 
 function isDeploymentType(value: unknown): value is DeploymentType {
@@ -134,6 +157,19 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
       out[key] = value;
     }
   }
+  if (data.oauth && typeof data.oauth === 'object' && !Array.isArray(data.oauth)) {
+    const oauth = data.oauth as Record<string, unknown>;
+    out.oauth = {};
+    if (typeof oauth.enabled === 'boolean') out.oauth.enabled = oauth.enabled;
+    for (const key of ['accessTokenTtlSec', 'refreshIdleTtlSec', 'dcrMaxClients'] as const) {
+      const value = oauth[key];
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 31_536_000)
+        out.oauth[key] = value;
+    }
+    const max = oauth.refreshMaxLifetimeSec;
+    if (typeof max === 'number' && Number.isInteger(max) && max >= 0 && max <= 315_360_000)
+      out.oauth.refreshMaxLifetimeSec = max;
+  }
   return out;
 }
 
@@ -159,7 +195,9 @@ export function mergeAiAccessSettings(
 ): EffectiveAiAccessSettingsWithMeta {
   const sources = {} as EffectiveAiAccessSettingsWithMeta['sources'];
   const effective = { ...BUILTIN };
-  for (const key of Object.keys(BUILTIN) as (keyof EffectiveAiAccessSettings)[]) {
+  for (const key of Object.keys(BUILTIN).filter(
+    key => key !== 'oauth'
+  ) as (keyof EffectiveAiAccessSettings)[]) {
     sources[key] =
       fromSettingsJs[key] !== undefined
         ? 'settings.js'
@@ -168,7 +206,15 @@ export function mergeAiAccessSettings(
           : 'default';
     Object.assign(effective, { [key]: fromSettingsJs[key] ?? fromDisk[key] ?? BUILTIN[key] });
   }
-  return { ...effective, sources };
+  const merged = { ...effective, sources };
+  if (fromSettingsJs.oauth !== undefined || fromDisk.oauth !== undefined) {
+    merged.oauth = { ...DEFAULT_OAUTH, ...(fromDisk.oauth ?? {}), ...(fromSettingsJs.oauth ?? {}) };
+    sources.oauth = fromSettingsJs.oauth !== undefined ? 'settings.js' : 'disk';
+  } else {
+    merged.oauth = { ...DEFAULT_OAUTH };
+    sources.oauth = 'default';
+  }
+  return merged;
 }
 
 export function settingsJsPartial(
@@ -177,9 +223,25 @@ export function settingsJsPartial(
 ): PersistedAiAccessSettings {
   const sanitized = sanitizePartial(aiAccess ?? {}, warn);
   // A present settings.js key is always locked, even if its invalid value needs a default.
-  for (const key of Object.keys(BUILTIN) as (keyof EffectiveAiAccessSettings)[]) {
+  for (const key of Object.keys(BUILTIN).filter(
+    key => key !== 'oauth'
+  ) as (keyof EffectiveAiAccessSettings)[]) {
     if (aiAccess && Object.hasOwn(aiAccess, key) && sanitized[key] === undefined) {
       Object.assign(sanitized, { [key]: BUILTIN[key] });
+    }
+  }
+  // Same for oauth fields: an invalid settings.js value falls back to the default
+  // (never to a disk value) and is reported.
+  const rawOauth = (aiAccess as { oauth?: unknown } | undefined)?.oauth;
+  if (rawOauth && typeof rawOauth === 'object' && !Array.isArray(rawOauth)) {
+    const oauth = (sanitized.oauth ??= {});
+    for (const key of Object.keys(DEFAULT_OAUTH) as (keyof typeof DEFAULT_OAUTH)[]) {
+      if (Object.hasOwn(rawOauth, key) && oauth[key] === undefined) {
+        warn?.(
+          `AI Access: settings.js aiAccess.oauth.${key} is invalid; using the default (${String(DEFAULT_OAUTH[key])})`
+        );
+        Object.assign(oauth, { [key]: DEFAULT_OAUTH[key] });
+      }
     }
   }
   return sanitized;
@@ -230,7 +292,12 @@ export class SettingsStore {
 
   /** Merge into existing disk overrides (only provided keys change). */
   patch(partial: PersistedAiAccessSettings): EffectiveAiAccessSettingsWithMeta {
-    return this.update({ ...this.disk, ...sanitizePartial(partial) });
+    const sanitized = sanitizePartial(partial);
+    return this.update({
+      ...this.disk,
+      ...sanitized,
+      ...(sanitized.oauth ? { oauth: { ...this.disk.oauth, ...sanitized.oauth } } : {}),
+    });
   }
 
   private persist(next: PersistedAiAccessSettings): void {

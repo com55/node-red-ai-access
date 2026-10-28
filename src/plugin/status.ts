@@ -73,6 +73,29 @@ export function buildStatus(RED: NodeRedPluginAPI, req: AuthenticatedRequest): A
   const access = describeAccess(RED, req);
   const aiSettings = resolveAiAccessSettings(RED.settings);
 
+  if (req.auth) {
+    const user = req.auth.extra?.user;
+    return {
+      ok: true,
+      version: readPackageVersion(),
+      adminAuthEnabled: access.adminAuthEnabled,
+      aiAccessEnabled: aiSettings.enabled,
+      aiFeaturesEnabled: access.aiFeaturesEnabled,
+      allowWithoutAdminAuth: access.allowWithoutAdminAuth,
+      permission: req.auth.scopes.includes('propose') ? 'propose' : 'read',
+      capabilities: { view: true, manageLinks: false, approveProposals: false },
+      defaultLinkTtlSeconds: aiSettings.defaultLinkTtlSeconds,
+      maxActiveLinks: aiSettings.maxActiveLinks,
+      defaultDeploymentType: aiSettings.defaultDeploymentType,
+      caller: {
+        kind: 'oauth',
+        clientId: req.auth.clientId,
+        user: typeof user === 'string' ? user : 'owner',
+        scopes: req.auth.scopes,
+      },
+    };
+  }
+
   // Access-link callers are not admin sessions: permission stays null; caller
   // identifies the AI token so clients do not treat null as "logged out".
   if (req.accessLink) {

@@ -81,6 +81,13 @@ module.exports = {
     // Browser origins allowed to call /mcp/a, /mcp/api, and /mcp/rpc
     // cross-origin (default: none — no CORS headers are sent)
     // corsAllowedOrigins: ['https://app.example.com'],
+    // MCP OAuth (disabled by default; publicBaseUrl is the issuer)
+    // oauth: {
+    //   enabled: true,
+    //   accessTokenTtlSec: 3600,
+    //   refreshIdleTtlSec: 2592000,
+    //   dcrMaxClients: 20,
+    // },
   },
 };
 ```
@@ -156,6 +163,33 @@ read-only. Public URL, CORS, and rate limits apply immediately; changing limits
 starts fresh rate-limit buckets. A button opens the `/mcp` page. When
 `adminAuth` is off, the tab exposes the `allowWithoutAdminAuth` opt-in with a
 clear local-only warning.
+
+The sidebar also configures MCP OAuth, shows registered clients with revoke
+buttons, and reports route collisions and the `httpNodeRoot: false` metadata
+fallback. Enabling OAuth with no Public URL or an HTTP non-loopback URL shows a
+warning confirmation; it does not block the change. OAuth fields set in
+`settings.js` are locked in the sidebar.
+
+### MCP OAuth
+
+OAuth is disabled by default. Set `aiAccess.publicBaseUrl` to the public HTTPS
+origin before enabling it; localhost and loopback HTTP are supported for local
+development. Node-RED serves authorization, token, dynamic client registration,
+and revocation under `/mcp/oauth/*`. It publishes authorization server metadata
+at `/.well-known/oauth-authorization-server` and protected resource metadata at
+`/.well-known/oauth-protected-resource/mcp` and
+`/.well-known/oauth-protected-resource`. The issuer is `publicBaseUrl` and the
+resource indicator is `{publicBaseUrl}/mcp`. When `httpNodeRoot` is false,
+metadata is available under the admin `/mcp` path instead; the sidebar displays
+this fallback. Route collisions disable the affected OAuth endpoints and appear
+in the sidebar.
+
+Clients use authorization code with PKCE S256 and can request `read` or
+`propose`. Consent uses the Node-RED editor login. Access tokens last one hour
+by default; refresh tokens expire after 30 days of inactivity and rotate on each
+use. Reusing a rotated refresh token revokes its token family. Tokens are stored
+as SHA-256 hashes in `<userDir>/.ai-access/oauth.json`. Access-link `aia_`
+bearer tokens continue to work. See [MCP client setup](docs/mcp-clients.md).
 
 Public URL **Check** uses `POST /mcp/api/v1/settings/check-public-url` and
 requires `*` permission because it performs an outbound request. It validates

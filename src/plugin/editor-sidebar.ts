@@ -53,6 +53,33 @@ function editorSidebarStyles(): string {
 #red-ui-sidebar-ai-access .ai-access-status-block p {
   margin: 0 0 6px;
 }
+#red-ui-sidebar-ai-access .ai-access-oauth-warning {
+  color: #9b2c2c;
+  white-space: pre-wrap;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-client {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-client span {
+  overflow-wrap: anywhere;
+}
+#red-ui-sidebar-ai-access .ai-access-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  padding: 18px;
+  background: var(--red-ui-primary-background, #fff);
+}
+#red-ui-sidebar-ai-access .ai-access-dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
 #red-ui-sidebar-ai-access .ai-access-ttl-presets {
   display: flex;
   flex-wrap: wrap;
@@ -190,6 +217,7 @@ function editorSidebarScriptPartA(): string {
     var CAN_EDIT = false;
     var ADMIN_AUTH = true;
     var LAST = null;
+    var dialogOpen = false;
     var FIELD_IDS = {
       enabled: 'enabled', allowWithoutAdminAuth: 'allow-without',
       defaultLinkTtlSeconds: 'ttl', defaultDeploymentType: 'deploy',
@@ -287,6 +315,24 @@ function editorSidebarScriptPartA(): string {
       $el.addClass('is-visible');
     }
 
+    function openConfirmDialog(message) {
+      if (dialogOpen) return Promise.resolve(false);
+      dialogOpen = true;
+      $('#ai-access-dialog-message').text(message);
+      $('#ai-access-dialog').show();
+      return new Promise(function (resolve) {
+        function finish(accepted) {
+          $('#ai-access-dialog').hide();
+          $('#ai-access-dialog-allow').off('click');
+          $('#ai-access-dialog-cancel').off('click');
+          dialogOpen = false;
+          resolve(accepted);
+        }
+        $('#ai-access-dialog-allow').on('click', function () { finish(true); });
+        $('#ai-access-dialog-cancel').on('click', function () { finish(false); });
+      });
+    }
+
     function hoursFromSeconds(seconds) {
       var s = Number(seconds);
       if (!Number.isFinite(s) || s <= 0) return 4;
@@ -343,6 +389,87 @@ function editorSidebarScriptPartA(): string {
       });
       $('#' + CONTENT_ID + ' .ai-access-ttl-presets button').prop('disabled', readonly || (data.sources && data.sources.defaultLinkTtlSeconds === 'settings.js'));
       $('#ai-access-check-public-url').prop('disabled', readonly);
+      var oauth = s.oauth || {};
+      $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled);
+      setDuration('access-ttl', oauth.accessTokenTtlSec || 3600, OAUTH_ACCESS_UNITS);
+      setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
+      $('#ai-access-oauth-refresh-max').val(Math.round((typeof oauth.refreshMaxLifetimeSec === 'number' ? oauth.refreshMaxLifetimeSec : 7776000) / 86400));
+      $('#ai-access-oauth-refresh-max-unit').val('days');
+      $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
+      var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
+      $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-refresh-max, #ai-access-oauth-refresh-max-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
+      $('#ai-access-oauth-lock').toggle(!!(data.sources && data.sources.oauth === 'settings.js'));
+    }
+
+    var OAUTH_ACCESS_UNITS = [['minutes', 60, 'Minutes'], ['hours', 3600, 'Hours']];
+    var OAUTH_REFRESH_UNITS = [['hours', 3600, 'Hours'], ['days', 86400, 'Days']];
+    var OAUTH_MAX_UNITS = [['days', 86400, 'Days']];
+
+    // Show seconds as the largest unit that divides them evenly (smallest unit otherwise).
+    function setDuration(field, seconds, units) {
+      var unit = units[0];
+      for (var i = units.length - 1; i >= 0; i--) {
+        if (seconds % units[i][1] === 0) { unit = units[i]; break; }
+      }
+      $('#ai-access-oauth-' + field).val(Math.max(1, Math.round(seconds / unit[1])));
+      $('#ai-access-oauth-' + field + '-unit').val(unit[0]);
+    }
+
+    function readDuration(field, units) {
+      var amount = Number($('#ai-access-oauth-' + field).val());
+      var name = $('#ai-access-oauth-' + field + '-unit').val();
+      var mult = units[0][1];
+      units.forEach(function (u) { if (u[0] === name) mult = u[1]; });
+      return Math.round(amount * mult);
+    }
+
+    function refreshOAuth() {
+      api('/oauth/status').then(function (status) {
+        var warnings = [];
+        if (status.httpNodeRootFallback) warnings.push('httpNodeRoot is disabled: OAuth metadata is served under the admin /mcp path.');
+        if (status.authorization && status.authorization.length) warnings.push('OAuth authorization routes collide with: ' + status.authorization.join(', '));
+        if (status.metadata && status.metadata.length) warnings.push('OAuth metadata routes collide with: ' + status.metadata.join(', '));
+        $('#ai-access-oauth-route-warning').text(warnings.join('\\n')).toggle(warnings.length > 0);
+      }).catch(function (err) {
+        $('#ai-access-oauth-route-warning').text('OAuth route status unavailable: ' + err.message).show();
+      });
+      api('/oauth/clients').then(function (data) {
+        var list = $('#ai-access-oauth-clients').empty();
+        var clients = (data && data.clients) || [];
+        if (!clients.length) {
+          $('<p></p>').text('No registered OAuth clients.').appendTo(list);
+          return;
+        }
+        clients.forEach(function (client) {
+          var row = $('<div class="ai-access-oauth-client"></div>').appendTo(list);
+          $('<span></span>').text((client.client_name || 'Unnamed client') + ' (' + client.client_id + ')').appendTo(row);
+          $('<button type="button" class="red-ui-button"></button>').text('Revoke').prop('disabled', !CAN_EDIT)
+            .appendTo(row).on('click', function () {
+              openConfirmDialog('Revoke OAuth client "' + (client.client_name || client.client_id) + '" and its tokens?')
+                .then(function (accepted) {
+                  if (!accepted) return;
+                  api('/oauth/clients/' + encodeURIComponent(client.client_id), { method: 'DELETE' })
+                    .then(function () { setFlash($('#ai-access-flash'), 'OAuth client revoked.', true); refreshOAuth(); })
+                    .catch(function (err) { setFlash($('#ai-access-flash'), err.message || String(err), false); });
+                });
+            });
+        });
+      }).catch(function (err) {
+        $('#ai-access-oauth-clients').text('OAuth clients unavailable: ' + err.message);
+      });
+    }
+
+    function oauthPublicUrlWarning(value) {
+      if (!value) return 'No Public URL is configured. OAuth clients may not discover this server.';
+      try {
+        var url = new URL(value);
+        var host = url.hostname.toLowerCase();
+        if (host.endsWith('.')) host = host.slice(0, -1);
+        if (url.protocol === 'https:' || host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return '';
+        return 'The Public URL does not use HTTPS. OAuth tokens and redirects may be exposed.';
+      } catch (e) {
+        return 'The Public URL is invalid. OAuth clients may not discover this server.';
+      }
     }
 
     function formatPendingBadge(live, stale) {
@@ -397,6 +524,7 @@ function editorSidebarScriptPartA(): string {
         .then(function (data) {
           applyForm(data);
           refreshPending();
+          refreshOAuth();
         })
         .catch(function (err) {
           setFlash($('#ai-access-flash'), err.message || String(err), false);
@@ -420,7 +548,7 @@ function editorSidebarScriptPartA(): string {
 
     function saveSettings(opts) {
       var silent = !!(opts && opts.silent);
-      if (!CAN_EDIT || saving) return;
+      if (!CAN_EDIT || saving || dialogOpen) return;
       var payload = {
         enabled: $('#ai-access-enabled').is(':checked'),
         allowWithoutAdminAuth: $('#ai-access-allow-without').is(':checked'),
@@ -432,10 +560,37 @@ function editorSidebarScriptPartA(): string {
         rateLimitWindowMs: Number($('#ai-access-rate-window').val()),
         rateLimitMaxPerIp: Number($('#ai-access-rate-ip').val()),
         rateLimitMaxPerToken: Number($('#ai-access-rate-token').val()),
+        oauth: {
+          enabled: $('#ai-access-oauth-enabled').is(':checked'),
+          accessTokenTtlSec: readDuration('access-ttl', OAUTH_ACCESS_UNITS),
+          refreshIdleTtlSec: readDuration('refresh-ttl', OAUTH_REFRESH_UNITS),
+          refreshMaxLifetimeSec: readDuration('refresh-max', OAUTH_MAX_UNITS),
+          dcrMaxClients: Number($('#ai-access-oauth-dcr-cap').val()),
+        },
       };
       Object.keys(payload).forEach(function (key) {
         if (LAST && LAST.sources && LAST.sources[key] === 'settings.js') delete payload[key];
       });
+      // Persist the max lifetime only when the user changed it, so the default can evolve.
+      var loadedOauth = (LAST && LAST.settings && LAST.settings.oauth) || {};
+      var loadedMax = typeof loadedOauth.refreshMaxLifetimeSec === 'number' ? loadedOauth.refreshMaxLifetimeSec : 7776000;
+      if (payload.oauth && Math.round(payload.oauth.refreshMaxLifetimeSec / 86400) === Math.round(loadedMax / 86400)) {
+        delete payload.oauth.refreshMaxLifetimeSec;
+      }
+      if (LAST && LAST.settings && !(LAST.settings.oauth && LAST.settings.oauth.enabled) && payload.oauth && payload.oauth.enabled) {
+        var warning = oauthPublicUrlWarning(payload.publicBaseUrl === undefined ? LAST.settings.publicBaseUrl : payload.publicBaseUrl);
+        if (warning) {
+          openConfirmDialog(warning + '\\n\\nEnable OAuth anyway?').then(function (accepted) {
+            if (accepted) persistSettings(payload, silent);
+            else $('#ai-access-oauth-enabled').prop('checked', false);
+          });
+          return;
+        }
+      }
+      persistSettings(payload, silent);
+    }
+
+    function persistSettings(payload, silent) {
       saving = true;
       api('/settings', { method: 'PUT', body: JSON.stringify(payload) })
         .then(function (data) {
@@ -446,6 +601,7 @@ function editorSidebarScriptPartA(): string {
           if (silent) showSavedToast();
           else setFlash($('#ai-access-flash'), 'Settings saved.', true);
           refreshPending();
+          refreshOAuth();
         })
         .catch(function (err) {
           setFlash($('#ai-access-flash'), err.message || String(err), false);
@@ -481,6 +637,12 @@ function editorSidebarScriptPartB(): string {
         .on('click', loadSettings);
 
       var body = $('<div class="red-ui-sidebar-ai-access-body"></div>').appendTo(content);
+      var dialog = $('<div id="ai-access-dialog" class="ai-access-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-access-dialog-title" style="display:none"></div>').appendTo(body);
+      $('<h3 id="ai-access-dialog-title"></h3>').text('Confirm OAuth action').appendTo(dialog);
+      $('<p id="ai-access-dialog-message"></p>').appendTo(dialog);
+      var dialogActions = $('<div class="ai-access-dialog-actions"></div>').appendTo(dialog);
+      $('<button type="button" id="ai-access-dialog-cancel" class="red-ui-button"></button>').text('Cancel').appendTo(dialogActions);
+      $('<button type="button" id="ai-access-dialog-allow" class="red-ui-button"></button>').text('Continue').appendTo(dialogActions);
 
       $('<div class="red-ui-settings-section-description"></div>')
         .text('Configure temporary AI access features. Changes apply immediately (no restart).')
@@ -591,6 +753,31 @@ function editorSidebarScriptPartB(): string {
       var trustRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
       $('<label></label>').text('Express trust proxy (read-only)').appendTo(trustRow);
       $('<span id="ai-access-trust-proxy"></span>').appendTo(trustRow);
+      $('<h3></h3>').text('MCP OAuth').appendTo(body);
+      $('<p class="form-tips"></p>').text('Clients can request read or propose access through OAuth. Changes apply immediately.').appendTo(body);
+      row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
+      $('<input id="ai-access-oauth-enabled" type="checkbox">').appendTo(row);
+      $('<label for="ai-access-oauth-enabled"></label>').text('Enable MCP OAuth').appendTo(row);
+      $('<span id="ai-access-oauth-lock" class="form-tips" style="display:none"></span>')
+        .text('🔒 Locked by settings.js').appendTo(row);
+      [
+        ['access-ttl', 'Access token lifetime', OAUTH_ACCESS_UNITS],
+        ['refresh-ttl', 'Refresh token idle lifetime', OAUTH_REFRESH_UNITS],
+        ['refresh-max', 'Refresh token max lifetime (default 90 days, 0 = unlimited)', OAUTH_MAX_UNITS],
+        ['dcr-cap', 'Maximum registered OAuth clients', null]
+      ].forEach(function (field) {
+        var id = 'ai-access-oauth-' + field[0];
+        var oauthRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
+        $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
+        $('<input type="number" step="1" style="width:80px">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(oauthRow).on('change', scheduleAutoSave);
+        if (!field[2]) return;
+        var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
+          .appendTo(oauthRow).on('change', scheduleAutoSave);
+        field[2].forEach(function (u) { $('<option></option>').attr('value', u[0]).text(u[2]).appendTo(select); });
+      });
+      $('<p id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></p>').appendTo(body);
+      $('<h4></h4>').text('Registered OAuth clients').appendTo(body);
+      $('<div id="ai-access-oauth-clients" aria-live="polite"></div>').appendTo(body);
       Object.keys(FIELD_IDS).forEach(function (key) {
         var id = FIELD_IDS[key];
         $('<span class="form-tips" style="display:none"></span>')
@@ -598,7 +785,7 @@ function editorSidebarScriptPartB(): string {
           .appendTo(content.find('#ai-access-' + id).closest('.red-ui-settings-row'));
       });
 
-      content.find('#ai-access-enabled, #ai-access-allow-without, #ai-access-deploy').on(
+      content.find('#ai-access-enabled, #ai-access-allow-without, #ai-access-deploy, #ai-access-oauth-enabled').on(
         'change',
         scheduleAutoSave
       );

@@ -5,7 +5,12 @@
  * and the /mcp/rpc Streamable HTTP endpoint.
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { NextFunction, Request, Response } from 'express';
+
+import { resolveAiAccessPaths } from '../storage/paths.js';
 
 import { requireAccessLink } from './access-link-auth.js';
 import { editorAuthTokenKey } from './auth-token-key.js';
@@ -45,6 +50,12 @@ import {
   listNodeTypesHandler,
   searchPaletteHandler,
 } from './node-types-routes.js';
+import {
+  detectOAuthRouteCollisions,
+  LocalOAuthProvider,
+  OAuthStore,
+  makeOAuthHandlers,
+} from './oauth.js';
 import { openApiJsonHandler, openApiYamlHandler } from './openapi.js';
 import { renderMcpPage } from './page.js';
 import { liveFlowLabelsFromFlows, setRequestFlowLabels } from './proposal-present.js';
@@ -57,7 +68,7 @@ import {
   rejectProposalHandler,
   withdrawProposalHandler,
 } from './proposals-routes.js';
-import { createLiveAiAccessDualRateLimiters } from './rate-limit.js';
+import { createAiAccessRateLimiter, createLiveAiAccessDualRateLimiters } from './rate-limit.js';
 import { asyncRoute } from './route-errors.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import {
@@ -167,11 +178,143 @@ export function registerRoutes(
     services.settingsStore.getEffective()
   );
   const { ip: limiter, token: tokenLimiter } = dualLimiters;
+  const oauthStore = new OAuthStore(
+    resolveAiAccessPaths(RED.settings.userDir),
+    () => services.settingsStore.getEffective().oauth.dcrMaxClients
+  );
+  const publicBase = () => services.settingsStore.getEffective().publicBaseUrl;
+  const mcpUrl = () => `${publicBase().replace(/\/$/, '')}/mcp`;
+  const oauthProvider = new LocalOAuthProvider(
+    oauthStore,
+    mcpUrl,
+    () => services.settingsStore.getEffective().oauth.accessTokenTtlSec,
+    () => services.settingsStore.getEffective().oauth.refreshIdleTtlSec,
+    () => services.settingsStore.getEffective().oauth.refreshMaxLifetimeSec
+  );
+  const oauth = makeOAuthHandlers(RED, oauthProvider, publicBase, mcpUrl);
 
   // AI-facing CORS: no headers by default; echo allow-listed origins only.
   installAiCorsMiddleware(
     RED.httpAdmin,
     aiCorsMiddleware(() => services.settingsStore.getEffective().corsAllowedOrigins)
+  );
+  const routeStatus = {
+    authorization: [] as string[],
+    metadata: [] as string[],
+    httpNodeRootFallback: RED.settings.httpNodeRoot === false || !RED.httpNode,
+  };
+  const refreshCollisions = () => {
+    routeStatus.authorization = [
+      ...detectOAuthRouteCollisions(RED.httpAdmin, ['/mcp/oauth/']),
+      ...detectOAuthRouteCollisions(RED.httpNode, ['/mcp/oauth/']),
+    ];
+    const metadataPaths = routeStatus.httpNodeRootFallback
+      ? ['/mcp/.well-known/oauth-']
+      : ['/.well-known/oauth-'];
+    routeStatus.metadata = [
+      ...detectOAuthRouteCollisions(RED.httpAdmin, metadataPaths),
+      ...detectOAuthRouteCollisions(RED.httpNode, metadataPaths),
+    ];
+    try {
+      // Flows are not loaded yet while the plugin registers; `flows:started` re-runs this.
+      RED.nodes?.eachNode(node => {
+        if (node.type !== 'http in' || typeof node.url !== 'string') return;
+        const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
+        if (path.startsWith('/mcp/oauth/')) routeStatus.authorization.push(`http-in node ${path}`);
+        if (path.startsWith('/.well-known/oauth-'))
+          routeStatus.metadata.push(`http-in node ${path}`);
+      });
+    } catch {
+      // ignore: flow runtime not started
+    }
+    const staticDirs = RED.settings.httpStatic ? [RED.settings.httpStatic].flat() : [];
+    for (const dir of staticDirs) {
+      for (const path of [
+        '.well-known/oauth-authorization-server',
+        '.well-known/oauth-protected-resource',
+        'mcp/oauth/authorize',
+        'mcp/oauth/token',
+        'mcp/oauth/register',
+        'mcp/oauth/revoke',
+      ]) {
+        if (!existsSync(join(dir, path))) continue;
+        if (path.startsWith('mcp/'))
+          routeStatus.authorization.push(`httpStatic ${join(dir, path)}`);
+        else routeStatus.metadata.push(`httpStatic ${join(dir, path)}`);
+      }
+    }
+    for (const collision of [...routeStatus.authorization, ...routeStatus.metadata])
+      RED.log?.warn?.(`AI Access OAuth route collision: ${collision}`);
+  };
+  refreshCollisions();
+  RED.events?.on('flows:started', refreshCollisions);
+  const authorizeLimiter = createAiAccessRateLimiter({ windowMs: 60_000, maxPerIp: 30 });
+  const oauthServerMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (
+      !services.settingsStore.getEffective().oauth.enabled ||
+      routeStatus.authorization.length ||
+      !req.path.startsWith('/mcp/oauth/')
+    ) {
+      next();
+      return;
+    }
+    // Same gate as aia_ links: disabled AI Access blocks consent, token, register, revoke.
+    // Consent pages get the shared per-IP limiter plus a tighter one for /authorize,
+    // which creates pending in-memory requests.
+    const path = req.path.replace(/\/+$/, '').toLowerCase();
+    const run = () => requireAiFeatures(RED)(req, res, () => oauth.server(req, res, next));
+    if (path === '/mcp/oauth/authorize') limiter(req, res, () => authorizeLimiter(req, res, run));
+    else if (path.startsWith('/mcp/oauth/consent/')) limiter(req, res, run);
+    else run();
+  };
+  (oauthServerMiddleware as typeof oauthServerMiddleware & { oauthOwned: boolean }).oauthOwned =
+    true;
+  RED.httpAdmin.use(oauthServerMiddleware);
+  const metadataHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!services.settingsStore.getEffective().oauth.enabled || routeStatus.metadata.length) {
+      next();
+      return;
+    }
+    oauth.metadata(req, res, next);
+  };
+  (metadataHandler as typeof metadataHandler & { oauthOwned: boolean }).oauthOwned = true;
+  if (routeStatus.httpNodeRootFallback) RED.httpAdmin.use('/mcp', metadataHandler);
+  else RED.httpNode?.use(metadataHandler);
+  RED.httpAdmin.get(
+    '/mcp/api/v1/oauth/clients',
+    limiter,
+    tokenLimiter,
+    requireAdminSession(RED, 'api'),
+    (req: AuthenticatedRequest, res: Response) =>
+      res.json({
+        clients: oauthStore.data.clients.map(c => ({
+          client_id: c.client_id,
+          client_name: c.client_name,
+          redirect_uris: c.redirect_uris,
+          lastUsedAt: c.lastUsedAt,
+        })),
+      })
+  );
+  RED.httpAdmin.get(
+    '/mcp/api/v1/oauth/status',
+    limiter,
+    tokenLimiter,
+    requireAdminSession(RED, 'api'),
+    (_req: AuthenticatedRequest, res: Response) =>
+      res.json({
+        ...routeStatus,
+        collisions: [...routeStatus.authorization, ...routeStatus.metadata],
+        oauthEnabled: services.settingsStore.getEffective().oauth.enabled,
+      })
+  );
+  RED.httpAdmin.delete(
+    '/mcp/api/v1/oauth/clients/:id',
+    limiter,
+    tokenLimiter,
+    requireAdminSession(RED, 'api'),
+    requireStarPermission(RED),
+    (req: AuthenticatedRequest, res: Response) =>
+      res.json({ revoked: oauthStore.revokeClient(String(req.params.id)) })
   );
 
   // Resolve live flow labels once per proposal-related request so every channel
@@ -364,7 +507,35 @@ export function registerRoutes(
     asyncRoute(withdrawProposalHandler(services.proposalStore, services.auditLog, httpAdminRoot))
   );
 
-  const mcpRpcGuards = [limiter, tokenLimiter, requireAccessLink(RED, services.linkStore, 'mcp')];
+  const mcpRpcGuards = [
+    limiter,
+    tokenLimiter,
+    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      const authHeader = req.headers.authorization;
+      if (
+        !services.settingsStore.getEffective().oauth.enabled ||
+        authHeader?.toLowerCase().startsWith('bearer aia_')
+      ) {
+        if (services.settingsStore.getEffective().oauth.enabled) {
+          const setHeader = res.setHeader.bind(res);
+          res.setHeader = ((name: string, value: number | string | readonly string[]) => {
+            if (
+              name.toLowerCase() === 'www-authenticate' &&
+              typeof value === 'string' &&
+              !value.includes('resource_metadata=')
+            ) {
+              const prm = `${publicBase().replace(/\/$/, '')}${routeStatus.httpNodeRootFallback ? '/mcp' : ''}/.well-known/oauth-protected-resource/mcp`;
+              value += `, resource_metadata="${prm}", scope="read propose"`;
+            }
+            return setHeader(name, value);
+          }) as typeof res.setHeader;
+        }
+        requireAccessLink(RED, services.linkStore, 'mcp')(req, res, next);
+        return;
+      }
+      requireAiFeatures(RED)(req, res, () => oauth.auth(req, res, next));
+    },
+  ];
   RED.httpAdmin.post(
     '/mcp/rpc',
     ...mcpRpcGuards,

@@ -11,6 +11,7 @@ import {
   ProposalNotFoundError,
   ProposalNotOwnedError,
   ProposalNotPendingError,
+  proposalOwnerId,
   type Proposal,
   type ProposalDecisionBy,
   type ProposalStatus,
@@ -85,7 +86,7 @@ export type PresentedProposalWithMine = PresentedProposal & { mine: boolean };
 export type PresentedProposalApiWithMine = PresentedProposalApi & { mine: boolean };
 
 function isMineProposal(proposal: Proposal, accessLink: AccessLinkAuthInfo): boolean {
-  return proposal.createdBy.linkId === accessLink.id;
+  return proposalOwnerId(proposal.createdBy) === accessLink.id;
 }
 
 /** Max page size for proposal list endpoints (REST / GET / MCP). */
@@ -786,7 +787,7 @@ export async function submitReplaceFlowProposal(
   });
   throwValidationIssues(flowErrors);
 
-  const createdBy: {
+  const auditActor: {
     kind: 'access-link';
     linkId: string;
     label?: string;
@@ -795,8 +796,12 @@ export async function submitReplaceFlowProposal(
     linkId: accessLink.id,
   };
   if (accessLink.label !== undefined) {
-    createdBy.label = accessLink.label;
+    auditActor.label = accessLink.label;
   }
+  const createdBy =
+    accessLink.oauthClientId && accessLink.oauthUser
+      ? { kind: 'oauth' as const, clientId: accessLink.oauthClientId, user: accessLink.oauthUser }
+      : auditActor;
 
   const title =
     sanitizeProposalTitle(body.title) ?? autoGenerateProposalTitle(safeBaseFlow, safeFlow);
@@ -817,7 +822,7 @@ export async function submitReplaceFlowProposal(
   const presented = presentProposal(proposal, presentOptions);
 
   const flowLabel = presented.flowLabel || undefined;
-  audit.append('proposal.created', createdBy, {
+  audit.append('proposal.created', auditActor, {
     proposalId: proposal.id,
     flowId: safeFlowId,
     expectedRev: safeExpectedRev,

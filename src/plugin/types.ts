@@ -50,9 +50,17 @@ export interface AiAccessSettings {
    * Default: none (no CORS headers). Editable in the AI Access settings sidebar unless locked by settings.js.
    */
   corsAllowedOrigins?: string[];
+  oauth?: {
+    enabled?: boolean;
+    accessTokenTtlSec?: number;
+    refreshIdleTtlSec?: number;
+    /** Absolute refresh-family lifetime in seconds; default 7776000 (90 days), 0 = unlimited. */
+    refreshMaxLifetimeSec?: number;
+    dcrMaxClients?: number;
+  };
 }
 
-export type AiAccessPermission = 'read' | '*';
+export type AiAccessPermission = 'read' | 'propose' | '*';
 
 export interface AiAccessCapabilities {
   view: boolean;
@@ -103,7 +111,15 @@ export interface AiAccessStatusCallerAccessLink {
   baseUrls?: Partial<AiAccessStatusCallerBaseUrls>;
 }
 
-export type AiAccessStatusCaller = AiAccessStatusCallerAdmin | AiAccessStatusCallerAccessLink;
+export interface AiAccessStatusCallerOAuth {
+  kind: 'oauth';
+  clientId: string;
+  user: string;
+  scopes: string[];
+}
+
+export type AiAccessStatusCaller =
+  AiAccessStatusCallerAdmin | AiAccessStatusCallerAccessLink | AiAccessStatusCallerOAuth;
 
 export interface AiAccessStatus {
   ok: boolean;
@@ -133,6 +149,8 @@ export interface AiAccessStatus {
 export interface NodeRedPluginSettings {
   userDir: string;
   httpAdminRoot?: string;
+  httpNodeRoot?: string | false;
+  httpStatic?: string | string[];
   adminAuth?: unknown;
   aiAccess?: AiAccessSettings;
 }
@@ -144,6 +162,9 @@ export interface NodeRedAuthAPI {
 export interface NodeRedPluginAPI {
   settings: NodeRedPluginSettings;
   httpAdmin: Express;
+  httpNode?: Express;
+  nodes?: { eachNode(listener: (node: { type?: string; url?: string }) => void): void };
+  events?: { on(event: string, listener: () => void): void };
   auth: NodeRedAuthAPI;
   plugins: {
     registerPlugin: (id: string, definition?: Record<string, unknown>) => void;
@@ -164,6 +185,8 @@ export interface AccessLinkAuthInfo {
   createdAt: string;
   expiresAt: string;
   createdBy?: string;
+  oauthClientId?: string;
+  oauthUser?: string;
 }
 
 export interface AuthenticatedRequest extends Request {
