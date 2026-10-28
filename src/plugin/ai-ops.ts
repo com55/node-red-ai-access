@@ -50,6 +50,13 @@ import {
   type PresentProposalApiOptions,
   type PresentProposalOptions,
 } from './proposal-present.js';
+import {
+  aiRedactingAdapter,
+  rawFlowAdapter,
+  redactProposalForAi,
+  restoreRedactedPlaceholders,
+  secretChangeWarnings,
+} from './secret-redaction.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
 export { MAX_PROPOSAL_JSON_BYTES };
@@ -351,7 +358,7 @@ export function listAccessibleProposals(
     .filter(p => filter.mine !== false || !isMineProposal(p, accessLink))
     .filter(p => matchesStatusFilter(p.status, filter.status));
   const presented = listed.map(p => ({
-    ...presentProposal(p, presentOptions),
+    ...presentProposal(redactProposalForAi(p), presentOptions),
     mine: isMineProposal(p, accessLink),
   }));
   const page = applyListPagination(presented, filter);
@@ -390,7 +397,7 @@ export function getAccessibleProposal(
   }
   const proposal = store.get(id);
   return {
-    ...presentProposal(proposal, presentOptions),
+    ...presentProposal(redactProposalForAi(proposal), presentOptions),
     mine: isMineProposal(proposal, accessLink),
   };
 }
@@ -449,7 +456,7 @@ export function withdrawMyProposal(
       : 'Withdrawn by access link';
   const actor = accessLinkActor(accessLink);
   const withdrawn = store.markWithdrawn(id, actor, cleaned);
-  const presented = presentProposal(withdrawn, presentOptions);
+  const presented = presentProposal(redactProposalForAi(withdrawn), presentOptions);
   const flowLabel = presented.flowLabel || undefined;
   audit.append('proposal.withdrawn', actor, {
     proposalId: withdrawn.id,
@@ -521,7 +528,8 @@ export function presentAccessibleProposalForApi(
       // keep presented
     }
   }
-  const lean = presentProposalForApi(presented, apiOptions);
+  // AI-facing: never expose secret values from stored flow bodies.
+  const lean = presentProposalForApi(redactProposalForAi(presented), apiOptions);
   const out: PresentedProposalApiWithMine & Record<string, unknown> = {
     ...lean,
     mine: presented.mine,
@@ -709,6 +717,34 @@ function assertSafeRevAndFlowId(
   }
 }
 
+/**
+ * Strictly restore `[REDACTED]` placeholders from the live flows; reject the
+ * submit when any placeholder is not exactly where the AI was shown it.
+ */
+function strictRestoreOrThrow(
+  flow: Record<string, unknown>,
+  liveFlows: readonly Record<string, unknown>[]
+): ReturnType<typeof restoreRedactedPlaceholders> {
+  const restoration = restoreRedactedPlaceholders(sanitizeFlowTab(flow), liveFlows);
+  if (restoration.unresolved.length > 0) {
+    // Never store a placeholder and never move a secret: reject with details.
+    throwValidationIssues(
+      restoration.unresolved.map(miss => ({
+        code: 'redacted_placeholder_mismatch',
+        error:
+          `Node ${miss.nodeId} field ${miss.property}: ${miss.reason}. ` +
+          '[REDACTED] placeholders are restored only when left exactly where they were shown ' +
+          '(same node, field, env/header name, and unchanged line). Do not copy, move, or add ' +
+          'placeholders; keep those lines unchanged or supply a real new value.',
+        nodeId: miss.nodeId,
+        property: miss.property,
+        statusCode: 400,
+      }))
+    );
+  }
+  return restoration;
+}
+
 export async function submitReplaceFlowProposal(
   store: ProposalStore,
   audit: AuditLog,
@@ -735,8 +771,11 @@ export async function submitReplaceFlowProposal(
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
   }
   const payloadObj = payload as Record<string, unknown>;
+  // Node ops run against the same redacted view the AI read; placeholders are
+  // restored from the live (raw) flows below.
+  const liveAdapter = rawFlowAdapter(adapter);
   const resolved = await resolveReplaceFlowPayload(
-    adapter,
+    aiRedactingAdapter(liveAdapter),
     expectedRev,
     payloadObj,
     body.nodes,
@@ -759,18 +798,19 @@ export async function submitReplaceFlowProposal(
   const rawFlow = flow as Partial<FlowTab>;
   throwValidationIssues(collectFullFlowShapeIssues(rawFlow, safeFlowId));
 
-  const safeFlow = sanitizeFlowTab(flow) as Partial<FlowTab>;
-
   // Rev before types (stale rev fails without palette lookup).
-  const current = await adapter.getFlows();
+  const current = await liveAdapter.getFlows();
   if (current.rev !== safeExpectedRev) {
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
   }
+  // Keep secrets the AI only saw as `[REDACTED]` (never store the placeholder).
+  const restoration = strictRestoreOrThrow(flow as Record<string, unknown>, current.flows);
+  const safeFlow = sanitizeFlowTab(restoration.flow) as Partial<FlowTab>;
   throwValidationIssues(collectCrossFlowDuplicateIssues(safeFlow, safeFlowId, current.flows));
 
   // Snapshot the live tab at expectedRev so later diffs stay stable if the
   // live flow moves (other approvals, editor edits, …).
-  const baseSnapshot = await adapter.getFlow(safeFlowId);
+  const baseSnapshot = await liveAdapter.getFlow(safeFlowId);
   if (baseSnapshot.rev !== safeExpectedRev) {
     throw new FlowRevisionConflictError(safeExpectedRev, baseSnapshot.rev, 'submit_proposal');
   }
@@ -786,6 +826,11 @@ export async function submitReplaceFlowProposal(
     ...(nodeTypesAdapter ? { nodeTypes: nodeTypesAdapter } : {}),
   });
   throwValidationIssues(flowErrors);
+  flowWarnings.unshift(
+    ...secretChangeWarnings(restoration.restoredFields, safeFlow, current.flows).map(w => ({
+      ...w,
+    }))
+  );
 
   const auditActor: {
     kind: 'access-link';
@@ -814,12 +859,15 @@ export async function submitReplaceFlowProposal(
       flow: safeFlow,
     },
     baseFlow: safeBaseFlow,
+    ...(restoration.restoredFields.length > 0
+      ? { restoredSecrets: restoration.restoredFields }
+      : {}),
     title,
     createdBy,
     ...(flowWarnings.length > 0 ? { warnings: flowWarnings } : {}),
   });
 
-  const presented = presentProposal(proposal, presentOptions);
+  const presented = presentProposal(redactProposalForAi(proposal), presentOptions);
 
   const flowLabel = presented.flowLabel || undefined;
   audit.append('proposal.created', auditActor, {
@@ -830,6 +878,7 @@ export async function submitReplaceFlowProposal(
     displayName: presented.displayName,
     ...(flowLabel ? { flowLabel } : {}),
     ...(flowWarnings.length > 0 ? { warningCount: flowWarnings.length } : {}),
+    ...(restoration.restored > 0 ? { restoredRedactions: restoration.restored } : {}),
   });
 
   return presented;

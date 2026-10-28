@@ -74,6 +74,8 @@ export interface Proposal {
    * Never blocks approve — AI may scaffold first; humans configure later.
    */
   warnings?: ProposalWarning[];
+  /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
+  restoredSecrets?: { nodeId: string; property: string }[];
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -98,6 +100,7 @@ export interface CreateProposalInput {
   title: string;
   /** Soft validation notes to persist with the proposal. */
   warnings?: ProposalWarning[];
+  restoredSecrets?: { nodeId: string; property: string }[];
 }
 
 export class ProposalNotFoundError extends Error {
@@ -149,6 +152,22 @@ function isProposalStatus(value: unknown): value is ProposalStatus {
 }
 
 const MAX_STORED_WARNINGS = 50;
+
+/** Field references only (node id + path), never values. */
+function sanitizeRestoredSecrets(raw: unknown): { nodeId: string; property: string }[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: { nodeId: string; property: string }[] = [];
+  for (const entry of raw.slice(0, 200)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { nodeId, property } = entry as Record<string, unknown>;
+    if (typeof nodeId !== 'string' || typeof property !== 'string') continue;
+    out.push({
+      nodeId: nodeId.replace(/\0/g, '').slice(0, 200),
+      property: property.replace(/\0/g, '').slice(0, 200),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 /** Keep only safe string fields from a soft-validation warning for disk. */
 function sanitizeProposalWarnings(raw: unknown): ProposalWarning[] | undefined {
@@ -275,6 +294,10 @@ export class ProposalStore {
     if (warnings) {
       record.warnings = warnings;
     }
+    const restored = sanitizeRestoredSecrets(proposal.restoredSecrets);
+    if (restored) {
+      record.restoredSecrets = restored;
+    }
 
     if (proposal.decidedBy) {
       if (proposal.decidedBy.kind === 'access-link') {
@@ -334,6 +357,9 @@ export class ProposalStore {
     const warnings = sanitizeProposalWarnings(input.warnings);
     if (warnings) {
       proposal.warnings = warnings;
+    }
+    if (input.restoredSecrets?.length) {
+      proposal.restoredSecrets = input.restoredSecrets;
     }
     this.writeAtomic(id, proposal);
     return this.get(id);

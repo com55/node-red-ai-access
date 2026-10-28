@@ -15,6 +15,10 @@ import { join } from 'node:path';
 
 import { validateSettingsPublicBaseUrl } from '../plugin/access-path.js';
 import { canonicalOrigin } from '../plugin/cors.js';
+import {
+  DEFAULT_SECRET_NAME_PATTERNS,
+  normalizeSecretNamePatterns,
+} from '../plugin/secret-patterns.js';
 import type { DeploymentType } from '../runtime/types.js';
 
 import type { AiAccessPaths } from './paths.js';
@@ -39,6 +43,8 @@ export interface PersistedAiAccessSettings {
   rateLimitWindowMs?: number;
   rateLimitMaxPerIp?: number;
   rateLimitMaxPerToken?: number;
+  /** Secret-like env / config names redacted from AI responses (case-insensitive words). */
+  secretNamePatterns?: string[];
   oauth?: {
     enabled?: boolean;
     accessTokenTtlSec?: number;
@@ -59,6 +65,7 @@ export interface EffectiveAiAccessSettings {
   rateLimitWindowMs: number;
   rateLimitMaxPerIp: number;
   rateLimitMaxPerToken: number;
+  secretNamePatterns: string[];
   oauth: {
     enabled: boolean;
     accessTokenTtlSec: number;
@@ -93,6 +100,7 @@ const BUILTIN: EffectiveAiAccessSettings = {
   rateLimitWindowMs: 60_000,
   rateLimitMaxPerIp: 600,
   rateLimitMaxPerToken: 300,
+  secretNamePatterns: [...DEFAULT_SECRET_NAME_PATTERNS],
   oauth: { ...DEFAULT_OAUTH },
 };
 
@@ -155,6 +163,20 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
     const max = key === 'rateLimitWindowMs' ? 3_600_000 : 1_000_000;
     if (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max) {
       out[key] = value;
+    }
+  }
+  if (data.secretNamePatterns !== undefined) {
+    const patterns = normalizeSecretNamePatterns(data.secretNamePatterns);
+    if (patterns) {
+      if (
+        Array.isArray(data.secretNamePatterns) &&
+        patterns.length < data.secretNamePatterns.length
+      ) {
+        warn?.('AI Access: invalid or duplicate secretNamePatterns entries were dropped');
+      }
+      out.secretNamePatterns = patterns;
+    } else {
+      warn?.('AI Access: secretNamePatterns must be a list of strings; ignored');
     }
   }
   if (data.oauth && typeof data.oauth === 'object' && !Array.isArray(data.oauth)) {
@@ -290,14 +312,22 @@ export class SettingsStore {
     return this.cached;
   }
 
-  /** Merge into existing disk overrides (only provided keys change). */
-  patch(partial: PersistedAiAccessSettings): EffectiveAiAccessSettingsWithMeta {
+  /**
+   * Merge into existing disk overrides (only provided keys change). Keys in
+   * `reset` are removed from disk so they fall back to settings.js / default.
+   */
+  patch(
+    partial: PersistedAiAccessSettings,
+    reset: readonly (keyof PersistedAiAccessSettings)[] = []
+  ): EffectiveAiAccessSettingsWithMeta {
     const sanitized = sanitizePartial(partial);
-    return this.update({
+    const next: PersistedAiAccessSettings = {
       ...this.disk,
       ...sanitized,
       ...(sanitized.oauth ? { oauth: { ...this.disk.oauth, ...sanitized.oauth } } : {}),
-    });
+    };
+    for (const key of reset) delete next[key];
+    return this.update(next);
   }
 
   private persist(next: PersistedAiAccessSettings): void {

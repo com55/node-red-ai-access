@@ -72,6 +72,8 @@ export interface PresentProposalApiOptions extends PresentProposalOptions {
 
 /** Lean proposal shape returned by default from create/get/list/propose. */
 export interface PresentedProposalApi {
+  /** Field refs (node id + path) whose `[REDACTED]` was restored at submit. */
+  restoredSecrets?: { nodeId: string; property: string }[];
   id: string;
   status: Proposal['status'];
   type: Proposal['type'];
@@ -741,6 +743,9 @@ export function presentProposalForApi(
   }
   if (full.warnings && full.warnings.length > 0) {
     lean.warnings = full.warnings;
+  }
+  if (proposal.restoredSecrets && proposal.restoredSecrets.length > 0) {
+    lean.restoredSecrets = proposal.restoredSecrets;
   }
   if (full.baseRevStale !== undefined) {
     lean.baseRevStale = full.baseRevStale;

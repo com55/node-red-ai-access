@@ -34,10 +34,14 @@ const AUDIT_DETAIL_KEYS = [
   'createdAt',
   'ttlSeconds',
   'kind',
+  // Secret redaction (counts only, never values).
+  'redactions',
+  'restoredRedactions',
+  'operation',
 ] as const;
 
 /** Numeric audit detail fields (not coerced through sanitizeString). */
-const AUDIT_DETAIL_NUMBER_KEYS = new Set(['ttlSeconds']);
+const AUDIT_DETAIL_NUMBER_KEYS = new Set(['ttlSeconds', 'redactions', 'restoredRedactions']);
 
 export function assertSafeSegment(value: string, paramName: string): string {
   if (!value || !SAFE_SEGMENT_RE.test(value) || value.includes('..')) {

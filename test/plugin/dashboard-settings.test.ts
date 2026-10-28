@@ -170,6 +170,51 @@ interface FakeEl {
   listeners: Record<string, (() => void)[]>;
   addEventListener(ev: string, fn: () => void): void;
   querySelectorAll(sel: string): FakeEl[];
+  children: FakeEl[];
+  attrs: Record<string, string>;
+  tagName: string;
+  readonly firstChild: FakeEl | null;
+  appendChild(child: FakeEl): FakeEl;
+  removeChild(child: FakeEl): FakeEl;
+  setAttribute(name: string, value: string): void;
+  [extra: string]: unknown;
+}
+
+function makeEl(id: string, tagName = 'div'): FakeEl {
+  return {
+    id,
+    tagName,
+    value: '',
+    checked: false,
+    disabled: false,
+    hidden: false,
+    textContent: '',
+    innerHTML: '',
+    className: '',
+    listeners: {},
+    children: [],
+    attrs: {},
+    get firstChild() {
+      return this.children[0] ?? null;
+    },
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    removeChild(child) {
+      this.children = this.children.filter(c => c !== child);
+      return child;
+    },
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+    addEventListener(ev, fn) {
+      (this.listeners[ev] ??= []).push(fn);
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
 }
 
 function fakeDom() {
@@ -177,23 +222,7 @@ function fakeDom() {
   const get = (id: string): FakeEl => {
     let el = els.get(id);
     if (!el) {
-      el = {
-        id,
-        value: '',
-        checked: false,
-        disabled: false,
-        hidden: false,
-        textContent: '',
-        innerHTML: '',
-        className: '',
-        listeners: {},
-        addEventListener(ev, fn) {
-          (this.listeners[ev] ??= []).push(fn);
-        },
-        querySelectorAll() {
-          return [];
-        },
-      };
+      el = makeEl(id);
       els.set(id, el);
     }
     return el;
@@ -212,7 +241,7 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       return responses[path] ?? {};
     },
     location: { origin: 'http://nr.local:1880' },
-    document: { querySelector: () => null },
+    document: { querySelector: () => null, createElement: (tag: string) => makeEl('', tag) },
     URL,
     setTimeout,
     clearTimeout,
@@ -237,6 +266,8 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       out.renderOAuthRouteWarning = renderOAuthRouteWarning;
       out.loadOAuthClients = loadOAuthClients;
       out.saveSettingsNow = saveSettingsNow;
+      out.addSecretPattern = addSecretPattern;
+      out.resetSecretPatterns = resetSecretPatterns;
     })();`,
     ctx
   );
@@ -443,5 +474,95 @@ describe('dashboard settings client', () => {
     expect(confirm.opts).toBeDefined();
     expect(dom.get('oauth-enabled').checked).toBe(false);
     expect(calls.some(c => c.options?.method === 'PUT')).toBe(false);
+  });
+
+  describe('secret name patterns', () => {
+    const base = {
+      canEdit: true,
+      adminAuthEnabled: true,
+      settings: { secretNamePatterns: ['PASSWORD', '<img src=x onerror=alert(1)>'] },
+      sources: { secretNamePatterns: 'disk' },
+    };
+
+    function chipTexts(list: FakeEl): string[] {
+      return list.children.map(li => li.children[0]?.textContent ?? '');
+    }
+
+    it('renders chips with textContent only (never HTML)', () => {
+      const { dom, out } = loadSettingsClient({});
+      out.applySettings!(base);
+      const list = dom.get('secret-patterns');
+      expect(chipTexts(list)).toEqual(['PASSWORD', '<img src=x onerror=alert(1)>']);
+      expect(list.innerHTML).toBe('');
+      for (const li of list.children) expect(li.innerHTML).toBe('');
+      expect(dom.get('secret-patterns-source').textContent).toBe('(customized)');
+      expect(dom.get('set-secret-reset').disabled).toBe(false);
+    });
+
+    it('remove, add (validated, uppercased), and reset to defaults', async () => {
+      const { dom, out, calls, confirm } = loadSettingsClient({ '/settings': base });
+      out.applySettings!(base);
+      const firstChip = dom.get('secret-patterns').children[0]!;
+      const remove = firstChip.children[1]!;
+      expect(remove.attrs['aria-label']).toBe('Remove PASSWORD');
+      remove.listeners.click![0]!();
+      await new Promise(r => setTimeout(r, 0));
+      const puts = () => calls.filter(c => c.options?.method === 'PUT');
+      expect(JSON.parse(puts()[0]!.options!.body!)).toEqual({
+        secretNamePatterns: ['<img src=x onerror=alert(1)>'],
+      });
+
+      dom.get('set-secret-new').value = 'bad value!';
+      out.addSecretPattern!();
+      expect(puts()).toHaveLength(1);
+      expect(dom.get('settings-flash').textContent).toMatch(/2-40 letters/);
+
+      dom.get('set-secret-new').value = ' pin ';
+      out.addSecretPattern!();
+      await new Promise(r => setTimeout(r, 0));
+      expect(JSON.parse(puts()[1]!.options!.body!).secretNamePatterns).toEqual([
+        'PASSWORD',
+        '<img src=x onerror=alert(1)>',
+        'PIN',
+      ]);
+      expect(dom.get('set-secret-new').value).toBe('');
+
+      out.resetSecretPatterns!();
+      await confirm.opts!.onConfirm!();
+      await new Promise(r => setTimeout(r, 0));
+      expect(JSON.parse(puts()[2]!.options!.body!)).toEqual({ secretNamePatterns: null });
+    });
+
+    it('locked by settings.js or read-only: no remove buttons, inputs disabled', () => {
+      for (const data of [
+        { ...base, sources: { secretNamePatterns: 'settings.js' } },
+        { ...base, canEdit: false },
+      ]) {
+        const { dom, out, calls } = loadSettingsClient({});
+        out.applySettings!(data);
+        const list = dom.get('secret-patterns');
+        for (const li of list.children) expect(li.children).toHaveLength(1);
+        expect(dom.get('set-secret-new').disabled).toBe(true);
+        expect(dom.get('set-secret-add').disabled).toBe(true);
+        expect(dom.get('set-secret-reset').disabled).toBe(true);
+        dom.get('set-secret-new').value = 'PIN';
+        out.addSecretPattern!();
+        expect(calls.some(c => c.options?.method === 'PUT')).toBe(false);
+      }
+      const locked = loadSettingsClient({});
+      locked.out.applySettings!({ ...base, sources: { secretNamePatterns: 'settings.js' } });
+      expect(locked.dom.get('lock-secret-patterns').hidden).toBe(false);
+      expect(locked.dom.get('secret-patterns-source').textContent).toBe('(set in settings.js)');
+    });
+
+    it('collectSettingsPayload never sends secretNamePatterns', async () => {
+      const { dom, out, calls } = loadSettingsClient({ '/settings': base });
+      out.applySettings!(base);
+      dom.get('set-rate-ip').value = '20';
+      out.saveSettingsNow!();
+      await new Promise(r => setTimeout(r, 0));
+      const put = calls.find(c => c.options?.method === 'PUT');
+      expect(JSON.parse(put!.options!.body!)).not.toHaveProperty('secretNamePatterns');
+    });
   });
 });

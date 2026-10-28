@@ -215,6 +215,22 @@ function renderMcpPageSettingsSection(): string {
           </div>
         </div>
 
+        <div class="card settings-card" id="secret-redaction-card">
+          <h3>Secret redaction</h3>
+          <p class="hint">Values whose names match these words are shown to AI clients as <code>[REDACTED]</code>: env variables (flow, group, subflow, node) and secret-named node settings. Known token formats (GitHub, AWS, Slack, OpenAI, Google, JWT, private keys, Bearer headers, URL passwords) are always redacted. Matching is case-insensitive on whole words, so <code>KEY</code> matches <code>API_KEY</code> but not <code>KEYBOARD</code>. The dashboard always shows real values, and proposals keep secrets the AI left as <code>[REDACTED]</code>.</p>
+          <div class="form-row">
+            <span class="label" id="secret-patterns-label">Secret name patterns <span class="hint" id="secret-patterns-source"></span></span>
+            <ul class="chip-list" id="secret-patterns" aria-labelledby="secret-patterns-label"></ul>
+            <div class="field-line">
+              <input type="text" id="set-secret-new" class="grow" maxlength="40" placeholder="e.g. PIN or SIGNING_KEY" aria-label="New secret name pattern" data-no-autosave="1" />
+              <button type="button" class="action secondary" id="set-secret-add">Add</button>
+              <button type="button" class="action secondary" id="set-secret-reset">Reset to defaults</button>
+              ${lockBadge('secret-patterns')}
+            </div>
+            <p class="hint">Letters, digits, <code>_</code> or <code>-</code> (2–40 characters). An empty list turns off name-based redaction; token formats are still redacted.</p>
+          </div>
+        </div>
+
         <div class="card settings-card">
           <h3>Rate limits</h3>
           <div class="form-row">

@@ -1505,6 +1505,7 @@ components:
         - `chunk_conflict` (409): Same draft seq re-sent with different data
         - `missing_chunks` (400): Draft submit with gaps in seq
         - `draft_hash_mismatch` (400): Draft sha256 does not match assembled bytes
+        - `redacted_placeholder_mismatch` (400): A `[REDACTED]` placeholder was added, duplicated, moved, or its env/header name changed
         - `upstream_error` (502): Node-RED runtime/flows error
         - `internal_error` (500): Unexpected server error
       enum:
@@ -1557,6 +1558,7 @@ components:
         - chunk_conflict
         - missing_chunks
         - draft_hash_mismatch
+        - redacted_placeholder_mismatch
         - upstream_error
         - internal_error
     # END GENERATED ERROR CODES

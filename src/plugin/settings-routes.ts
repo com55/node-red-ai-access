@@ -17,6 +17,12 @@ import {
   requestPublicUrlCheck,
 } from './public-url-check.js';
 import { sendCaughtRouteError } from './route-errors.js';
+import {
+  DEFAULT_SECRET_NAME_PATTERNS,
+  MAX_SECRET_NAME_PATTERNS,
+  normalizeSecretNamePatterns,
+  SECRET_NAME_PATTERN_RE,
+} from './secret-patterns.js';
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
@@ -62,6 +68,7 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     disk: store.getDisk(),
     trustProxy: normalizeTrustProxy(req.app.get('trust proxy')),
     precedence: ['settings.js', 'disk', 'default'] as const,
+    defaults: { secretNamePatterns: [...DEFAULT_SECRET_NAME_PATTERNS] },
   };
 }
 
@@ -123,6 +130,30 @@ function parseCorsField(body: Record<string, unknown>, patch: PersistedAiAccessS
   patch.corsAllowedOrigins = [...new Set(origins as string[])];
 }
 
+function parseSecretPatternsField(
+  body: Record<string, unknown>,
+  patch: PersistedAiAccessSettings,
+  reset: (keyof PersistedAiAccessSettings)[]
+): void {
+  const value = body.secretNamePatterns;
+  if (value === undefined) return;
+  if (value === null) {
+    reset.push('secretNamePatterns');
+    return;
+  }
+  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string'))
+    throw new Error('secretNamePatterns must be a list of strings (or null to reset)');
+  if (value.length > MAX_SECRET_NAME_PATTERNS)
+    throw new Error(`secretNamePatterns allows at most ${MAX_SECRET_NAME_PATTERNS} entries`);
+  for (const entry of value as string[]) {
+    if (!SECRET_NAME_PATTERN_RE.test(entry.trim()))
+      throw new Error(
+        'secretNamePatterns entries must be 2-40 letters, digits, "_" or "-" (e.g. API_KEY)'
+      );
+  }
+  patch.secretNamePatterns = normalizeSecretNamePatterns(value) ?? [];
+}
+
 export function putSettingsHandler(
   RED: NodeRedPluginAPI,
   store: SettingsStore,
@@ -143,6 +174,7 @@ export function putSettingsHandler(
     if (store.getEffective().sources.oauth === 'settings.js') delete body.oauth;
 
     const patch: PersistedAiAccessSettings = {};
+    const reset: (keyof PersistedAiAccessSettings)[] = [];
     try {
       if (body.oauth !== undefined) {
         if (!body.oauth || typeof body.oauth !== 'object' || Array.isArray(body.oauth))
@@ -197,6 +229,7 @@ export function putSettingsHandler(
       if (body.publicBaseUrl !== undefined)
         patch.publicBaseUrl = validateSettingsPublicBaseUrl(body.publicBaseUrl);
       parseCorsField(body, patch);
+      parseSecretPatternsField(body, patch, reset);
       for (const key of [
         'rateLimitWindowMs',
         'rateLimitMaxPerIp',
@@ -210,7 +243,7 @@ export function putSettingsHandler(
     }
 
     try {
-      const effective = store.patch(patch);
+      const effective = store.patch(patch, reset);
       bindPublicBaseUrl(effective.publicBaseUrl);
       linkStore.configureDefaults({
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,

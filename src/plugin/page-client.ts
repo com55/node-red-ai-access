@@ -1444,6 +1444,7 @@ function pageClientScriptPartB(): string {
    * Small add/modify-only edits without warnings stay one-click.
    */
   function needsApproveConfirm(diff, proposal) {
+    if (proposal && Array.isArray(proposal.restoredSecrets) && proposal.restoredSecrets.length) return true;
     if (proposalWarnings(proposal, diff).length > 0) return true;
     if (!diff || !diff.summary) return false;
     var removed = Number(diff.summary.removed) || 0;
@@ -1460,6 +1461,41 @@ function pageClientScriptPartB(): string {
     if (fromDiff.length) return fromDiff;
     if (proposal && Array.isArray(proposal.warnings)) return proposal.warnings;
     return [];
+  }
+
+  /**
+   * Fields where a [REDACTED] placeholder was restored to the live secret,
+   * plus a strong banner when that node's destination or code changed.
+   */
+  var SECRET_WARN_CODES = ['secret_destination_changed', 'secret_node_code_changed',
+    'secret_wires_changed', 'secret_scope_changed', 'outbound_node_changed', 'secret_tab_changed',
+    'secret_reference_added'];
+  function renderRestoredSecrets(p) {
+    var fields = p && Array.isArray(p.restoredSecrets) ? p.restoredSecrets : [];
+    var warns = (p && Array.isArray(p.warnings) ? p.warnings : []).filter(function (w) {
+      return w && SECRET_WARN_CODES.indexOf(w.code) >= 0;
+    });
+    if (!fields.length && !warns.length) return '';
+    var strong = warns.some(function (w) { return w.code !== 'secret_node_code_changed'; });
+    var items = fields.map(function (f) {
+      return '<li><code>' + esc(String(f.nodeId)) + '</code> · <code>' + esc(String(f.property)) + '</code></li>';
+    }).join('');
+    var warnItems = warns.map(function (w) {
+      return '<li><strong>' + esc(String(w.code)) + '</strong> — ' + esc(String(w.error || '')) + '</li>';
+    }).join('');
+    return '<div class="proposal-warnings restored-secrets' + (strong ? ' restored-secrets-danger' : '') +
+      '" role="' + (strong ? 'alert' : 'status') + '">' +
+      '<p class="proposal-warnings-title">' +
+      esc(strong
+        ? 'Security review: this proposal changes what could send data (or secrets) elsewhere'
+        : 'Secrets restored from the live flow (' + fields.length + ')') +
+      '</p>' +
+      (warnItems ? '<ul>' + warnItems + '</ul>' : '') +
+      (fields.length
+        ? '<p class="muted">The AI saw [REDACTED] in these fields; approving keeps the real values:</p>' +
+          '<ul>' + items + '</ul>'
+        : '') +
+      '</div>';
   }
 
   function renderValidationWarnings(warnings, opts) {
@@ -2303,9 +2339,9 @@ function pageClientScriptPartB2Cards(): string {
     var deleteBanner = cached ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
     var cardWarns = proposalWarnings(p, cached);
-    var warnBanner = cardWarns.length && !cached
+    var warnBanner = renderRestoredSecrets(p) + (cardWarns.length && !cached
       ? renderValidationWarnings(cardWarns)
-      : '';
+      : '');
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
     var changes =

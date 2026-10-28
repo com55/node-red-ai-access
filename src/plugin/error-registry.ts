@@ -291,6 +291,69 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     ALL,
     'warning'
   ),
+  e(
+    'redacted_placeholder_mismatch',
+    400,
+    'A `[REDACTED]` placeholder was added, duplicated, moved, or its env/header name changed',
+    'Keep placeholders exactly where they were shown (same line, same name) or supply a real value',
+    ALL
+  ),
+  e(
+    'secret_destination_changed',
+    201,
+    'Warning: a node holding a restored secret changed where it sends data (url/host/method/headers/…)',
+    'Reviewer must verify the new destination before approving',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_node_code_changed',
+    201,
+    'Warning: a node holding a restored secret had its code changed',
+    'Reviewer must check the code does not send the secret elsewhere',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_wires_changed',
+    201,
+    'Warning: a node holding a restored secret had its output wires changed',
+    'Reviewer must check where its messages now go',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_scope_changed',
+    201,
+    'Warning: tab/group env or a config node scoping a secret-holding node changed',
+    'Reviewer must check env-resolved hosts/URLs (e.g. `${API_HOST}`)',
+    ALL,
+    'warning'
+  ),
+  e(
+    'outbound_node_changed',
+    201,
+    'Warning: proposal adds/changes an outbound-capable node (http request/response, mqtt, tcp, udp, email, websocket, link out/call, function, exec, file, or any node with url/host fields)',
+    'Reviewer must check it cannot send secret data elsewhere',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_tab_changed',
+    201,
+    'Warning: proposal with restored secrets also changes other nodes in the tab',
+    'Review every change before approving',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_reference_added',
+    201,
+    'Warning: an added/changed node now reads a secret-named env/global/flow value (env.get, $env, ${…}, typed input)',
+    'Reviewer must check the value is not sent anywhere unexpected',
+    ALL,
+    'warning'
+  ),
   // --- Proposal statuses (auto-closed)
   e(
     'expired',

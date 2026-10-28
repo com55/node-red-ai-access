@@ -73,7 +73,9 @@ import {
   withdrawProposalHandler,
 } from './proposals-routes.js';
 import { createAiAccessRateLimiter, createLiveAiAccessDualRateLimiters } from './rate-limit.js';
+import { redactionAuditMiddleware } from './redaction-audit.js';
 import { asyncRoute } from './route-errors.js';
+import { aiRedactingAdapter } from './secret-redaction.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import {
   checkPublicUrlHandler,
@@ -346,11 +348,17 @@ export function registerRoutes(
 
   // Self-contained GET access links for headerless HTTP clients (`/mcp/a/<token>/…`).
   // Reuse the same IP+token limiter instances as REST/MCP so one token shares one bucket.
+  // Audit `[REDACTED]` counts on AI (access-link) JSON responses under /mcp/.
+  // Path-scoped inside the middleware (AI routes under /mcp/ only); a mounted
+  // `use('/mcp', …)` would trip the plugin's own http-in collision detector.
+  RED.httpAdmin.use(redactionAuditMiddleware(services.auditLog));
+
   registerGetLinkRoutes(RED, {
     linkStore: services.linkStore,
     proposalStore: services.proposalStore,
     auditLog: services.auditLog,
-    flowAdapter: services.flowAdapter,
+    // GET links are AI-only: every flow read is redacted.
+    flowAdapter: aiRedactingAdapter(services.flowAdapter),
     nodeTypesAdapter: services.nodeTypesAdapter,
     ...(services.catalogueFetcher ? { catalogueFetcher: services.catalogueFetcher } : {}),
     ...(services.catalogueUrl ? { catalogueUrl: services.catalogueUrl } : {}),

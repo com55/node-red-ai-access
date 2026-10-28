@@ -62,6 +62,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `chunk_conflict` | 409 | Same draft seq re-sent with different data | Re-send identical data or start a new draft | GET |
 | `missing_chunks` | 400 | Draft submit with gaps in seq | Upload every seq from 0 through max | GET |
 | `draft_hash_mismatch` | 400 | Draft sha256 does not match assembled bytes | Send the hex sha256 of the assembled UTF-8 | GET |
+| `redacted_placeholder_mismatch` | 400 | A `[REDACTED]` placeholder was added, duplicated, moved, or its env/header name changed | Keep placeholders exactly where they were shown (same line, same name) or supply a real value | GET, REST, MCP |
 | `upstream_error` | 502 | Node-RED runtime/flows error | Retry; check Node-RED logs | GET, REST, MCP |
 | `internal_error` | 500 | Unexpected server error | Retry; check Node-RED logs | GET, REST, MCP |
 
@@ -74,6 +75,13 @@ Returned in `warnings[]` on a successful propose/submit; they never block.
 | `missing_config_node` | 201 | Warning: node has no (or an unresolved) config node yet | Configure before deploy if needed; see `candidates` | GET, REST, MCP |
 | `unwired_node` | 201 | Warning: node has outputs but no wires | Wire it, or ignore while scaffolding | GET, REST, MCP |
 | `incomplete_wires` | 201 | Warning: fewer wire ports than outputs | Add ports if outputs should connect | GET, REST, MCP |
+| `secret_destination_changed` | 201 | Warning: a node holding a restored secret changed where it sends data (url/host/method/headers/…) | Reviewer must verify the new destination before approving | GET, REST, MCP |
+| `secret_node_code_changed` | 201 | Warning: a node holding a restored secret had its code changed | Reviewer must check the code does not send the secret elsewhere | GET, REST, MCP |
+| `secret_wires_changed` | 201 | Warning: a node holding a restored secret had its output wires changed | Reviewer must check where its messages now go | GET, REST, MCP |
+| `secret_scope_changed` | 201 | Warning: tab/group env or a config node scoping a secret-holding node changed | Reviewer must check env-resolved hosts/URLs (e.g. `${API_HOST}`) | GET, REST, MCP |
+| `outbound_node_changed` | 201 | Warning: proposal adds/changes an outbound-capable node (http request/response, mqtt, tcp, udp, email, websocket, link out/call, function, exec, file, or any node with url/host fields) | Reviewer must check it cannot send secret data elsewhere | GET, REST, MCP |
+| `secret_tab_changed` | 201 | Warning: proposal with restored secrets also changes other nodes in the tab | Review every change before approving | GET, REST, MCP |
+| `secret_reference_added` | 201 | Warning: an added/changed node now reads a secret-named env/global/flow value (env.get, $env, ${…}, typed input) | Reviewer must check the value is not sent anywhere unexpected | GET, REST, MCP |
 
 ## Auto-closed proposal statuses
 
