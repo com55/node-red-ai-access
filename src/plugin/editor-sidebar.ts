@@ -13,6 +13,7 @@ export const EDITOR_SIDEBAR_ASSET_VERSION = packageVersion();
 
 function editorSidebarStyles(): string {
   return `#red-ui-sidebar-ai-access {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -423,7 +424,11 @@ function editorSidebarScriptPartA(): string {
       if (dialogOpen) return Promise.resolve(false);
       dialogOpen = true;
       $('#ai-access-dialog-message').text(message);
+      // The dialog overlays the whole (non-scrolling) tab, so it is visible however far
+      // the settings body is scrolled.
       $('#ai-access-dialog').show();
+      var allowBtn = document.getElementById('ai-access-dialog-allow');
+      if (allowBtn && allowBtn.focus) allowBtn.focus();
       return new Promise(function (resolve) {
         function finish(accepted) {
           $('#ai-access-dialog').hide();
@@ -803,7 +808,7 @@ function editorSidebarScriptPartB(): string {
         .on('click', loadSettings);
 
       var body = $('<div class="red-ui-sidebar-ai-access-body"></div>').appendTo(content);
-      var dialog = $('<div id="ai-access-dialog" class="ai-access-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-access-dialog-title" style="display:none"></div>').appendTo(body);
+      var dialog = $('<div id="ai-access-dialog" class="ai-access-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-access-dialog-title" style="display:none"></div>').appendTo(content);
       $('<h3 id="ai-access-dialog-title"></h3>').text('Confirm OAuth action').appendTo(dialog);
       $('<p id="ai-access-dialog-message"></p>').appendTo(dialog);
       var dialogActions = $('<div class="ai-access-dialog-actions"></div>').appendTo(dialog);

@@ -18,6 +18,10 @@ and this project adheres to
   `resource_metadata` challenge). Browsers opening `/mcp` still get the
   dashboard.
 
+- Editor sidebar: Revoke for registered OAuth clients appeared to do nothing
+  because its confirm dialog rendered at the top of the scrolled settings panel
+  (out of view). The dialog now overlays the whole tab.
+
 ### Changed
 
 - Default "Maximum registered OAuth clients" (`oauth.dcrMaxClients`) is now 5
