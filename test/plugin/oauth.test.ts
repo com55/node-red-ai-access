@@ -65,12 +65,18 @@ function appFor(
     events,
     auth: {
       needsPermission: () => (req, res, next) => {
-        if (options.session && req.headers['x-test-user'] !== 'alice') {
+        const who = req.headers['x-test-user'];
+        if (options.session && who !== 'alice' && who !== 'bob') {
           res.status(401).end();
           return;
         }
         if (options.session)
-          Object.assign(req, { user: { username: 'alice@example.com', permissions: '*' } });
+          Object.assign(req, {
+            user:
+              who === 'bob'
+                ? { username: 'bob@example.com', permissions: 'read' }
+                : { username: 'alice@example.com', permissions: '*' },
+          });
         next();
       },
     },
@@ -89,14 +95,13 @@ async function register(app: Express, redirect = 'http://127.0.0.1:3456/callback
       token_endpoint_auth_method: 'none',
     });
 }
-async function authorize(
-  app: Express,
+function consentParams(
   clientId: string,
   resourceUrl = resource,
   method = 'S256',
   scope = 'read propose'
 ) {
-  const params = {
+  return {
     client_id: clientId,
     redirect_uri: 'http://127.0.0.1:3456/callback',
     response_type: 'code',
@@ -106,17 +111,37 @@ async function authorize(
     resource: resourceUrl,
     state: 'abc',
   };
-  const page = await request(app).get('/mcp/oauth/authorize').query(params);
-  if (page.status !== 200) return { page };
-  const granted = await request(app)
-    .post('/mcp/oauth/authorize')
-    .type('form')
-    .send({ ...params, accept: '1' });
+}
+/** Drives the consent shell the way its browser script does. */
+async function approve(app: Express, page: request.Response, user?: string, decision = 'allow') {
+  const id = /data-request="([^"]+)"/.exec(page.text)![1]!;
+  const auth = (r: request.Test) => (user ? r.set('x-test-user', user) : r);
+  const details = await auth(request(app).get(`/mcp/oauth/consent/${id}`));
+  if (details.status !== 200) return { details };
+  const granted = await auth(request(app).post(`/mcp/oauth/consent/${id}`))
+    .set('Sec-Fetch-Site', 'same-origin')
+    .send({ csrf: details.body.csrf, decision });
+  const location = granted.body.redirect as string | undefined;
   return {
-    page,
+    id,
+    details,
     granted,
-    code: new URL(granted.headers.location!).searchParams.get('code'),
+    code: location ? new URL(location).searchParams.get('code') : null,
   };
+}
+async function authorize(
+  app: Express,
+  clientId: string,
+  resourceUrl = resource,
+  method = 'S256',
+  scope = 'read propose',
+  user?: string
+) {
+  const page = await request(app)
+    .get('/mcp/oauth/authorize')
+    .query(consentParams(clientId, resourceUrl, method, scope));
+  if (page.status !== 200) return { page };
+  return { page, ...(await approve(app, page, user)) };
 }
 async function exchange(
   app: Express,
@@ -212,8 +237,8 @@ describe('MCP OAuth backend', () => {
     expect(flow.page.text).toContain('Test client');
     expect(flow.page.text).toContain('127.0.0.1');
     expect(flow.page.text).toContain('Warning');
-    expect(flow.granted?.status).toBe(302);
-    expect((await exchange(admin, id, flow.code!, 'https://other.example/mcp')).status).toBe(400);
+    expect(flow.granted?.status).toBe(200);
+    expect((await exchange(admin, id, flow.code, 'https://other.example/mcp')).status).toBe(400);
     const second = (await authorize(admin, id)).code!;
     const issued = await exchange(admin, id, second);
     expect(issued.status).toBe(200);
@@ -407,39 +432,20 @@ describe('MCP OAuth backend', () => {
   it('requires an admin session for consent and client administration', async () => {
     const { admin } = appFor(userDir, { session: true });
     const id = (await register(admin)).body.client_id as string;
-    const params = {
-      client_id: id,
-      redirect_uri: 'http://127.0.0.1:3456/callback',
-      response_type: 'code',
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
-      scope: 'read propose',
-      resource,
-    };
-    expect((await request(admin).get('/mcp/oauth/authorize').query(params)).status).toBe(401);
-    expect((await request(admin).get('/mcp/oauth/authorize/').query(params)).status).toBe(401);
-    expect((await request(admin).get('/mcp/oauth/Authorize').query(params)).status).toBe(401);
-    expect(
-      (await request(admin).get('/mcp/oauth/authorize').set('x-test-user', 'alice').query(params))
-        .status
-    ).toBe(200);
+    const params = consentParams(id);
+    const page = await request(admin).get('/mcp/oauth/authorize').query(params);
+    expect(page.status).toBe(200);
+    expect((await approve(admin, page)).details.status).toBe(401);
     expect((await request(admin).get('/mcp/api/v1/oauth/clients')).status).toBe(401);
     expect(
       (await request(admin).get('/mcp/api/v1/oauth/clients').set('x-test-user', 'alice')).body
         .clients
     ).toHaveLength(1);
-    const granted = await request(admin)
-      .post('/mcp/oauth/authorize')
-      .set('x-test-user', 'alice')
-      .type('form')
-      .send({ ...params, accept: '1' });
-    expect(granted.status).toBe(302);
-    const token = await exchange(
-      admin,
-      id,
-      new URL(granted.headers.location!).searchParams.get('code')!
-    );
+    const flow = await approve(admin, page, 'alice');
+    expect(flow.granted?.status).toBe(200);
+    const token = await exchange(admin, id, flow.code!);
     expect(token.status).toBe(200);
+    expect(token.body.scope).toBe('read propose');
     const revoked = await request(admin)
       .delete(`/mcp/api/v1/oauth/clients/${id}`)
       .set('x-test-user', 'alice');
@@ -456,6 +462,75 @@ describe('MCP OAuth backend', () => {
           .send({})
       ).status
     ).toBe(401);
+  });
+
+  it('never grants propose to an approver with read-only permission', async () => {
+    const { admin } = appFor(userDir, { session: true });
+    const id = (await register(admin)).body.client_id as string;
+    const flow = await authorize(admin, id, resource, 'S256', 'read propose', 'bob');
+    expect(flow.details?.body.grantable).toEqual(['read']);
+    const token = await exchange(admin, id, flow.code);
+    expect(token.status).toBe(200);
+    expect(token.body.scope).toBe('read');
+    const proposeOnly = await authorize(admin, id, resource, 'S256', 'propose', 'bob');
+    expect(proposeOnly.details?.status).toBe(403);
+  });
+
+  it('hardens the consent page and its decision endpoint', async () => {
+    const { admin } = appFor(userDir, { session: true });
+    const id = (await register(admin)).body.client_id as string;
+    const page = await request(admin).get('/mcp/oauth/authorize').query(consentParams(id));
+    expect(page.headers['x-frame-options']).toBe('DENY');
+    expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(page.headers['content-security-policy']).toMatch(/script-src 'nonce-[^']+'/);
+    expect(page.text.indexOf('127.0.0.1')).toBeLessThan(page.text.indexOf('Test client'));
+    expect(
+      (await request(admin).post('/mcp/oauth/authorize').type('form').send({})).status
+    ).not.toBe(302);
+    const reqId = /data-request="([^"]+)"/.exec(page.text)![1]!;
+    const details = await request(admin)
+      .get(`/mcp/oauth/consent/${reqId}`)
+      .set('x-test-user', 'alice');
+    const post = (body: Record<string, unknown>, headers: Record<string, string>) =>
+      request(admin)
+        .post(`/mcp/oauth/consent/${reqId}`)
+        .set('x-test-user', 'alice')
+        .set(headers)
+        .send(body);
+    expect((await post({ csrf: 'wrong', decision: 'allow' }, {})).status).toBe(403);
+    expect(
+      (
+        await post(
+          { csrf: details.body.csrf, decision: 'allow' },
+          { Origin: 'https://evil.example' }
+        )
+      ).status
+    ).toBe(403);
+    expect(
+      (
+        await post(
+          { csrf: details.body.csrf, decision: 'allow' },
+          { 'Sec-Fetch-Site': 'cross-site' }
+        )
+      ).status
+    ).toBe(403);
+    const other = await request(admin).get('/mcp/oauth/authorize').query(consentParams(id));
+    const otherId = /data-request="([^"]+)"/.exec(other.text)![1]!;
+    expect(
+      (
+        await request(admin)
+          .post(`/mcp/oauth/consent/${otherId}`)
+          .set('x-test-user', 'alice')
+          .send({ csrf: details.body.csrf, decision: 'allow' })
+      ).status
+    ).toBe(403);
+    const denied = await post(
+      { csrf: details.body.csrf, decision: 'deny' },
+      { 'Sec-Fetch-Site': 'same-origin' }
+    );
+    expect(denied.status).toBe(200);
+    expect(denied.body.redirect).toContain('error=access_denied');
+    expect((await post({ csrf: details.body.csrf, decision: 'allow' }, {})).status).toBe(404);
   });
 
   it('maps OAuth scopes to MCP tools and records client and user ownership', async () => {

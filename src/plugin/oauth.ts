@@ -31,7 +31,10 @@ import express, { type RequestHandler, type Response } from 'express';
 import type { AiAccessPaths } from '../storage/paths.js';
 import { encodeTrustedJson, writeTrustedAtomic } from '../storage/trusted-write.js';
 
-import { requireAdminSession } from './auth.js';
+import { editorAuthTokenKey } from './auth-token-key.js';
+import { requireAdminSession, resolvePermission } from './auth.js';
+import { consentScript } from './oauth-consent-script.js';
+import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
 interface OAuthDb {
@@ -443,87 +446,197 @@ export function makeOAuthHandlers(
       next(error);
     });
   };
-  const consent: RequestHandler = (req: AuthenticatedRequest, res, next) => {
-    express.urlencoded({ extended: false })(req, res, () =>
-      requireAdminSession(RED, 'page')(req, res, () => {
+  // Node-RED keeps the editor session token in localStorage (`auth-tokens` + path
+  // suffix), not a cookie, so a top-level redirect to this page carries no Bearer.
+  // GET /authorize validates the request and renders a static shell; its script
+  // reads the editor token and calls /consent/:id with Bearer to fetch details
+  // and post the decision. Pending requests live in memory and are single use.
+  interface Pending {
+    clientId: string;
+    redirect: string;
+    challenge: string;
+    scopes: string[];
+    resource: string;
+    state: string;
+    csrf: string;
+    approver?: string;
+    expires: number;
+  }
+  const pending = new Map<string, Pending>();
+  const sweep = () => {
+    const now = Date.now();
+    for (const [id, p] of pending) if (p.expires <= now) pending.delete(id);
+    while (pending.size > 500) pending.delete(pending.keys().next().value!);
+  };
+  const securityHeaders = (res: Response, nonce?: string) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Security-Policy',
+      `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; ` : ''}style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`
+    );
+  };
+  const tokenKey = editorAuthTokenKey(RED.settings.httpAdminRoot);
+  const grantableFor = (req: AuthenticatedRequest): string[] => {
+    if (!isAdminAuthEnabled(RED.settings)) return [...oauthScopes];
+    const permission = resolvePermission(req);
+    return permission === '*' ? [...oauthScopes] : permission === 'read' ? ['read'] : [];
+  };
+  const sameOrigin = (req: AuthenticatedRequest): boolean => {
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin') return false;
+    const origin = req.get('origin');
+    if (!origin) return true;
+    const allowed = new Set<string>();
+    try {
+      allowed.add(new URL(issuer()).origin);
+    } catch {
+      // no public URL configured
+    }
+    const host = req.get('host');
+    if (host) {
+      allowed.add(`http://${host}`);
+      allowed.add(`https://${host}`);
+    }
+    return allowed.has(origin);
+  };
+  const authorizePage: RequestHandler = (req, res) => {
+    sweep();
+    const q = req.query;
+    const client = provider.clientsStore.getClient(value(q.client_id));
+    if (!client) {
+      res.status(400).send('Unknown OAuth client');
+      return;
+    }
+    const redirect =
+      value(q.redirect_uri) || (client.redirect_uris.length === 1 ? client.redirect_uris[0]! : '');
+    if (!client.redirect_uris.some(uri => redirectUriMatches(redirect, uri))) {
+      res.status(400).send('Unregistered redirect URI');
+      return;
+    }
+    if (
+      q.response_type !== 'code' ||
+      q.code_challenge_method !== 'S256' ||
+      !/^[A-Za-z0-9_-]{43,128}$/.test(value(q.code_challenge))
+    ) {
+      res.status(400).send('Authorization code with PKCE S256 is required');
+      return;
+    }
+    const scopes = [...new Set((value(q.scope) || 'read').split(' ').filter(Boolean))];
+    if (scopes.some(scope => !oauthScopes.includes(scope))) {
+      res.status(400).send('Unsupported scope');
+      return;
+    }
+    const requested = value(q.resource) || resource();
+    let canonical: string;
+    try {
+      canonical = canonicalResource(requested);
+    } catch {
+      res.status(400).send('Invalid resource');
+      return;
+    }
+    if (canonical !== canonicalResource(resource())) {
+      res.status(400).send('Resource mismatch');
+      return;
+    }
+    const id = secret();
+    pending.set(id, {
+      clientId: client.client_id,
+      redirect,
+      challenge: value(q.code_challenge),
+      scopes,
+      resource: requested,
+      state: value(q.state),
+      csrf: secret(),
+      expires: Date.now() + 10 * 60_000,
+    });
+    const redirectHost = new URL(redirect).host;
+    const nonce = randomBytes(16).toString('base64');
+    securityHeaders(res, nonce);
+    res
+      .status(200)
+      .type('html')
+      .send(
+        `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize MCP client</title>` +
+          `<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px}h1{font-size:1.4em;word-break:break-all}.warn{color:#9b2c2c}.muted{color:#555}button{margin-right:8px;padding:6px 14px}</style>` +
+          `<main data-request="${escapeHtml(id)}" data-token-key="${escapeHtml(tokenKey)}">` +
+          `<p class="muted">An MCP client wants to access Node-RED and will receive tokens at:</p>` +
+          `<h1>${escapeHtml(redirectHost)}</h1>${
+            loopback.has(new URL(redirect).hostname)
+              ? '<p class="warn">Warning: this redirect URI is reachable only on this machine.</p>'
+              : ''
+          }<p class="muted">Client-provided name (unverified): ${escapeHtml(client.client_name || 'Unnamed client')}</p>` +
+          `<p>Requested permissions: ${escapeHtml(scopes.join(', '))}</p>` +
+          `<p id="status">Checking your Node-RED editor session…</p>` +
+          `<p id="grant" hidden></p>` +
+          `<p><button id="allow" type="button" hidden>Allow</button><button id="deny" type="button" hidden>Deny</button><button id="retry" type="button" hidden>Retry</button></p>` +
+          `</main><script nonce="${nonce}">${consentScript}</script></html>`
+      );
+  };
+  const consentApi: RequestHandler = (req: AuthenticatedRequest, res, next) => {
+    securityHeaders(res);
+    express.json({ limit: '4kb' })(req, res, () =>
+      requireAdminSession(RED, 'api')(req, res, () => {
         try {
-          const q =
-            req.method === 'POST' ? (req.body as Record<string, unknown> | undefined) : req.query;
-          if (!q) {
-            res.status(400).send('Invalid authorization request');
+          sweep();
+          const id = /^\/mcp\/oauth\/consent\/([A-Za-z0-9_-]+)\/?$/.exec(req.path)?.[1] ?? '';
+          const item = pending.get(id);
+          const client = item && provider.clientsStore.getClient(item.clientId);
+          if (!item || !client) {
+            res.status(404).json({ error: 'Consent request expired or unknown' });
             return;
           }
-          const client = provider.clientsStore.getClient(value(q.client_id));
-          if (!client) {
-            res.status(400).send('Unknown OAuth client');
+          const user = (isAdminAuthEnabled(RED.settings) && req.user?.username) || 'owner';
+          const grantable = item.scopes.filter(scope => grantableFor(req).includes(scope));
+          if (!grantable.length) {
+            res.status(403).json({
+              error: 'Your Node-RED permissions do not allow granting the requested scopes',
+              grantable,
+            });
             return;
           }
-          const redirect =
-            value(q.redirect_uri) ||
-            (client.redirect_uris.length === 1 ? client.redirect_uris[0]! : '');
-          if (!client.redirect_uris.some(uri => redirectUriMatches(redirect, uri))) {
-            res.status(400).send('Unregistered redirect URI');
+          if (req.method === 'GET') {
+            item.approver = user;
+            res.json({
+              client_name: client.client_name ?? null,
+              redirect_host: new URL(item.redirect).host,
+              requested: item.scopes,
+              grantable,
+              user,
+              csrf: item.csrf,
+            });
             return;
           }
-          if (
-            q.response_type !== 'code' ||
-            q.code_challenge_method !== 'S256' ||
-            !/^[A-Za-z0-9_-]{43,128}$/.test(value(q.code_challenge))
-          ) {
-            res.status(400).send('Authorization code with PKCE S256 is required');
+          if (req.method !== 'POST') {
+            res.status(405).end();
             return;
           }
-          const scopes = (value(q.scope) || 'read').split(' ').filter(Boolean);
-          if (scopes.some(scope => !oauthScopes.includes(scope))) {
-            res.status(400).send('Unsupported scope');
+          const body = (req.body ?? {}) as Record<string, unknown>;
+          if (!sameOrigin(req) || body.csrf !== item.csrf || item.approver !== user) {
+            res.status(403).json({ error: 'Consent request verification failed' });
             return;
           }
-          const requested = value(q.resource) || resource();
-          if (canonicalResource(requested) !== canonicalResource(resource())) {
-            res.status(400).send('Resource mismatch');
-            return;
+          pending.delete(id);
+          const target = new URL(item.redirect);
+          if (body.decision !== 'allow') {
+            target.searchParams.set('error', 'access_denied');
+          } else {
+            const code = provider.createCode(
+              client,
+              {
+                redirectUri: item.redirect,
+                codeChallenge: item.challenge,
+                scopes: grantable,
+                resource: new URL(item.resource),
+              },
+              user
+            );
+            target.searchParams.set('code', code);
           }
-          const redirectHost = new URL(redirect).hostname;
-          if (req.method !== 'POST' || q.accept !== '1') {
-            const hidden = Object.entries({
-              client_id: client.client_id,
-              redirect_uri: redirect,
-              response_type: 'code',
-              code_challenge: value(q.code_challenge),
-              code_challenge_method: 'S256',
-              scope: scopes.join(' '),
-              state: value(q.state),
-              resource: requested,
-            })
-              .map(
-                ([name, field]) =>
-                  `<input type="hidden" name="${name}" value="${escapeHtml(field)}">`
-              )
-              .join('');
-            res.setHeader('Cache-Control', 'no-store');
-            res
-              .status(200)
-              .type('html')
-              .send(
-                `<!doctype html><html lang="en"><meta charset="utf-8"><title>OAuth consent</title><h1>Authorize ${escapeHtml(client.client_name || 'OAuth client')}</h1><p>Redirect URI host: ${escapeHtml(redirectHost)}</p>${loopback.has(redirectHost) ? '<p>Warning: this redirect URI is reachable only on this machine.</p>' : ''}<p>Permissions: ${escapeHtml(scopes.join(', '))}</p><form method="post">${hidden}<button name="accept" value="1">Allow</button></form></html>`
-              );
-            return;
-          }
-          const user = RED.settings.adminAuth ? req.user?.username : 'owner';
-          const code = provider.createCode(
-            client,
-            {
-              redirectUri: redirect,
-              codeChallenge: value(q.code_challenge),
-              scopes,
-              resource: new URL(requested),
-            },
-            user || 'owner'
-          );
-          const target = new URL(redirect);
-          target.searchParams.set('code', code);
-          if (q.state) target.searchParams.set('state', value(q.state));
-          res.redirect(302, target.href);
+          if (item.state) target.searchParams.set('state', item.state);
+          res.json({ redirect: target.href });
         } catch (error) {
           next(error);
         }
@@ -544,7 +657,12 @@ export function makeOAuthHandlers(
     const path = req.path;
     const normalizedPath = path.replace(/\/+$/, '').toLowerCase();
     if (normalizedPath === '/mcp/oauth/authorize') {
-      consent(req, res, next);
+      if (req.method === 'GET') authorizePage(req, res, next);
+      else res.status(405).set('Allow', 'GET').end();
+      return;
+    }
+    if (normalizedPath.startsWith('/mcp/oauth/consent/')) {
+      consentApi(req, res, next);
       return;
     }
     if (
