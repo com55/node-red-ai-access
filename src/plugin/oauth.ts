@@ -220,6 +220,7 @@ export function detectOAuthRouteCollisions(
 
 export class LocalOAuthProvider implements OAuthServerProvider {
   readonly skipLocalPkceValidation = false;
+  private readonly inflight = new Map<string, Code>();
   constructor(
     readonly clientsStore: OAuthStore,
     private readonly resource: () => string,
@@ -237,7 +238,13 @@ export class LocalOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     code: string
   ): Promise<string> {
+    // Single attempt: the code leaves the store before PKCE is checked, so a failed
+    // verifier or redirect_uri burns it. The exchange step reads the in-flight copy.
     const found = this.findCode(client, code);
+    this.clientsStore.data.codes = this.clientsStore.data.codes.filter(c => c !== found);
+    this.clientsStore.persist();
+    this.inflight.set(found.hash, found);
+    setTimeout(() => this.inflight.delete(found.hash), 30_000).unref?.();
     return found.challenge;
   }
   async exchangeAuthorizationCode(
@@ -247,15 +254,17 @@ export class LocalOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL
   ): Promise<OAuthTokens> {
-    const item = this.findCode(client, code);
+    const item = this.inflight.get(hash(code)) ?? this.findCode(client, code);
+    this.inflight.delete(item.hash);
+    this.clientsStore.data.codes = this.clientsStore.data.codes.filter(c => c !== item);
+    this.clientsStore.persist();
     if (
+      item.clientId !== client.client_id ||
       item.expires <= Date.now() ||
       redirectUri !== item.redirectUri ||
       (resource && canonicalResource(resource.href) !== item.resource)
     )
       throw new InvalidGrantError('Invalid authorization code');
-    this.clientsStore.data.codes = this.clientsStore.data.codes.filter(c => c !== item);
-    this.clientsStore.persist();
     return this.issue(client.client_id, item.scopes, item.resource, item.user);
   }
   async exchangeRefreshToken(

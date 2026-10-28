@@ -328,6 +328,25 @@ describe('MCP OAuth backend', () => {
     expect(tokens.every(t => t.expires > base + 121_000)).toBe(true);
   });
 
+  it('burns an authorization code on the first exchange attempt even when PKCE fails', async () => {
+    const { admin } = appFor(userDir);
+    const id = (await register(admin)).body.client_id as string;
+    const code = (await authorize(admin, id)).code!;
+    expect((await exchange(admin, id, code, resource, 'b'.repeat(43))).status).toBe(400);
+    expect((await exchange(admin, id, code)).status).toBe(400);
+    const code2 = (await authorize(admin, id)).code!;
+    const wrongRedirect = await request(admin).post('/mcp/oauth/token').type('form').send({
+      grant_type: 'authorization_code',
+      client_id: id,
+      code: code2,
+      code_verifier: verifier,
+      redirect_uri: 'http://127.0.0.1:3456/other',
+      resource,
+    });
+    expect(wrongRedirect.status).toBe(400);
+    expect((await exchange(admin, id, code2)).status).toBe(400);
+  });
+
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {
     const { admin, linkStore } = appFor(userDir);
     const link = linkStore.create({ kind: 'mcp', label: 'legacy' });
