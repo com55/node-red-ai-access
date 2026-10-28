@@ -809,6 +809,12 @@ export function redactProposalForAi<P extends Proposal>(
     ...proposal,
     payload: { ...proposal.payload, flow: redactFlowData(proposal.payload.flow, patterns).value },
   };
+  if (proposal.conflictChoice) {
+    out.conflictChoice = {
+      nodeId: proposal.conflictChoice.nodeId,
+      choice: proposal.conflictChoice.choice,
+    };
+  }
   if (proposal.baseFlow !== undefined) {
     out.baseFlow = redactFlowData(proposal.baseFlow, patterns).value;
   }

@@ -43,6 +43,15 @@ describe('SettingsStore', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
+  it.each([0, -1, 0.5])('rejects invalid TTL %s at the store boundary without writing it', ttl => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new SettingsStore(paths, {});
+    expect(() => store.patch({ defaultLinkTtlSeconds: ttl })).toThrow('minimum of 1');
+    expect(() => store.patch({ proposalTtlDays: ttl })).toThrow('between 1 and 365');
+    expect(store.getDisk()).toEqual({});
+  });
+
   it('defaults the maximum registered OAuth clients to 5', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);

@@ -68,7 +68,7 @@ describe('/mcp audit log page client', () => {
 
   it('uses a wide responsive layout and side-by-side diff toggle', () => {
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
-    expect(styles).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
+    expect(styles).toMatch(/max-width:\s*min\(1640px,\s*97vw\)/);
     expect(styles).toMatch(/\.diff-split/);
     expect(styles).toMatch(/\.diff-mode-toggle/);
     expect(styles).toMatch(/\.diff-line/);

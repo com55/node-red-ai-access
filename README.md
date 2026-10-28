@@ -472,11 +472,16 @@ deploys flows and cannot interrupt an in-flight approval.
 
 Open proposals auto-rebase on editor changes. A `conflict` blocks approval until
 resolved using REST `POST /proposals/:id/resolve`, admin
-`POST /proposals/:id/resolve-conflict`, or MCP `resolve_proposal_conflict`.
-Diffs include `rebase`, `liveChanges` and (without conflicts) `vsCurrent`, the
-merged deployment. Approval requires the reviewed `mergedHash` when editor
-changes are merged. Proposals expire after `proposalTtlDays` (integer 1–365,
-default 7), editable through the settings API. Approve may send
+`POST /proposals/:id/resolve-conflict`, or MCP `resolve_proposal_conflict`. The
+dashboard confirms conflict choices and shows the chosen side. Admins can undo
+the latest choice with `POST /proposals/:id/resolve-conflict` and
+`{ "nodeId": "...", "choice": "undo" }` until the next proposal edit or choice;
+undo restores the proposal and rechecks current live flows without deploying.
+Diffs include `conflictValues` (base/live/proposed per field, including flow
+env; redacted for AI callers), `rebase`, `liveChanges` and (without conflicts)
+`vsCurrent`, the merged deployment. Approval requires the reviewed `mergedHash`
+when editor changes are merged. Proposals expire after `proposalTtlDays`
+(integer 1–365, default 7), editable through the settings API. Approve may send
 `deploymentType`: `nodes` (default), `flows`, or `full`. Approval rebases
 against the current revision; conflicts leave the proposal open for resolution.
 Deploy timeouts keep it **pending**; other deploy errors mark it **failed**.

@@ -277,3 +277,30 @@ describe('isLargeDelete', () => {
     expect(isLargeDelete(summary) && !false /* baseRevChanged */).toBe(true);
   });
 });
+
+describe('flow settings comparisons', () => {
+  it('does not invent editor changes when omitted flow settings equal Node-RED defaults', () => {
+    const result = buildDiffSections(
+      { id: 'tab', nodes: [], disabled: false, env: [], info: '' },
+      { id: 'tab', nodes: [] }
+    );
+    expect(result.summary.tabChanges).toEqual([]);
+    expect(result.tabProperties).toEqual([]);
+  });
+
+  it('includes real before/after flow settings values so equal field names do not hide distinct comparisons', () => {
+    const result = buildDiffSections(
+      { id: 'tab', label: 'proposed', env: [{ name: 'MODE', value: 'next', type: 'str' }] },
+      { id: 'tab', label: 'live', env: [{ name: 'MODE', value: 'current', type: 'str' }] }
+    );
+    expect(result.tabProperties).toEqual([
+      { key: 'label', kind: 'scalar', before: 'live', after: 'proposed' },
+      {
+        key: 'env',
+        kind: 'scalar',
+        before: [{ name: 'MODE', value: 'current', type: 'str' }],
+        after: [{ name: 'MODE', value: 'next', type: 'str' }],
+      },
+    ]);
+  });
+});

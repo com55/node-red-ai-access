@@ -1099,7 +1099,7 @@ paths:
   /proposals/{id}/resolve-conflict:
     post:
       tags: [Proposals]
-      summary: Choose live or proposed for one current conflict
+      summary: Choose live or proposed for one current conflict, or undo the latest choice
       operationId: resolveProposalConflict
       security:
         - AdminSession: []
@@ -2375,6 +2375,16 @@ components:
         - reviewUrl
         - reviewPath
       properties:
+        conflictChoice:
+          type: object
+          description: Latest manual resolution; admins can undo it until the next body edit or choice. Undo snapshots are never returned.
+          required: [nodeId, choice]
+          properties:
+            nodeId:
+              type: string
+            choice:
+              type: string
+              enum: [live, proposed]
         deployPending:
           type: object
           description: Timed-out deployment has an unknown outcome; approvals wait until settlement or the hard cap. Check live flows before approving again.
@@ -2622,7 +2632,8 @@ components:
           type: string
         choice:
           type: string
-          enum: [live, proposed]
+          enum: [live, proposed, undo]
+          description: Undo restores the proposal before the latest choice for nodeId and rechecks against live. Available until the next body edit or choice; admin only. Nothing is deployed.
 
     ResolveProposalRequest:
       oneOf:
@@ -2775,6 +2786,11 @@ components:
       type: object
       required: [summary, added, removed, modified]
       properties:
+        tabProperties:
+          type: array
+          description: Before and after values of changed flow settings, including env. Uses the caller's redacted view.
+          items:
+            $ref: '#/components/schemas/ProposalDiffPropertyChange'
         summary:
           type: object
           required: [added, removed, modified, tabChanges]
@@ -2839,6 +2855,26 @@ components:
               description: True for legacy proposals without a stored baseFlow
             rebase:
               $ref: '#/components/schemas/ProposalRebase'
+            conflictValues:
+              type: array
+              description: Base, live and proposed values for each conflicting path. AI callers receive redacted values.
+              items:
+                type: object
+                required: [nodeId, fields]
+                properties:
+                  nodeId:
+                    type: string
+                  fields:
+                    type: array
+                    items:
+                      type: object
+                      required: [field]
+                      properties:
+                        field:
+                          type: string
+                        base: {}
+                        live: {}
+                        proposed: {}
             liveChanges:
               $ref: '#/components/schemas/ProposalDiffSections'
             vsCurrent:

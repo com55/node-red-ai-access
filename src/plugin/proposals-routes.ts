@@ -543,6 +543,27 @@ export function resolveProposalConflictHandler(
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       const body = (req.body ?? {}) as { nodeId?: unknown; choice?: unknown };
+      if (body.choice === 'undo') {
+        const existing = store.get(String(req.params.id));
+        const saved = existing.conflictChoice;
+        if (!saved?.undo || saved.nodeId !== body.nodeId) {
+          res.status(409).json({
+            code: 'conflict_not_found',
+            error: 'This choice can no longer be undone. Reload the proposal.',
+          });
+          return;
+        }
+        const restored = store.updateBody(existing.id, saved.undo);
+        const live = await adapter.getFlows();
+        const proposal = syncOneProposal(store, restored, live).proposal;
+        audit.append('proposal.conflict_resolved', adminActor(req), {
+          proposalId: existing.id,
+          nodeId: saved.nodeId,
+          choice: 'undo',
+        });
+        res.json(presentProposalForApi(proposal, presentOptionsFor(req, httpAdminRoot)));
+        return;
+      }
       const proposal = await resolveConflictChoice(
         store,
         audit,

@@ -130,6 +130,120 @@ describe('auto-rebase service and HTTP API', () => {
     head.rev += '-editor';
   }
 
+  it('reports no net deployment change after keeping the editor values during rebase', async () => {
+    const p = await submit();
+    edit('a', { func: 'live' });
+    await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'live' });
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${p.body.id}/diff`);
+    expect(diff.status).toBe(200);
+    expect(diff.body).toMatchObject({
+      baseRevChanged: true,
+      rebase: { state: 'clean', conflicts: [] },
+      vsCurrent: { summary: { added: 0, removed: 0, modified: 0, tabChanges: [] } },
+    });
+  });
+
+  it('returns all three field values for node and flow env conflicts, with AI values redacted', async () => {
+    edit('tab', {
+      env: [
+        { name: 'MODE', value: 'base', type: 'str' },
+        { name: 'API_KEY', value: 'base-secret', type: 'str' },
+      ],
+    });
+    const baseRev = head.rev;
+    const flow = (await adapter.getFlow('tab')).flow;
+    const p = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: baseRev,
+        payload: {
+          flowId: 'tab',
+          flow: {
+            ...flow,
+            env: [
+              { name: 'MODE', value: 'proposed', type: 'str' },
+              { name: 'API_KEY', value: 'proposed-secret', type: 'str' },
+            ],
+            nodes: flow.nodes.map(n => (n.id === 'a' ? { ...n, func: 'proposed code' } : n)),
+          },
+        },
+      });
+    expect(p.status).toBe(201);
+    edit('tab', {
+      env: [
+        { name: 'MODE', value: 'live', type: 'str' },
+        { name: 'API_KEY', value: 'live-secret', type: 'str' },
+      ],
+    });
+    edit('a', { func: 'live code' });
+    const url = `/mcp/api/v1/proposals/${p.body.id}/diff`;
+    const admin = await request(app).get(url);
+    expect(admin.body.conflictValues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: 'a',
+          fields: expect.arrayContaining([
+            { field: 'func', base: 'return msg;', live: 'live code', proposed: 'proposed code' },
+          ]),
+        }),
+        expect.objectContaining({
+          nodeId: 'tab',
+          fields: expect.arrayContaining([
+            { field: 'env["MODE"].value', base: 'base', live: 'live', proposed: 'proposed' },
+          ]),
+        }),
+      ])
+    );
+    expect(JSON.stringify(admin.body.conflictValues)).toContain('live-secret');
+    const ai = await request(app).get(url).set(auth());
+    expect(ai.status).toBe(200);
+    expect(JSON.stringify(ai.body.conflictValues)).not.toMatch(
+      /base-secret|live-secret|proposed-secret/
+    );
+    expect(JSON.stringify(ai.body.conflictValues)).toContain('[REDACTED]');
+  });
+
+  it('persists the latest conflict choice, exposes only its metadata and allows admin undo/change', async () => {
+    const p = await submit();
+    edit('a', { func: 'live' });
+    const url = `/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`;
+    const chosen = await request(app).post(url).send({ nodeId: 'a', choice: 'live' });
+    expect(chosen.status).toBe(200);
+    expect(chosen.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'live' });
+    expect(chosen.body.conflictChoice).not.toHaveProperty('undo');
+    expect(
+      store.get(p.body.id).conflictChoice?.undo?.flow.nodes?.find(n => n.id === 'a')?.func
+    ).toBe('proposal');
+    const ai = await request(app)
+      .get(`/mcp/api/v1/proposals/${p.body.id}?include=payload,baseFlow`)
+      .set(auth());
+    expect(ai.body.conflictChoice).not.toHaveProperty('undo');
+    edit('b', { name: 'new independent edit' });
+    const undone = await request(app).post(url).send({ nodeId: 'a', choice: 'undo' });
+    expect(undone.status).toBe(200);
+    expect(undone.body.status).toBe('conflict');
+    expect(undone.body.conflictChoice).toBeUndefined();
+    expect(head.flows.find(n => n.id === 'b')?.name).toBe('new independent edit');
+    expect(updateFlow).not.toHaveBeenCalled();
+    const changed = await request(app).post(url).send({ nodeId: 'a', choice: 'proposed' });
+    expect(changed.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'proposed' });
+    expect(changed.body.status).toBe('pending');
+  });
+
+  it('refuses undo after a proposal has been decided', async () => {
+    const p = await submit();
+    edit('a', { func: 'live' });
+    const url = `/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`;
+    await request(app).post(url).send({ nodeId: 'a', choice: 'live' });
+    await request(app).post(`/mcp/api/v1/proposals/${p.body.id}/reject`).send({ reason: 'closed' });
+    const undo = await request(app).post(url).send({ nodeId: 'a', choice: 'undo' });
+    expect(undo.status).toBe(409);
+  });
+
   it('B1: approving a name edit leaves a same-node function proposal pending, mergeable and approvable', async () => {
     const p1 = await submit('a', 'r1', { name: 'approved name' });
     const p2 = await submit('a', 'r1', { func: 'msg.changed = true; return msg;' });

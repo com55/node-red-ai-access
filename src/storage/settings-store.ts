@@ -127,7 +127,7 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
   }
   if (
     typeof data.defaultLinkTtlSeconds === 'number' &&
-    Number.isFinite(data.defaultLinkTtlSeconds) &&
+    Number.isInteger(data.defaultLinkTtlSeconds) &&
     data.defaultLinkTtlSeconds > 0
   ) {
     out.defaultLinkTtlSeconds = Math.floor(data.defaultLinkTtlSeconds);
@@ -145,7 +145,7 @@ function sanitizePartial(raw: unknown, warn?: Warn): PersistedAiAccessSettings {
   }
   if (
     typeof data.maxActiveLinks === 'number' &&
-    Number.isFinite(data.maxActiveLinks) &&
+    Number.isInteger(data.maxActiveLinks) &&
     data.maxActiveLinks > 0
   ) {
     out.maxActiveLinks = Math.floor(data.maxActiveLinks);
@@ -331,6 +331,20 @@ export class SettingsStore {
     partial: PersistedAiAccessSettings,
     reset: readonly (keyof PersistedAiAccessSettings)[] = []
   ): EffectiveAiAccessSettingsWithMeta {
+    if (
+      partial.defaultLinkTtlSeconds !== undefined &&
+      (!Number.isInteger(partial.defaultLinkTtlSeconds) || partial.defaultLinkTtlSeconds < 1)
+    ) {
+      throw new Error('defaultLinkTtlSeconds must be an integer with a minimum of 1');
+    }
+    if (
+      partial.proposalTtlDays !== undefined &&
+      (!Number.isInteger(partial.proposalTtlDays) ||
+        partial.proposalTtlDays < 1 ||
+        partial.proposalTtlDays > 365)
+    ) {
+      throw new Error('proposalTtlDays must be an integer between 1 and 365');
+    }
     const sanitized = sanitizePartial(partial);
     const next: PersistedAiAccessSettings = {
       ...this.disk,

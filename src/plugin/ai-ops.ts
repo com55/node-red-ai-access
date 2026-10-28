@@ -1134,6 +1134,15 @@ export async function resolveConflictChoice(
   const updated = store.updateBody(id, {
     baseFlow: sanitizeFlowTab(next.base),
     flow: sanitizeFlowTab(next.proposed),
+    conflictChoice: {
+      nodeId,
+      choice,
+      undo: {
+        baseFlow: checked.baseFlow ?? {},
+        flow: checked.payload.flow,
+        warnings: checked.warnings ?? [],
+      },
+    },
     warnings: [
       ...(checked.warnings ?? []).filter(
         w => w.code !== 'secret_may_revert' || w.nodeId !== nodeId

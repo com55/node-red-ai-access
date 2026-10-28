@@ -116,6 +116,16 @@ export interface Proposal {
   deployPending?: { mergedHash: string; reason: string; queueReleased?: boolean };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
+  /** Latest manual resolution, retained for admin undo until the next body edit. */
+  conflictChoice?: {
+    nodeId: string;
+    choice: 'live' | 'proposed';
+    undo?: {
+      baseFlow: Partial<FlowTab>;
+      flow: Partial<FlowTab>;
+      warnings: ProposalWarning[];
+    };
+  };
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -419,6 +429,24 @@ export class ProposalStore {
           record.deployPending.queueReleased = true;
       }
     }
+    const choice = proposal.conflictChoice;
+    if (
+      choice &&
+      isOpenProposalStatus(record.status) &&
+      (choice.choice === 'live' || choice.choice === 'proposed') &&
+      typeof choice.nodeId === 'string' &&
+      choice.undo
+    ) {
+      record.conflictChoice = {
+        nodeId: choice.nodeId.replace(/\0/g, '').slice(0, 200),
+        choice: choice.choice,
+        undo: {
+          baseFlow: sanitizeFlowTab(choice.undo.baseFlow),
+          flow: sanitizeFlowTab(choice.undo.flow),
+          warnings: sanitizeProposalWarnings(choice.undo.warnings) ?? [],
+        },
+      };
+    }
     const rebase = sanitizeRebaseInfo(proposal.rebase);
     if (rebase && isOpenProposalStatus(record.status)) {
       record.rebase = rebase;
@@ -682,6 +710,7 @@ export class ProposalStore {
       title?: string;
       restoredSecrets?: { nodeId: string; property: string }[];
       warnings?: ProposalWarning[];
+      conflictChoice?: Proposal['conflictChoice'];
     }
   ): Proposal {
     const proposal = this.get(id);
@@ -703,6 +732,8 @@ export class ProposalStore {
       if (update.warnings.length > 0) proposal.warnings = update.warnings;
       else delete proposal.warnings;
     }
+    if (update.conflictChoice) proposal.conflictChoice = update.conflictChoice;
+    else delete proposal.conflictChoice;
     proposal.status = 'pending';
     delete proposal.rebase;
     proposal.updatedAt = new Date(this.now()).toISOString();

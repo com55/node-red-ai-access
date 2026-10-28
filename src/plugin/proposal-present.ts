@@ -97,6 +97,7 @@ export interface PresentedProposalApi {
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
+  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed' };
   deployPending?: Proposal['deployPending'];
   /** Soft validation notes (missing config, unwired, …) — not blocking. */
   warnings?: Proposal['warnings'];
@@ -661,6 +662,14 @@ export function presentProposal(
   const reviewUrl = options.req ? absolutizePath(options.req, reviewPath) : reviewPath;
   return {
     ...proposal,
+    ...(proposal.conflictChoice
+      ? {
+          conflictChoice: {
+            nodeId: proposal.conflictChoice.nodeId,
+            choice: proposal.conflictChoice.choice,
+          },
+        }
+      : {}),
     title,
     storedTitle,
     flowLabel,
@@ -758,6 +767,7 @@ export function presentProposalForApi(
     lean.restoredSecrets = proposal.restoredSecrets;
   }
   if (full.deployPending) lean.deployPending = full.deployPending;
+  if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;
   if (full.rebase) {
     lean.rebase = full.rebase;
   }
