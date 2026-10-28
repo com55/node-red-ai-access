@@ -161,11 +161,14 @@ with `[REDACTED]`. The dashboard (admin session) always shows real values.
   `scheme://user:password@` URLs, and `name = "literal"` / `name: 'literal'`
   assignments whose name matches a pattern. Only the literal is replaced.
 - Redacted nodes list the redacted field paths in `_aiRedactions`.
-- Also caught: connection strings / DSNs (`Server=…;Password=…;`), unquoted
-  `password: x` / `token=x` in non-code text fields, and
-  `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
+- Also caught: connection strings / DSNs (`Server=…;Password=…;`), URL query
+  params with a secret name (`?key=abc123&x=1` → only `abc123`), unquoted
+  `password: x` / `token=x` in non-code text fields (the value must contain a
+  digit or symbol, so prose like `Session: started` or `key: value` is kept),
+  and `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
   `name`/`label`/`info` are content-scanned only (no key-name rule). Any single
-  string field over 256 KB is not scanned and is sent to AI as `[REDACTED]`.
+  string field over 256 KB, or one whose scan exceeds a 150 ms budget, is sent
+  to AI as `[REDACTED]`. All patterns are length-bounded / linear (no ReDoS).
 - **Proposals (strict restore)**: a `[REDACTED]` placeholder is restored to the
   original secret on submit only when it stays exactly where it was shown: same
   node id and field, env and name/value entries (headers, change rules) matched
@@ -177,7 +180,12 @@ with `[REDACTED]`. The dashboard (admin session) always shows real values.
 - Approving: the proposal card lists every field whose secret was restored, and
   shows a red warning (`secret_destination_changed`) when a node holding a
   restored secret had its `url`/`host`/`port`/`method`/`headers`/type or similar
-  destination changed, or `secret_node_code_changed` when its code changed.
+  destination changed, or `secret_node_code_changed` when its code changed. Also
+  flagged when secrets were restored: `secret_wires_changed` (its output wires
+  changed), `secret_scope_changed` (tab/group env such as `${API_HOST}`, or a
+  config node it uses, changed), `outbound_node_changed` (an http, mqtt, tcp,
+  udp, email, websocket, function, exec or file node was added/changed), and
+  `secret_tab_changed` (any other node in the tab changed).
 - Node-RED credentials (and `cred` env entries) are never part of flow output.
 - The audit log records `ai.redacted` with the count per response (never
   values).

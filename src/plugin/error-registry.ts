@@ -314,6 +314,38 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     ALL,
     'warning'
   ),
+  e(
+    'secret_wires_changed',
+    201,
+    'Warning: a node holding a restored secret had its output wires changed',
+    'Reviewer must check where its messages now go',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_scope_changed',
+    201,
+    'Warning: tab/group env or a config node scoping a secret-holding node changed',
+    'Reviewer must check env-resolved hosts/URLs (e.g. `${API_HOST}`)',
+    ALL,
+    'warning'
+  ),
+  e(
+    'outbound_node_changed',
+    201,
+    'Warning: proposal with restored secrets adds/changes an outbound-capable node (http, mqtt, tcp, udp, email, websocket, function, exec, file)',
+    'Reviewer must check it cannot send secret data elsewhere',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_tab_changed',
+    201,
+    'Warning: proposal with restored secrets also changes other nodes in the tab',
+    'Review every change before approving',
+    ALL,
+    'warning'
+  ),
   // --- Proposal statuses (auto-closed)
   e(
     'expired',
