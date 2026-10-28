@@ -285,6 +285,54 @@ describe('strict proposal three-way rebase', () => {
     });
   });
 
+  it.each(['node', 'config', 'tab', 'deep'])(
+    'allows a literal live placeholder at the same %s field path',
+    location => {
+      const b = clone(base);
+      if (location === 'node') b.nodes![0]!.func = 'prefix [REDACTED] suffix';
+      if (location === 'config') b.configs![0]!.password = '[REDACTED]';
+      if (location === 'tab') b.env = [{ name: 'TOKEN', value: '[REDACTED]' }];
+      if (location === 'deep') b.nodes![0]!.nested = { child: ['[REDACTED]'] };
+      const p = clone(b);
+      p.nodes![1]!.name = 'proposal';
+      expect(rebase(p, b, { base: b }).state).toBe('clean');
+      const live = clone(b);
+      live.nodes![0]!.x = 100;
+      expect(rebase(p, live, { base: b }).state).toBe('merged');
+    }
+  );
+
+  it.each(['node', 'field', 'array index'])(
+    'blocks a placeholder copied to a different %s',
+    location => {
+      const b = clone(base);
+      b.nodes![0]!.nested = ['[REDACTED]', 'safe'];
+      const p = clone(b);
+      if (location === 'node') p.nodes![1]!.nested = ['[REDACTED]'];
+      if (location === 'field') p.nodes![0]!.other = '[REDACTED]';
+      if (location === 'array index') p.nodes![0]!.nested = ['safe', '[REDACTED]'];
+      expect(rebase(p, b, { base: b }).conflicts).toContainEqual(
+        expect.objectContaining({ kind: 'redacted_placeholder' })
+      );
+    }
+  );
+
+  it('keeps a literal placeholder added live after the proposal was submitted', () => {
+    const p = clone(base),
+      c = clone(base);
+    p.nodes![1]!.name = 'proposal';
+    c.nodes![0]!.func = '[REDACTED]';
+    expect(rebase(p, c)).toMatchObject({
+      state: 'merged',
+      merged: {
+        nodes: [
+          expect.objectContaining({ id: 'a', func: '[REDACTED]' }),
+          expect.objectContaining({ id: 'b', name: 'proposal' }),
+        ],
+      },
+    });
+  });
+
   it('legacy records need a base after revisions move and cannot bypass safety at the same rev', () => {
     expectConflict(rebase(base, base, { base: undefined }), 'base_unavailable', 'tab');
     expect(rebase(base, base, { base: undefined, baseRev: 'r2' }).state).toBe('clean');
@@ -384,6 +432,59 @@ describe('secrets during rebase', () => {
     b.nodes![0]!.func = 'const API_KEY = "base-secret";\nreturn msg;';
     return b;
   };
+  it.each(['password', 'credentials', 'env', 'code', 'tab env'])(
+    'keeps a newer live %s secret on proposed conflict resolution unless intentionally changed',
+    location => {
+      for (const intentional of [false, true]) {
+        const b = clone(base);
+        const setSecret = (tab: FlowTab, value: string) => {
+          const node = tab.nodes![0]!;
+          if (location === 'password') node.password = value;
+          if (location === 'credentials') node.credentials = { password: value };
+          if (location === 'env')
+            node.env = [
+              { name: 'MODE', value: 'dev' },
+              { name: 'PASSWORD', value },
+            ];
+          if (location === 'code') node.func = `const PASSWORD = "${value}";\nreturn msg;`;
+          if (location === 'tab env') tab.env = [{ name: 'PASSWORD', value }];
+        };
+        setSecret(b, 'OLDPW');
+        const p = clone(b),
+          c = clone(b);
+        if (location === 'tab env') {
+          p.label = 'proposed';
+          c.label = 'live';
+        } else {
+          p.nodes![0]!.name = 'proposed';
+          c.nodes![0]!.name = 'live';
+        }
+        if (intentional) setSecret(p, 'PROPOSALPW');
+        setSecret(c, 'NEWPW');
+        if (location === 'env') (c.nodes![0]!.env as unknown[]).reverse();
+        const nodeId = location === 'tab env' ? 'tab' : 'a';
+        expectConflict(
+          rebase(p, c, { base: b }),
+          location === 'tab env' ? 'tab_changed_both' : 'node_changed_both',
+          nodeId
+        );
+        const before = clone({ b, p, c });
+        const next = applyConflictChoice({
+          flowId: 'tab',
+          base: b,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId,
+          choice: 'proposed',
+        });
+        const result = rebase(next.proposed as FlowTab, c, { base: next.base });
+        expect(result.state).not.toBe('conflict');
+        expect(JSON.stringify(result.merged)).toContain(intentional ? 'PROPOSALPW' : 'NEWPW');
+        expect(JSON.stringify(result.merged)).not.toContain('OLDPW');
+        expect({ b, p, c }).toEqual(before);
+      }
+    }
+  );
   it.each(['content', 'position'])(
     'conflicts if the editor changes a secret and the proposal touches the node (%s)',
     mode => {

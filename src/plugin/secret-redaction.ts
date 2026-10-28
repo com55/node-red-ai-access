@@ -945,6 +945,55 @@ function stableElementKey(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Keep live rotations of secret fields that the proposal left at their base value. */
+export function preserveLiveSecrets(base: FlowNode, proposed: FlowNode, live: FlowNode): FlowNode {
+  const secrets = new Map<string, string[]>();
+  redactEntity(base, {
+    matcher: createSecretNameMatcher(currentSecretNamePatterns()),
+    count: 0,
+    secrets,
+  });
+  const walk = (b: unknown, p: unknown, c: unknown, path: string): unknown => {
+    if (typeof p === 'string') {
+      return p === b && secrets.has(`${base.id}\u0000${path}`) ? c : p;
+    }
+    if (Array.isArray(p)) {
+      const before: unknown[] = Array.isArray(b) ? b : [];
+      const current: unknown[] = Array.isArray(c) ? c : [];
+      const usedBase = new Set<number>();
+      const usedLive = new Set<number>();
+      return p.map((item: unknown, i: number) => {
+        const key = stableElementKey(item);
+        const match = (list: unknown[], used: Set<number>): number => {
+          const index =
+            key === undefined
+              ? i
+              : list.findIndex((entry, j) => !used.has(j) && stableElementKey(entry) === key);
+          used.add(index);
+          return index;
+        };
+        const bi = match(before, usedBase);
+        const ci = match(current, usedLive);
+        return walk(before[bi], item, current[ci], `${path}[${bi}]`);
+      });
+    }
+    if (isPlainObject(p)) {
+      const before = isPlainObject(b) ? b : {};
+      const current = isPlainObject(c) ? c : {};
+      return Object.fromEntries(
+        Object.entries(p)
+          .map(([key, value]) => [
+            key,
+            walk(before[key], value, current[key], path ? `${path}.${key}` : key),
+          ])
+          .filter(([, value]) => value !== undefined)
+      );
+    }
+    return p;
+  };
+  return walk(base, proposed, live, '') as FlowNode;
+}
+
 function restoreWalk(
   ai: unknown,
   redacted: unknown,

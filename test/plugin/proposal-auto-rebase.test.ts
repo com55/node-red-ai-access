@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { adapterAtRev, submitReplaceFlowProposal } from '../../src/plugin/ai-ops.js';
-import { ProposalService } from '../../src/plugin/proposal-service.js';
+import {
+  ProposalRebaseAckRequiredError,
+  ProposalService,
+} from '../../src/plugin/proposal-service.js';
 import { registerRoutes } from '../../src/plugin/index.js';
 import {
   configureProposalTtl,
@@ -166,6 +169,58 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
     expect(head.flows.find(n => n.id === 'b')!.name).toBe('second');
   });
+
+  it('serializes simultaneous approvals across service instances and retains both node edits', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'second' });
+    updateFlow.mockImplementation(async (params: UpdateFlowParams) => {
+      // Like the runtime adapters, check the rev before an asynchronous write.
+      if (params.expectedRev !== head.rev)
+        throw new FlowRevisionConflictError(params.expectedRev, head.rev);
+      const flows = replaceFlowTabInFlatFlows(head.flows, params.flowId, params.flow);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      head = { rev: `${head.rev}-deploy`, flows };
+      return { flowId: params.flowId, rev: head.rev };
+    });
+    const services = [
+      new ProposalService(store, audit, adapter, () => 'nodes'),
+      new ProposalService(store, audit, adapter, () => 'nodes'),
+    ];
+    const results = await Promise.all(
+      [a.body.id, b.body.id].map(async (id, index) => {
+        const service = services[index]!;
+        try {
+          return await service.approve(id, { kind: 'admin' });
+        } catch (error) {
+          if (!(error instanceof ProposalRebaseAckRequiredError)) throw error;
+          // The queued proposal must acknowledge the merge with the first deploy.
+          return service.approve(id, { kind: 'admin' }, { mergedHash: error.mergedHash });
+        }
+      })
+    );
+    expect(results.map(p => p.status)).toEqual(['approved', 'approved']);
+    expect(updateFlow).toHaveBeenCalledTimes(2);
+    expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
+    expect(head.flows.find(n => n.id === 'b')!.name).toBe('second');
+    expect(updateFlow.mock.calls.map(c => c[0].expectedRev)).toEqual(['r1', 'r1-deploy']);
+  });
+
+  it.each(['read', 'deployment setting'])(
+    'releases approval locks after a %s error',
+    async failure => {
+      const p = await submit();
+      const service = new ProposalService(store, audit, adapter, () => {
+        if (failure === 'deployment setting') throw new Error('setting unavailable');
+        return 'nodes';
+      });
+      if (failure === 'read')
+        vi.spyOn(adapter, 'getFlows').mockRejectedValueOnce(new Error('runtime unavailable'));
+      await expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toThrow('unavailable');
+      expect(store.isApproving(p.body.id)).toBe(false);
+      const retry = new ProposalService(store, audit, adapter, () => 'nodes');
+      expect((await retry.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
+    }
+  );
 
   it('retries a revision race during updateFlow and succeeds against the new revision', async () => {
     const p = await submit();

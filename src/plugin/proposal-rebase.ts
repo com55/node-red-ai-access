@@ -14,7 +14,7 @@
  * - New node id in P that also exists live (any tab) → conflict.
  * - Tab deleted live → conflict.
  * - A merged node wiring to (or grouped under) a node that no longer exists → conflict.
- * - A `[REDACTED]` placeholder must never reach the deployed tab → conflict.
+ * - A `[REDACTED]` placeholder absent at the same live field path → conflict.
  *
  * The merge is a pure function of (B, P, C); the proposal body itself is never
  * rewritten by a rebase, so re-running it against a newer live rev is safe.
@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import type { FlowNode, FlowTab } from '../runtime/types.js';
 
 import { REDACTED_PLACEHOLDER } from './secret-patterns.js';
-import { secretValuesChanged } from './secret-redaction.js';
+import { preserveLiveSecrets, secretValuesChanged } from './secret-redaction.js';
 
 export type RebaseState = 'clean' | 'merged' | 'conflict';
 
@@ -195,13 +195,20 @@ export function nestedLiveTab(
   return out;
 }
 
-function containsPlaceholder(value: unknown): boolean {
-  const pending = [value];
+function containsNewPlaceholder(value: unknown, live: unknown): boolean {
+  const pending: [unknown, unknown][] = [[value, live]];
   while (pending.length > 0) {
-    const next = pending.pop();
-    if (typeof next === 'string' && next.includes(REDACTED_PLACEHOLDER)) return true;
+    const [next, current] = pending.pop() ?? [];
+    if (
+      typeof next === 'string' &&
+      next.includes(REDACTED_PLACEHOLDER) &&
+      !(typeof current === 'string' && current.includes(REDACTED_PLACEHOLDER))
+    )
+      return true;
     if (next && typeof next === 'object') {
-      for (const child of Object.values(next)) pending.push(child);
+      const liveFields = current && typeof current === 'object' ? current : {};
+      for (const [key, child] of Object.entries(next))
+        pending.push([child, (liveFields as Record<string, unknown>)[key]]);
     }
   }
   return false;
@@ -452,7 +459,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
         choices: ['live'],
       });
     }
-    if (containsPlaceholder(node)) {
+    if (containsNewPlaceholder(node, C.get(node.id)?.node)) {
       push({
         kind: 'redacted_placeholder',
         nodeId: node.id,
@@ -486,7 +493,7 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
       });
     }
   }
-  if (containsPlaceholder(mergedTabProps)) {
+  if (containsNewPlaceholder(mergedTabProps, cTab)) {
     push({
       kind: 'redacted_placeholder',
       nodeId: flowId,
@@ -563,18 +570,33 @@ export function applyConflictChoice(input: {
   const proposed = clone(input.proposed);
   if (nodeId === flowId) {
     const live = tabProps(current);
+    const chosen =
+      choice === 'proposed'
+        ? preserveLiveSecrets(
+            { id: flowId, type: current.type ?? 'tab', ...tabProps(base) },
+            { id: flowId, type: current.type ?? 'tab', ...tabProps(proposed) },
+            { id: flowId, type: current.type ?? 'tab', ...live }
+          )
+        : live;
     for (const key of TAB_FIELDS) {
       delete (base as Record<string, unknown>)[key];
       if (live[key] !== undefined) (base as Record<string, unknown>)[key] = clone(live[key]);
-      if (choice === 'live') {
-        delete (proposed as Record<string, unknown>)[key];
-        if (live[key] !== undefined) (proposed as Record<string, unknown>)[key] = clone(live[key]);
-      }
+      delete (proposed as Record<string, unknown>)[key];
+      if (chosen[key] !== undefined)
+        (proposed as Record<string, unknown>)[key] = clone(chosen[key]);
     }
     return { base, proposed };
   }
   const liveMap = mapTab(current);
   const liveNode = liveMap.get(nodeId);
+  const baseNode = mapTab(base).get(nodeId);
+  const proposedNode = mapTab(proposed).get(nodeId);
+  if (choice === 'proposed' && baseNode && proposedNode && liveNode) {
+    setNode(proposed, nodeId, {
+      ...proposedNode,
+      node: preserveLiveSecrets(baseNode.node, proposedNode.node, liveNode.node),
+    });
+  }
   setNode(base, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
   if (choice === 'live') {
     setNode(proposed, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);

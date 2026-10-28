@@ -74,6 +74,10 @@ export class ProposalRebaseRaceError extends Error {
 
 const MAX_APPROVE_ATTEMPTS = 3;
 
+// Shared by every service/entry point: adapter revision checks are not atomic
+// with deployment, so only one approval may read, merge and deploy at a time.
+let approveQueue = Promise.resolve();
+
 export interface ApproveOptions {
   deploymentType?: DeploymentType;
   /**
@@ -96,11 +100,31 @@ export class ProposalService {
     decidedBy: ProposalDecisionBy,
     options: ApproveOptions = {}
   ): Promise<Proposal> {
+    // Keep the per-proposal guard immediate, including while queued globally.
     const proposal = this.proposals.beginApprove(id);
-    const meta = auditProposalMeta(proposal);
-    const deploymentType = options.deploymentType ?? this.getDeploymentType();
+    const previous = approveQueue;
+    let release!: () => void;
+    approveQueue = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      return await this.approveLocked(proposal, decidedBy, options);
+    } finally {
+      release();
+    }
+  }
+
+  private async approveLocked(
+    proposal: Proposal,
+    decidedBy: ProposalDecisionBy,
+    options: ApproveOptions
+  ): Promise<Proposal> {
+    const id = proposal.id;
     let approved: Proposal | undefined;
     try {
+      const meta = auditProposalMeta(proposal);
+      const deploymentType = options.deploymentType ?? this.getDeploymentType();
       // Guard for future proposal types (today only replace_flow exists).
       const proposalType: string = proposal.type;
       if (proposalType !== 'replace_flow') {
