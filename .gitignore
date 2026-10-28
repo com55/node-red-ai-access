@@ -139,3 +139,6 @@ mcp-debug.log
 
 /dist
 core.585
+
+# Yarn install state (machine-specific, regenerated on install)
+.yarn/install-state.gz
