@@ -391,12 +391,33 @@ function editorSidebarScriptPartA(): string {
       $('#ai-access-check-public-url').prop('disabled', readonly);
       var oauth = s.oauth || {};
       $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled);
-      $('#ai-access-oauth-access-ttl').val(oauth.accessTokenTtlSec || 3600);
-      $('#ai-access-oauth-refresh-ttl').val(oauth.refreshIdleTtlSec || 2592000);
+      setDuration('access-ttl', oauth.accessTokenTtlSec || 3600, OAUTH_ACCESS_UNITS);
+      setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
       $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
       var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
-      $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-refresh-ttl, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
+      $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
       $('#ai-access-oauth-lock').toggle(!!(data.sources && data.sources.oauth === 'settings.js'));
+    }
+
+    var OAUTH_ACCESS_UNITS = [['minutes', 60, 'Minutes'], ['hours', 3600, 'Hours']];
+    var OAUTH_REFRESH_UNITS = [['hours', 3600, 'Hours'], ['days', 86400, 'Days']];
+
+    // Show seconds as the largest unit that divides them evenly (smallest unit otherwise).
+    function setDuration(field, seconds, units) {
+      var unit = units[0];
+      for (var i = units.length - 1; i >= 0; i--) {
+        if (seconds % units[i][1] === 0) { unit = units[i]; break; }
+      }
+      $('#ai-access-oauth-' + field).val(Math.max(1, Math.round(seconds / unit[1])));
+      $('#ai-access-oauth-' + field + '-unit').val(unit[0]);
+    }
+
+    function readDuration(field, units) {
+      var amount = Number($('#ai-access-oauth-' + field).val());
+      var name = $('#ai-access-oauth-' + field + '-unit').val();
+      var mult = units[0][1];
+      units.forEach(function (u) { if (u[0] === name) mult = u[1]; });
+      return Math.round(amount * mult);
     }
 
     function refreshOAuth() {
@@ -538,8 +559,8 @@ function editorSidebarScriptPartA(): string {
         rateLimitMaxPerToken: Number($('#ai-access-rate-token').val()),
         oauth: {
           enabled: $('#ai-access-oauth-enabled').is(':checked'),
-          accessTokenTtlSec: Number($('#ai-access-oauth-access-ttl').val()),
-          refreshIdleTtlSec: Number($('#ai-access-oauth-refresh-ttl').val()),
+          accessTokenTtlSec: readDuration('access-ttl', OAUTH_ACCESS_UNITS),
+          refreshIdleTtlSec: readDuration('refresh-ttl', OAUTH_REFRESH_UNITS),
           dcrMaxClients: Number($('#ai-access-oauth-dcr-cap').val()),
         },
       };
@@ -730,14 +751,18 @@ function editorSidebarScriptPartB(): string {
       $('<span id="ai-access-oauth-lock" class="form-tips" style="display:none"></span>')
         .text('🔒 Locked by settings.js').appendTo(row);
       [
-        ['access-ttl', 'Access token lifetime (seconds)'],
-        ['refresh-ttl', 'Refresh token idle lifetime (seconds)'],
-        ['dcr-cap', 'Maximum registered OAuth clients']
+        ['access-ttl', 'Access token lifetime', OAUTH_ACCESS_UNITS],
+        ['refresh-ttl', 'Refresh token idle lifetime', OAUTH_REFRESH_UNITS],
+        ['dcr-cap', 'Maximum registered OAuth clients', null]
       ].forEach(function (field) {
         var id = 'ai-access-oauth-' + field[0];
         var oauthRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
         $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
-        $('<input type="number" min="1" step="1">').attr('id', id).appendTo(oauthRow).on('change', scheduleAutoSave);
+        $('<input type="number" min="1" step="1" style="width:80px">').attr('id', id).appendTo(oauthRow).on('change', scheduleAutoSave);
+        if (!field[2]) return;
+        var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
+          .appendTo(oauthRow).on('change', scheduleAutoSave);
+        field[2].forEach(function (u) { $('<option></option>').attr('value', u[0]).text(u[2]).appendTo(select); });
       });
       $('<p id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></p>').appendTo(body);
       $('<h4></h4>').text('Registered OAuth clients').appendTo(body);

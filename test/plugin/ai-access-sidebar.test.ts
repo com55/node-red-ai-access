@@ -546,7 +546,14 @@ describe('ai-access-sidebar.js served tab', () => {
       expect(
         $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[0]!.textContent
       ).toContain('Test app');
-      expect($('#ai-access-oauth-access-ttl').elements[0]!.props.value).toBe(3600);
+      expect($('#ai-access-oauth-access-ttl').elements[0]!.props.value).toBe(1);
+      expect($('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value).toBe('hours');
+      expect($('#ai-access-oauth-refresh-ttl').elements[0]!.props.value).toBe(30);
+      expect($('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value).toBe('days');
+      $('#ai-access-oauth-access-ttl').elements[0]!.props.value = 90;
+      $('#ai-access-oauth-access-ttl-unit').elements[0]!.props.value = 'minutes';
+      $('#ai-access-oauth-refresh-ttl').elements[0]!.props.value = 12;
+      $('#ai-access-oauth-refresh-ttl-unit').elements[0]!.props.value = 'hours';
       $('#ai-access-oauth-enabled').elements[0]!.props.checked = true;
       $('#ai-access-oauth-enabled').elements[0]!.handlers.change![0]!();
       await vi.advanceTimersByTimeAsync(400);
@@ -562,7 +569,12 @@ describe('ai-access-sidebar.js served tab', () => {
       await vi.advanceTimersByTimeAsync(0);
       const put = fetcher.mock.calls.find(call => call[1]?.method === 'PUT');
       expect(JSON.parse(put![1]!.body!)).toMatchObject({
-        oauth: { enabled: true, dcrMaxClients: 20 },
+        oauth: {
+          enabled: true,
+          dcrMaxClients: 20,
+          accessTokenTtlSec: 5400,
+          refreshIdleTtlSec: 43200,
+        },
       });
       const button = $('#ai-access-oauth-clients').elements[0]!.children[0]!.children[1]!;
       button.handlers.click![0]!();
