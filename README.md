@@ -86,7 +86,7 @@ module.exports = {
     //   enabled: true,
     //   accessTokenTtlSec: 3600,
     //   refreshIdleTtlSec: 2592000,
-    //   dcrMaxClients: 20,
+    //   dcrMaxClients: 5,
     // },
   },
 };
@@ -191,6 +191,23 @@ use. Reusing a rotated refresh token revokes its token family. Tokens are stored
 as SHA-256 hashes in `<userDir>/.ai-access/oauth.json`. Access-link `aia_`
 bearer tokens continue to work. See [MCP client setup](docs/mcp-clients.md).
 
+Add `{publicBaseUrl}/mcp` as the server URL in ChatGPT, Claude and other MCP
+clients; `/mcp` and `/mcp/rpc` serve the same MCP endpoint (browsers opening
+`/mcp` get the dashboard). At most `oauth.dcrMaxClients` (default 5) approved
+clients are kept: lowering the limit removes none, but new registrations are
+refused with `400` until clients are revoked.
+
+When you are signed out and Node-RED uses `credentials` login, the consent page
+shows its own sign-in form. It calls Node-RED's `/auth/token` endpoint and
+stores the resulting editor token in `localStorage` under the editor's key, so
+this also signs you in to the Node-RED editor in that browser.
+
+> **Exposing Node-RED publicly:** Node-RED's own `/auth/token` login endpoint is
+> not rate limited (neither by Node-RED nor by this plugin). Before exposing
+> Node-RED to the internet for OAuth, put it behind a reverse proxy or other
+> limiter that throttles `POST {httpAdminRoot}/auth/token` (and preferably the
+> whole admin path), and use strong passwords.
+
 Public URL **Check** uses `POST /mcp/api/v1/settings/check-public-url` and
 requires `*` permission because it performs an outbound request. It validates
 the form URL, fetches only `{publicBaseUrl}{httpAdminRoot}/mcp/api/v1`
@@ -229,30 +246,31 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** or
 **`GET /mcp/api/v1/openapi.json`** (also in
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml)).
 
-| Path                                     | Purpose                                          |
-| ---------------------------------------- | ------------------------------------------------ |
-| `GET /mcp`                               | Admin UI (status, links, proposals, audit log)   |
-| `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)          |
-| `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts     |
-| `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)  |
-| `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint) |
-| `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                 |
-| `GET /mcp/api/v1/openapi.json`           | OpenAPI 3.1 specification (JSON)                 |
-| `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)        |
-| `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)      |
-| `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)     |
-| `GET /mcp/api/v1/links`                  | List active access links (`*` only)              |
-| `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)        |
-| `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                    |
-| `GET /mcp/api/v1/flows`                  | List flows + rev (admin `read` or access link)   |
-| `GET /mcp/api/v1/flows/:id`              | Get one flow + rev (admin `read` or access link) |
-| `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)        |
-| `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)           |
-| `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)             |
-| `GET /mcp/api/v1/proposals/:id/diff`     | Diff proposal vs current flow (admin `read`/own) |
-| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)  |
-| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)         |
-| `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)             |
+| Path                                     | Purpose                                                   |
+| ---------------------------------------- | --------------------------------------------------------- |
+| `GET /mcp`                               | Admin UI (status, links, proposals, audit log)            |
+| `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)                   |
+| `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts              |
+| `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)           |
+| `POST /mcp`                              | Same MCP endpoint (OAuth resource URL for ChatGPT/Claude) |
+| `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint)          |
+| `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                          |
+| `GET /mcp/api/v1/openapi.json`           | OpenAPI 3.1 specification (JSON)                          |
+| `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)                 |
+| `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)               |
+| `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)              |
+| `GET /mcp/api/v1/links`                  | List active access links (`*` only)                       |
+| `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)                 |
+| `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                             |
+| `GET /mcp/api/v1/flows`                  | List flows + rev (admin `read` or access link)            |
+| `GET /mcp/api/v1/flows/:id`              | Get one flow + rev (admin `read` or access link)          |
+| `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)                 |
+| `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)                    |
+| `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)                      |
+| `GET /mcp/api/v1/proposals/:id/diff`     | Diff proposal vs current flow (admin `read`/own)          |
+| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)           |
+| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)                  |
+| `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)                      |
 
 ### MCP JSON-RPC (`POST /mcp/rpc`)
 

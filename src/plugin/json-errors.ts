@@ -16,8 +16,24 @@ import type { NodeRedPluginAPI } from './types.js';
 
 const ATTACHED = Symbol.for('com55.ai-access.mcpJsonErrorHandler');
 
-function isMcpRpcPath(path: string): boolean {
-  return /\/mcp\/rpc\/?$/.test(path) || path.includes('/mcp/rpc');
+/**
+ * JSON-RPC endpoints: `<root>/mcp/rpc` and its alias `<root>/mcp`. The handler runs
+ * on the plugin app (paths relative to httpAdminRoot) and on the parent app (paths
+ * include httpAdminRoot), so both forms are anchored.
+ */
+function mcpRpcMatcher(httpAdminRoot?: string): (path: string) => boolean {
+  let root = httpAdminRoot ?? '/';
+  while (root.endsWith('/')) {
+    root = root.slice(0, -1);
+  }
+  const targets = new Set<string>();
+  for (const base of root ? ['', root] : ['']) {
+    for (const p of ['/mcp', '/mcp/rpc']) {
+      targets.add(base + p);
+      targets.add(`${base + p}/`);
+    }
+  }
+  return path => targets.has(path);
 }
 
 function isMcpPath(path: string): boolean {
@@ -61,7 +77,8 @@ function isPayloadTooLarge(err: unknown): boolean {
  * Must be registered with `app.use` so Express treats it as error middleware
  * (4-arg signature). Safe to register on both plugin and parent httpAdmin.
  */
-export function mcpJsonErrorHandler(): ErrorRequestHandler {
+export function mcpJsonErrorHandler(httpAdminRoot?: string): ErrorRequestHandler {
+  const isMcpRpcPath = mcpRpcMatcher(httpAdminRoot);
   return (err: unknown, req: Request, res: Response, next: NextFunction): void => {
     if (res.headersSent) {
       next(err);
@@ -114,13 +131,13 @@ export function mcpJsonErrorHandler(): ErrorRequestHandler {
   };
 }
 
-function attachOnce(app: Express): void {
+function attachOnce(app: Express, httpAdminRoot?: string): void {
   const marked = app as Express & { [ATTACHED]?: boolean };
   if (marked[ATTACHED]) {
     return;
   }
   marked[ATTACHED] = true;
-  app.use(mcpJsonErrorHandler());
+  app.use(mcpJsonErrorHandler(httpAdminRoot));
 }
 
 /**
@@ -129,6 +146,6 @@ function attachOnce(app: Express): void {
  */
 export function attachMcpJsonErrorHandlers(RED: NodeRedPluginAPI): void {
   for (const app of httpAdminAppsForMcpErrors(RED)) {
-    attachOnce(app);
+    attachOnce(app, RED.settings.httpAdminRoot);
   }
 }

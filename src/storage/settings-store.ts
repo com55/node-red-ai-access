@@ -79,7 +79,7 @@ const DEFAULT_OAUTH = {
   accessTokenTtlSec: 3600,
   refreshIdleTtlSec: 2_592_000,
   refreshMaxLifetimeSec: 7_776_000,
-  dcrMaxClients: 20,
+  dcrMaxClients: 5,
 };
 
 const BUILTIN: EffectiveAiAccessSettings = {

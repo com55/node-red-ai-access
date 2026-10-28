@@ -30,6 +30,7 @@ function nodeRedLikeApp(allowed: string[]): express.Express {
   app.get('/mcp/api/v1/status', (_req, res) => res.json({ ok: true }));
   app.get('/mcp/a/aia_x/status', (_req, res) => res.json({ ok: true }));
   app.post('/mcp/rpc', (_req, res) => res.json({ ok: true }));
+  app.post('/mcp', (_req, res) => res.json({ ok: true }));
   app.get('/editor-thing', (_req, res) => res.json({ ok: true }));
   return app;
 }
@@ -41,12 +42,20 @@ describe('AI-facing CORS', () => {
       ['get', '/mcp/api/v1/status'],
       ['get', '/mcp/a/aia_x/status'],
       ['post', '/mcp/rpc'],
+      ['post', '/mcp'],
     ] as const) {
       const res = await request(app)[method](path).set('Origin', 'https://site.example');
       expect(res.status).toBe(200);
       expect(res.headers['access-control-allow-origin']).toBeUndefined();
       expect(res.headers.vary).toMatch(/Origin/);
     }
+  });
+
+  it('echoes an allow-listed origin on the /mcp alias', async () => {
+    const res = await request(nodeRedLikeApp(['https://app.example']))
+      .post('/mcp')
+      .set('Origin', 'https://app.example');
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example');
   });
 
   it('leaves non-AI admin routes untouched', async () => {

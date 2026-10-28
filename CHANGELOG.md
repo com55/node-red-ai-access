@@ -8,6 +8,34 @@ and this project adheres to
 
 ## Unreleased
 
+### Fixed
+
+- MCP OAuth with ChatGPT: "Authentication succeeded, action discovery failed".
+  The OAuth protected resource (and the URL users add in ChatGPT/Claude) is
+  `<Public URL>/mcp`, but MCP was only served at `/mcp/rpc`, so the
+  authenticated `POST /mcp` returned 404. `/mcp` now also serves MCP Streamable
+  HTTP (POST; SSE `GET`/`DELETE` answer 405 like `/mcp/rpc`, and the same 401 +
+  `resource_metadata` challenge). Browsers opening `/mcp` still get the
+  dashboard.
+
+- Editor sidebar: Revoke for registered OAuth clients appeared to do nothing
+  because its confirm dialog rendered at the top of the scrolled settings panel
+  (out of view). The dialog now overlays the whole tab.
+
+### Changed
+
+- Default "Maximum registered OAuth clients" (`oauth.dcrMaxClients`) is now 5
+  (was 20). Upgrading with more than 5 approved clients removes none of them:
+  existing clients keep working, but new registrations get `400` (Maximum active
+  OAuth clients reached) until clients are revoked below the limit or the limit
+  is raised.
+- At most 25 OAuth clients may await consent at once (was 100).
+- AI-facing CORS policy now also covers `/mcp`.
+- Redesigned OAuth consent page: branded card, redirect host first, permission
+  list with descriptions, signed-in user, prominent Allow / secondary Deny,
+  responsive and dark-mode friendly, no external assets. When signed out with
+  credentials login, the page shows an inline sign-in form in the same style.
+
 ## [0.2.0-beta.2] - 2026-10-28
 
 ### Fixed

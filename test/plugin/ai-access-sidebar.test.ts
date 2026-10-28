@@ -437,6 +437,10 @@ describe('ai-access-sidebar.js served tab', () => {
         expect($('#ai-access-rate-ip').elements[0]!.props.disabled).toBe(!canEdit);
         expect($('#ai-access-cors').elements[0]!.props.value).toBe('https://browser.example');
         expect($('#ai-access-trust-proxy').elements[0]!.textContent).toBe('Trust proxy: loopback');
+        // Confirm dialog overlays the non-scrolling tab root, not the scrolled body.
+        expect(
+          ($('#ai-access-dialog').elements[0] as unknown as { parent?: { id?: string } }).parent?.id
+        ).toBe('red-ui-sidebar-ai-access');
         expect($('#ai-access-check-public-url').elements[0]!.props.disabled).toBe(!canEdit);
         expect($('#ai-access-ttl').elements[0]!.props.value).toBe(2);
         if (canEdit) {

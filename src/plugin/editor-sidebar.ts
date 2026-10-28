@@ -13,6 +13,7 @@ export const EDITOR_SIDEBAR_ASSET_VERSION = packageVersion();
 
 function editorSidebarStyles(): string {
   return `#red-ui-sidebar-ai-access {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -423,7 +424,11 @@ function editorSidebarScriptPartA(): string {
       if (dialogOpen) return Promise.resolve(false);
       dialogOpen = true;
       $('#ai-access-dialog-message').text(message);
+      // The dialog overlays the whole (non-scrolling) tab, so it is visible however far
+      // the settings body is scrolled.
       $('#ai-access-dialog').show();
+      var allowBtn = document.getElementById('ai-access-dialog-allow');
+      if (allowBtn && allowBtn.focus) allowBtn.focus();
       return new Promise(function (resolve) {
         function finish(accepted) {
           $('#ai-access-dialog').hide();
@@ -504,7 +509,7 @@ function editorSidebarScriptPartA(): string {
       setDuration('refresh-ttl', oauth.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
       $('#ai-access-oauth-refresh-max').val(Math.round((typeof oauth.refreshMaxLifetimeSec === 'number' ? oauth.refreshMaxLifetimeSec : 7776000) / 86400));
       $('#ai-access-oauth-refresh-max-unit').val('days');
-      $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 20);
+      $('#ai-access-oauth-dcr-cap').val(oauth.dcrMaxClients || 5);
       var oauthLocked = readonly || (data.sources && data.sources.oauth === 'settings.js');
       $('#ai-access-oauth-enabled, #ai-access-oauth-access-ttl, #ai-access-oauth-access-ttl-unit, #ai-access-oauth-refresh-ttl, #ai-access-oauth-refresh-ttl-unit, #ai-access-oauth-refresh-max, #ai-access-oauth-refresh-max-unit, #ai-access-oauth-dcr-cap').prop('disabled', oauthLocked);
       $('#ai-access-oauth-lock').toggle(!!(data.sources && data.sources.oauth === 'settings.js'));
@@ -803,7 +808,7 @@ function editorSidebarScriptPartB(): string {
         .on('click', loadSettings);
 
       var body = $('<div class="red-ui-sidebar-ai-access-body"></div>').appendTo(content);
-      var dialog = $('<div id="ai-access-dialog" class="ai-access-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-access-dialog-title" style="display:none"></div>').appendTo(body);
+      var dialog = $('<div id="ai-access-dialog" class="ai-access-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-access-dialog-title" style="display:none"></div>').appendTo(content);
       $('<h3 id="ai-access-dialog-title"></h3>').text('Confirm OAuth action').appendTo(dialog);
       $('<p id="ai-access-dialog-message"></p>').appendTo(dialog);
       var dialogActions = $('<div class="ai-access-dialog-actions"></div>').appendTo(dialog);
@@ -949,6 +954,9 @@ function editorSidebarScriptPartB(): string {
         $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
         var line = $('<div class="ai-access-duration"></div>').appendTo(oauthRow);
         $('<input type="number" step="1">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(line).on('change', scheduleAutoSave);
+        if (field[0] === 'dcr-cap') {
+          $('<p class="form-tips"></p>').text('Applies to new registrations: existing clients keep working, but new apps are refused while the number of clients is at or above this limit. Revoke unused clients to make room.').appendTo(oauthRow);
+        }
         if (!field[2]) return;
         var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
           .appendTo(line).on('change', scheduleAutoSave);
