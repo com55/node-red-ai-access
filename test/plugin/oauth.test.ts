@@ -35,6 +35,7 @@ function appFor(
     collision?: boolean;
     session?: boolean;
     publicUrl?: string;
+    enabled?: boolean;
   } = {}
 ) {
   const admin = express();
@@ -48,6 +49,7 @@ function appFor(
       httpNodeRoot: options.fallback ? false : '/',
       ...(options.session ? { adminAuth: { type: 'credentials' } } : {}),
       aiAccess: {
+        ...(options.enabled === false ? { enabled: false } : {}),
         allowWithoutAdminAuth: true,
         publicBaseUrl: options.publicUrl ?? issuer,
         oauth: {
@@ -346,6 +348,30 @@ describe('MCP OAuth backend', () => {
     });
     expect(wrongRedirect.status).toBe(400);
     expect((await exchange(admin, id, code2)).status).toBe(400);
+  });
+
+  it('rejects OAuth RPC, consent and token calls when AI Access is disabled', async () => {
+    const { admin } = appFor(userDir);
+    const id = (await register(admin)).body.client_id as string;
+    const code = (await authorize(admin, id)).code!;
+    const issued = (await exchange(admin, id, code)).body;
+    const pending = (await authorize(admin, id)).code!;
+    const off = appFor(userDir, { enabled: false }).admin;
+    const rpc = await request(off)
+      .post('/mcp/rpc')
+      .set('Authorization', `Bearer ${issued.access_token as string}`)
+      .set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(rpc.status).toBe(403);
+    expect((await authorize(off, id)).page.status).toBe(403);
+    expect((await exchange(off, id, pending)).status).toBe(403);
+    const refresh = await request(off).post('/mcp/oauth/token').type('form').send({
+      grant_type: 'refresh_token',
+      client_id: id,
+      refresh_token: issued.refresh_token,
+      resource,
+    });
+    expect(refresh.status).toBe(403);
   });
 
   it('keeps aia_ MCP links working while OAuth is enabled', async () => {

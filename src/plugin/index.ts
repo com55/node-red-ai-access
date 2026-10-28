@@ -256,7 +256,8 @@ export function registerRoutes(
       next();
       return;
     }
-    oauth.server(req, res, next);
+    // Same gate as aia_ links: disabled AI Access blocks consent, token, register, revoke.
+    requireAiFeatures(RED)(req, res, () => oauth.server(req, res, next));
   };
   (oauthServerMiddleware as typeof oauthServerMiddleware & { oauthOwned: boolean }).oauthOwned =
     true;
@@ -524,7 +525,7 @@ export function registerRoutes(
         requireAccessLink(RED, services.linkStore, 'mcp')(req, res, next);
         return;
       }
-      oauth.auth(req, res, next);
+      requireAiFeatures(RED)(req, res, () => oauth.auth(req, res, next));
     },
   ];
   RED.httpAdmin.post(
