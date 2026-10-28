@@ -54,7 +54,7 @@ jobs:
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          # Prerelease versions (e.g. 0.2.0-beta.1) go to the "next" dist-tag
+          # Prerelease versions (e.g. 0.2.0-beta.1) go to the "beta" dist-tag
           # and are marked as GitHub pre-releases; stable versions are unchanged.
           case "$version" in
             *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;;
@@ -96,7 +96,7 @@ jobs:
           tarball="$(ls ./release/*.tgz)"
           tag_args=()
           if [ "$PRERELEASE" = "true" ]; then
-            tag_args=(--tag next)
+            tag_args=(--tag beta)
           fi
           if [ -n "$NPM_TOKEN" ]; then
             echo "Publishing with the NPM_TOKEN secret (first-publish fallback)."

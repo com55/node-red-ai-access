@@ -10,7 +10,7 @@ and this project adheres to
 
 ## [0.2.0-beta.1] - 2026-10-28
 
-First pre-release of 0.2.0, published under the npm `next` dist-tag.
+First pre-release of 0.2.0, published under the npm `beta` dist-tag.
 
 ### Added
 
