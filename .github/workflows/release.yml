@@ -54,6 +54,12 @@ jobs:
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          # Prerelease versions (e.g. 0.2.0-beta.1) go to the "next" dist-tag
+          # and are marked as GitHub pre-releases; stable versions are unchanged.
+          case "$version" in
+            *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;;
+            *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;;
+          esac
           echo "PACKAGE_NAME=$(node -p "require('./package.json').name")" >> "$GITHUB_ENV"
 
       - name: Enable Corepack
@@ -88,13 +94,17 @@ jobs:
           fi
           # "./" stops npm from reading release/x.tgz as a GitHub user/repo shorthand.
           tarball="$(ls ./release/*.tgz)"
+          tag_args=()
+          if [ "$PRERELEASE" = "true" ]; then
+            tag_args=(--tag next)
+          fi
           if [ -n "$NPM_TOKEN" ]; then
             echo "Publishing with the NPM_TOKEN secret (first-publish fallback)."
-            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish "$tarball" --access public --provenance
+            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish "$tarball" --access public --provenance "${tag_args[@]}"
           else
             echo "Publishing with npm trusted publishing (OIDC)."
             unset NODE_AUTH_TOKEN
-            npm publish "$tarball" --access public --provenance
+            npm publish "$tarball" --access public --provenance "${tag_args[@]}"
           fi
 
       - name: Extract CHANGELOG section
@@ -105,8 +115,13 @@ jobs:
             found { print }
           ' CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
-            echo "::error::No CHANGELOG section found for $VERSION"
-            exit 1
+            if [ "$PRERELEASE" = "true" ]; then
+              echo "::warning::No CHANGELOG section found for $VERSION; using a default note"
+              echo "Pre-release $TAG. See CHANGELOG.md for details." > release-notes.md
+            else
+              echo "::error::No CHANGELOG section found for $VERSION"
+              exit 1
+            fi
           fi
 
       - name: Create or update GitHub release
@@ -114,9 +129,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tarball="$(ls ./release/*.tgz)"
+          release_args=()
+          if [ "$PRERELEASE" = "true" ]; then
+            release_args=(--prerelease --latest=false)
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md "${release_args[@]}"
             gh release upload "$TAG" "$tarball" --clobber
           else
-            gh release create "$TAG" "$tarball" --title "$TAG" --notes-file release-notes.md --verify-tag
+            gh release create "$TAG" "$tarball" --title "$TAG" --notes-file release-notes.md --verify-tag "${release_args[@]}"
           fi
