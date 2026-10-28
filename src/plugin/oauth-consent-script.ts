@@ -121,5 +121,28 @@ export const consentScript = `(function () {
   allow.addEventListener('click', function () { decide('allow'); });
   deny.addEventListener('click', function () { decide('deny'); });
   retry.addEventListener('click', load);
+  // Auto-retry once the user signs in to the editor in another tab (it writes
+  // the token to localStorage), or when this tab is shown / focused again.
+  // Only while signed out and not while typing in the inline sign-in form.
+  function signedOut() { return !retry.hidden || !login.hidden; }
+  function hasToken() {
+    try { var t = JSON.parse(localStorage.getItem(key) || 'null'); return !!(t && t.access_token); } catch (e) { return false; }
+  }
+  var lastAuto = 0;
+  function typingInLogin() {
+    return !login.hidden && !!($('username').value || $('password').value);
+  }
+  function autoRetry(fromStorage) {
+    if (!signedOut() || !hasToken()) return;
+    // A token written by another tab is definitive; on focus / visibility only,
+    // leave a half-typed inline sign-in alone.
+    if (!fromStorage && typingInLogin()) return;
+    if (Date.now() - lastAuto < 1000) return;
+    lastAuto = Date.now();
+    load();
+  }
+  window.addEventListener('storage', function (ev) { if (ev.key === key && ev.newValue) autoRetry(true); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') autoRetry(false); });
+  window.addEventListener('focus', function () { autoRetry(false); });
   load();
 })();`;
