@@ -626,6 +626,26 @@ describe('secrets during rebase', () => {
     }
   );
 
+  it('raises a conflict when a duplicate secret line is deleted and live changed both passwords', () => {
+    const b = clone(base);
+    b.nodes![0]!.func = "const password = 'OLDPW';\nconst password = 'OLDPW';\nreturn msg;";
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.func = "const password = 'OLDPW';\nreturn null;";
+    c.nodes![0]!.func = "const password = 'FIRSTNEW';\nconst password = 'SECONDNEW';\nreturn msg;";
+    expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+    expect(() =>
+      applyConflictChoice({
+        flowId: 'tab',
+        base: b,
+        proposed: p,
+        liveFlows: flat(c),
+        nodeId: 'a',
+        choice: 'proposed',
+      })
+    ).toThrow('A duplicate secret line was removed');
+  });
+
   it.each(['env', 'headers'])(
     'matches literal placeholder entries by name/key across reordered %s',
     field => {
@@ -653,7 +673,7 @@ describe('secrets during rebase', () => {
     const b = clone(base);
     b.nodes![0]!.func = '// [REDACTED] docs\nreturn msg;';
     const p = clone(b);
-    p.nodes![0]!.func += '\n// [REDACTED] docs';
+    p.nodes![0]!.func = (p.nodes![0]!.func as string) + '\n// [REDACTED] docs';
     expectConflict(rebase(p, b, { base: b }), 'redacted_placeholder');
   });
 
@@ -665,7 +685,7 @@ describe('secrets during rebase', () => {
         c = clone(b);
       c.nodes![0]!.func = 'const API_KEY = "new-live-secret";\nreturn msg;';
       if (mode === 'position') p.nodes![0]!.x = 999;
-      else p.nodes![0]!.func += '\n// proposed';
+      else p.nodes![0]!.func = (p.nodes![0]!.func as string) + '\n// proposed';
       expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
     }
   );
@@ -690,7 +710,7 @@ describe('secrets during rebase', () => {
       p = clone(b),
       c = clone(b);
     p.nodes![0]!.x = 999;
-    c.nodes![0]!.func += '\n// editor';
+    c.nodes![0]!.func = (c.nodes![0]!.func as string) + '\n// editor';
     expect(rebase(p, c, { base: b }).state).toBe('merged');
   });
   it('merges a proposal position edit with reordered live env entries when secret values are unchanged', () => {

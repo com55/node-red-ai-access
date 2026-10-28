@@ -142,7 +142,8 @@ export function createPluginServices(
     proposalStore,
     auditLog,
     flowAdapter,
-    () => resolveAiAccessSettings(RED.settings).defaultDeploymentType
+    () => resolveAiAccessSettings(RED.settings).defaultDeploymentType,
+    RED.settings.aiAccess
   );
 
   return {

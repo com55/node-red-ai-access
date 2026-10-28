@@ -54,10 +54,17 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'warning'
   ),
   e(
+    'approve_queue_timeout',
+    504,
+    'Approval exceeded its queue-wait deadline (default 60 seconds); no deployment was started for this request',
+    'Check the live flow and retry approval',
+    ADMIN
+  ),
+  e(
     'deploy_timeout',
     504,
-    'Deployment exceeded the 60 second deadline; deployPending records an unknown outcome and approvals wait for the runtime to settle',
-    'A late success marks the proposal approved with resultRev; a late failure clears deployPending and keeps it pending for retry',
+    'Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes)',
+    'Before the cap, late settlement updates the proposal; after the cap, deployPending.queueReleased is true and the outcome stays unknown. Check the live flow before approving again; approval always re-reads live',
     ADMIN
   ),
   e(

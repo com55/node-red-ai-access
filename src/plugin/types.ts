@@ -25,6 +25,12 @@ export interface AiAccessSettings {
   maxActiveLinks?: number;
   /** Deployment type used when approving proposals (default: nodes). */
   defaultDeploymentType?: 'nodes' | 'flows' | 'full';
+  /** Approval queue waiting deadline in milliseconds (default 60,000). */
+  approveQueueTimeoutMs?: number;
+  /** Deployment caller deadline in milliseconds (default 60,000). */
+  deployTimeoutMs?: number;
+  /** Release an unsettled deployment's approval queue after this duration (default 300,000 ms). */
+  deployHardCapMs?: number;
   /**
    * Rate-limit window in milliseconds for `/mcp/api` and `/mcp/a`
    * (default: 60000).

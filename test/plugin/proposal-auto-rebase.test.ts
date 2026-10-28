@@ -9,18 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { adapterAtRev, submitReplaceFlowProposal } from '../../src/plugin/ai-ops.js';
+import { registerRoutes } from '../../src/plugin/index.js';
+import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
+import { hashFlowTab } from '../../src/plugin/proposal-rebase.js';
 import {
   ProposalRebaseAckRequiredError,
   ProposalService,
 } from '../../src/plugin/proposal-service.js';
-import { registerRoutes } from '../../src/plugin/index.js';
 import {
   configureProposalTtl,
   syncOneProposal,
   syncOpenProposals,
 } from '../../src/plugin/proposal-sync.js';
-import { hashFlowTab } from '../../src/plugin/proposal-rebase.js';
-import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
 import { aiRedactingAdapter } from '../../src/plugin/secret-redaction.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import { FlowRevisionConflictError } from '../../src/runtime/errors.js';
@@ -47,7 +47,7 @@ describe('auto-rebase service and HTTP API', () => {
   let dir: string, app: ReturnType<typeof express>, store: ProposalStore, audit: AuditLog;
   let adapter: FlowAdapter, head: FlowsSnapshot, token: string, events: EventEmitter;
   let linkStore: AccessLinkStore;
-  let updateFlow: ReturnType<typeof vi.fn>;
+  let updateFlow: ReturnType<typeof vi.fn<FlowAdapter['updateFlow']>>;
   let beforeUpdate: ((params: UpdateFlowParams) => Promise<void>) | undefined;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'auto-rebase-api-'));
@@ -87,7 +87,11 @@ describe('auto-rebase service and HTTP API', () => {
           next();
         },
       },
-      plugins: { registerPlugin() {} },
+      plugins: {
+        registerPlugin() {
+          // Plugin registration is unused by this route test harness.
+        },
+      },
     };
     registerRoutes(RED, { flowAdapter: adapter, linkStore });
     token = linkStore.create({ kind: 'rest', label: 'AI' }).token;
@@ -436,6 +440,260 @@ describe('auto-rebase service and HTTP API', () => {
     expect(store.get(p.body.id).deployPending).toBeUndefined();
     expect(updateFlow).not.toHaveBeenCalled();
   });
+
+  it('returns an HTTP 504 at the default queue deadline and never runs the abandoned slot', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'abandoned' }),
+      c = await submit('b', 'r1', { name: 'successor' });
+    vi.useFakeTimers();
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise(() => {
+          // Keep the deployment pending to exercise timeout handling.
+        })
+    );
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 100,
+      approveQueueTimeoutMs: 400_000,
+    });
+    const startedAt = Date.now();
+    const first = expect(service.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const read = vi.spyOn(adapter, 'getFlows');
+    const queuedApprove = vi.spyOn(ProposalService.prototype, 'approve');
+    const responsePromise = approve(b.body.id).then(response => response);
+    await vi.waitFor(() =>
+      expect(queuedApprove).toHaveBeenCalledWith(b.body.id, expect.anything(), expect.anything())
+    );
+    read.mockClear(); // the HTTP handler reads live before entering the service
+    await vi.advanceTimersByTimeAsync(60_000);
+    await first;
+    expect(store.isApproving(b.body.id)).toBe(false);
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    const response = await responsePromise;
+    expect(response.status).toBe(504);
+    expect(response.body).toMatchObject({ code: 'approve_queue_timeout' });
+    expect(store.get(b.body.id).status).toBe('pending');
+    expect(read).not.toHaveBeenCalled();
+    const successor = service.approve(c.body.id, { kind: 'admin' });
+    await vi.advanceTimersByTimeAsync(startedAt + 300_000 - Date.now() - 1);
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await successor).status).toBe('approved');
+    expect(head.flows.find(n => n.id === 'b')!.name).toBe('successor');
+    expect(store.get(b.body.id).status).toBe('conflict'); // successor changed the same node
+    expect(store.isApproving(a.body.id)).toBe(false);
+    expect(updateFlow).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the configured queue deadline only while waiting, not during deployment', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'queued' });
+    vi.useFakeTimers();
+    let finish!: () => void;
+    beforeUpdate = () =>
+      new Promise<void>(resolve => {
+        finish = resolve;
+      });
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      approveQueueTimeoutMs: 25,
+      deployTimeoutMs: 100,
+      deployHardCapMs: 500,
+    });
+    const first = service.approve(a.body.id, { kind: 'admin' });
+    const queued = expect(service.approve(b.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'approve_queue_timeout',
+      statusCode: 504,
+    });
+    await vi.advanceTimersByTimeAsync(24);
+    expect(store.isApproving(a.body.id)).toBe(true);
+    expect(store.isApproving(b.body.id)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await queued;
+    beforeUpdate = undefined;
+    finish();
+    expect((await first).status).toBe('approved');
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['reject', 'withdraw'] as const)(
+    'allows %s while queued and exits with proposal_not_pending',
+    async decision => {
+      const a = await submit(),
+        b = await submit('b', 'r1', { name: 'queued' });
+      vi.useFakeTimers();
+      updateFlow.mockImplementationOnce(
+        () =>
+          new Promise(() => {
+            // Keep the deployment pending to exercise timeout handling.
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 100,
+        deployHardCapMs: 500,
+        approveQueueTimeoutMs: 1000,
+      });
+      const first = expect(service.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      const queued = expect(service.approve(b.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'proposal_not_pending',
+        statusCode: 409,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.isApproving(b.body.id)).toBe(false);
+      if (decision === 'reject') service.reject(b.body.id, { kind: 'admin' }, 'No');
+      else store.markWithdrawn(b.body.id, { kind: 'access-link', linkId: 'owner' }, 'Withdraw');
+      await vi.advanceTimersByTimeAsync(500);
+      await first;
+      await queued;
+      expect(store.get(b.body.id).status).toBe(decision === 'reject' ? 'rejected' : 'withdrawn');
+      expect(store.isApproving(b.body.id)).toBe(false);
+      expect(updateFlow).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('releases a never-settling deployment at the configured cap with a persisted API note', async () => {
+    const a = await submit(),
+      b = await submit('b', 'r1', { name: 'second' });
+    vi.useFakeTimers();
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise(() => {
+          // Keep the deployment pending to exercise timeout handling.
+        })
+    );
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 100,
+      deployHardCapMs: 500,
+      approveQueueTimeoutMs: 1000,
+    });
+    const first = expect(service.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+    });
+    const queued = service.approve(b.body.id, { kind: 'admin' });
+    await vi.advanceTimersByTimeAsync(499);
+    await first;
+    expect(store.isApproving(a.body.id)).toBe(true);
+    expect(store.get(a.body.id).deployPending?.queueReleased).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await queued).status).toBe('approved');
+    expect(store.isApproving(a.body.id)).toBe(false);
+    const pending = new ProposalStore(resolveAiAccessPaths(dir)).get(a.body.id);
+    expect(presentProposalForApi(pending)).toMatchObject({
+      status: 'pending',
+      deployPending: {
+        queueReleased: true,
+        reason: expect.stringContaining('Check the live flow before approving again'),
+      },
+    });
+    const read = vi.spyOn(adapter, 'getFlows');
+    const retry = await service.approve(a.body.id, { kind: 'admin' }).catch(error => error);
+    expect(read).toHaveBeenCalled();
+    expect(retry).toBeInstanceOf(ProposalRebaseAckRequiredError);
+    expect(updateFlow).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'ignores late %s after the hard cap and rechecks live on retry',
+    async outcome => {
+      const p = await submit();
+      vi.useFakeTimers();
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      beforeUpdate = () =>
+        new Promise<void>((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
+        });
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 100,
+        deployHardCapMs: 500,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await first;
+      const pending = store.get(p.body.id);
+      expect(pending.deployPending?.queueReleased).toBe(true);
+      beforeUpdate = undefined;
+      if (outcome === 'success') finish();
+      else fail(new Error('failure after cap'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get(p.body.id)).toEqual(pending);
+      expect(audit.list().filter(e => e.action === 'proposal.approved')).toHaveLength(0);
+      const read = vi.spyOn(adapter, 'getFlows');
+      expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
+      expect(read).toHaveBeenCalled();
+      expect(updateFlow).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 2);
+      expect(store.get(p.body.id).deployPending).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('returns deploy_timeout even when the hard cap is configured before the caller deadline', async () => {
+    const p = await submit();
+    vi.useFakeTimers();
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise(() => {
+          // Keep the deployment pending to exercise timeout handling.
+        })
+    );
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 1000,
+      deployHardCapMs: 50,
+    });
+    const result = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+      statusCode: 504,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    await result;
+    expect(store.get(p.body.id).deployPending?.queueReleased).toBe(true);
+    expect(store.isApproving(p.body.id)).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'does not overwrite a withdrawal on late %s after the hard cap',
+    async outcome => {
+      const p = await submit();
+      vi.useFakeTimers();
+      let finish!: (result: { flowId: string; rev: string }) => void;
+      let fail!: (error: Error) => void;
+      updateFlow.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 100,
+        deployHardCapMs: 500,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await first;
+      const withdrawn = store.markWithdrawn(p.body.id, { kind: 'admin' }, 'Stop');
+      if (outcome === 'success') finish({ flowId: 'tab', rev: 'late' });
+      else fail(new Error('late failure'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get(p.body.id)).toEqual(withdrawn);
+      expect(store.isApproving(p.body.id)).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
 
   it('does not deploy when a merged result already matches live with unrelated editor edits', async () => {
     const flow = (await adapter.getFlow('tab')).flow;
@@ -813,6 +1071,30 @@ describe('auto-rebase service and HTTP API', () => {
     expect(listed.body.proposals.find((x: { id: string }) => x.id === p.body.id).warnings).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'secret_may_revert' })])
     );
+  });
+
+  it('keeps ambiguous duplicate-secret deletion in conflict after choosing proposed', async () => {
+    edit('a', { func: "const password = 'OLDPW';\nconst password = 'OLDPW';\nreturn msg;" });
+    const p = await submit('a', head.rev, { func: "const password = 'OLDPW';\nreturn null;" });
+    expect(p.status).toBe(201);
+    edit('a', { func: "const password = 'FIRSTNEW';\nconst password = 'SECONDNEW';\nreturn msg;" });
+    const resolved = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'proposed' });
+    expect(resolved.status).toBe(409);
+    expect(resolved.body).toMatchObject({
+      code: 'proposal_conflict',
+      conflicts: [expect.objectContaining({ nodeId: 'a', fields: ['func'] })],
+    });
+    expect(JSON.stringify(resolved.body)).not.toMatch(/OLDPW|FIRSTNEW|SECONDNEW/);
+    expect(store.get(p.body.id).status).toBe('conflict');
+    expect((await approve(p.body.id)).body.code).toBe('proposal_conflict');
+    expect(updateFlow).not.toHaveBeenCalled();
+    const keepLive = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'live' });
+    expect(keepLive.status).toBe(200);
+    expect(keepLive.body.status).toBe('pending');
   });
 
   it('restores secrets and keeps warning metadata and restoration audit on AI resolution', async () => {

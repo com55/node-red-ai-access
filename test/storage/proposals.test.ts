@@ -136,7 +136,7 @@ describe('ProposalStore + ProposalService', () => {
     });
 
     const first = service.approve(created.id, { kind: 'admin', username: 'a' });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
     await expect(
       service.approve(created.id, { kind: 'admin', username: 'b' })
     ).rejects.toBeInstanceOf(ProposalConcurrentApproveError);

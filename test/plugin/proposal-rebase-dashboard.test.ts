@@ -179,6 +179,23 @@ describe('dashboard rebase controls', () => {
     expect(html).toContain('Pairing by name is ambiguous.');
   });
 
+  it('asks reviewers to check live after the deployment hard cap', () => {
+    const html = dashboard().renderProposalCard({
+      id: 'p',
+      status: 'pending',
+      title: 'Unsettled deployment',
+      payload: { flowId: 'tab', flow: { nodes: [] } },
+      deployPending: {
+        mergedHash: 'abc',
+        reason: 'The approval queue was released.',
+        queueReleased: true,
+      },
+    });
+    expect(html).toContain('Deploy outcome unknown');
+    expect(html).toContain('The approval queue was released.');
+    expect(html).toContain('Check the live flow before approving again.');
+  });
+
   it('escapes conflict details and offers only the available choices', () => {
     const ui = dashboard();
     ui.setCanApprove(true);

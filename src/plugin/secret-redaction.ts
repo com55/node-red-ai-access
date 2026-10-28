@@ -1049,6 +1049,16 @@ export function duplicateEnvWarnings(
   return warnings;
 }
 
+/** A retained duplicate secret cannot be paired after another copy was deleted. */
+export class SecretAlignmentConflictError extends Error {
+  constructor() {
+    super(
+      'A duplicate secret line was removed while its live values changed. Resolve this field against the live flow.'
+    );
+    this.name = 'SecretAlignmentConflictError';
+  }
+}
+
 /** Keep each unchanged proposed secret span at its live value, preserving other edits. */
 export function preserveLiveSecrets(
   base: FlowNode,
@@ -1089,6 +1099,18 @@ export function preserveLiveSecrets(
         if (occurrence.kind !== 'secret') return;
         const context = bc[i];
         const key = context ? contextKey(context) : '';
+        const baseCopies = baseIndex.get(key) ?? [];
+        const proposedCopies = proposedIndex.get(key) ?? [];
+        const liveCopies = liveIndex.get(key) ?? [];
+        if (
+          baseCopies.length > 1 &&
+          proposedCopies.length > 0 &&
+          proposedCopies.length < baseCopies.length &&
+          JSON.stringify(baseCopies.map(j => bf.occurrences[j]?.value)) !==
+            JSON.stringify(liveCopies.map(j => cf?.occurrences[j]?.value))
+        ) {
+          throw new SecretAlignmentConflictError();
+        }
         const matches = (lookup: Map<string, number[]>, field: RedactedField | undefined) => {
           const indices = lookup.get(key) ?? [];
           // A literal with the same context also makes alignment ambiguous.

@@ -7,6 +7,7 @@ import type { DeploymentType, FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
   ProposalConflictError,
+  ProposalConcurrentApproveError,
   ProposalNotPendingError,
   isOpenProposalStatus,
   type Proposal,
@@ -73,24 +74,48 @@ export class ProposalRebaseRaceError extends Error {
   }
 }
 
-/** The caller deadline elapsed; deployment still holds the approval queue. */
+/** The caller deadline elapsed; the runtime outcome remains unknown. */
 export class ProposalDeployTimeoutError extends Error {
   readonly code = 'deploy_timeout' as const;
   readonly statusCode = 504;
   constructor() {
     super(
-      'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set, and approvals wait until the runtime settles. A late success marks it approved; a late failure keeps it pending for retry.'
+      'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set. Approvals wait until the runtime settles or the deploy hard cap is reached. Check the live flow before approving again.'
     );
     this.name = 'ProposalDeployTimeoutError';
   }
 }
 
+/** The approval never left the queue before its waiting deadline. */
+export class ProposalApproveQueueTimeoutError extends Error {
+  readonly code = 'approve_queue_timeout' as const;
+  readonly statusCode = 504;
+  constructor() {
+    super(
+      'Approval timed out waiting in the queue. No deployment was started for this request. Check the live flow and retry.'
+    );
+    this.name = 'ProposalApproveQueueTimeoutError';
+  }
+}
+
+class DeployHardCapError extends Error {}
+
 export interface ProposalServiceOptions {
   /** Maximum time to await updateFlow (default 60 seconds). Does not cancel the runtime operation. */
   deployTimeoutMs?: number;
+  /** Maximum time waiting to start approval (default 60 seconds). */
+  approveQueueTimeoutMs?: number;
+  /** Release the queue after this much unsettled deployment time (default 5 minutes). */
+  deployHardCapMs?: number;
 }
 
 const MAX_APPROVE_ATTEMPTS = 3;
+
+function deadlineMs(configured: number | undefined, fallback: number): number {
+  return configured !== undefined && Number.isFinite(configured) && configured > 0
+    ? configured
+    : fallback;
+}
 
 // Shared by every service/entry point: adapter revision checks are not atomic
 // with deployment, so only one approval may read, merge and deploy at a time.
@@ -119,34 +144,49 @@ export class ProposalService {
     decidedBy: ProposalDecisionBy,
     options: ApproveOptions = {}
   ): Promise<Proposal> {
-    // Ordinary concurrent clicks still fail immediately. After a timeout, a
-    // retry joins the queue and re-reads the outcome when the deploy settles.
-    const waitingForOutcome = this.proposals.get(id).deployPending !== undefined;
-    if (!waitingForOutcome) this.proposals.beginApprove(id);
+    const initial = this.proposals.get(id);
+    const waitingForOutcome = initial.deployPending !== undefined;
+    if (!isOpenProposalStatus(initial.status)) {
+      throw new ProposalNotPendingError(id, initial.status);
+    }
+    // Check active clicks without locking a proposal that is only queued.
+    if (!waitingForOutcome && this.proposals.isApproving(id)) {
+      throw new ProposalConcurrentApproveError(id);
+    }
     const previous = approveQueue;
     let release!: () => void;
-    approveQueue = new Promise<void>(resolve => {
+    const slot = new Promise<void>(resolve => {
       release = resolve;
     });
+    // An abandoned slot must not let its successors jump past an active deploy.
+    approveQueue = previous.then(() => slot);
     return new Promise<Proposal>((resolve, reject) => {
-      let ownsLock = !waitingForOutcome;
+      let ownsLock = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const deadline = new Promise<never>((_resolve, rejectWait) => {
+        timer = setTimeout(
+          () => rejectWait(new ProposalApproveQueueTimeoutError()),
+          deadlineMs(this.serviceOptions.approveQueueTimeoutMs, 60_000)
+        );
+        timer.unref?.();
+      });
       const run = async () => {
         try {
-          await previous;
+          await Promise.race([previous, deadline]);
+          clearTimeout(timer);
           const current = this.proposals.get(id);
-          if (waitingForOutcome) {
-            if (current.status === 'approved') return current;
-            this.proposals.beginApprove(id);
-            ownsLock = true;
-          }
-          return await this.approveLocked(current, decidedBy, options, reject);
+          if (waitingForOutcome && current.status === 'approved') return current;
+          const proposal = this.proposals.beginApprove(id);
+          ownsLock = true;
+          return await this.approveLocked(proposal, decidedBy, options, reject);
         } finally {
+          clearTimeout(timer);
           if (ownsLock) this.proposals.releaseLock(id);
           release();
         }
       };
-      // A timeout rejects only the caller's promise. run still owns the queue
-      // and proposal lock until updateFlow and its outcome bookkeeping finish.
+      // The caller deploy deadline rejects promptly; run holds the queue only
+      // until settlement or the hard cap, whichever comes first.
       void run().then(resolve, reject);
     });
   }
@@ -245,6 +285,15 @@ export class ProposalService {
             });
             this.audit.append('proposal.deploy_timeout', decidedBy, { ...meta, code: error.code });
             onTimeout(error);
+          },
+          () => {
+            this.proposals.recordDeployPending(id, {
+              mergedHash,
+              queueReleased: true,
+              reason:
+                'Deploy outcome unknown: the runtime did not settle before the hard cap. The approval queue was released. Check the live flow before approving again.',
+            });
+            onTimeout(new ProposalDeployTimeoutError());
           }
         );
         approved = this.proposals.markApproved(id, decidedBy, applied.rev);
@@ -259,6 +308,7 @@ export class ProposalService {
         break;
       } catch (error) {
         if (approved) throw error; // an audit error must not undo a recorded success
+        if (error instanceof DeployHardCapError) throw error; // retain unknown outcome
         if (timedOut) {
           this.proposals.recordDeployPending(id, undefined);
           throw error; // caller already received 504; leave the proposal pending
@@ -289,18 +339,34 @@ export class ProposalService {
     return approved;
   }
 
-  private async withDeployDeadline<T>(deploy: () => Promise<T>, onTimeout: () => void): Promise<T> {
-    const configured = this.serviceOptions.deployTimeoutMs;
-    const timeoutMs =
-      configured !== undefined && Number.isFinite(configured) && configured > 0
-        ? configured
-        : 60_000;
-    const timer = setTimeout(onTimeout, timeoutMs);
+  private async withDeployDeadline<T>(
+    deploy: () => Promise<T>,
+    onTimeout: () => void,
+    onHardCap: () => void
+  ): Promise<T> {
+    const timer = setTimeout(onTimeout, deadlineMs(this.serviceOptions.deployTimeoutMs, 60_000));
     timer.unref?.();
+    let capTimer: ReturnType<typeof setTimeout>;
+    const cap = new Promise<never>((_resolve, reject) => {
+      capTimer = setTimeout(
+        () => {
+          try {
+            onHardCap();
+          } finally {
+            reject(new DeployHardCapError());
+          }
+        },
+        deadlineMs(this.serviceOptions.deployHardCapMs, 300_000)
+      );
+      capTimer.unref?.();
+    });
     try {
-      return await deploy();
+      // Race consumes late rejections too. After the cap no detached deploy
+      // bookkeeping may overwrite a newer approval, rejection or withdrawal.
+      return await Promise.race([deploy(), cap]);
     } finally {
       clearTimeout(timer);
+      clearTimeout(capTimer!);
     }
   }
 

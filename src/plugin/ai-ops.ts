@@ -12,6 +12,7 @@ import {
   ProposalNotFoundError,
   ProposalNotOwnedError,
   ProposalNotPendingError,
+  ProposalConflictError,
   isOpenProposalStatus,
   proposalOwnerId,
   type Proposal,
@@ -60,6 +61,7 @@ import {
   restoreRedactedPlaceholders,
   secretChangeWarnings,
   duplicateEnvWarnings,
+  SecretAlignmentConflictError,
 } from './secret-redaction.js';
 import type { AccessLinkAuthInfo } from './types.js';
 
@@ -1067,7 +1069,10 @@ export async function resolveConflictChoice(
       nodeId,
       choice,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof SecretAlignmentConflictError) {
+      throw new ProposalConflictError(id, checked.rebase?.conflicts ?? []);
+    }
     throw new AiOpsValidationError('This conflict cannot be resolved by hand.', 'invalid_choice');
   }
   const updated = store.updateBody(id, {

@@ -1549,7 +1549,8 @@ components:
       description: |
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
-        - `deploy_timeout` (504): Deployment exceeded the 60 second deadline; deployPending records an unknown outcome and approvals wait for the runtime to settle
+        - `approve_queue_timeout` (504): Approval exceeded its queue-wait deadline (default 60 seconds); no deployment was started for this request
+        - `deploy_timeout` (504): Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes)
         - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
         - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
         - `rebase_race` (409): Flows kept changing during approval
@@ -1609,6 +1610,7 @@ components:
         - `upstream_error` (502): Node-RED runtime/flows error
         - `internal_error` (500): Unexpected server error
       enum:
+        - approve_queue_timeout
         - deploy_timeout
         - proposal_conflict
         - rebase_ack_required
@@ -2355,13 +2357,16 @@ components:
       properties:
         deployPending:
           type: object
-          description: Timed-out deployment has an unknown outcome; approvals wait until the runtime settles.
+          description: Timed-out deployment has an unknown outcome; approvals wait until settlement or the hard cap. Check live flows before approving again.
           required: [mergedHash, reason]
           properties:
             mergedHash:
               type: string
             reason:
               type: string
+            queueReleased:
+              type: boolean
+              description: True when the deploy hard cap released the queue. Late settlement no longer updates this proposal; approval always re-reads live flows.
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:

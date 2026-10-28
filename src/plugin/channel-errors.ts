@@ -27,6 +27,7 @@ import {
   ProposalRebaseAckRequiredError,
   ProposalRebaseRaceError,
   ProposalDeployTimeoutError,
+  ProposalApproveQueueTimeoutError,
 } from './proposal-service.js';
 
 export type ErrorChannel = 'get' | 'rest' | 'mcp';
@@ -52,7 +53,9 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   rebase_ack_required: 'Review and acknowledge the merged proposal',
   rebase_race: 'Flows kept changing during approval',
   deploy_timeout:
-    'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set, and approvals wait until the runtime settles. A late success marks it approved; a late failure keeps it pending for retry.',
+    'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set. Approvals wait until the runtime settles or the deploy hard cap is reached. Check the live flow before approving again.',
+  approve_queue_timeout:
+    'Approval timed out waiting in the queue. No deployment was started for this request. Check the live flow and retry.',
   conflict_not_found: 'Conflict no longer exists',
   invalid_choice: 'Invalid conflict choice',
   flow_id_mismatch: 'Proposal flow id cannot change',
@@ -270,6 +273,7 @@ export function mapErrorForChannel(
   } else if (
     error instanceof ProposalRebaseRaceError ||
     error instanceof ProposalDeployTimeoutError ||
+    error instanceof ProposalApproveQueueTimeoutError ||
     error instanceof ProposalConcurrentApproveError
   ) {
     mapped = { statusCode: error.statusCode, body: { error: error.message, code: error.code } };

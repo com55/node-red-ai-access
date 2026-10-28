@@ -113,7 +113,7 @@ export interface Proposal {
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
-  deployPending?: { mergedHash: string; reason: string };
+  deployPending?: { mergedHash: string; reason: string; queueReleased?: boolean };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
   /**
@@ -415,6 +415,8 @@ export class ProposalStore {
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
         record.deployPending = { mergedHash, reason };
+        if (proposal.deployPending.queueReleased === true)
+          record.deployPending.queueReleased = true;
       }
     }
     const rebase = sanitizeRebaseInfo(proposal.rebase);

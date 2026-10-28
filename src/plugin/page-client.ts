@@ -2503,7 +2503,9 @@ function pageClientScriptPartB2Cards(): string {
     var cardWarns = proposalWarnings(p, cached);
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
-        esc(p.deployPending.reason) + '</p></div>'
+        esc(p.deployPending.queueReleased
+          ? 'The approval queue was released. Check the live flow before approving again.'
+          : p.deployPending.reason) + '</p></div>'
       : '';
     var warnBanner = deployBanner + renderRestoredSecrets(p) + (cardWarns.length && !cached
       ? renderValidationWarnings(cardWarns)
