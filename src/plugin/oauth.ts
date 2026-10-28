@@ -38,7 +38,7 @@ import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
 interface OAuthDb {
-  clients: (OAuthClientInformationFull & { lastUsedAt?: number })[];
+  clients: (OAuthClientInformationFull & { lastUsedAt?: number; approved?: boolean })[];
   codes: Code[];
   tokens: Token[];
 }
@@ -65,6 +65,10 @@ interface Token {
 }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
+/** Registered clients that never got consent are dropped after this long. */
+const UNCONSENTED_CLIENT_TTL_MS = 3_600_000;
+/** Hard bound on clients awaiting consent (registration is also rate limited per IP). */
+const MAX_UNCONSENTED_CLIENTS = 100;
 const emptyDb = (): OAuthDb => ({ clients: [], codes: [], tokens: [] });
 
 export class OAuthStore implements OAuthRegisteredClientsStore {
@@ -107,7 +111,11 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
   prune(now = Date.now()): void {
     const active = new Set(
       this.db.clients
-        .filter(c => (c.lastUsedAt ?? (c.client_id_issued_at ?? 0) * 1000) > now - 30 * 86400_000)
+        .filter(c =>
+          c.approved
+            ? (c.lastUsedAt ?? (c.client_id_issued_at ?? 0) * 1000) > now - 30 * 86400_000
+            : (c.client_id_issued_at ?? 0) * 1000 > now - UNCONSENTED_CLIENT_TTL_MS
+        )
         .map(c => c.client_id)
     );
     this.db.clients = this.db.clients.filter(c => active.has(c.client_id));
@@ -123,8 +131,10 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     input: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>
   ): OAuthClientInformationFull {
     this.prune();
-    if (this.db.clients.length >= this.maxClients())
+    if (this.approvedCount() >= this.maxClients())
       throw new InvalidClientMetadataError('Maximum active OAuth clients reached');
+    if (this.db.clients.length - this.approvedCount() >= MAX_UNCONSENTED_CLIENTS)
+      throw new InvalidClientMetadataError('Too many OAuth clients awaiting consent');
     if (
       !Array.isArray(input.redirect_uris) ||
       !input.redirect_uris.length ||
@@ -158,6 +168,18 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     this.db.clients.push(client);
     this.save();
     return client;
+  }
+  private approvedCount(): number {
+    return this.db.clients.filter(c => c.approved).length;
+  }
+  /** Marks a client as consented; only approved clients count toward the cap. */
+  approve(id: string): void {
+    const client = this.db.clients.find(c => c.client_id === id);
+    if (!client || client.approved) return;
+    if (this.approvedCount() >= this.maxClients())
+      throw new InvalidClientMetadataError('Maximum active OAuth clients reached');
+    client.approved = true;
+    this.save();
   }
   get data(): OAuthDb {
     return this.db;
@@ -623,6 +645,12 @@ export function makeOAuthHandlers(
           if (body.decision !== 'allow') {
             target.searchParams.set('error', 'access_denied');
           } else {
+            try {
+              provider.clientsStore.approve(client.client_id);
+            } catch {
+              res.status(409).json({ error: 'Maximum active OAuth clients reached' });
+              return;
+            }
             const code = provider.createCode(
               client,
               {

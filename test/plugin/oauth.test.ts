@@ -419,8 +419,25 @@ describe('MCP OAuth backend', () => {
   it('caps DCR clients and rejects unsafe redirects', async () => {
     const { admin } = appFor(userDir, { cap: 1 });
     expect((await register(admin, 'http://evil.example/cb')).status).toBe(400);
+    const first = (await register(admin)).body.client_id as string;
     expect((await register(admin)).status).toBe(201);
+    await authorize(admin, first);
     expect((await register(admin)).status).toBe(400);
+  });
+
+  it('expires never-consented clients after an hour and keeps approved ones', async () => {
+    const { admin } = appFor(userDir);
+    const base = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    clock.mockReturnValue(base);
+    const approved = (await register(admin)).body.client_id as string;
+    const idle = (await register(admin)).body.client_id as string;
+    await authorize(admin, approved);
+    clock.mockReturnValue(base + 3_600_001);
+    const page = (id: string) =>
+      request(admin).get('/mcp/oauth/authorize').query(consentParams(id));
+    expect((await page(idle)).status).toBe(400);
+    expect((await page(approved)).status).toBe(200);
   });
 
   it('limits registrations to ten per hour per IP', async () => {
