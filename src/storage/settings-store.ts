@@ -230,6 +230,20 @@ export function settingsJsPartial(
       Object.assign(sanitized, { [key]: BUILTIN[key] });
     }
   }
+  // Same for oauth fields: an invalid settings.js value falls back to the default
+  // (never to a disk value) and is reported.
+  const rawOauth = (aiAccess as { oauth?: unknown } | undefined)?.oauth;
+  if (rawOauth && typeof rawOauth === 'object' && !Array.isArray(rawOauth)) {
+    const oauth = (sanitized.oauth ??= {});
+    for (const key of Object.keys(DEFAULT_OAUTH) as (keyof typeof DEFAULT_OAUTH)[]) {
+      if (Object.hasOwn(rawOauth, key) && oauth[key] === undefined) {
+        warn?.(
+          `AI Access: settings.js aiAccess.oauth.${key} is invalid; using the default (${String(DEFAULT_OAUTH[key])})`
+        );
+        Object.assign(oauth, { [key]: DEFAULT_OAUTH[key] });
+      }
+    }
+  }
   return sanitized;
 }
 

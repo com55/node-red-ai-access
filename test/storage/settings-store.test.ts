@@ -9,7 +9,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../../src/storage/paths.js';
-import { mergeAiAccessSettings, SettingsStore } from '../../src/storage/settings-store.js';
+import {
+  mergeAiAccessSettings,
+  settingsJsPartial,
+  SettingsStore,
+} from '../../src/storage/settings-store.js';
 
 describe('mergeAiAccessSettings', () => {
   it('applies settings.js over disk over defaults', () => {
@@ -155,5 +159,19 @@ describe('SettingsStore', () => {
     expect(
       mergeAiAccessSettings({}, { oauth: { refreshMaxLifetimeSec: 0 } }).oauth.refreshMaxLifetimeSec
     ).toBe(0);
+  });
+  it('locks settings.js OAuth fields against disk values and warns on invalid ones', () => {
+    const warn = vi.fn();
+    const sjs = settingsJsPartial(
+      { oauth: { accessTokenTtlSec: -5, refreshIdleTtlSec: 7200 } },
+      warn
+    );
+    const merged = mergeAiAccessSettings(sjs, {
+      oauth: { accessTokenTtlSec: 600, refreshIdleTtlSec: 60, dcrMaxClients: 5 },
+    });
+    expect(merged.oauth.accessTokenTtlSec).toBe(3600);
+    expect(merged.oauth.refreshIdleTtlSec).toBe(7200);
+    expect(merged.oauth.dcrMaxClients).toBe(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('oauth.accessTokenTtlSec'));
   });
 });
