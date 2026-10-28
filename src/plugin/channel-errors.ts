@@ -193,7 +193,7 @@ function hintFor(
         'List proposals and use an id from that response.'
       );
     case 'proposal_not_owned':
-      return 'Only the access link that created an open proposal can withdraw it.';
+      return 'Use the creating access link to resolve or withdraw. If that token is lost, an admin with full permission can withdraw through POST /proposals/{id}/withdraw.';
     case 'proposal_not_pending':
       return 'Only open (pending or conflict) proposals can be withdrawn or rejected.';
     case 'confirm_required':

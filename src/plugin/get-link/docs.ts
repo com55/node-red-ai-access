@@ -243,7 +243,7 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 9. Withdraw your own open (pending or conflict) proposal:
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
    not \`rejected\`). Only the link that created a proposal can withdraw it;
-   others get \`403 proposal_not_owned\`.
+   others get \`403 proposal_not_owned\`. If the token is lost, an admin with full permission can withdraw using an authenticated dashboard session via \`POST /mcp/api/v1/proposals/<id>/withdraw\`; this recovery is audit-logged.
 
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.

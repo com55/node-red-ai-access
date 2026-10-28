@@ -2710,7 +2710,7 @@ function pageClientScriptPartB2Focus(): string {
         if (id && label) cachedFlowLabels[id] = String(label);
       });
       var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
-        return [p.id, p.status, p.updatedAt, p.baseRevStale, p.flowLabel, p.title];
+        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title];
       })]);
       var unchanged = sameAsLastRender('proposals', sig);
       if (opts.skipRender || (opts.auto && unchanged)) {
@@ -2869,8 +2869,8 @@ function pageClientScriptPartB2Apply(): string {
       p.rebase = Object.assign({}, p.rebase || {}, diff.rebase);
       p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
     }
-    if (p && typeof diff.baseRevStale === 'boolean') {
-      p.baseRevStale = diff.baseRevStale;
+    if (p && typeof diff.baseRevChanged === 'boolean') {
+      p.baseRevChanged = diff.baseRevChanged;
     }
     // Move cards between review and conflict groups when the rebase state changes.
     if (p && (p.status === 'pending' || p.status === 'conflict') && wasStale !== proposalIsStale(p)) {
@@ -3226,7 +3226,7 @@ function pageClientScriptPartC(): string {
       cachedProposals.forEach(function (peer) {
         if (peer.id !== id && (peer.status === 'pending' || peer.status === 'conflict') && peer.expectedRev === expectedRev) {
           delete proposalDiffCache[peer.id];
-          peer.baseRevStale = true;
+          peer.baseRevChanged = true;
         }
       });
       await loadProposals({ skipRender: true });

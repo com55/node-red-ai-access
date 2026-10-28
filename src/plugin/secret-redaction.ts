@@ -1598,7 +1598,16 @@ function tabWarnings(
           `SECURITY: this proposal ${before ? 'changes' : 'adds'} outbound-capable node ${nid} ` +
           `(${type}). Check where it sends data before approving.`,
         nodeId: nid,
-        property: 'type',
+        property: [...new Set([...Object.keys(before ?? {}), ...Object.keys(after)])]
+          .filter(
+            key =>
+              !LAYOUT_KEYS.has(key) &&
+              key !== 'nodes' &&
+              key !== 'configs' &&
+              !sameJson(before?.[key], after[key])
+          )
+          .sort()
+          .join(','),
       });
     }
     const had = before ? referencedNames(before) : new Set<string>();

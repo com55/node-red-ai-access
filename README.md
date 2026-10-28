@@ -435,6 +435,41 @@ field against the live flow or choose **live**. Changed env arrays with
 duplicate names show `duplicate_env_keys`, since pairing by name is ambiguous
 when entries are reordered.
 
+Open proposals merge changes per node and tab field. Different fields on the
+same node merge automatically; changes to the same field conflict even when both
+values are identical. Position (`x`/`y`) edits never conflict; a proposed
+position edit wins a tie. Env entries merge by unique name and then entry field;
+credentials merge by key (including nested keys). Duplicate env names use an
+atomic array comparison and retain the existing ambiguity warning. Deletion
+versus modification, id collisions, dangling references, and unsafe redacted
+placeholders still block approval.
+
+Proposal responses and diffs expose `baseRev` (an alias of `expectedRev`).
+`baseRevChanged` replaces `baseRevStale`: it only reports that the base revision
+differs from live for an open proposal. It is informational, including after a
+successful rebase. `rebase.rev` is the checked live revision and `rebase.state`
+is `clean` (proposal applies unchanged), `merged` (live edits incorporated), or
+`conflict` (approval blocked). A merged proposal still requires review of its
+current `mergedHash` before approval.
+
+MCP `resolve_proposal_conflict` and REST `POST /proposals/:id/resolve` accept
+`nodeId` + `choice: "live" | "proposed"` for one current conflict. Choices
+affect only overlapping fields; independent edits from both sides survive.
+Existing secret preservation and ambiguity warnings also apply. Alternatively
+send `expectedRev` + `payload` to replace the proposal body: node operations
+apply to the **flow snapshot at expectedRev**, not to the stored proposal or
+merged result, so include every intended edit. These modes cannot be mixed. Both
+require the submitting token; tab conflicts use the flow id as `nodeId`.
+
+If the submitting token is lost, a full (`*`) admin can withdraw an open
+proposal through `POST /mcp/api/v1/proposals/:id/withdraw` using the dashboard's
+authenticated admin session (optional JSON `reason`). Other access tokens,
+including replacement tokens, cannot withdraw it. Recovery records
+`proposal.withdrawn` with the admin identity, original owner id,
+`withdrawalAuthority: "admin-recovery"`, proposal id, and reason. Owner-token
+withdrawal records `withdrawalAuthority: "owner-token"`. Withdrawal never
+deploys flows and cannot interrupt an in-flight approval.
+
 Open proposals auto-rebase on editor changes. A `conflict` blocks approval until
 resolved using REST `POST /proposals/:id/resolve`, admin
 `POST /proposals/:id/resolve-conflict`, or MCP `resolve_proposal_conflict`.

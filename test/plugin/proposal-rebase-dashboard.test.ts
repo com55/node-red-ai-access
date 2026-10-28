@@ -54,8 +54,12 @@ describe('dashboard auto-rebase review', () => {
       const ui = dashboard();
       const approve = vi.fn();
       ui.setApprove(approve);
-      const proposal = { id: 'p', status: 'pending', baseRevStale: true, rebase: { state } };
-      ui.setProposal(proposal, { baseRevStale: true, rebase: { state }, summary: { modified: 1 } });
+      const proposal = { id: 'p', status: 'pending', baseRevChanged: true, rebase: { state } };
+      ui.setProposal(proposal, {
+        baseRevChanged: true,
+        rebase: { state },
+        summary: { modified: 1 },
+      });
       expect(ui.proposalIsStale(proposal)).toBe(false);
       await ui.approveProposal('p');
       expect(approve).toHaveBeenCalledWith('p', 'nodes');

@@ -38,9 +38,11 @@ import {
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  withdrawProposalAsActor,
   resolveMyProposal,
   resolveConflictChoice,
   type SubmitReplaceFlowInput,
+  type ResolveProposalInput,
 } from './ai-ops.js';
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
@@ -200,7 +202,7 @@ export function listProposalsHandler(
         if (!isOpenProposalStatus(lean.status) || liveRev === undefined) {
           return lean;
         }
-        return { ...lean, baseRevStale: lean.expectedRev !== liveRev };
+        return { ...lean, baseRevChanged: lean.expectedRev !== liveRev };
       });
       res.json({
         proposals,
@@ -229,7 +231,7 @@ export function listProposalsHandler(
       if (!isOpenProposalStatus(p.status) || liveRev === undefined) {
         return p;
       }
-      return { ...p, baseRevStale: p.expectedRev !== liveRev };
+      return { ...p, baseRevChanged: p.expectedRev !== liveRev };
     });
     res.json({
       proposals,
@@ -390,7 +392,7 @@ export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: 
 }
 
 /**
- * POST /proposals/:id/withdraw — access-link only; withdraw own pending proposal.
+ * POST /proposals/:id/withdraw — owner token or full admin recovery session.
  */
 export function withdrawProposalHandler(
   store: ProposalStore,
@@ -398,14 +400,6 @@ export function withdrawProposalHandler(
   httpAdminRoot?: string
 ) {
   return (req: AuthenticatedRequest, res: Response): void => {
-    if (!req.accessLink) {
-      res.setHeader('WWW-Authenticate', ACCESS_LINK_WWW_AUTHENTICATE);
-      res.status(401).json({
-        error: ACCESS_LINK_MISSING_MESSAGE,
-        code: ACCESS_LINK_MISSING_CODE,
-      });
-      return;
-    }
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       res.status(400).json({ error: 'Missing proposal id', code: 'missing_proposal_id' });
@@ -415,6 +409,18 @@ export function withdrawProposalHandler(
     const presentOpts = presentOptionsFor(req, httpAdminRoot);
     const include = resolveIncludeFromQuery(req.query);
     try {
+      if (!req.accessLink) {
+        const withdrawn = withdrawProposalAsActor(
+          store,
+          audit,
+          adminActor(req),
+          id,
+          body.reason,
+          presentOpts
+        );
+        res.json(presentProposalForApi(withdrawn, { ...presentOpts, include }));
+        return;
+      }
       const withdrawn = withdrawMyProposal(
         store,
         audit,
@@ -516,7 +522,7 @@ export function resolveProposalHandler(
         audit,
         req.accessLink,
         String(req.params.id),
-        (req.body ?? {}) as SubmitReplaceFlowInput,
+        (req.body ?? {}) as ResolveProposalInput,
         adapter,
         opts,
         nodeTypes

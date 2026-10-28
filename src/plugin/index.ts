@@ -584,10 +584,12 @@ export function registerRoutes(
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/withdraw',
-    limiter,
-    tokenLimiter,
+    ...sharedRead,
+    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      if (req.accessLink) next();
+      else requireStarPermission(RED)(req, res, next);
+    },
     requireJsonContentType('rest'),
-    requireAccessLink(RED, services.linkStore, 'rest'),
     asyncRoute(withdrawProposalHandler(services.proposalStore, services.auditLog, httpAdminRoot))
   );
 

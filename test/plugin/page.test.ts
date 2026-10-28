@@ -254,7 +254,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/needsApproveConfirm/);
     expect(res.text).toMatch(/openDeleteConfirmDialog/);
     expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
-    expect(res.text).toMatch(/diff\.baseRevStale/);
+    expect(res.text).toMatch(/diff\.baseRevChanged/);
     expect(res.text).toMatch(/Type DELETE to confirm/);
     expect(res.text).toMatch(/formatDiffActionSummary|Summary:/);
     expect(res.text).toMatch(/toast-title|toast-link|View/);

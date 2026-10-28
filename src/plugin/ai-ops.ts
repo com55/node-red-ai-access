@@ -458,23 +458,51 @@ export function withdrawMyProposal(
   if (!isOpenProposalStatus(proposal.status)) {
     throw new ProposalNotPendingError(id, proposal.status);
   }
+  return {
+    ...withdrawProposalAsActor(
+      store,
+      audit,
+      accessLinkActor(accessLink),
+      id,
+      reason,
+      presentOptions
+    ),
+    mine: true,
+  };
+}
+
+/** Caller must authenticate an admin with full (`*`) permission before using this recovery path. */
+export function withdrawProposalAsActor(
+  store: ProposalStore,
+  audit: AuditLog,
+  actor: ProposalDecisionBy,
+  id: string,
+  reason: unknown,
+  presentOptions: PresentProposalOptions = {}
+): PresentedProposal {
+  const proposal = store.get(id);
+  if (actor.kind === 'access-link' && proposalOwnerId(proposal.createdBy) !== actor.linkId) {
+    throw new ProposalNotOwnedError(id);
+  }
   const cleaned =
     typeof reason === 'string' && reason.trim()
       ? reason.replace(/\0/g, '').trim().slice(0, 2_000)
-      : 'Withdrawn by access link';
-  const actor = accessLinkActor(accessLink);
+      : actor.kind === 'admin'
+        ? 'Withdrawn by administrator (token recovery)'
+        : 'Withdrawn by access link';
   const withdrawn = store.markWithdrawn(id, actor, cleaned);
   const presented = presentProposal(redactProposalForAi(withdrawn), presentOptions);
-  const flowLabel = presented.flowLabel || undefined;
   audit.append('proposal.withdrawn', actor, {
-    proposalId: withdrawn.id,
-    flowId: withdrawn.payload.flowId,
+    proposalId: id,
+    flowId: proposal.payload.flowId,
     title: presented.title,
     displayName: presented.displayName,
     reason: cleaned,
-    ...(flowLabel ? { flowLabel } : {}),
+    withdrawalAuthority: actor.kind === 'admin' ? 'admin-recovery' : 'owner-token',
+    originalOwnerId: proposalOwnerId(proposal.createdBy),
+    ...(presented.flowLabel ? { flowLabel: presented.flowLabel } : {}),
   });
-  return { ...presented, mine: true };
+  return presented;
 }
 
 /** Attach conflict warning fields for a pending proposal on read/submit. */
@@ -963,12 +991,17 @@ export async function submitReplaceFlowProposal(
  * Same validation and secret restoration as submit; status returns to
  * `pending` and the proposal is rebased right away.
  */
+export type ResolveProposalInput = SubmitReplaceFlowInput & {
+  nodeId?: unknown;
+  choice?: unknown;
+};
+
 export async function resolveMyProposal(
   store: ProposalStore,
   audit: AuditLog,
   accessLink: AccessLinkAuthInfo,
   id: string,
-  body: SubmitReplaceFlowInput,
+  body: ResolveProposalInput,
   adapter: FlowAdapter,
   presentOptions: PresentProposalOptions = {},
   nodeTypesAdapter?: NodeTypesAdapter
@@ -982,6 +1015,29 @@ export async function resolveMyProposal(
   }
   if (!isOpenProposalStatus(existing.status)) {
     throw new ProposalNotPendingError(id, existing.status);
+  }
+  if (body.choice !== undefined || body.nodeId !== undefined) {
+    if (
+      body.payload !== undefined ||
+      body.nodes !== undefined ||
+      body.expectedRev !== undefined ||
+      body.title !== undefined
+    ) {
+      throw new AiOpsValidationError(
+        'Use nodeId + choice alone, or expectedRev + payload to replace the body; do not mix the modes.',
+        'invalid_choice'
+      );
+    }
+    const resolved = await resolveConflictChoice(
+      store,
+      audit,
+      auditActorFor(accessLink),
+      id,
+      body.nodeId,
+      body.choice,
+      adapter
+    );
+    return { ...presentProposal(redactProposalForAi(resolved), presentOptions), mine: true };
   }
   const prepared = await prepareReplaceFlowSubmission(
     { type: 'replace_flow', ...body, payload: body.payload ?? { flowId: existing.payload.flowId } },

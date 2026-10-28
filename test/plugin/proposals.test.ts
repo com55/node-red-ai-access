@@ -263,7 +263,7 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(createdLog?.details?.displayName).toBeTruthy();
   });
 
-  it('lists pending proposals with baseRevStale and flowLabel (never raw tab id as label)', async () => {
+  it('lists pending proposals with baseRevChanged and flowLabel (never raw tab id as label)', async () => {
     const { app, linkStore } = createApp({
       userDir,
       authenticate: asUser('*', 'admin'),
@@ -326,7 +326,7 @@ describe('proposals / flows / logs HTTP API', () => {
     // Unrelated rev changes rebase cleanly and keep the proposal open.
     expect(listed.body.proposals[0].status).toBe('pending');
     expect(listed.body.proposals[0].rebase.state).toBe('clean');
-    expect(listed.body.proposals[0].baseRevStale).toBe(true);
+    expect(listed.body.proposals[0].baseRevChanged).toBe(true);
     expect(listed.body.proposals[0].flowLabel).toBe('Test Flow');
     expect(listed.body.proposals[0].flowLabel).not.toBe('tab-1');
   });
@@ -546,7 +546,7 @@ describe('proposals / flows / logs HTTP API', () => {
       flowId: 'tab-1',
       expectedRev: 'rev-1',
       currentRev: 'rev-2',
-      baseRevStale: true,
+      baseRevChanged: true,
       compareAgainst: 'base',
       summary: { added: 1, removed: 1, modified: 1 },
     });
@@ -595,7 +595,7 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(otherDiff.body.proposalId).toBe(created.body.id);
   });
 
-  it('GET /proposals/:id/diff sets baseRevStale only while pending', async () => {
+  it('GET /proposals/:id/diff sets baseRevChanged only while pending', async () => {
     let liveRev = 'rev-1';
     const adapter: FlowAdapter = {
       kind: 'red',
@@ -626,7 +626,7 @@ describe('proposals / flows / logs HTTP API', () => {
     liveRev = 'rev-live';
     const pendingDiff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
     expect(pendingDiff.status).toBe(200);
-    expect(pendingDiff.body.baseRevStale).toBe(true);
+    expect(pendingDiff.body.baseRevChanged).toBe(true);
     expect(pendingDiff.body.currentRev).toBe('rev-live');
     expect(pendingDiff.body.expectedRev).toBe('rev-1');
     expect(pendingDiff.body.compareAgainst).toBe('base');
@@ -636,7 +636,7 @@ describe('proposals / flows / logs HTTP API', () => {
     });
     const rejectedDiff = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}/diff`);
     expect(rejectedDiff.status).toBe(200);
-    expect(rejectedDiff.body.baseRevStale).toBe(false);
+    expect(rejectedDiff.body.baseRevChanged).toBe(false);
     expect(rejectedDiff.body.compareAgainst).toBe('base');
   });
 

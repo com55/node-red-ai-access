@@ -45,7 +45,7 @@ Get detail for one installed node type: defaults (JSON), inputs/outputs (always 
 
 ## `get_proposal`
 
-Get any proposal by id (all tokens can read). Response includes mine:true|false and, for open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
+Get any proposal by id (all tokens can read). Response includes mine:true|false and, for open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -109,14 +109,16 @@ List proposals visible to this access link (all proposals by default). Each item
 
 ## `resolve_proposal_conflict`
 
-Replace your own open proposal with a resolution based on expectedRev. Revision changes auto-rebase; conflict blocks approval until resolved. Open proposals expire after the configured TTL (default 7 days). Read the current flow first; payload accepts a full flow or nodes ops as in submit_proposal.
+Resolve your own open proposal. Different node/tab fields auto-merge; only fields changed on both sides conflict (x/y never conflict). Choose one current conflict using nodeId + choice, preserving all non-conflicting fields. Alternatively replace the proposal using expectedRev + payload: nodes ops apply to the flow snapshot at expectedRev, NOT the stored proposal or merged result; include every intended proposal edit. Read get_proposal_diff for conflicts and get_flow for a fresh rev. These two modes cannot be mixed.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
-| `expectedRev` | yes | string | — |
-| `id` | yes | string | — |
-| `payload` | yes | object | — |
-| `title` | no | string | — |
+| `choice` | no | "live" \| "proposed" | For this conflict, keep live or proposed values of overlapping fields only. Disjoint edits survive. Use with nodeId, without expectedRev/title/payload. |
+| `expectedRev` | no | string | Revision of the flow snapshot on which replacement payload ops run. Required with payload; normally the current get_flow rev. |
+| `id` | yes | string | Your open proposal id (prop-…) |
+| `nodeId` | no | string | Conflict nodeId from rebase.conflicts; use the flow id for tab/env conflicts. Required with choice. |
+| `payload` | no | object | Replacement body; required with expectedRev, omitted with nodeId + choice |
+| `title` | no | string | Optional replacement title (body replacement mode only) |
 
 ## `search_flows`
 
@@ -151,7 +153,7 @@ Submit a replace_flow proposal for owner approval (does not deploy). Preferred f
 
 ## `withdraw_proposal`
 
-Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw; other tokens get 403. Cite displayName + reviewUrl when telling the user.
+Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. Cite displayName + reviewUrl when telling the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

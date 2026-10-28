@@ -18,8 +18,8 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `proposal_conflict` | 409 | Editor and proposal changes conflict (conflicts contains field names only) | Read the current flow and resolve the proposal before approval | GET, REST, MCP, admin |
 | `rebase_ack_required` | 409 | The merged result needs review (mergedHash included) | Review the diff and approve with its mergedHash | admin |
 | `rebase_race` | 409 | Flows kept changing during approval | Recheck the proposal and retry approval | admin |
-| `conflict_not_found` | 409 | The requested conflict no longer exists | Reload the proposal and its conflicts | admin |
-| `invalid_choice` | 400 | Invalid manual conflict choice | Use an available live or proposed choice | admin |
+| `conflict_not_found` | 409 | The requested conflict no longer exists | Reload the proposal and its conflicts | REST, MCP, admin |
+| `invalid_choice` | 400 | Invalid manual conflict choice | Use nodeId plus an available live or proposed choice, without replacement payload or revision | REST, MCP, admin |
 | `flow_id_mismatch` | 400 | Resolution tried to change the proposal flow id | Keep the same flowId or submit a new proposal | REST, MCP |
 | `access_link_missing` | 401 | No Bearer / path token | Ask the user for a new access link of the right kind | GET, REST, MCP |
 | `bearer_scheme_required` | 401 | Auth used Basic (or non-Bearer) | Send `Authorization: Bearer <token>` | REST, MCP |
@@ -49,7 +49,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `version_mismatch` | 409 | Unknown or unavailable `rev` / `expectedRev` snapshot | Re-read flows and resubmit | GET, REST, MCP |
 | `proposal_not_found` | 404 | Unknown proposal id | List proposals and use an existing id | GET, REST, MCP |
 | `proposal_not_pending` | 409 | Action needs an open proposal | Only pending or conflict proposals can withdraw / decide | GET, REST, MCP |
-| `proposal_not_owned` | 403 | Withdraw of another token’s proposal | Only the creating token can withdraw | GET, REST, MCP |
+| `proposal_not_owned` | 403 | Resolve or withdraw another token’s proposal | Use the creating token; lost-token withdrawal requires a full admin session | GET, REST, MCP |
 | `validation_failed` | 400 | Several validation errors at once (message `N validation errors`) | Fix every entry in errors[] and resubmit. | GET, REST, MCP |
 | `duplicate_node_id` | 400 | The same node id appears more than once in a full tab or batch | Give every node a unique id | GET, REST, MCP |
 | `missing_node_id` | 400 | Node / op without an id | Include a non-empty string id | GET, REST, MCP |

@@ -130,6 +130,69 @@ describe('auto-rebase service and HTTP API', () => {
     head.rev += '-editor';
   }
 
+  it('B1: approving a name edit leaves a same-node function proposal pending, mergeable and approvable', async () => {
+    const p1 = await submit('a', 'r1', { name: 'approved name' });
+    const p2 = await submit('a', 'r1', { func: 'msg.changed = true; return msg;' });
+    expect(p2.body.conflictingProposals).toBeUndefined();
+    expect((await approve(p1.body.id)).body.status).toBe('approved');
+    const got = await request(app).get(`/mcp/api/v1/proposals/${p2.body.id}`).set(auth());
+    expect(got.body).toMatchObject({
+      status: 'pending',
+      baseRev: 'r1',
+      baseRevChanged: true,
+      rebase: { state: 'merged', rev: head.rev, conflicts: [] },
+    });
+    expect(got.body.baseRevStale).toBeUndefined();
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${p2.body.id}/diff`).set(auth());
+    expect(diff.body).toMatchObject({
+      baseRev: 'r1',
+      baseRevChanged: true,
+      rebase: { state: 'merged', rev: head.rev },
+    });
+    const approved = await approve(p2.body.id, { mergedHash: diff.body.rebase.mergedHash });
+    expect(approved.body.status).toBe('approved');
+    expect(head.flows.find(n => n.id === 'a')).toMatchObject({
+      name: 'approved name',
+      func: 'msg.changed = true; return msg;',
+    });
+  });
+
+  it('B2: outbound function warning lists changed fields and never an unchanged type', async () => {
+    const submitted = await submit();
+    const warning = submitted.body.warnings.find(
+      (w: { code: string }) => w.code === 'outbound_node_changed'
+    );
+    expect(warning).toMatchObject({ nodeId: 'a', property: 'func' });
+    expect(warning.property.split(',')).not.toContain('type');
+  });
+
+  it('allows an admin to withdraw after token loss, with recovery authority and original owner in the audit', async () => {
+    const submitted = await submit();
+    const owner = store.get(submitted.body.id).createdBy;
+    linkStore.revoke(owner.kind === 'access-link' ? owner.linkId : '');
+    const withdrawn = await request(app)
+      .post(`/mcp/api/v1/proposals/${submitted.body.id}/withdraw`)
+      .send({ reason: 'Lost submitting token' });
+    expect(withdrawn.status).toBe(200);
+    expect(withdrawn.body).toMatchObject({
+      status: 'withdrawn',
+      decidedBy: { kind: 'admin', username: 'admin' },
+      reason: 'Lost submitting token',
+    });
+    expect(audit.list().find(e => e.action === 'proposal.withdrawn')).toMatchObject({
+      actor: { kind: 'admin', username: 'admin' },
+      details: {
+        withdrawalAuthority: 'admin-recovery',
+        originalOwnerId: owner.kind === 'access-link' ? owner.linkId : '',
+        proposalId: submitted.body.id,
+      },
+    });
+    expect(
+      (await request(app).post(`/mcp/api/v1/proposals/${submitted.body.id}/withdraw`).send({}))
+        .status
+    ).toBe(409);
+  });
+
   it('keeps proposals pending when a new tab is created elsewhere and deploys using the live rev', async () => {
     const p = await submit();
     expect(p.status).toBe(201);
@@ -139,7 +202,12 @@ describe('auto-rebase service and HTTP API', () => {
     expect(listed.status).toBe(200);
     expect(
       listed.body.proposals.find((candidate: { id: string }) => candidate.id === p.body.id)
-    ).toMatchObject({ status: 'pending', rebase: { state: 'clean', rev: 'r2' } });
+    ).toMatchObject({
+      status: 'pending',
+      baseRev: 'r1',
+      baseRevChanged: true,
+      rebase: { state: 'clean', rev: 'r2' },
+    });
     expect((await approve(p.body.id)).body.status).toBe('approved');
     expect(updateFlow).toHaveBeenCalledWith(expect.objectContaining({ expectedRev: 'r2' }));
     expect(head.flows.find(n => n.id === 'new-tab')!.label).toBe('New tab');
@@ -898,6 +966,85 @@ describe('auto-rebase service and HTTP API', () => {
     expect(resolved.status).toBe('pending');
     expect((await approve(p.id)).body.status).toBe('approved');
     expect(head.flows.find(n => n.id === 'a')!.func).toBe('MCP resolved');
+  });
+
+  it.each(['live', 'proposed'] as const)(
+    'MCP explicit %s choice resolves only overlapping fields',
+    async choice => {
+      const mcp = linkStore.create({ kind: 'mcp', label: 'Choice AI' });
+      const call = async (name: string, args: Record<string, unknown>, expectError = false) => {
+        const response = await request(app)
+          .post('/mcp/rpc')
+          .set('Authorization', `Bearer ${mcp.token}`)
+          .set('Accept', 'application/json, text/event-stream')
+          .send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+        expect(response.status).toBe(200);
+        expect(!!response.body.result.isError).toBe(expectError);
+        return JSON.parse(response.body.result.content[0].text);
+      };
+      const p = await call('submit_proposal', {
+        type: 'replace_flow',
+        expectedRev: 'r1',
+        payload: {
+          flowId: 'tab',
+          nodes: [{ op: 'set', id: 'a', set: { func: 'proposed', name: 'proposal name' } }],
+        },
+      });
+      edit('a', { func: 'live', outputs: 3 });
+      const mixed = await call(
+        'resolve_proposal_conflict',
+        { id: p.id, nodeId: 'a', choice, expectedRev: head.rev },
+        true
+      );
+      expect(mixed.code).toBe('invalid_choice');
+      const bad = await call(
+        'resolve_proposal_conflict',
+        { id: p.id, nodeId: 'missing', choice },
+        true
+      );
+      expect(bad.code).toBe('conflict_not_found');
+      const resolved = await call('resolve_proposal_conflict', { id: p.id, nodeId: 'a', choice });
+      expect(resolved.status).toBe('pending');
+      const flow = store.get(p.id).payload.flow.nodes!.find(n => n.id === 'a');
+      expect(flow).toMatchObject({
+        func: choice === 'live' ? 'live' : 'proposed',
+        name: 'proposal name',
+        outputs: 3,
+      });
+      expect((await approve(p.id)).body.status).toBe('approved');
+      expect(head.flows.find(n => n.id === 'a')).toMatchObject(flow!);
+    }
+  );
+
+  it('REST choice resolution is owner-only and rejects mixed replacement operations', async () => {
+    const p = await submit('a', 'r1', { func: 'proposed', name: 'proposal name' });
+    edit('a', { func: 'live', outputs: 3 });
+    const other = linkStore.create({ kind: 'rest', label: 'Other AI' });
+    const denied = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .send({ nodeId: 'a', choice: 'live' });
+    expect(denied.status).toBe(403);
+    const mixed = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a', choice: 'live', nodes: [{ op: 'remove', id: 'a' }] });
+    expect(mixed.body.code).toBe('invalid_choice');
+    const missing = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a' });
+    expect(missing.body.code).toBe('invalid_choice');
+    const resolved = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a', choice: 'live' });
+    expect(resolved.body.status).toBe('pending');
+    expect(store.get(p.body.id).payload.flow.nodes!.find(n => n.id === 'a')).toMatchObject({
+      func: 'live',
+      name: 'proposal name',
+      outputs: 3,
+    });
   });
 
   it('uses one immutable revision throughout submit even if the runtime moves during validation', async () => {

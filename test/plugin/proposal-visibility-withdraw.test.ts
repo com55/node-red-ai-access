@@ -17,7 +17,10 @@ import type { FlowAdapter } from '../../src/runtime/types.js';
 
 const MCP_ACCEPT = 'application/json, text/event-stream';
 
-function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore } {
+function createApp(
+  userDir: string,
+  permission?: string
+): { app: Express; linkStore: AccessLinkStore } {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
   const linkStore = new AccessLinkStore({ maxActiveLinks: 20 });
@@ -32,7 +35,11 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
     httpAdmin: app,
     auth: {
       needsPermission() {
-        return (_req: Request, _res: Response, next: NextFunction) => next();
+        return (req: Request, _res: Response, next: NextFunction) => {
+          if (permission)
+            Object.assign(req, { user: { username: 'viewer', permissions: permission } });
+          next();
+        };
       },
     },
     plugins: {
@@ -292,6 +299,31 @@ describe('proposal visibility, conflicts, withdraw', () => {
     expect(mcpOut.status).toBe('withdrawn');
     expect(mcpOut.mine).toBe(true);
   });
+
+  it.each([undefined, 'read'])(
+    'blocks lost-token recovery without full admin permission (%s)',
+    async permission => {
+      const { app, linkStore } = createApp(userDir, permission);
+      const link = linkStore.create({ label: 'owner', kind: 'rest' });
+      const p = await request(app)
+        .post('/mcp/api/v1/proposals')
+        .set('Authorization', `Bearer ${link.token}`)
+        .send({
+          type: 'replace_flow',
+          expectedRev: 'rev-1',
+          payload: { flowId: 'tab-1', nodes: [{ op: 'set', id: 'n1', set: { name: 'proposal' } }] },
+        });
+      expect(p.status).toBe(201);
+      const denied = await request(app)
+        .post(`/mcp/api/v1/proposals/${p.body.id}/withdraw`)
+        .send({});
+      expect(denied.status).toBe(permission ? 403 : 401);
+      const unchanged = await request(app)
+        .get(`/mcp/api/v1/proposals/${p.body.id}`)
+        .set('Authorization', `Bearer ${link.token}`);
+      expect(unchanged.body.status).toBe('pending');
+    }
+  );
 
   it('documents 1.5MB cap, known issues, and nodes shapes on GET docs', async () => {
     const { app, linkStore } = createApp(userDir);

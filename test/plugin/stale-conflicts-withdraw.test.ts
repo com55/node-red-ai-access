@@ -164,6 +164,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
         flow: {
           id: 'tab-1',
           type: 'tab',
+          label: 'Main',
           nodes: [
             { id: 'n1', type: 'inject', name: 'a2' },
             { id: 'n2', type: 'template', name: 'b' },
@@ -182,6 +183,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
         flow: {
           id: 'tab-1',
           type: 'tab',
+          label: 'Main',
           nodes: [
             { id: 'n1', type: 'inject', name: 'a' },
             { id: 'n2', type: 'template', name: 'b2' },
@@ -201,6 +203,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
         flow: {
           id: 'tab-1',
           type: 'tab',
+          label: 'Main',
           nodes: [
             { id: 'n1', type: 'inject', name: 'conflict' },
             { id: 'n2', type: 'template', name: 'b' },
@@ -220,6 +223,7 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
         flow: {
           id: 'tab-1',
           type: 'tab',
+          label: 'Main',
           nodes: [
             { id: 'n1', type: 'inject', name: 'a' },
             { id: 'n2', type: 'template', name: 'only-n2' },
@@ -236,6 +240,49 @@ describe('stale close, conflict trim, GET withdraw confirm', () => {
     expect(result).not.toHaveProperty('staleOnOlderRev');
     const overlapRef = result.conflictingProposals.find(c => c.id === overlapOld.id);
     expect(overlapRef?.overlappingNodeIds).toEqual(expect.arrayContaining(['n1']));
+  });
+
+  it('peer warnings compare env names and credential keys using the merge field paths', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new ProposalStore(paths);
+    const baseFlow = {
+      id: 'tab-1',
+      type: 'tab',
+      env: [
+        { name: 'A', value: 'old' },
+        { name: 'B', value: 'old' },
+      ],
+      nodes: [{ id: 'cfg', type: 'mqtt-broker' }],
+    };
+    const create = (env: typeof baseFlow.env, credentials: Record<string, string>) =>
+      store.create({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        baseFlow,
+        createdBy: { kind: 'access-link', linkId: 'owner' },
+        payload: {
+          flowId: 'tab-1',
+          flow: { ...baseFlow, env, nodes: [{ ...baseFlow.nodes[0]!, credentials }] },
+        },
+      });
+    const p = create([{ name: 'A', value: 'proposed' }, baseFlow.env[1]!], { user: 'proposed' });
+    const disjoint = create([baseFlow.env[0]!, { name: 'B', value: 'peer' }], {
+      password: 'peer-secret',
+    });
+    expect(findConflictingProposals(store, p).conflictingProposals).toEqual([]);
+    const overlap = create([{ name: 'A', value: 'peer' }, baseFlow.env[1]!], { user: 'peer' });
+    const conflicts = findConflictingProposals(store, p).conflictingProposals;
+    expect(conflicts.map(peer => peer.id)).not.toContain(disjoint.id);
+    expect(conflicts).toContainEqual(
+      expect.objectContaining({
+        id: overlap.id,
+        overlappingFields: [
+          { nodeId: 'cfg', fields: ['credentials.user'] },
+          { nodeId: 'tab-1', fields: ['env["A"].value'] },
+        ],
+      })
+    );
   });
 
   it('rebases pending proposals when liveRev moves', () => {

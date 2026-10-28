@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Node-RED AI Access Plugin API
-  version: 0.1.1
+  version: 0.2.0-beta.8
   summary: Temporary, owner-approved Node-RED access for AI clients
   description: |
     REST surface exposed by the `@com55/node-red-ai-access` Node-RED plugin
@@ -10,8 +10,8 @@ info:
 
     **Git mental model:** a proposal is like a pull request. Human approve =
     merge; reject = close; withdraw = the author closes their own PR. If `rev` /
-    `expectedRev` does not match, treat it as a conflict: re-read the flow,
-    rebase the edit, and resubmit. Every access link can see all proposals
+    `expectedRev` does not match, open proposals auto-rebase; only overlapping
+    field changes block approval. Read `rebase.state` to assess readiness. Every access link can see all proposals
     (`mine: true|false`).
 
     ## Base path
@@ -185,6 +185,10 @@ info:
     full tab or batch return `duplicate_node_id`.
 
     Open proposals (`pending` or `conflict`) auto-rebase when live revisions change.
+    Disjoint node and tab fields merge automatically. Only fields changed on both
+    sides conflict (even identical edits); x/y never conflict and proposed positions
+    win ties. Env merges by unique name and entry field, credentials by key.
+    Duplicate env names fall back to atomic comparison with ambiguity warnings.
     Conflicts block approval until resolved. Proposals expire only after the
     configured `proposalTtlDays` (default 7). Approval rebases other open proposals;
     legacy expired, rejected and superseded proposals stay closed.
@@ -194,7 +198,11 @@ info:
     The creating access link may withdraw its own pending proposal
     (`POST /proposals/{id}/withdraw`, GET `…/proposals/{id}/withdraw?confirm=1`,
     or MCP `withdraw_proposal`). GET withdraw requires `confirm=1` so prefetchers
-    cannot trigger it. Status becomes `withdrawn` (separate from admin
+    cannot trigger it. If the token is lost, a full (`*`) admin session may use
+    POST `/proposals/{id}/withdraw`. Other tokens remain blocked. Recovery is logged
+    as `proposal.withdrawn` with the admin identity, originalOwnerId, reason and
+    withdrawalAuthority=`admin-recovery` (owner-token withdrawals use `owner-token`).
+    Status becomes `withdrawn` (separate from admin
     `rejected`).
 
     ## Known issues
@@ -1054,9 +1062,13 @@ paths:
         (long text fields listed for expandable UI). Modified nodes include
         line-level diffs for text fields such as `func` and `template`.
 
-        `baseRevStale` is true only for **open** proposals when
+        `baseRev` aliases `expectedRev`, the stored proposal base revision.
+        `baseRevChanged` is true only for **open** proposals when
         `expectedRev` does not match the live revision (informational).
-        Closed proposals never set `baseRevStale`. Open proposals include
+        This is informational after a successful rebase, not an approval error.
+        `rebase.state` (`clean`, `merged`, `conflict`) reports merge readiness and
+        `rebase.rev` identifies the checked live rev. Closed proposals never set
+        `baseRevChanged` as true. Open proposals include
         `rebase` and `liveChanges` (editor changes since the stored base).
         Without conflicts, `vsCurrent` compares the merged deployment to live.
         Merges use raw stored proposals and live flows; AI diff sections are redacted.
@@ -1145,7 +1157,12 @@ paths:
   /proposals/{id}/resolve:
     post:
       tags: [Proposals]
-      summary: Resolve your own open proposal with a fresh payload
+      summary: Resolve your own open proposal with a choice or replacement payload
+      description: |
+        Use nodeId + choice for one current conflict (overlapping fields only;
+        independent live and proposed edits survive). Or use expectedRev + payload:
+        operations apply to the flow snapshot at expectedRev, not the stored
+        proposal or merged result. Include every intended edit. Do not mix modes.
       operationId: resolveProposal
       security:
         - AccessLinkBearer: []
@@ -1272,14 +1289,16 @@ paths:
   /proposals/{id}/withdraw:
     post:
       tags: [Proposals]
-      summary: Withdraw own pending proposal
+      summary: Withdraw an open proposal (owner token or full admin recovery)
       description: |
-        Access-link Bearer only. Withdraws an **open** (pending or conflict) proposal created by
-        this token. Status becomes `withdrawn` (not `rejected`). Optional
+        Accepts the creating access-link Bearer, or a full (`*`) admin session
+        for lost-token recovery. Other tokens and read-only admins are forbidden.
+        Withdraws an **open** (pending or conflict) proposal. Status becomes `withdrawn` (not `rejected`). Optional
         JSON body `{ "reason": "…" }`.
       operationId: withdrawProposal
       security:
         - AccessLinkBearer: []
+        - AdminSession: []
       parameters:
         - $ref: '#/components/parameters/ProposalId'
       requestBody:
@@ -1301,7 +1320,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not owned by this access link
+          description: Not owned by this access link or admin lacks full permission
           content:
             application/json:
               schema:
@@ -1585,7 +1604,7 @@ components:
         - `version_mismatch` (409): Unknown or unavailable `rev` / `expectedRev` snapshot
         - `proposal_not_found` (404): Unknown proposal id
         - `proposal_not_pending` (409): Action needs an open proposal
-        - `proposal_not_owned` (403): Withdraw of another token’s proposal
+        - `proposal_not_owned` (403): Resolve or withdraw another token’s proposal
         - `validation_failed` (400): Several validation errors at once (message `N validation errors`)
         - `duplicate_node_id` (400): The same node id appears more than once in a full tab or batch
         - `missing_node_id` (400): Node / op without an id
@@ -2346,6 +2365,7 @@ components:
         - type
         - status
         - expectedRev
+        - baseRev
         - payload
         - createdBy
         - createdAt
@@ -2378,6 +2398,12 @@ components:
           $ref: '#/components/schemas/ProposalStatus'
         expectedRev:
           type: string
+        baseRev:
+          type: string
+          description: Revision of the stored base snapshot; alias of expectedRev.
+        baseRevChanged:
+          type: boolean
+          description: Informational revision difference for open proposals; use rebase.state for merge readiness.
         payload:
           $ref: '#/components/schemas/ReplaceFlowPayload'
         baseFlow:
@@ -2536,7 +2562,7 @@ components:
       type: object
       required: [kind]
       description: |
-        Admin for approve/reject/fail; access-link for withdraw.
+        Admin for approve/reject/fail and recovery withdrawal; access-link for owner withdrawal.
       properties:
         kind:
           type: string
@@ -2599,21 +2625,40 @@ components:
           enum: [live, proposed]
 
     ResolveProposalRequest:
-      type: object
-      required: [expectedRev]
-      properties:
-        expectedRev:
-          type: string
-        title:
-          type: string
-          maxLength: 80
-        payload:
-          $ref: '#/components/schemas/ReplaceFlowPayload'
-        nodes:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [nodeId, choice]
+          properties:
+            nodeId:
+              type: string
+              description: Current conflict node id; flow id for tab/env conflicts.
+            choice:
+              type: string
+              enum: [live, proposed]
+              description: Keep this side for overlapping fields only; preserve independent changes and live secrets.
+        - type: object
+          required: [expectedRev]
+          properties:
+            expectedRev:
+              type: string
+              description: Flow snapshot revision to which replacement operations apply.
+            title:
+              type: string
+              maxLength: 80
+            payload:
+              $ref: '#/components/schemas/ReplaceFlowPayload'
+              description: Complete intended edits based on expectedRev; not applied to the stored proposal or merged result.
+            nodes:
+              type: array
+              description: Legacy alias for replacement payload nodes, applied to expectedRev.
+              items:
+                type: object
+                additionalProperties: true
+          not:
+            anyOf:
+              - required: [nodeId]
+              - required: [choice]
 
     ApproveProposalRequest:
       type: object
@@ -2766,7 +2811,8 @@ components:
             - flowId
             - expectedRev
             - currentRev
-            - baseRevStale
+            - baseRevChanged
+            - baseRev
             - compareAgainst
           properties:
             proposalId:
@@ -2775,9 +2821,12 @@ components:
               type: string
             expectedRev:
               type: string
+            baseRev:
+              type: string
+              description: Alias of expectedRev, the stored base revision.
             currentRev:
               type: string
-            baseRevStale:
+            baseRevChanged:
               type: boolean
               description: |
                 Informational: true for open proposals when expectedRev ≠ live rev.

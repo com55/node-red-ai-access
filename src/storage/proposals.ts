@@ -32,7 +32,7 @@ export function isOpenProposalStatus(status: ProposalStatus): boolean {
   return status === 'pending' || status === 'conflict';
 }
 
-/** One stored rebase conflict (field names only — never values). */
+/** One stored rebase conflict (field paths only, including env names / credential keys; never values). */
 export interface StoredRebaseConflict {
   kind: string;
   nodeId?: string;

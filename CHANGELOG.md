@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.8] - 2026-10-29
+
+- Merge disjoint fields on the same node and tab, including env entries by
+  unique name and credentials by key. Conflict choices preserve independent
+  changes from both sides and retain secret safeguards and warnings.
+- Keep peer proposals mergeable after approval of a different field on the same
+  node.
+- Report actual changed fields in `outbound_node_changed` warnings.
+- Expose `baseRev` and rename the informational revision flag to
+  `baseRevChanged`; use `rebase.state` and `rebase.rev` to assess the checked
+  merge.
+- Add `nodeId` + `choice` to MCP/REST proposal resolution and clarify that
+  replacement operations apply to the flow snapshot at `expectedRev`.
+- Allow full admins to withdraw proposals after token loss, with recovery
+  authority and original ownership in the audit log. Other tokens remain
+  blocked.
+
 ## [0.2.0-beta.7] - 2026-10-28
 
 ### Fixed
