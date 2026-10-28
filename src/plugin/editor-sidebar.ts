@@ -596,9 +596,13 @@ export function editorRevealListenerScript(): string {
   window.__com55AiAccessRevealListener = true;
   try { if (!window.name) window.name = 'node-red-editor'; } catch (e) {}
   var ch = new BroadcastChannel('node-red-ai-access');
+  var REQ_ID_RE = /^[0-9]{10,16}-[0-9]{1,12}$/;
+  var lastFocus = 0;
   ch.onmessage = function (ev) {
     var m = ev && ev.data;
-    if (!m || m.type !== 'reveal' || typeof m.id !== 'string' || m.id.length > 200) return;
+    if (!m || m.type !== 'reveal' || typeof m.id !== 'string' || !m.id || m.id.length > 200) return;
+    if (typeof m.reqId !== 'string' || !REQ_ID_RE.test(m.reqId)) return;
+    if (m.kind !== 'flow' && m.kind !== 'node') return;
     var ok = false;
     try {
       if (m.kind === 'flow') {
@@ -612,7 +616,10 @@ export function editorRevealListenerScript(): string {
       }
     } catch (e) { ok = false; }
     ch.postMessage({ type: 'reveal-ack', reqId: m.reqId, ok: ok });
-    if (ok) { try { window.focus(); } catch (e) {} }
+    if (ok && Date.now() - lastFocus > 2000) {
+      lastFocus = Date.now();
+      try { window.focus(); } catch (e) {}
+    }
   };
 })();`;
 }

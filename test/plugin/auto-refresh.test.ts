@@ -13,6 +13,7 @@ import { consentScript } from '../../src/plugin/oauth-consent-script.js';
 import {
   pageClientAutoRefreshScript,
   pageClientEditorJumpScript,
+  pageClientScript,
 } from '../../src/plugin/page-client.js';
 
 type Listener = (ev: Record<string, unknown>) => void;
@@ -60,6 +61,7 @@ function consentHarness(loginType: string) {
   };
   const store = new Map<string, string>();
   const calls: string[] = [];
+  const methods: string[] = [];
   const win = emitter();
   const doc = {
     ...emitter(),
@@ -70,8 +72,9 @@ function consentHarness(loginType: string) {
     getElementById: el,
     createElement: () => ({}),
   };
-  const fetch = (url: string) => {
+  const fetch = (url: string, init?: { method?: string }) => {
     calls.push(String(url));
+    methods.push(String(init?.method ?? 'GET').toUpperCase());
     if (String(url).includes('auth/login'))
       return Promise.resolve({
         status: 200,
@@ -107,7 +110,7 @@ function consentHarness(loginType: string) {
   };
   runInNewContext(consentScript, ctx);
   const consentCalls = () => calls.filter(c => c.startsWith('consent/')).length;
-  return { el, store, win, doc, consentCalls };
+  return { el, store, win, doc, consentCalls, methods };
 }
 
 describe('OAuth consent page auto-retry', () => {
@@ -181,11 +184,15 @@ function dashboardHarness() {
     loadLogs: () => calls.push('logs'),
     loadOAuthStatus: () => calls.push('oauthStatus'),
     loadOAuthClients: () => calls.push('oauthClients'),
+    beginLoad: () => 1,
+    isLatestLoad: () => true,
+    proposalActionsInFlight: 0,
     aiOn: true,
     canManage: true,
   };
   runInNewContext(`(function(){ ${pageClientAutoRefreshScript()} })();`, ctx);
   return {
+    ctx,
     calls,
     win,
     doc,
@@ -327,6 +334,7 @@ describe('dashboard → editor jump links', () => {
     const html = h.ctx.out.link!('node', 'a"b', '<x>');
     expect(html).toContain('href="/#node/a%22b"');
     expect(html).toContain('target="node-red-editor"');
+    expect(html).toContain('rel="noopener"');
     expect(html).toContain('&lt;x>');
   });
 
@@ -375,5 +383,184 @@ describe('consent auto-retry vs inline sign-in typing', () => {
     await flush();
     expect(h.consentCalls()).toBe(2);
     expect(h.el('allow').hidden).toBe(false);
+  });
+});
+
+/** Pull one named function's source out of the full dashboard client. */
+function extractFn(src: string, name: string): string {
+  const start = src.search(new RegExp(`(async )?function ${name}\\(`));
+  if (start < 0) throw new Error(`no ${name}`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`unbalanced ${name}`);
+}
+
+function proposalsHarness() {
+  const src = pageClientScript();
+  const fns = [
+    'beginLoad',
+    'isLatestLoad',
+    'sameAsLastRender',
+    'proposalFlowId',
+    'loadProposals',
+    'doApproveProposal',
+  ]
+    .map(n => extractFn(src, n))
+    .join('\n');
+  const pending: { path: string; resolve: (v: unknown) => void }[] = [];
+  const rendered: string[][] = [];
+  const ctx: Record<string, unknown> = {
+    out: {},
+    aiOn: true,
+    JSON,
+    Math,
+    Number,
+    String,
+    api: (path: string) =>
+      new Promise(resolve => {
+        pending.push({ path, resolve });
+      }),
+    refreshFlowLabels: () => Promise.resolve(),
+    $: () => ({}),
+    showFlash() {},
+    updatePendingBadges() {},
+    preserveUiState: (_c: unknown, fn: () => void) => fn(),
+    approveGate: null as null | { resolve: () => void },
+    doApproveProposalInner: () =>
+      new Promise<void>(resolve => {
+        (ctx as { approveGate: unknown }).approveGate = { resolve };
+      }),
+  };
+  runInNewContext(
+    `var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0;
+     var DECIDED_PAGE_SIZE = 20, DECIDED_STATUSES = 'approved', decidedLoaded = 0,
+       decidedTotal = 0, decidedHasMore = false, cachedProposals = [], cachedFlowLabels = {};
+     function renderProposalsList() { out.render(cachedProposals.map(function (p) { return p.id; })); }
+     ${fns}
+     out.load = loadProposals; out.approve = doApproveProposal;
+     out.inFlight = function () { return proposalActionsInFlight; };
+     out.labels = function () { return cachedFlowLabels; };`,
+    Object.assign(ctx, {
+      out: { render: (ids: string[]) => rendered.push(ids) },
+    })
+  );
+  const out = ctx.out as Record<string, (...a: unknown[]) => unknown>;
+  // Resolve the next queued api() call once it appears.
+  const answer = async (proposals: unknown[]) => {
+    for (let i = 0; i < 20 && !pending.length; i++) await flush();
+    const next = pending.shift();
+    if (!next) throw new Error('no pending api call');
+    next.resolve({ proposals });
+    await flush();
+  };
+  return { ctx, out, rendered, pending, answer };
+}
+
+describe('dashboard loaders: stale responses and in-flight actions', () => {
+  it('overlapping loadProposals ignores the stale (older) response', async () => {
+    const h = proposalsHarness();
+    const first = h.out.load!();
+    await flush();
+    const second = h.out.load!();
+    await flush();
+    // pending: first/pending, second/pending
+    const [p1, p2] = [h.pending.shift()!, h.pending.shift()!];
+    p2.resolve({ proposals: [{ id: 'new', status: 'pending' }] });
+    await flush();
+    await h.answer([]); // second decided
+    p1.resolve({ proposals: [{ id: 'old', status: 'pending' }] });
+    await flush();
+    await h.answer([]); // first decided — arrives last
+    await Promise.all([first, second]);
+    expect(h.rendered).toEqual([['new']]);
+  });
+
+  it('auto refresh with unchanged data does not re-render; label cache uses lean flowId', async () => {
+    const h = proposalsHarness();
+    const rows = [{ id: 'a', status: 'pending', flowId: 'f1', flowLabel: 'Flow 1' }];
+    const one = h.out.load!();
+    await h.answer(rows);
+    await h.answer([]);
+    await one;
+    const two = h.out.load!({ auto: true });
+    await h.answer(rows);
+    await h.answer([]);
+    await two;
+    expect(h.rendered).toHaveLength(1);
+    expect((h.out.labels!() as Record<string, string>).f1).toBe('Flow 1');
+  });
+
+  it('approve marks an action in flight and auto-refresh skips meanwhile', async () => {
+    const h = proposalsHarness();
+    const done = h.out.approve!('p1', 'flows');
+    expect(h.out.inFlight!()).toBe(1);
+    const d = dashboardHarness();
+    d.ctx.proposalActionsInFlight = 1;
+    d.advance(6000);
+    d.win.emit('focus');
+    await flush();
+    expect(d.calls).toEqual([]);
+    (h.ctx.approveGate as { resolve: () => void }).resolve();
+    await done;
+    expect(h.out.inFlight!()).toBe(0);
+    d.ctx.proposalActionsInFlight = 0;
+    d.win.emit('focus');
+    await flush();
+    expect(d.calls).toContain('/status');
+  });
+});
+
+describe('editor reveal listener input validation', () => {
+  it('rejects non-string, unknown-format and too-long ids / reqIds', async () => {
+    FakeChannel.all = [];
+    const ed = editorHarness({ n1: 'node' });
+    const acks: unknown[] = [];
+    const probe = new FakeChannel('node-red-ai-access');
+    probe.onmessage = ev => acks.push(ev.data);
+    const send = (m: unknown) => probe.postMessage(m);
+    send({ type: 'reveal', kind: 'node', id: 42, reqId: '1730000000000-1234' });
+    send({ type: 'reveal', kind: 'node', id: 'x'.repeat(201), reqId: '1730000000000-1234' });
+    send({ type: 'reveal', kind: 'node', id: 'n1', reqId: 7 });
+    send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '<script>' });
+    send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '1-2' });
+    send({ type: 'reveal', kind: 'weird', id: 'n1', reqId: '1730000000000-1234' });
+    await flush();
+    expect(ed.revealed).toEqual([]);
+    expect(acks).toEqual([]);
+    send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '1730000000000-1234' });
+    await flush();
+    expect(ed.revealed).toEqual(['node:n1']);
+    expect(acks).toEqual([{ type: 'reveal-ack', reqId: '1730000000000-1234', ok: true }]);
+  });
+
+  it('rate-limits window.focus()', async () => {
+    FakeChannel.all = [];
+    const ed = editorHarness({ n1: 'node' });
+    let focused = 0;
+    ed.win.focus = () => focused++;
+    const probe = new FakeChannel('node-red-ai-access');
+    for (let i = 0; i < 5; i++)
+      probe.postMessage({ type: 'reveal', kind: 'node', id: 'n1', reqId: `1730000000000-${i}` });
+    await flush();
+    expect(ed.revealed).toHaveLength(5);
+    expect(focused).toBe(1);
+  });
+});
+
+describe('consent auto-retry is read-only', () => {
+  it('never POSTs while auto-retrying', async () => {
+    const h = consentHarness('strategy');
+    await flush();
+    h.store.set('auth-tokens', JSON.stringify({ access_token: 't' }));
+    h.win.emit('storage', { key: 'auth-tokens', newValue: '{"access_token":"t"}' });
+    await flush();
+    h.doc.emit('visibilitychange');
+    h.win.emit('focus');
+    await flush();
+    expect(h.consentCalls()).toBeGreaterThanOrEqual(2);
+    expect(h.methods.every(m => m === 'GET')).toBe(true);
   });
 });

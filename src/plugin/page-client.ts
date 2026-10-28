@@ -25,6 +25,54 @@ function pageClientScriptPartA(): string {
   // Decided proposals load in pages (Load more); pending always load in full.
   var DECIDED_PAGE_SIZE = 50;
   var DECIDED_STATUSES = 'approved,rejected,failed,withdrawn,expired,superseded';
+  /*
+   * Per-loader generation counters: a loader bumps its counter before fetching
+   * and drops its response unless it is still the latest, so overlapping
+   * refreshes (manual + auto) never render stale data.
+   */
+  var loaderGen = {};
+  function beginLoad(kind) { loaderGen[kind] = (loaderGen[kind] || 0) + 1; return loaderGen[kind]; }
+  function isLatestLoad(kind, gen) { return loaderGen[kind] === gen; }
+  /** approve / reject requests in flight (auto-refresh waits for them). */
+  var proposalActionsInFlight = 0;
+  var lastRenderSig = {};
+  /** True when \`sig\` equals the last rendered signature for \`kind\` (and records it). */
+  function sameAsLastRender(kind, sig) {
+    if (lastRenderSig[kind] === sig) return true;
+    lastRenderSig[kind] = sig;
+    return false;
+  }
+  /*
+   * Re-render a container while keeping UI state: open <details> (diffs,
+   * raw payload, stale group…) keyed by card id + class + index, the focused
+   * element id, and page / container scroll.
+   */
+  function preserveUiState(container, render) {
+    if (!container || !container.querySelectorAll) { render(); return; }
+    var keyOf = function (d, i) {
+      var card = d.closest ? d.closest('[data-id]') : null;
+      return (card ? card.getAttribute('data-id') : '') + '|' + (d.className || '') + '|' + i;
+    };
+    var indexed = function () {
+      var counts = {};
+      return Array.prototype.map.call(container.querySelectorAll('details'), function (d) {
+        var base = keyOf(d, 0);
+        counts[base] = (counts[base] || 0) + 1;
+        return { el: d, key: keyOf(d, counts[base]) };
+      });
+    };
+    var openState = {};
+    indexed().forEach(function (x) { openState[x.key] = !!x.el.open; });
+    var focusedId = document.activeElement && document.activeElement.id;
+    var sx = window.scrollX || 0, sy = window.scrollY || 0, cs = container.scrollTop || 0;
+    render();
+    indexed().forEach(function (x) {
+      if (Object.prototype.hasOwnProperty.call(openState, x.key)) x.el.open = openState[x.key];
+    });
+    if (focusedId) { var f = document.getElementById(focusedId); if (f && f.focus) f.focus({ preventScroll: true }); }
+    container.scrollTop = cs;
+    if (window.scrollTo) window.scrollTo(sx, sy);
+  }
   var decidedLoaded = 0;
   var decidedTotal = 0;
   var decidedHasMore = false;
@@ -890,7 +938,8 @@ function pageClientScriptPartATabs(): string {
 
 function pageClientScriptPartA2(): string {
   return `
-  async function loadLinks() {
+  async function loadLinks(opts) {
+    opts = opts || {};
     if (!aiOn || !canManage) {
       var dashLinksOff = $('dash-links');
       if (dashLinksOff && !aiOn) dashLinksOff.textContent = '—';
@@ -898,15 +947,19 @@ function pageClientScriptPartA2(): string {
     }
     var list = $('links-list');
     var flash = $('links-flash');
-    showFlash(flash, '', true);
+    if (!opts.auto) showFlash(flash, '', true);
+    var gen = beginLoad('links');
     try {
       var data = await api('/links');
+      if (!isLatestLoad('links', gen)) return;
       var links = (data && data.links) || [];
       links.forEach(function (l) {
         if (l && l.id) cachedLinksById[l.id] = l;
       });
       var dashLinks = $('dash-links');
       if (dashLinks) dashLinks.textContent = String(links.length);
+      var linksUnchanged = sameAsLastRender('links', JSON.stringify(links));
+      if (opts.auto && linksUnchanged) return;
       if (!links.length) {
         list.innerHTML = '<div class="empty-state"><p class="empty-title">No active access links</p>' +
           '<p class="muted">Create a link above to give an AI temporary access to read flows and submit proposals.</p></div>';
@@ -2579,6 +2632,7 @@ function pageClientScriptPartB2Focus(): string {
   async function loadProposals(opts) {
     if (!aiOn) return;
     opts = opts || {};
+    var gen = beginLoad('proposals');
     var flash = $('proposals-flash');
     if (!opts.skipRender && !opts.keepFlash) {
       showFlash(flash, '', true);
@@ -2590,23 +2644,30 @@ function pageClientScriptPartB2Focus(): string {
       var decidedLimit = Math.min(200, Math.max(DECIDED_PAGE_SIZE, decidedLoaded));
       var decidedData = await api('/proposals?status=' + DECIDED_STATUSES +
         '&limit=' + decidedLimit + '&offset=0');
+      if (!isLatestLoad('proposals', gen)) return; // a newer refresh superseded this one
       var decidedList = (decidedData && decidedData.proposals) || [];
       decidedLoaded = decidedList.length;
       decidedTotal = Number(decidedData && decidedData.total) || decidedList.length;
       decidedHasMore = !!(decidedData && decidedData.hasMore);
       cachedProposals = ((pendingData && pendingData.proposals) || []).concat(decidedList);
       cachedProposals.forEach(function (p) {
-        var id = p && p.payload && p.payload.flowId;
+        var id = proposalFlowId(p);
         var label = p && p.flowLabel;
         if (id && label) cachedFlowLabels[id] = String(label);
       });
-      if (!opts.skipRender) {
-        renderProposalsList();
-      } else {
+      var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
+        return [p.id, p.status, p.updatedAt, p.baseRevStale, p.flowLabel, p.title];
+      })]);
+      var unchanged = sameAsLastRender('proposals', sig);
+      if (opts.skipRender || (opts.auto && unchanged)) {
         updatePendingBadges();
+      } else if (opts.auto) {
+        preserveUiState($('proposals-list'), renderProposalsList);
+      } else {
+        renderProposalsList();
       }
     } catch (e) {
-      showFlash(flash, e.message || String(e), false);
+      if (isLatestLoad('proposals', gen)) showFlash(flash, e.message || String(e), false);
     }
   }
 
@@ -3052,6 +3113,15 @@ function pageClientScriptPartC(): string {
   }
 
   async function doApproveProposal(id, deploymentType) {
+    proposalActionsInFlight += 1;
+    try {
+      return await doApproveProposalInner(id, deploymentType);
+    } finally {
+      proposalActionsInFlight -= 1;
+    }
+  }
+
+  async function doApproveProposalInner(id, deploymentType) {
     var flash = $('proposals-flash');
     var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var toastTitle = proposalToastTitle(pBefore);
@@ -3126,6 +3196,15 @@ function pageClientScriptPartC(): string {
   }
 
   async function rejectProposal(id, reasonOverride, options) {
+    proposalActionsInFlight += 1;
+    try {
+      return await rejectProposalInner(id, reasonOverride, options);
+    } finally {
+      proposalActionsInFlight -= 1;
+    }
+  }
+
+  async function rejectProposalInner(id, reasonOverride, options) {
     var flash = $('proposals-flash');
     var reason = reasonOverride && String(reasonOverride).trim()
       ? String(reasonOverride).trim()
@@ -3203,10 +3282,12 @@ function pageClientScriptPartCLogs(): string {
     renderLogsTable(filtered);
   }
 
-  async function loadLogs() {
+  async function loadLogs(opts) {
     if (!aiOn) return;
+    opts = opts || {};
     var flash = $('logs-flash');
-    showFlash(flash, '', true);
+    if (!opts.auto) showFlash(flash, '', true);
+    var gen = beginLoad('logs');
     try {
       // Need proposals (+ diffs) so audit rows use the same render-time titles.
       if (!cachedProposals.length) {
@@ -3216,7 +3297,10 @@ function pageClientScriptPartCLogs(): string {
         try { await loadLinks(); } catch (e) { /* best-effort for link label lookup */ }
       }
       var data = await api('/logs?limit=100');
-      cachedLogs = (data && data.logs) || [];
+      if (!isLatestLoad('logs', gen)) return;
+      var newLogs = (data && data.logs) || [];
+      if (sameAsLastRender('logs', JSON.stringify(newLogs)) && opts.auto) return;
+      cachedLogs = newLogs;
       var filter = $('logs-filter');
       if (filter) {
         var actions = [];
@@ -3544,7 +3628,7 @@ export function pageClientEditorJumpScript(): string {
   function editorJumpLink(kind, id, text, extraClass) {
     if (!id) return esc(text);
     return '<a class="editor-jump' + (extraClass ? ' ' + extraClass : '') + '" href="' +
-      esc(editorHashHref(kind, id)) + '" target="' + EDITOR_WINDOW_NAME + '" data-reveal-kind="' +
+      esc(editorHashHref(kind, id)) + '" target="' + EDITOR_WINDOW_NAME + '" rel="noopener" data-reveal-kind="' +
       esc(kind) + '" data-reveal-id="' + esc(String(id)) + '" title="Open in the Node-RED editor">' +
       esc(text) + '</a>';
   }
@@ -3619,17 +3703,20 @@ export function pageClientAutoRefreshScript(): string {
   async function autoRefresh() {
     if (document.visibilityState === 'hidden' || autoRefreshing) return;
     if (Date.now() - lastAutoRefresh < AUTO_REFRESH_MIN_MS || autoRefreshBlocked()) return;
+    if (typeof proposalActionsInFlight === 'number' && proposalActionsInFlight > 0) return;
     lastAutoRefresh = Date.now();
     autoRefreshing = true;
     try {
+      var gen = beginLoad('status');
       var s = await api('/status');
+      if (!isLatestLoad('status', gen)) return;
       applyStatus(s);
       var sel = document.querySelector('[role="tab"][aria-selected="true"]');
       var tab = sel ? sel.getAttribute('data-tab') : '';
       if (aiOn) {
-        if (canManage) loadLinks();
-        loadProposals({ keepFlash: true });
-        loadLogs();
+        if (canManage) loadLinks({ auto: true });
+        loadProposals({ keepFlash: true, auto: true });
+        loadLogs({ auto: true });
       }
       if (tab === 'oauth') { loadOAuthStatus(); loadOAuthClients(); }
       document.documentElement.setAttribute('data-auto-refreshed', String(lastAutoRefresh));
