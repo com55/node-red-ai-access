@@ -214,12 +214,18 @@ export function registerRoutes(
       ...detectOAuthRouteCollisions(RED.httpAdmin, metadataPaths),
       ...detectOAuthRouteCollisions(RED.httpNode, metadataPaths),
     ];
-    RED.nodes?.eachNode(node => {
-      if (node.type !== 'http in' || typeof node.url !== 'string') return;
-      const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
-      if (path.startsWith('/mcp/oauth/')) routeStatus.authorization.push(`http-in node ${path}`);
-      if (path.startsWith('/.well-known/oauth-')) routeStatus.metadata.push(`http-in node ${path}`);
-    });
+    try {
+      // Flows are not loaded yet while the plugin registers; `flows:started` re-runs this.
+      RED.nodes?.eachNode(node => {
+        if (node.type !== 'http in' || typeof node.url !== 'string') return;
+        const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
+        if (path.startsWith('/mcp/oauth/')) routeStatus.authorization.push(`http-in node ${path}`);
+        if (path.startsWith('/.well-known/oauth-'))
+          routeStatus.metadata.push(`http-in node ${path}`);
+      });
+    } catch {
+      // ignore: flow runtime not started
+    }
     const staticDirs = RED.settings.httpStatic ? [RED.settings.httpStatic].flat() : [];
     for (const dir of staticDirs) {
       for (const path of [
