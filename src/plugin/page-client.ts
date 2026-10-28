@@ -2279,6 +2279,17 @@ function pageClientScriptPartBDiffView2(): string {
       (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
         '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
       '<p>This choice changes the proposal only. Nothing is deployed until approval. Undo is available until the next proposal edit or choice.</p></div>' : '';
+    if ((p.aiConflictOverrides || []).length) {
+      chosen += '<div class="warning ai-conflict-override" role="alert"><strong>AI chose its own value over your editor change</strong>' +
+        '<p>Review the fields below before approving this proposal.</p>' +
+        ((diff && diff.aiOverrideValues) || []).map(function (entry) {
+          return '<h4>' + esc(entry.nodeId) + '</h4>' + entry.fields.map(function (v) {
+            return '<div class="conflict-values"><h4>' + esc(v.field || 'Node') + '</h4><dl>' +
+              '<div><dt>Before (live editor)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
+              '<div><dt>After (AI proposed)</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl></div>';
+          }).join('');
+        }).join('') + (!diff ? '<p>Loading before and after values…</p>' : '') + '</div>';
+    }
     if (!rebase || rebase.state !== 'conflict') return chosen;
     return chosen + '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
       '<h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>' +

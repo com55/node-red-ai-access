@@ -105,6 +105,51 @@ describe('GET/POST/DELETE /mcp/api/v1/links', () => {
     vi.clearAllMocks();
   });
 
+  it('counts only explicitly minted active links across signed-out and editor-authenticated dashboard reads', async () => {
+    let signedIn = false;
+    const { app } = createMockRed({
+      adminAuth: { type: 'credentials' },
+      authenticate: (req, res, next) => (signedIn ? asStarUser(req, res, next) : next()),
+    });
+    expect((await request(app).get('/mcp/api/v1/status')).status).toBe(401);
+    expect((await request(app).get('/mcp/api/v1/links')).status).toBe(401);
+    signedIn = true;
+    for (let i = 0; i < 2; i++) {
+      expect((await request(app).get('/ai-access')).status).toBe(200);
+      expect((await request(app).get('/mcp/api/v1/status')).status).toBe(200);
+      expect((await request(app).get('/mcp/api/v1/links')).body.links).toEqual([]);
+    }
+    const created = await request(app)
+      .post('/mcp/api/v1/links')
+      .send({ kind: 'mcp', label: 'explicit mint' });
+    signedIn = false;
+    expect((await request(app).get('/mcp/api/v1/status')).status).toBe(401);
+    signedIn = true;
+    await request(app).get('/mcp/api/v1/status');
+    const listed = await request(app).get('/mcp/api/v1/links');
+    expect(listed.body.links.map((l: { id: string }) => l.id)).toEqual([created.body.id]);
+    await request(app).delete(`/mcp/api/v1/links/${created.body.id}`);
+    expect((await request(app).get('/mcp/api/v1/links')).body.links).toEqual([]);
+  });
+
+  it.each([undefined, 'read'])(
+    'requires a full admin session for recovery withdrawal (%s)',
+    async permissions => {
+      const { app } = createMockRed({
+        adminAuth: { type: 'credentials' },
+        authenticate: (req, _res, next) => {
+          if (permissions)
+            (req as Request & { user?: MockUser }).user = { username: 'guest', permissions };
+          next();
+        },
+      });
+      const result = await request(app)
+        .post('/mcp/api/v1/proposals/prop-unavailable/withdraw')
+        .send({});
+      expect(result.status).toBe(permissions ? 403 : 401);
+    }
+  );
+
   it('lets a * user create, list, and revoke links; token only on create', async () => {
     const { app } = createMockRed({
       adminAuth: { type: 'credentials' },

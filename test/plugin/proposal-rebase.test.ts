@@ -107,6 +107,99 @@ describe('per-field proposal three-way rebase', () => {
     expectConflict(rebase(p, c), 'node_changed_both');
   });
 
+  it.each(['libs', 'initialize', 'finalize', 'outputs'])(
+    'conflicts when func and %s change on opposite sides',
+    field => {
+      const p = clone(base),
+        c = clone(base);
+      p.nodes![0]!.func = 'AI code';
+      c.nodes![0]![field] =
+        field === 'libs' ? [{ var: 'x', module: 'x' }] : field === 'outputs' ? 2 : 'editor code';
+      if (field === 'outputs') c.nodes![0]!.wires = [[], ['b']];
+      const result = rebase(p, c);
+      expectConflict(result, 'node_changed_both');
+      expect(result.conflicts[0]!.fields).toEqual(expect.arrayContaining(['func', field]));
+      // Both choices keep the entire execution group from the chosen side.
+      for (const choice of ['live', 'proposed'] as const) {
+        const resolved = applyConflictChoice({
+          flowId: 'tab',
+          base,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId: 'a',
+          choice,
+        });
+        const node = resolved.proposed.nodes!.find(n => n.id === 'a')!;
+        const expected = choice === 'live' ? c.nodes![0]! : p.nodes![0]!;
+        for (const key of ['func', field, 'wires']) expect(node[key]).toEqual(expected[key]);
+        expect(
+          rebaseFlowTab({ flowId: 'tab', ...resolved, liveFlows: flat(c), liveRev: 'r2' }).state
+        ).not.toBe('conflict');
+      }
+    }
+  );
+
+  it.each(['live', 'proposed'] as const)(
+    'couples %s output changes to competing wire edits',
+    side => {
+      const p = clone(base),
+        c = clone(base);
+      const outputSide = side === 'live' ? c : p;
+      const wireSide = side === 'live' ? p : c;
+      outputSide.nodes![0]!.outputs = 2;
+      outputSide.nodes![0]!.wires = [[], []];
+      wireSide.nodes![0]!.wires = [['b']];
+      const result = rebase(p, c);
+      expectConflict(result, 'node_changed_both');
+      expect(result.conflicts[0]!.fields).toEqual(expect.arrayContaining(['outputs', 'wires']));
+      for (const choice of ['live', 'proposed'] as const) {
+        const resolved = applyConflictChoice({
+          flowId: 'tab',
+          base,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId: 'a',
+          choice,
+        });
+        const expected = choice === 'live' ? c.nodes![0]! : p.nodes![0]!;
+        expect(resolved.proposed.nodes!.find(n => n.id === 'a')).toMatchObject({
+          wires: expected.wires,
+        });
+        expect(resolved.proposed.nodes!.find(n => n.id === 'a')!.outputs).toBe(expected.outputs);
+      }
+    }
+  );
+
+  it('merges wire-only editor changes with function code when output schema is unchanged', () => {
+    const p = clone(base),
+      c = clone(base);
+    p.nodes![0]!.func = 'AI';
+    c.nodes![0]!.wires = [['b']];
+    expect(rebase(p, c)).toMatchObject({
+      state: 'merged',
+      merged: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: 'a', func: 'AI', wires: [['b']] }),
+        ]),
+      },
+    });
+  });
+
+  it('keeps ordered switch rules strict', () => {
+    const b = clone(base);
+    b.nodes![0] = {
+      id: 'a',
+      type: 'switch',
+      rules: [{ t: 'eq', v: '1' }, { t: 'else' }],
+      wires: [[], []],
+    };
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.rules = [...(b.nodes![0].rules as unknown[])].reverse();
+    c.nodes![0]!.rules = [{ t: 'eq', v: '2' }, { t: 'else' }];
+    expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+  });
+
   it('merges disjoint config fields', () => {
     const p = clone(base),
       c = clone(base);

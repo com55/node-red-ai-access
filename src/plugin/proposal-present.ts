@@ -97,7 +97,8 @@ export interface PresentedProposalApi {
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
-  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed' };
+  aiConflictOverrides?: Proposal['aiConflictOverrides'];
+  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed'; chooser?: 'ai' | 'human' };
   deployPending?: Proposal['deployPending'];
   /** Soft validation notes (missing config, unwired, …) — not blocking. */
   warnings?: Proposal['warnings'];
@@ -667,6 +668,9 @@ export function presentProposal(
           conflictChoice: {
             nodeId: proposal.conflictChoice.nodeId,
             choice: proposal.conflictChoice.choice,
+            ...(proposal.conflictChoice.chooser
+              ? { chooser: proposal.conflictChoice.chooser }
+              : {}),
           },
         }
       : {}),
@@ -767,6 +771,7 @@ export function presentProposalForApi(
     lean.restoredSecrets = proposal.restoredSecrets;
   }
   if (full.deployPending) lean.deployPending = full.deployPending;
+  if (full.aiConflictOverrides) lean.aiConflictOverrides = full.aiConflictOverrides;
   if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;
   if (full.rebase) {
     lean.rebase = full.rebase;

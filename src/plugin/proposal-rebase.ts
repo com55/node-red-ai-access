@@ -77,6 +77,7 @@ export interface RebaseResult {
 }
 
 const TAB_FIELDS = ['label', 'disabled', 'info', 'env'] as const;
+const FUNCTION_FIELDS = ['func', 'libs', 'initialize', 'finalize', 'outputs'];
 const POSITION_FIELDS = new Set(['x', 'y']);
 const EMPTY_TAB_PROPS = { label: '', disabled: false, info: '', env: [] };
 /** Keys never compared (set by the deploy path / runtime). */
@@ -187,6 +188,20 @@ function mergeFields(
 ): { value: Record<string, unknown>; conflicts: string[] } {
   const conflicts: string[] = [];
   const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
+  const functionFields = new Set(
+    [base.type, proposed.type, live.type].includes('function') ? FUNCTION_FIELDS : []
+  );
+  // Output count and wiring are coupled: never combine one side's output
+  // schema with the other side's wires. Wire-only edits still merge with code.
+  if (
+    functionFields.size &&
+    (!same(base.outputs, proposed.outputs) || !same(base.outputs, live.outputs))
+  ) {
+    functionFields.add('wires');
+  }
+  const changedInGroup = (node: Record<string, unknown>) =>
+    [...functionFields].some(key => !same(base[key], node[key]));
+  const groupConflict = changedInGroup(proposed) && changedInGroup(live);
   const merge = (b: unknown, p: unknown, c: unknown, path: string): unknown => {
     if (same(b, p)) return c;
     // Expand these containers even when only one side changed, so peer warnings
@@ -232,7 +247,15 @@ function mergeFields(
     const entries: [string, unknown][] = [];
     for (const key of new Set([...Object.keys(b), ...Object.keys(p), ...Object.keys(c)])) {
       if (!prefix && IGNORED_FIELDS.has(key)) continue;
-      const value = merge(b[key], p[key], c[key], prefix ? `${prefix}.${key}` : key);
+      const path = prefix ? `${prefix}.${key}` : key;
+      let value: unknown;
+      if (!prefix && groupConflict && functionFields.has(key)) {
+        if (!same(b[key], p[key]) || !same(b[key], c[key])) conflicts.push(key);
+        if (!same(b[key], p[key])) changed?.push(key);
+        value = choice === 'live' ? c[key] : p[key];
+      } else {
+        value = merge(b[key], p[key], c[key], path);
+      }
       if (value !== undefined) entries.push([key, value]);
     }
     return Object.fromEntries(entries);

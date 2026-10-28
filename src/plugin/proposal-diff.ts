@@ -151,6 +151,8 @@ export interface ProposalDiffResult extends DiffSections {
     nodeId: string;
     fields: { field: string; base?: unknown; live?: unknown; proposed?: unknown }[];
   }[];
+  /** Live editor values the AI chose to replace, and the reviewed deploy values. */
+  aiOverrideValues?: ProposalDiffResult['conflictValues'];
   rebase?: Pick<RebaseResult, 'state' | 'rev' | 'mergedHash' | 'conflicts'>;
   /** Diff payload format (`summary` default collapses unchanged runs). */
   format?: 'summary' | 'full';
@@ -668,6 +670,23 @@ export async function computeProposalDiff(
         proposed: field
           ? conflictFieldValue(target(view.payload.flow, c.nodeId), field)
           : target(view.payload.flow, c.nodeId),
+      })),
+    }));
+    const deployTab = rebase.merged
+      ? ai
+        ? redactFlowData(rebase.merged).value
+        : rebase.merged
+      : view.payload.flow;
+    result.aiOverrideValues = (view.aiConflictOverrides ?? []).map(c => ({
+      nodeId: c.nodeId,
+      fields: c.fields.map(field => ({
+        field,
+        live: field
+          ? conflictFieldValue(target(currentTab, c.nodeId), field)
+          : target(currentTab, c.nodeId),
+        proposed: field
+          ? conflictFieldValue(target(deployTab, c.nodeId), field)
+          : target(deployTab, c.nodeId),
       })),
     }));
     result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);

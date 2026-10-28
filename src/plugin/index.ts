@@ -587,7 +587,8 @@ export function registerRoutes(
     ...sharedRead,
     (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       if (req.accessLink) next();
-      else requireStarPermission(RED)(req, res, next);
+      else
+        requireAdminSession(RED, 'api')(req, res, () => requireStarPermission(RED)(req, res, next));
     },
     requireJsonContentType('rest'),
     asyncRoute(withdrawProposalHandler(services.proposalStore, services.auditLog, httpAdminRoot))

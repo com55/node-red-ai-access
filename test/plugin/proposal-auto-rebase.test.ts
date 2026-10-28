@@ -213,7 +213,7 @@ describe('auto-rebase service and HTTP API', () => {
     const url = `/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`;
     const chosen = await request(app).post(url).send({ nodeId: 'a', choice: 'live' });
     expect(chosen.status).toBe(200);
-    expect(chosen.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'live' });
+    expect(chosen.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'live', chooser: 'human' });
     expect(chosen.body.conflictChoice).not.toHaveProperty('undo');
     expect(
       store.get(p.body.id).conflictChoice?.undo?.flow.nodes?.find(n => n.id === 'a')?.func
@@ -230,8 +230,108 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'b')?.name).toBe('new independent edit');
     expect(updateFlow).not.toHaveBeenCalled();
     const changed = await request(app).post(url).send({ nodeId: 'a', choice: 'proposed' });
-    expect(changed.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'proposed' });
+    expect(changed.body.conflictChoice).toEqual({
+      nodeId: 'a',
+      choice: 'proposed',
+      chooser: 'human',
+    });
     expect(changed.body.status).toBe('pending');
+  });
+
+  it('requires a reviewed hash after AI chooses proposed over live, across reload/recheck and later choices', async () => {
+    const p = await submit();
+    edit('a', { func: 'editor code' });
+    // Also create a second conflict so resolving it cannot erase the first override.
+    const existing = store.get(p.body.id);
+    existing.payload.flow.nodes!.find(n => n.id === 'b')!.name = 'AI name';
+    store.updateBody(p.body.id, { baseFlow: existing.baseFlow!, flow: existing.payload.flow });
+    edit('b', { name: 'editor name' });
+    const chosen = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a', choice: 'proposed' });
+    expect(chosen.status).toBe(200);
+    expect(chosen.body.conflictChoice).toEqual({ nodeId: 'a', choice: 'proposed', chooser: 'ai' });
+    expect(chosen.body.aiConflictOverrides).toEqual([{ nodeId: 'a', fields: ['func'] }]);
+    expect(chosen.body.conflictChoice).not.toHaveProperty('undo');
+    await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'b', choice: 'live' });
+    const reloaded = new ProposalStore(resolveAiAccessPaths(dir)).get(p.body.id);
+    expect(reloaded.conflictChoice?.chooser).toBe('human');
+    expect(reloaded.aiConflictOverrides).toEqual([{ nodeId: 'a', fields: ['func'] }]);
+    await request(app).post(`/mcp/api/v1/proposals/${p.body.id}/recheck`).send({});
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${p.body.id}/diff`);
+    expect(diff.body.rebase.state).toBe('merged');
+    expect(diff.body.aiOverrideValues).toEqual([
+      {
+        nodeId: 'a',
+        fields: [{ field: 'func', live: 'editor code', proposed: 'proposal' }],
+      },
+    ]);
+    const missing = await approve(p.body.id);
+    expect(missing.status).toBe(409);
+    expect(missing.body.code).toBe('rebase_ack_required');
+    expect((await approve(p.body.id, { mergedHash: '0000000000000000' })).status).toBe(409);
+    expect(updateFlow).not.toHaveBeenCalled();
+    expect((await approve(p.body.id, { mergedHash: diff.body.rebase.mergedHash })).status).toBe(
+      200
+    );
+    expect(head.flows.find(n => n.id === 'a')!.func).toBe('proposal');
+    expect(head.flows.find(n => n.id === 'b')!.name).toBe('editor name');
+  });
+
+  it('redacts AI override before/after values using the same view as conflict diffs', async () => {
+    edit('tab', { env: [{ name: 'API_KEY', value: 'base-secret', type: 'str' }] });
+    const p = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: head.rev,
+        payload: {
+          flowId: 'tab',
+          flow: {
+            ...(await adapter.getFlow('tab')).flow,
+            env: [{ name: 'API_KEY', value: 'proposed-secret', type: 'str' }],
+          },
+        },
+      });
+    edit('tab', { env: [{ name: 'API_KEY', value: 'live-secret', type: 'str' }] });
+    const resolved = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'tab', choice: 'proposed' });
+    expect(resolved.body.conflictChoice.chooser).toBe('ai');
+    const ai = await request(app).get(`/mcp/api/v1/proposals/${p.body.id}/diff`).set(auth());
+    expect(JSON.stringify(ai.body.aiOverrideValues)).not.toMatch(
+      /base-secret|live-secret|proposed-secret/
+    );
+    expect(JSON.stringify(ai.body.aiOverrideValues)).toContain('[REDACTED]');
+    const admin = await request(app).get(`/mcp/api/v1/proposals/${p.body.id}/diff`);
+    expect(JSON.stringify(admin.body.aiOverrideValues)).toContain('live-secret');
+    expect(JSON.stringify(admin.body.aiOverrideValues)).toContain('proposed-secret');
+  });
+
+  it('undo removes the AI override gate and restores the unresolved conflict', async () => {
+    const p = await submit();
+    edit('a', { func: 'editor' });
+    await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a', choice: 'proposed' });
+    const undo = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'undo' });
+    expect(undo.body.status).toBe('conflict');
+    expect(undo.body.aiConflictOverrides).toBeUndefined();
+    const human = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
+      .send({ nodeId: 'a', choice: 'proposed' });
+    expect(human.body.conflictChoice.chooser).toBe('human');
+    expect(human.body.aiConflictOverrides).toBeUndefined();
+    expect(human.body.rebase.state).toBe('clean');
+    expect((await approve(p.body.id)).status).toBe(200);
   });
 
   it('refuses undo after a proposal has been decided', async () => {
@@ -1083,7 +1183,7 @@ describe('auto-rebase service and HTTP API', () => {
   });
 
   it.each(['live', 'proposed'] as const)(
-    'MCP explicit %s choice resolves only overlapping fields',
+    'MCP explicit %s choice resolves the function execution group and retains unrelated fields',
     async choice => {
       const mcp = linkStore.create({ kind: 'mcp', label: 'Choice AI' });
       const call = async (name: string, args: Record<string, unknown>, expectError = false) => {
@@ -1123,9 +1223,20 @@ describe('auto-rebase service and HTTP API', () => {
       expect(flow).toMatchObject({
         func: choice === 'live' ? 'live' : 'proposed',
         name: 'proposal name',
-        outputs: 3,
       });
-      expect((await approve(p.id)).body.status).toBe('approved');
+      expect(flow!.outputs).toBe(choice === 'live' ? 3 : undefined);
+      expect(resolved.conflictChoice.chooser).toBe('ai');
+      if (choice === 'proposed') {
+        expect((await approve(p.id)).body.code).toBe('rebase_ack_required');
+      }
+      expect(
+        (
+          await approve(
+            p.id,
+            choice === 'proposed' ? { mergedHash: resolved.rebase.mergedHash } : {}
+          )
+        ).body.status
+      ).toBe('approved');
       expect(head.flows.find(n => n.id === 'a')).toMatchObject(flow!);
     }
   );

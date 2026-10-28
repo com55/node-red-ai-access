@@ -813,6 +813,7 @@ export function redactProposalForAi<P extends Proposal>(
     out.conflictChoice = {
       nodeId: proposal.conflictChoice.nodeId,
       choice: proposal.conflictChoice.choice,
+      ...(proposal.conflictChoice.chooser ? { chooser: proposal.conflictChoice.chooser } : {}),
     };
   }
   if (proposal.baseFlow !== undefined) {

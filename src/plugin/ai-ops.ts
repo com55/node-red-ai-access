@@ -1137,12 +1137,20 @@ export async function resolveConflictChoice(
     conflictChoice: {
       nodeId,
       choice,
+      chooser: actor.kind === 'admin' ? 'human' : 'ai',
       undo: {
         baseFlow: checked.baseFlow ?? {},
         flow: checked.payload.flow,
         warnings: checked.warnings ?? [],
+        aiConflictOverrides: checked.aiConflictOverrides ?? [],
       },
     },
+    aiConflictOverrides: [
+      ...(checked.aiConflictOverrides ?? []).filter(c => c.nodeId !== nodeId),
+      ...(actor.kind !== 'admin' && choice === 'proposed'
+        ? [{ nodeId, fields: conflict.fields?.length ? conflict.fields : [''] }]
+        : []),
+    ],
     warnings: [
       ...(checked.warnings ?? []).filter(
         w => w.code !== 'secret_may_revert' || w.nodeId !== nodeId
@@ -1157,6 +1165,7 @@ export async function resolveConflictChoice(
     nodeId,
     choice,
     kind: conflict.kind,
+    chooser: actor.kind === 'admin' ? 'human' : 'ai',
     status: result.status,
   });
   return result;

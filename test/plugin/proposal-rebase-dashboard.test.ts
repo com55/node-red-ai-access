@@ -426,6 +426,42 @@ describe('proposal UX details', () => {
     expect(html).not.toContain('<script>');
   });
 
+  it('warns about AI overrides with escaped field and before/after values', () => {
+    const ui = dashboard();
+    const html = ui.renderConflictPanel(
+      {
+        id: 'p',
+        conflictChoice: { nodeId: 'n', choice: 'proposed', chooser: 'ai' },
+        aiConflictOverrides: [{ nodeId: 'n', fields: ['func'] }],
+        rebase: { state: 'merged' },
+      },
+      {
+        aiOverrideValues: [
+          {
+            nodeId: 'n',
+            fields: [{ field: 'func', live: 'editor code', proposed: '<script>AI</script>' }],
+          },
+        ],
+      }
+    );
+    for (const text of [
+      'AI chose its own value over your editor change',
+      'func',
+      'Before (live editor)',
+      'editor code',
+      'After (AI proposed)',
+      '&lt;script&gt;AI&lt;/script&gt;',
+    ])
+      expect(html).toContain(text);
+    expect(html).not.toContain('<script>');
+    expect(
+      ui.renderConflictPanel({
+        id: 'p',
+        conflictChoice: { nodeId: 'n', choice: 'proposed', chooser: 'human' },
+      })
+    ).not.toContain('AI chose its own value');
+  });
+
   it('shows the chosen state and a real undo/change control after resolution', () => {
     const ui = dashboard();
     ui.setCanApprove(true);
