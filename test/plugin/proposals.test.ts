@@ -130,7 +130,7 @@ describe('proposals / flows / logs HTTP API', () => {
       authenticate: asUser('*', 'admin'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [] }),
+        getFlows: () => Promise.resolve({ rev: 'rev-1', flows: [{ id: 'tab-1', type: 'tab' }] }),
         getFlow: () =>
           Promise.resolve({
             rev: 'rev-1',
@@ -320,9 +320,10 @@ describe('proposals / flows / logs HTTP API', () => {
     const listed = await request(app2).get('/mcp/api/v1/proposals');
     expect(listed.status).toBe(200);
     expect(listed.body.proposals).toHaveLength(1);
-    // Live rev moved → pending auto-closes as expired (no longer baseRevStale pending).
-    expect(listed.body.proposals[0].status).toBe('expired');
-    expect(listed.body.proposals[0].reason).toMatch(/expired/i);
+    // Unrelated rev changes rebase cleanly and keep the proposal open.
+    expect(listed.body.proposals[0].status).toBe('pending');
+    expect(listed.body.proposals[0].rebase.state).toBe('clean');
+    expect(listed.body.proposals[0].baseRevStale).toBe(true);
     expect(listed.body.proposals[0].flowLabel).toBe('Test Flow');
     expect(listed.body.proposals[0].flowLabel).not.toBe('tab-1');
   });
@@ -409,7 +410,7 @@ describe('proposals / flows / logs HTTP API', () => {
       authenticate: asUser('*', 'admin'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [{ id: 'tab-1', type: 'tab' }] }),
         getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
         updateFlow,
       },
@@ -433,13 +434,13 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(updateFlow).not.toHaveBeenCalled();
   });
 
-  it('approve with rev conflict returns rejected proposal', async () => {
+  it('approve retries rev races and returns rebase_race while keeping the proposal open', async () => {
     const { app, linkStore } = createApp({
       userDir,
       authenticate: asUser('*', 'admin'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [{ id: 'tab-1', type: 'tab' }] }),
         getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
         updateFlow: () => Promise.reject(new FlowRevisionConflictError('r', 'new')),
       },
@@ -456,9 +457,10 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(created.status).toBe(201);
 
     const result = await request(app).post(`/mcp/api/v1/proposals/${created.body.id}/approve`);
-    expect(result.status).toBe(200);
-    expect(result.body.status).toBe('rejected');
-    expect(result.body.reason).toMatch(/resubmit/i);
+    expect(result.status).toBe(409);
+    expect(result.body.code).toBe('rebase_race');
+    const open = await request(app).get(`/mcp/api/v1/proposals/${created.body.id}`);
+    expect(open.body.status).toBe('pending');
   });
 
   it('GET /proposals/:id/diff compares against the stored base snapshot', async () => {
@@ -473,7 +475,7 @@ describe('proposals / flows / logs HTTP API', () => {
       authenticate: asUser('read', 'guest'),
       adapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: liveRev, flows: [] }),
+        getFlows: () => Promise.resolve({ rev: liveRev, flows: [{ id: 'tab-1', type: 'tab', label: 'Main' }, ...liveNodes.map(n => ({ ...n, z: 'tab-1' }))] }),
         getFlow: () =>
           Promise.resolve({
             rev: liveRev,
@@ -557,7 +559,9 @@ describe('proposals / flows / logs HTTP API', () => {
       ?.changes.find((c: { key: string }) => c.key === 'func');
     expect(funcChange?.kind).toBe('text');
     expect(funcChange?.lines?.some((l: { op: string }) => l.op === 'add')).toBe(true);
-    expect(asAdmin.body.vsCurrent?.removed).toEqual(
+    expect(asAdmin.body.rebase.state).toBe('merged');
+    expect(asAdmin.body.liveChanges.added).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'html20k' })]));
+    expect(asAdmin.body.vsCurrent?.removed).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'html20k' })])
     );
 
@@ -580,7 +584,7 @@ describe('proposals / flows / logs HTTP API', () => {
     let liveRev = 'rev-1';
     const adapter: FlowAdapter = {
       kind: 'red',
-      getFlows: () => Promise.resolve({ rev: liveRev, flows: [] }),
+      getFlows: () => Promise.resolve({ rev: liveRev, flows: [{ id: 'tab-1', type: 'tab' }] }),
       getFlow: () =>
         Promise.resolve({
           rev: liveRev,
@@ -670,7 +674,7 @@ describe('proposals / flows / logs HTTP API', () => {
       linkStore,
       flowAdapter: {
         kind: 'red',
-        getFlows: () => Promise.resolve({ rev: 'r', flows: [] }),
+        getFlows: () => Promise.resolve({ rev: 'r', flows: [{ id: 'tab-1', type: 'tab' }] }),
         getFlow: () => Promise.resolve({ rev: 'r', flow: { id: 'tab-1', nodes: [] } }),
         updateFlow: () => Promise.resolve({ flowId: 'tab-1', rev: 'r2' }),
       },

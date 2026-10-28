@@ -25,7 +25,7 @@ let nowProvider: () => number = () => Date.now();
 /** Wire the dashboard setting (days). Values < 1 fall back to the default. */
 export function configureProposalTtl(getDays: () => number, now?: () => number): void {
   ttlDaysProvider = getDays;
-  if (now) nowProvider = now;
+  nowProvider = now ?? (() => Date.now());
 }
 
 export function proposalTtlMs(): number {

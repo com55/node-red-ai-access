@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.7] - 2026-10-28
+
+### Fixed
+
+- Unrelated flow changes no longer expire or reject pending proposals.
+
+### Added
+
+- Automatic three-way rebasing onto live flows, with a `conflict` status that blocks approval until resolved.
+- Configurable `proposalTtlDays` (1–365 days, default 7); only TTL expiry closes old open proposals.
+- Admin conflict-choice and recheck routes, AI REST resolution, and the MCP `resolve_proposal_conflict` tool.
+- Diffs include editor changes and the merged deployment; approval requires a `mergedHash` acknowledgement when live changes are merged.
+- Recent known stale revisions are accepted at submit and rebased immediately.
+
 ## [0.2.0-beta.5] - 2026-10-28
 
 ### Security

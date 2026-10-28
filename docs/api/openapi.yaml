@@ -173,7 +173,7 @@ info:
     (`invalid_filter` for list filters, `invalid_arguments` otherwise).
 
     On submit and on **get** of a **pending** proposal, responses may include
-    `conflictingProposals` (same-`expectedRev` peers or true node/field overlaps)
+    `conflictingProposals` (open proposals with overlapping node edits)
     with optional `overlappingNodeIds` / `overlappingFields`. List endpoints
     omit `conflictingProposals`. Submit, get, and list responses include
     `autoClosedCount` when that request auto-closed pending proposals as
@@ -184,10 +184,10 @@ info:
     `N validation errors` and every entry in `errors[]`. Duplicate node ids in a
     full tab or batch return `duplicate_node_id`.
 
-    Pending proposals whose `expectedRev` no longer matches the live flow rev
-    are auto-closed as `expired`. When a proposal is approved, other pending
-    proposals on the same flow become `superseded`. Closed proposals are never
-    conflicts.
+    Open proposals (`pending` or `conflict`) auto-rebase when live revisions change.
+    Conflicts block approval until resolved. Proposals expire only after the
+    configured `proposalTtlDays` (default 7). Approval rebases other open proposals;
+    legacy expired, rejected and superseded proposals stay closed.
 
     ## Withdraw
 
@@ -963,10 +963,9 @@ paths:
         flow tab. Does not mutate Node-RED until an admin with `*` approves.
 
         Include `expectedRev` (preferred; `expected_rev` accepted as alias)
-        from the latest `GET /flows` or `GET /flows/{id}` response. The live
-        flow revision is checked **at submit time** (**409**
-        `version_mismatch` if stale). On approve, a stale revision marks the
-        proposal `rejected` with a resubmit message (no deploy).
+        from `GET /flows` or `GET /flows/{id}`. Recent known stale revisions are
+        accepted using snapshot history and rebased immediately. Unknown revisions
+        return **409** `version_mismatch`. Approval rechecks against the live revision.
 
         Optional `title` (≤80 chars) is stored as a human-friendly label; when
         omitted it is auto-generated from the change set. Responses always
@@ -1055,14 +1054,14 @@ paths:
         (long text fields listed for expandable UI). Modified nodes include
         line-level diffs for text fields such as `func` and `template`.
 
-        `baseRevStale` is true only for **pending** proposals when
-        `expectedRev` does not match the live revision (approve would fail).
-        Approved/rejected/failed proposals never set `baseRevStale`. When
-        pending and stale, `vsCurrent` optionally includes proposal-vs-live
-        sections for review.
+        `baseRevStale` is true only for **open** proposals when
+        `expectedRev` does not match the live revision (informational).
+        Closed proposals never set `baseRevStale`. Open proposals include
+        `rebase` and `liveChanges` (editor changes since the stored base).
+        Without conflicts, `vsCurrent` compares the merged deployment to live.
+        Merges use raw stored proposals and live flows; AI diff sections are redacted.
 
-        Admins with `read` can diff any proposal. Access-link clients can only
-        diff proposals they created.
+        Admins with `read` and access-link clients can diff any proposal.
       operationId: getProposalDiff
       security:
         - AccessLinkBearer: []
@@ -1085,6 +1084,97 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /proposals/{id}/resolve-conflict:
+    post:
+      tags: [Proposals]
+      summary: Choose live or proposed for one current conflict
+      operationId: resolveProposalConflict
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConflictChoiceRequest'
+      responses:
+        '200':
+          description: Presented proposal with current rebase metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Proposal not found
+        '409':
+          description: Proposal closed, conflict missing, or revision unavailable
+  /proposals/{id}/recheck:
+    post:
+      tags: [Proposals]
+      summary: Recheck an open proposal against raw live flows
+      operationId: recheckProposal
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        '200':
+          description: Presented proposal with current rebase metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Proposal not found
+        '409':
+          description: Proposal closed, conflict missing, or revision unavailable
+  /proposals/{id}/resolve:
+    post:
+      tags: [Proposals]
+      summary: Resolve your own open proposal with a fresh payload
+      operationId: resolveProposal
+      security:
+        - AccessLinkBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveProposalRequest'
+      responses:
+        '200':
+          description: Presented proposal with current rebase metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Proposal not found
+        '409':
+          description: Proposal closed, conflict missing, or revision unavailable
+
   /proposals/{id}/approve:
     post:
       tags: [Proposals]
@@ -1094,9 +1184,12 @@ paths:
         Optional body `deploymentType`: `nodes` (default from settings),
         `flows`, or `full`.
 
-        Revision conflict: proposal is marked `rejected` with a resubmit
-        message (HTTP 200 with `status: rejected`). Other deploy errors mark
-        it `failed`. Concurrent approve of the same id returns 409.
+        Auto-rebases against raw live flows and deploys the merged tab with the live rev.
+        Conflicts return 409 `proposal_conflict` with field-name-only `conflicts`.
+        Merged editor changes require `mergedHash` from the reviewed diff; otherwise
+        409 `rebase_ack_required` includes the current hash. Revision races retry
+        up to three times then return 409 `rebase_race`, leaving the proposal open.
+        Other deploy errors mark it `failed`. Concurrent approval returns 409.
       operationId: approveProposal
       security:
         - AdminSession: []
@@ -1181,7 +1274,7 @@ paths:
       tags: [Proposals]
       summary: Withdraw own pending proposal
       description: |
-        Access-link Bearer only. Withdraws a **pending** proposal created by
+        Access-link Bearer only. Withdraws a **open** (pending or conflict) proposal created by
         this token. Status becomes `withdrawn` (not `rejected`). Optional
         JSON body `{ "reason": "…" }`.
       operationId: withdrawProposal
@@ -1456,6 +1549,12 @@ components:
       description: |
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
+        - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
+        - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
+        - `rebase_race` (409): Flows kept changing during approval
+        - `conflict_not_found` (409): The requested conflict no longer exists
+        - `invalid_choice` (400): Invalid manual conflict choice
+        - `flow_id_mismatch` (400): Resolution tried to change the proposal flow id
         - `access_link_missing` (401): No Bearer / path token
         - `bearer_scheme_required` (401): Auth used Basic (or non-Bearer)
         - `token_expired` (401): Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`)
@@ -1481,7 +1580,7 @@ components:
         - `invalid_diff_format` (400): Unknown `format` on proposal diff
         - `confirm_required` (400): GET withdraw without `confirm=1`
         - `missing_expected_rev` (400): Proposal submitted without `expectedRev` / `rev`
-        - `version_mismatch` (409): Stale `rev` / `expectedRev`
+        - `version_mismatch` (409): Unknown or unavailable `rev` / `expectedRev` snapshot
         - `proposal_not_found` (404): Unknown proposal id
         - `proposal_not_pending` (409): Action needs a pending proposal
         - `proposal_not_owned` (403): Withdraw of another token’s proposal
@@ -1509,6 +1608,12 @@ components:
         - `upstream_error` (502): Node-RED runtime/flows error
         - `internal_error` (500): Unexpected server error
       enum:
+        - proposal_conflict
+        - rebase_ack_required
+        - rebase_race
+        - conflict_not_found
+        - invalid_choice
+        - flow_id_mismatch
         - access_link_missing
         - bearer_scheme_required
         - token_expired
@@ -1737,6 +1842,11 @@ components:
     AiAccessSettingsPatch:
       type: object
       properties:
+        proposalTtlDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 7
         enabled:
           type: boolean
         allowWithoutAdminAuth:
@@ -2184,9 +2294,46 @@ components:
             additionalProperties: true
       additionalProperties: true
 
+    ProposalRebase:
+      type: object
+      description: Merge metadata; conflicts contain field names only, never field values.
+      properties:
+        state:
+          type: string
+          enum: [clean, merged, conflict]
+        rev:
+          type: string
+        mergedHash:
+          type: string
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              nodeId:
+                type: string
+              kind:
+                type: string
+              fields:
+                type: array
+                items:
+                  type: string
+              message:
+                type: string
+              choices:
+                type: array
+                items:
+                  type: string
+                  enum: [live, proposed]
+        liveChangedCount:
+          type: integer
+        checkedAt:
+          type: string
+          format: date-time
+
     ProposalStatus:
       type: string
-      enum: [pending, approved, rejected, failed, withdrawn, expired, superseded]
+      enum: [pending, conflict, approved, rejected, failed, withdrawn, expired, superseded]
 
     Proposal:
       type: object
@@ -2204,6 +2351,8 @@ components:
         - reviewUrl
         - reviewPath
       properties:
+        rebase:
+          $ref: '#/components/schemas/ProposalRebase'
         id:
           type: string
         type:
@@ -2424,9 +2573,39 @@ components:
               find: Hello
               replace: Hi
 
+    ConflictChoiceRequest:
+      type: object
+      required: [nodeId, choice]
+      properties:
+        nodeId:
+          type: string
+        choice:
+          type: string
+          enum: [live, proposed]
+
+    ResolveProposalRequest:
+      type: object
+      required: [expectedRev]
+      properties:
+        expectedRev:
+          type: string
+        title:
+          type: string
+          maxLength: 80
+        payload:
+          $ref: '#/components/schemas/ReplaceFlowPayload'
+        nodes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
     ApproveProposalRequest:
       type: object
       properties:
+        mergedHash:
+          type: string
+          description: Hash of the reviewed merged result; required when editor changes are merged.
         deploymentType:
           $ref: '#/components/schemas/DeploymentType'
 
@@ -2586,7 +2765,7 @@ components:
             baseRevStale:
               type: boolean
               description: |
-                True only for pending proposals when expectedRev ≠ live rev.
+                Informational: true for open proposals when expectedRev ≠ live rev.
                 Never true for approved/rejected/failed.
             compareAgainst:
               type: string
@@ -2594,10 +2773,14 @@ components:
             baseSnapshotMissing:
               type: boolean
               description: True for legacy proposals without a stored baseFlow
+            rebase:
+              $ref: '#/components/schemas/ProposalRebase'
+            liveChanges:
+              $ref: '#/components/schemas/ProposalDiffSections'
             vsCurrent:
               $ref: '#/components/schemas/ProposalDiffSections'
               description: |
-                Present when pending and baseRevStale — proposal vs live flow.
+                Present for open proposals without conflicts — merged result vs live flow.
 
     AuditActor:
       oneOf:

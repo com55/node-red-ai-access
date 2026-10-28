@@ -14,9 +14,9 @@ Temporary, owner-approved Node-RED access for AI clients. Ships as a **Node-RED
   services
 
 **Git mental model:** a proposal is like a pull request. Human approve = merge;
-reject = close; withdraw = the author closes their own PR. If `rev` /
-`expectedRev` does not match, treat it as a conflict: re-read the flow, rebase
-the edit, and resubmit. Every access link can see all proposals
+reject = close; withdraw = the author closes their own PR. Revision changes
+auto-rebase open proposals. A `conflict` blocks approval until resolved. Open
+proposals expire after a configurable TTL (default 7 days). Every access link can see all proposals
 (`mine: true|false`).
 
 Derived from
@@ -402,7 +402,15 @@ revoke the link and create a new one. After a restart every old token is
 invalid.
 
 Call `list_flows` or `get_flow` first and pass the returned `rev` as
-`expectedRev`. Submit checks the live rev (**409** if stale). Approve may send
+`expectedRev`. Recent known stale revisions are accepted and auto-rebased; unknown
+revisions return **409** `version_mismatch`. Open proposals auto-rebase on editor
+changes. A `conflict` blocks approval until resolved using REST
+`POST /proposals/:id/resolve`, admin `POST /proposals/:id/resolve-conflict`, or MCP
+`resolve_proposal_conflict`. Diffs include `rebase`, `liveChanges` and (without
+conflicts) `vsCurrent`, the merged deployment. Approval requires the reviewed
+`mergedHash` when editor changes are merged. Proposals expire after
+`proposalTtlDays` (integer 1–365, default 7), editable through the settings API.
+Approve may send
 `deploymentType`: `nodes` (default), `flows`, or `full`. A stale `expectedRev`
 at approve marks the proposal **rejected** with a resubmit message; other deploy
 errors mark it **failed**. Reject never mutates flows.

@@ -171,6 +171,9 @@ export function applyDiffFormat(
     ...formatted,
     format,
   };
+  if (diff.liveChanges) {
+    result.liveChanges = formatSections(diff.liveChanges, format);
+  }
   if (diff.vsCurrent) {
     result.vsCurrent = formatSections(diff.vsCurrent, format);
   }

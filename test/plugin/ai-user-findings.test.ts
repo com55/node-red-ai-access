@@ -345,7 +345,7 @@ describe('AI-user findings', () => {
       expect(res.body.expectedRev).toBe('stale');
     });
 
-    it('stale submit reports draftDeleted: false', async () => {
+    it('draft submit accepts a known stale revision and rebases immediately', async () => {
       const { app, linkStore, adapter } = createApp({ userDir });
       const link = linkStore.create({ label: 'f5-sub' });
       const created = await request(app).get(
@@ -360,10 +360,9 @@ describe('AI-user findings', () => {
       const submitted = await request(app).get(
         `/mcp/a/${link.token}/draft/${draftId}/submit?sha256=${sha256Hex(body)}`
       );
-      expect(submitted.status).toBe(409);
-      expect(submitted.body.code).toBe('version_mismatch');
-      expect(submitted.body.draftDeleted).toBe(false);
-      expect(String(submitted.body.hint)).toMatch(/kept|not deleted|Draft was kept/i);
+      expect(submitted.status).toBe(201);
+      expect(submitted.body.proposal.status).toBe('pending');
+      expect(submitted.body.proposal.rebase.state).toBe('clean');
     });
   });
 

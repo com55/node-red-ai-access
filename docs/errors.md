@@ -13,6 +13,12 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
+| `proposal_conflict` | 409 | Editor and proposal changes conflict (conflicts contains field names only) | Read the current flow and resolve the proposal before approval | GET, REST, MCP, admin |
+| `rebase_ack_required` | 409 | The merged result needs review (mergedHash included) | Review the diff and approve with its mergedHash | admin |
+| `rebase_race` | 409 | Flows kept changing during approval | Recheck the proposal and retry approval | admin |
+| `conflict_not_found` | 409 | The requested conflict no longer exists | Reload the proposal and its conflicts | admin |
+| `invalid_choice` | 400 | Invalid manual conflict choice | Use an available live or proposed choice | admin |
+| `flow_id_mismatch` | 400 | Resolution tried to change the proposal flow id | Keep the same flowId or submit a new proposal | REST, MCP |
 | `access_link_missing` | 401 | No Bearer / path token | Ask the user for a new access link of the right kind | GET, REST, MCP |
 | `bearer_scheme_required` | 401 | Auth used Basic (or non-Bearer) | Send `Authorization: Bearer <token>` | REST, MCP |
 | `token_expired` | 401 | Known token past `expiresAt` (body includes `expiredAt` and `accessLinksUrl`) | Ask the user to create a new link on the `/ai-access` dashboard → Access tokens (`accessLinksUrl`) | GET, REST, MCP |
@@ -38,7 +44,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `invalid_diff_format` | 400 | Unknown `format` on proposal diff | Use `format=summary` (default) or `format=full` | GET, REST, MCP |
 | `confirm_required` | 400 | GET withdraw without `confirm=1` | Repeat the request with `confirm=1` | GET |
 | `missing_expected_rev` | 400 | Proposal submitted without `expectedRev` / `rev` | Read the flow and pass its `rev` | GET, REST, MCP |
-| `version_mismatch` | 409 | Stale `rev` / `expectedRev` | Re-read flows and resubmit | GET, REST, MCP |
+| `version_mismatch` | 409 | Unknown or unavailable `rev` / `expectedRev` snapshot | Re-read flows and resubmit | GET, REST, MCP |
 | `proposal_not_found` | 404 | Unknown proposal id | List proposals and use an existing id | GET, REST, MCP |
 | `proposal_not_pending` | 409 | Action needs a pending proposal | Only pending can withdraw / decide | GET, REST, MCP |
 | `proposal_not_owned` | 403 | Withdraw of another token’s proposal | Only the creating token can withdraw | GET, REST, MCP |
@@ -83,9 +89,10 @@ Returned in `warnings[]` on a successful propose/submit; they never block.
 | `secret_tab_changed` | 201 | Warning: proposal with restored secrets also changes other nodes in the tab | Review every change before approving | GET, REST, MCP |
 | `secret_reference_added` | 201 | Warning: an added/changed node now reads a secret-named env/global/flow value (env.get, $env, ${…}, typed input) | Reviewer must check the value is not sent anywhere unexpected | GET, REST, MCP |
 
-## Auto-closed proposal statuses
+## Proposal statuses
 
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
-| `expired` | 200 | Status: pending proposal auto-closed because the live flow rev moved past `expectedRev` | Re-read the flow and submit a new proposal | GET, REST, MCP |
-| `superseded` | 200 | Status: pending proposal auto-closed because another proposal on the same flow was approved | Re-read the flow and submit a new proposal if still needed | GET, REST, MCP |
+| `conflict` | 200 | Status: open proposal has conflicting editor changes; approval blocked | Read the current flow and resolve the proposal | GET, REST, MCP |
+| `expired` | 200 | Status: open proposal expired after the configured TTL (default 7 days) | Re-read the flow and submit a new proposal | GET, REST, MCP |
+| `superseded` | 200 | Legacy closed status; new approvals rebase other open proposals | Re-read the flow and submit a new proposal if still needed | GET, REST, MCP |

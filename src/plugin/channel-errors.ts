@@ -14,6 +14,8 @@ import {
 } from '../runtime/errors.js';
 import {
   ProposalNotFoundError,
+  ProposalConflictError,
+  ProposalConcurrentApproveError,
   ProposalNotOwnedError,
   ProposalNotPendingError,
 } from '../storage/proposals.js';
@@ -21,6 +23,7 @@ import { StoragePayloadTooLargeError } from '../storage/trusted-write.js';
 
 import { AiOpsValidationError } from './ai-ops.js';
 import { registryHint } from './error-registry.js';
+import { ProposalRebaseAckRequiredError, ProposalRebaseRaceError } from './proposal-service.js';
 
 export type ErrorChannel = 'get' | 'rest' | 'mcp';
 
@@ -41,6 +44,13 @@ export interface ChannelErrorMapped {
 
 /** Canonical user-facing messages — same text on every channel. */
 export const CANONICAL_ERROR_TEXT: Record<string, string> = {
+  proposal_conflict: 'Proposal conflicts with current editor changes',
+  rebase_ack_required: 'Review and acknowledge the merged proposal',
+  rebase_race: 'Flows kept changing during approval',
+  conflict_not_found: 'Conflict no longer exists',
+  invalid_choice: 'Invalid conflict choice',
+  flow_id_mismatch: 'Proposal flow id cannot change',
+
   node_not_found: 'Node was not found',
   flow_not_found: 'Flow was not found',
   field_not_found: 'Field was not found',
@@ -176,7 +186,7 @@ function hintFor(
     case 'proposal_not_owned':
       return 'Only the access link that created a pending proposal can withdraw it.';
     case 'proposal_not_pending':
-      return 'Only pending proposals can be withdrawn or decided.';
+      return 'Only open (pending or conflict) proposals can be withdrawn or rejected.';
     case 'confirm_required':
       return 'Add confirm=1 to the withdraw URL (required so link prefetchers cannot withdraw).';
     case 'invalid_wires':
@@ -241,7 +251,13 @@ export function mapErrorForChannel(
   const canonicalize = options.canonicalizeMessage !== false;
   let mapped: ChannelErrorMapped | null = null;
 
-  if (error instanceof AiOpsValidationError) {
+  if (error instanceof ProposalConflictError) {
+    mapped = { statusCode: 409, body: { error: error.message, code: error.code, conflicts: error.conflicts } };
+  } else if (error instanceof ProposalRebaseAckRequiredError) {
+    mapped = { statusCode: 409, body: { error: error.message, code: error.code, mergedHash: error.mergedHash } };
+  } else if (error instanceof ProposalRebaseRaceError || error instanceof ProposalConcurrentApproveError) {
+    mapped = { statusCode: 409, body: { error: error.message, code: error.code } };
+  } else if (error instanceof AiOpsValidationError) {
     mapped = {
       statusCode: error.statusCode,
       body: {

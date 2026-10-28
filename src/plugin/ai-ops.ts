@@ -127,6 +127,7 @@ export interface ListProposalsPage {
 const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
   'pending',
   'conflict',
+  'conflict',
   'approved',
   'rejected',
   'failed',
@@ -975,7 +976,7 @@ export async function resolveMyProposal(
     throw new ProposalNotPendingError(id, existing.status);
   }
   const prepared = await prepareReplaceFlowSubmission(
-    { type: 'replace_flow', ...body },
+    { type: 'replace_flow', ...body, payload: body.payload ?? { flowId: existing.payload.flowId } },
     adapter,
     nodeTypesAdapter
   );
@@ -985,12 +986,14 @@ export async function resolveMyProposal(
       'flow_id_mismatch'
     );
   }
+  const title = sanitizeProposalTitle(body.title);
   const updated = store.updateBody(id, {
     baseFlow: prepared.safeBaseFlow,
     flow: prepared.safeFlow,
     expectedRev: prepared.safeExpectedRev,
     restoredSecrets: prepared.restoration.restoredFields,
     warnings: prepared.flowWarnings,
+    ...(title ? { title } : {}),
   });
   const proposal = syncOneProposal(store, updated, prepared.head).proposal;
   const presented = presentProposal(redactProposalForAi(proposal), presentOptions);

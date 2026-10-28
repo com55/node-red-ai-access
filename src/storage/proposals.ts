@@ -652,6 +652,7 @@ export class ProposalStore {
       baseFlow: Partial<FlowTab>;
       flow: Partial<FlowTab>;
       expectedRev?: string;
+      title?: string;
       restoredSecrets?: { nodeId: string; property: string }[];
       warnings?: ProposalWarning[];
     }
@@ -666,6 +667,7 @@ export class ProposalStore {
     proposal.baseFlow = update.baseFlow;
     proposal.payload = { flowId: proposal.payload.flowId, flow: update.flow };
     if (update.expectedRev !== undefined) proposal.expectedRev = update.expectedRev;
+    if (update.title !== undefined) proposal.title = update.title;
     if (update.restoredSecrets !== undefined) {
       if (update.restoredSecrets.length > 0) proposal.restoredSecrets = update.restoredSecrets;
       else delete proposal.restoredSecrets;

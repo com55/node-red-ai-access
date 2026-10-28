@@ -1536,7 +1536,7 @@ function pageClientScriptPartB(): string {
   }
 
   function proposalIsStale(p) {
-    if (!p || p.status !== 'pending') return false;
+    if (!p || (p.status !== 'pending' && p.status !== 'conflict')) return false;
     if (p.baseRevStale === true) return true;
     var cached = proposalDiffCache[p.id];
     return !!(cached && cached.baseRevStale);
@@ -1676,7 +1676,7 @@ function pageClientScriptPartB(): string {
   }
 
   function countPendingBuckets() {
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
     var stale = 0;
     pending.forEach(function (p) {
       if (proposalIsStale(p)) stale += 1;
@@ -1685,7 +1685,7 @@ function pageClientScriptPartB(): string {
       pending: pending.length,
       live: pending.length - stale,
       stale: stale,
-      decided: Math.max(decidedTotal, cachedProposals.filter(function (p) { return p.status !== 'pending'; }).length)
+      decided: Math.max(decidedTotal, cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); }).length)
     };
   }
 `;
@@ -2241,7 +2241,7 @@ function pageClientScriptPartB2Actions(): string {
 
   function dismissAllStaleProposals() {
     var staleIds = cachedProposals
-      .filter(function (p) { return p.status === 'pending' && proposalIsStale(p); })
+      .filter(function (p) { return (p.status === 'pending' || p.status === 'conflict') && proposalIsStale(p); })
       .map(function (p) { return p.id; });
     if (!staleIds.length) return;
     var n = staleIds.length;
@@ -2450,8 +2450,8 @@ function pageClientScriptPartB2CardsList(): string {
   }
 
   function countSearchMatchesInFilter(filter) {
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
-    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
+    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
     if (filter === 'decided') {
       return decided.filter(proposalMatchesSearch).length;
     }
@@ -2489,8 +2489,8 @@ function pageClientScriptPartB2CardsList(): string {
     var list = $('proposals-list');
     if (!list) return;
     var filters = $('proposals-filters');
-    var pending = cachedProposals.filter(function (p) { return p.status === 'pending'; });
-    var decided = cachedProposals.filter(function (p) { return p.status !== 'pending'; });
+    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
+    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
     updatePendingBadges();
     if (filters) filters.hidden = cachedProposals.length === 0;
     if (!cachedProposals.length) {
@@ -2574,7 +2574,7 @@ function pageClientScriptPartB2Focus(): string {
     }
     try {
       await refreshFlowLabels();
-      var pendingData = await api('/proposals?status=pending');
+      var pendingData = await api('/proposals?status=pending,conflict');
       // Refresh keeps however many decided cards were already loaded.
       var decidedLimit = Math.min(200, Math.max(DECIDED_PAGE_SIZE, decidedLoaded));
       var decidedData = await api('/proposals?status=' + DECIDED_STATUSES +
@@ -2674,7 +2674,7 @@ function pageClientScriptPartB2Focus(): string {
       needsRerender = true;
     }
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    if (p && p.status !== 'pending' && proposalsFilter === 'pending') {
+    if (p && (p.status !== 'pending' && p.status !== 'conflict') && proposalsFilter === 'pending') {
       proposalsFilter = 'decided';
       var filtersEl = $('proposals-filters');
       if (filtersEl) {
@@ -2743,7 +2743,7 @@ function pageClientScriptPartB2Apply(): string {
       p.baseRevStale = diff.baseRevStale;
     }
     // Newly discovered stale → re-render into the Out of date group.
-    if (p && p.status === 'pending' && !wasStale && diff.baseRevStale) {
+    if (p && (p.status === 'pending' || p.status === 'conflict') && !wasStale && diff.baseRevStale) {
       renderProposalsList();
       return;
     }
@@ -2795,7 +2795,7 @@ function pageClientScriptPartB2Apply(): string {
 
     // Refresh headings from the live diff; rebuild disambiguation across peers
     // (includes stale cards — relative "12h ago" alone must not be the only cue).
-    var pendingPeers = cachedProposals.filter(function (x) { return x.status === 'pending'; });
+    var pendingPeers = cachedProposals.filter(function (x) { return (x.status === 'pending' || x.status === 'conflict'); });
     disambiguatedTitleCache = buildDisambiguatedTitles(pendingPeers);
     pendingPeers.forEach(function (peer) {
       var el = document.querySelector('[data-title-for="' + peer.id + '"]');
@@ -3047,7 +3047,7 @@ function pageClientScriptPartC(): string {
     var expectedRev = pBefore && pBefore.expectedRev;
     var peersBefore = expectedRev
       ? cachedProposals.filter(function (x) {
-          return x.id !== id && x.status === 'pending' && x.expectedRev === expectedRev;
+          return x.id !== id && (x.status === 'pending' || x.status === 'conflict') && x.expectedRev === expectedRev;
         }).length
       : 0;
     try {
@@ -3073,7 +3073,7 @@ function pageClientScriptPartC(): string {
       delete proposalDiffCache[id];
       // Clear diff cache for peers that shared the rev — they are now out of date.
       cachedProposals.forEach(function (peer) {
-        if (peer.id !== id && peer.status === 'pending' && peer.expectedRev === expectedRev) {
+        if (peer.id !== id && (peer.status === 'pending' || peer.status === 'conflict') && peer.expectedRev === expectedRev) {
           delete proposalDiffCache[peer.id];
           peer.baseRevStale = true;
         }

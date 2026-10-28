@@ -38,6 +38,9 @@ import {
   presentAccessibleProposalForApi,
   submitReplaceFlowProposal,
   withdrawMyProposal,
+  resolveMyProposal,
+  resolveConflictChoice,
+  type SubmitReplaceFlowInput,
 } from './ai-ops.js';
 import { CANONICAL_ERROR_TEXT, channelErrorHint } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
@@ -57,7 +60,7 @@ import {
   ProposalRebaseRaceError,
   type ProposalService,
 } from './proposal-service.js';
-import { expireByTtl, rebaseOpenProposalsWith, tryRawLive } from './proposal-sync.js';
+import { expireByTtl, rebaseOpenProposalsWith, syncOneProposal, tryRawLive } from './proposal-sync.js';
 import { sendCaughtRouteError } from './route-errors.js';
 import { adapterForRequest } from './secret-redaction.js';
 import type { AuthenticatedRequest } from './types.js';
@@ -455,7 +458,7 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
         return;
       }
       const diff = applyDiffFormat(
-        await computeProposalDiff(proposal, adapterForRequest(req, adapter)),
+        await computeProposalDiff(proposal, adapterForRequest(req, adapter), store.get(id)),
         resolved.format
       );
       res.json(diff);
@@ -480,5 +483,39 @@ export function getProposalDiffHandler(store: ProposalStore, adapter: FlowAdapte
       sendCaughtRouteError(res, error);
       return;
     }
+  };
+}
+
+/** Replace the caller's own open proposal using the same validation as submit. */
+export function resolveProposalHandler(store: ProposalStore, audit: AuditLog, adapter: FlowAdapter, httpAdminRoot?: string, nodeTypes?: NodeTypesAdapter) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.accessLink) { sendSafeJsonError(res, 401, 'access_link_missing'); return; }
+    try {
+      const opts = presentOptionsFor(req, httpAdminRoot);
+      const proposal = await resolveMyProposal(store, audit, req.accessLink, String(req.params.id), (req.body ?? {}) as SubmitReplaceFlowInput, adapter, opts, nodeTypes);
+      res.json(presentAccessibleProposalForApi(store, req.accessLink, proposal, opts));
+    } catch (error) { sendCaughtRouteError(res, error); }
+  };
+}
+
+export function resolveProposalConflictHandler(store: ProposalStore, audit: AuditLog, adapter: FlowAdapter, httpAdminRoot?: string) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const body = (req.body ?? {}) as { nodeId?: unknown; choice?: unknown };
+      const proposal = await resolveConflictChoice(store, audit, adminActor(req), String(req.params.id), body.nodeId, body.choice, adapter);
+      res.json(presentProposalForApi(proposal, presentOptionsFor(req, httpAdminRoot)));
+    } catch (error) { sendCaughtRouteError(res, error); }
+  };
+}
+
+export function recheckProposalHandler(store: ProposalStore, adapter: FlowAdapter, httpAdminRoot?: string) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      expireByTtl(store);
+      let proposal = store.get(String(req.params.id));
+      const live = await tryRawLive(adapter);
+      if (live && isOpenProposalStatus(proposal.status)) proposal = syncOneProposal(store, proposal, live).proposal;
+      res.json(presentProposalForApi(proposal, presentOptionsFor(req, httpAdminRoot)));
+    } catch (error) { sendCaughtRouteError(res, error); }
   };
 }

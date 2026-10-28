@@ -20,6 +20,7 @@ export interface AiAccessSettings {
   allowWithoutAdminAuth?: boolean;
   /** Default access-link TTL in seconds (default: 14400 = 4h). */
   defaultLinkTtlSeconds?: number;
+  proposalTtlDays?: number;
   /** Maximum concurrent active access links (default: 10). */
   maxActiveLinks?: number;
   /** Deployment type used when approving proposals (default: nodes). */
@@ -177,7 +178,7 @@ export interface NodeRedPluginAPI {
       }) => void
     ): void;
   };
-  events?: { on(event: string, listener: () => void): void };
+  events?: { on(event: string, listener: () => void): void; removeListener?(event: string, listener: () => void): void };
   auth: NodeRedAuthAPI;
   plugins: {
     registerPlugin: (id: string, definition?: Record<string, unknown>) => void;

@@ -8,20 +8,21 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import request from 'supertest';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
-import { registerRoutes } from '../../src/plugin/index.js';
+import { createAiMcpServer } from '../../src/plugin/mcp-rpc.js';
+import { createPluginServices } from '../../src/plugin/services.js';
 import { formatMcpToolsMarkdown, type McpToolListItem } from '../../src/plugin/mcp-tools-doc.js';
-import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
+import type { AuthenticatedRequest, NodeRedPluginAPI } from '../../src/plugin/types.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const DOC_PATH = join(ROOT, 'docs/mcp-tools.md');
-const MCP_ACCEPT = 'application/json, text/event-stream';
 
-function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore } {
+function createApp(userDir: string) {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
   const linkStore = new AccessLinkStore({ maxActiveLinks: 5 });
@@ -45,7 +46,7 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
     },
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
-  registerRoutes(RED, {
+  const services = createPluginServices(RED, {
     linkStore,
     flowAdapter: {
       kind: 'red',
@@ -54,20 +55,23 @@ function createApp(userDir: string): { app: Express; linkStore: AccessLinkStore 
       updateFlow: () => Promise.resolve({ rev: 'r2' }),
     },
   });
-  return { app, linkStore };
+  return { RED, services, linkStore };
 }
 
-async function liveToolsMarkdown(app: Express, token: string): Promise<string> {
-  const res = await request(app)
-    .post('/mcp/rpc')
-    .set('Authorization', `Bearer ${token}`)
-    .set('Accept', MCP_ACCEPT)
-    .set('Content-Type', 'application/json')
-    .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-  expect(res.status).toBe(200);
-  const tools = (res.body.result as { tools: McpToolListItem[] }).tools;
-  expect(tools.length).toBeGreaterThan(5);
-  return formatMcpToolsMarkdown(tools);
+async function liveToolsMarkdown(h: ReturnType<typeof createApp>, accessLink: NonNullable<AuthenticatedRequest['accessLink']>): Promise<string> {
+  const server = createAiMcpServer(h.RED, h.services, { accessLink } as AuthenticatedRequest);
+  const client = new Client({ name: 'docs', version: '1' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(5);
+    return formatMcpToolsMarkdown(tools);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 }
 
 describe('docs/mcp-tools.md', () => {
@@ -82,9 +86,9 @@ describe('docs/mcp-tools.md', () => {
   });
 
   it('matches live tools/list (or updates when UPDATE_MCP_TOOLS=1)', async () => {
-    const { app, linkStore } = createApp(userDir);
-    const link = linkStore.create({ kind: 'mcp', label: 'doc' });
-    const generated = await liveToolsMarkdown(app, link.token);
+    const h = createApp(userDir);
+    const link = h.linkStore.create({ kind: 'mcp', label: 'doc' });
+    const generated = await liveToolsMarkdown(h, link);
 
     if (process.env.UPDATE_MCP_TOOLS === '1') {
       writeFileSync(DOC_PATH, generated, 'utf8');
