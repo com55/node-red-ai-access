@@ -46,7 +46,7 @@ function renderMcpPageHeader(): string {
     </header>
     <div id="boot-flash" class="flash" hidden></div>
     <div id="auth-gate" class="auth-gate" hidden>
-      <main class="sg-card" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+      <div class="sg-card" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
         <div class="sg-head">${LOGO}<div class="sg-brand"><b>Node-RED AI Access</b><span>Dashboard</span></div></div>
         <div class="sg-body">
           <h1 id="auth-gate-title">Sign in to Node-RED</h1>
@@ -63,7 +63,7 @@ function renderMcpPageHeader(): string {
           </div>
         </div>
         <div class="sg-foot">You only need to sign in once — the dashboard continues automatically.</div>
-      </main>
+      </div>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
     <nav class="tabs" aria-label="Admin views" hidden id="main-nav">
