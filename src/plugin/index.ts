@@ -51,7 +51,10 @@ import {
   searchPaletteHandler,
 } from './node-types-routes.js';
 import {
-  detectOAuthRouteCollisions,
+  describeOAuthRouteCollision,
+  detectOAuthRouteCollisionDetails,
+  findHttpInCollisions,
+  type OAuthRouteCollision,
   LocalOAuthProvider,
   OAuthStore,
   makeOAuthHandlers,
@@ -201,32 +204,46 @@ export function registerRoutes(
   const routeStatus = {
     authorization: [] as string[],
     metadata: [] as string[],
+    details: [] as (OAuthRouteCollision & { kind: 'authorization' | 'metadata' })[],
     httpNodeRootFallback: RED.settings.httpNodeRoot === false || !RED.httpNode,
   };
+  let lastLogged = '';
   const refreshCollisions = () => {
-    routeStatus.authorization = [
-      ...detectOAuthRouteCollisions(RED.httpAdmin, ['/mcp/oauth/']),
-      ...detectOAuthRouteCollisions(RED.httpNode, ['/mcp/oauth/']),
-    ];
     const metadataPaths = routeStatus.httpNodeRootFallback
       ? ['/mcp/.well-known/oauth-']
       : ['/.well-known/oauth-'];
-    routeStatus.metadata = [
-      ...detectOAuthRouteCollisions(RED.httpAdmin, metadataPaths),
-      ...detectOAuthRouteCollisions(RED.httpNode, metadataPaths),
-    ];
+    let httpIn: { auth: OAuthRouteCollision[]; meta: OAuthRouteCollision[] } = {
+      auth: [],
+      meta: [],
+    };
     try {
       // Flows are not loaded yet while the plugin registers; `flows:started` re-runs this.
-      RED.nodes?.eachNode(node => {
-        if (node.type !== 'http in' || typeof node.url !== 'string') return;
-        const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
-        if (path.startsWith('/mcp/oauth/')) routeStatus.authorization.push(`http-in node ${path}`);
-        if (path.startsWith('/.well-known/oauth-'))
-          routeStatus.metadata.push(`http-in node ${path}`);
-      });
+      const each = RED.nodes?.eachNode.bind(RED.nodes);
+      httpIn = {
+        auth: findHttpInCollisions(each, ['/mcp/oauth/']),
+        meta: findHttpInCollisions(each, ['/.well-known/oauth-']),
+      };
     } catch {
       // ignore: flow runtime not started
     }
+    // An enabled http-in node also shows up as an Express 'bound dispatch' route on
+    // httpNode; report it once, as the node. Routes of stopped/removed/disabled nodes
+    // are unregistered by Node-RED, so the scan is re-evaluated from scratch each deploy.
+    const nodePaths = new Set([...httpIn.auth, ...httpIn.meta].map(c => c.path));
+    const express = (app: unknown, prefixes: string[], isHttpNode: boolean) =>
+      detectOAuthRouteCollisionDetails(app, prefixes).filter(
+        c => !(isHttpNode && c.source === 'route' && nodePaths.has(c.path))
+      );
+    const auth: OAuthRouteCollision[] = [
+      ...express(RED.httpAdmin, ['/mcp/oauth/'], false),
+      ...express(RED.httpNode, ['/mcp/oauth/'], true),
+      ...httpIn.auth,
+    ];
+    const meta: OAuthRouteCollision[] = [
+      ...express(RED.httpAdmin, metadataPaths, false),
+      ...express(RED.httpNode, metadataPaths, true),
+      ...httpIn.meta,
+    ];
     const staticDirs = RED.settings.httpStatic ? [RED.settings.httpStatic].flat() : [];
     for (const dir of staticDirs) {
       for (const path of [
@@ -238,13 +255,25 @@ export function registerRoutes(
         'mcp/oauth/revoke',
       ]) {
         if (!existsSync(join(dir, path))) continue;
-        if (path.startsWith('mcp/'))
-          routeStatus.authorization.push(`httpStatic ${join(dir, path)}`);
-        else routeStatus.metadata.push(`httpStatic ${join(dir, path)}`);
+        const entry: OAuthRouteCollision = { path: join(dir, path), source: 'httpStatic' };
+        if (path.startsWith('mcp/')) auth.push(entry);
+        else meta.push(entry);
       }
     }
-    for (const collision of [...routeStatus.authorization, ...routeStatus.metadata])
-      RED.log?.warn?.(`AI Access OAuth route collision: ${collision}`);
+    routeStatus.authorization = auth.map(describeOAuthRouteCollision);
+    routeStatus.metadata = meta.map(describeOAuthRouteCollision);
+    routeStatus.details = [
+      ...auth.map(c => ({ ...c, kind: 'authorization' as const })),
+      ...meta.map(c => ({ ...c, kind: 'metadata' as const })),
+    ];
+    const lines = [
+      ...routeStatus.authorization.map(c => `${c} — OAuth authorization routes disabled`),
+      ...routeStatus.metadata.map(c => `${c} — OAuth metadata disabled`),
+    ];
+    const key = lines.join('\n');
+    if (key !== lastLogged)
+      for (const line of lines) RED.log?.warn?.(`AI Access OAuth route collision: ${line}`);
+    lastLogged = key;
   };
   refreshCollisions();
   RED.events?.on('flows:started', refreshCollisions);

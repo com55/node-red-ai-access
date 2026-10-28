@@ -10,7 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccessLinkStore } from '../../src/access/index.js';
 import { registerRoutes } from '../../src/plugin/index.js';
-import { canonicalResource, detectOAuthRouteCollisions } from '../../src/plugin/oauth.js';
+import {
+  canonicalResource,
+  detectOAuthRouteCollisions,
+  findHttpInCollisions,
+  type FlowNodeLike,
+} from '../../src/plugin/oauth.js';
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 
@@ -38,6 +43,7 @@ function appFor(
     enabled?: boolean;
     refreshMax?: number;
     oauthFromDisk?: boolean;
+    flowNodes?: FlowNodeLike[];
   } = {}
 ) {
   const admin = express();
@@ -72,6 +78,9 @@ function appFor(
     httpAdmin: admin,
     ...(node ? { httpNode: node } : {}),
     events,
+    ...(options.flowNodes
+      ? { nodes: { eachNode: fn => options.flowNodes?.forEach(n => fn(n)) } }
+      : {}),
     auth: {
       needsPermission: () => (req, res, next) => {
         const who = req.headers['x-test-user'];
@@ -789,6 +798,77 @@ describe('MCP OAuth backend', () => {
       (await request(later.admin).get('/mcp/api/v1/oauth/status')).body.authorization.join(' ')
     ).toContain('/mcp/oauth/revoke');
     rmSync(secondDir, { recursive: true, force: true });
+  });
+
+  it('ignores disabled http-in nodes and nodes on disabled tabs', () => {
+    const nodes: FlowNodeLike[] = [
+      { id: 't1', type: 'tab', disabled: true },
+      { id: 't2', type: 'tab' },
+      {
+        id: 'a',
+        type: 'http in',
+        url: '/.well-known/oauth-authorization-server',
+        z: 't2',
+        d: true,
+      },
+      { id: 'b', type: 'http in', url: '/.well-known/oauth-protected-resource', z: 't1' },
+      { id: 'c', type: 'http in', url: '.well-known/oauth-x', z: 't2', name: 'Mine' },
+    ];
+    expect(findHttpInCollisions(fn => nodes.forEach(fn), ['/.well-known/oauth-'])).toEqual([
+      { path: '/.well-known/oauth-x', source: 'http-in', nodeId: 'c', nodeName: 'Mine' },
+    ]);
+  });
+
+  it('re-evaluates http-in collisions on deploy and reports each node once with id and name', async () => {
+    const flowNodes: FlowNodeLike[] = [
+      { id: 't', type: 'tab' },
+      {
+        id: 'n1',
+        type: 'http in',
+        url: '/.well-known/oauth-authorization-server',
+        z: 't',
+        d: true,
+      },
+    ];
+    const app = appFor(userDir, { flowNodes });
+    app.events.emit('flows:started');
+    let status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.collisions).toEqual([]);
+    expect((await request(app.node!).get('/.well-known/oauth-authorization-server')).status).toBe(
+      200
+    );
+
+    // Enable it: Node-RED registers an Express route ('bound dispatch') and the node is live.
+    flowNodes[1] = { ...flowNodes[1], d: false, name: 'Meta' };
+    const handler = (_req: unknown, res: { send(b: string): void }) => res.send('flow');
+    app.node!.get('/.well-known/oauth-authorization-server', handler);
+    app.events.emit('flows:started');
+    status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.details).toEqual([
+      {
+        kind: 'metadata',
+        path: '/.well-known/oauth-authorization-server',
+        source: 'http-in',
+        nodeId: 'n1',
+        nodeName: 'Meta',
+      },
+    ]);
+    expect(status.metadata[0]).toContain("http-in node 'Meta'");
+
+    // Disable again: Node-RED removes the route on close; collision clears on next deploy.
+    flowNodes[1] = { ...flowNodes[1], d: true };
+    const stack = app.node as unknown as {
+      _router?: { stack: { route?: unknown }[] };
+      router?: { stack: { route?: unknown }[] };
+    };
+    const layers = (stack._router ?? stack.router)!.stack;
+    layers.splice(
+      layers.findIndex(l => l.route),
+      1
+    );
+    app.events.emit('flows:started');
+    status = (await request(app.admin).get('/mcp/api/v1/oauth/status')).body;
+    expect(status.collisions).toEqual([]);
   });
 
   it('normalizes scheme, host, and trailing slash for resource indicators', () => {

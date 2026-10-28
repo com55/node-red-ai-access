@@ -8,6 +8,28 @@ and this project adheres to
 
 ## Unreleased
 
+## [0.2.0-beta.2] - 2026-10-28
+
+### Fixed
+
+- OAuth route collision check no longer counts disabled `http in` nodes or nodes
+  on disabled flows; collisions are re-evaluated from scratch on every deploy,
+  and an enabled `http in` node is reported once (not again as an Express "bound
+  dispatch" route).
+- Editor sidebar: OAuth lifetime number inputs and unit dropdowns sit on one
+  line, including the narrow Node-RED 5 sidebar.
+- Editor sidebar: OAuth route collisions are shown as a readable bulleted list,
+  one route per line; `http in` nodes link to the node in the editor.
+- Editor sidebar: Public URL "Check" result is shown as a clear green/red
+  status; loopback notes and the trust proxy state are moved into a muted,
+  collapsible "About the check" section with human-readable wording.
+
+### Added
+
+- Editor sidebar: short "How to use MCP OAuth" help in the OAuth section.
+- `GET /mcp/api/v1/oauth/status` returns structured `details` (path, source,
+  node id/name) for each collision.
+
 ## [0.2.0-beta.1] - 2026-10-28
 
 First pre-release of 0.2.0, published under the npm `beta` dist-tag.

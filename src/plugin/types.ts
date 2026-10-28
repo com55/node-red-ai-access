@@ -163,7 +163,19 @@ export interface NodeRedPluginAPI {
   settings: NodeRedPluginSettings;
   httpAdmin: Express;
   httpNode?: Express;
-  nodes?: { eachNode(listener: (node: { type?: string; url?: string }) => void): void };
+  nodes?: {
+    eachNode(
+      listener: (node: {
+        id?: string;
+        type?: string;
+        url?: string;
+        name?: string;
+        z?: string;
+        d?: boolean;
+        disabled?: boolean;
+      }) => void
+    ): void;
+  };
   events?: { on(event: string, listener: () => void): void };
   auth: NodeRedAuthAPI;
   plugins: {

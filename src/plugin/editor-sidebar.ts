@@ -55,7 +55,99 @@ function editorSidebarStyles(): string {
 }
 #red-ui-sidebar-ai-access .ai-access-oauth-warning {
   color: #9b2c2c;
-  white-space: pre-wrap;
+  background: #fdf0f0;
+  border: 1px solid #f0c4c4;
+  border-radius: 4px;
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-warning p {
+  margin: 0 0 4px;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-warning ul {
+  margin: 0 0 6px 18px;
+  padding: 0;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-warning li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-warning code {
+  font-size: 0.95em;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-warning a {
+  text-decoration: underline;
+  cursor: pointer;
+}
+#red-ui-sidebar-ai-access .ai-access-duration {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+}
+#red-ui-sidebar-ai-access .red-ui-settings-row.stacked .ai-access-duration input {
+  width: 80px;
+  flex: 0 1 80px;
+  min-width: 50px;
+  margin: 0;
+}
+#red-ui-sidebar-ai-access .red-ui-settings-row.stacked .ai-access-duration select {
+  width: auto;
+  flex: 0 1 auto;
+  min-width: 70px;
+  margin: 0;
+}
+#red-ui-sidebar-ai-access .ai-access-check-result {
+  display: none;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+#red-ui-sidebar-ai-access .ai-access-check-result.is-ok {
+  display: block;
+  color: #1e6b2e;
+  background: #e8f6ec;
+  border: 1px solid #a8d8b4;
+}
+#red-ui-sidebar-ai-access .ai-access-check-result.is-fail {
+  display: block;
+  color: #9b2c2c;
+  background: #fdf0f0;
+  border: 1px solid #f0c4c4;
+}
+#red-ui-sidebar-ai-access .ai-access-check-result.is-pending {
+  display: block;
+  font-weight: 400;
+  color: var(--red-ui-secondary-text-color, #666);
+}
+#red-ui-sidebar-ai-access .ai-access-muted {
+  color: var(--red-ui-secondary-text-color, #888);
+  font-size: 0.85em;
+  margin: 4px 0 0;
+  line-height: 1.35;
+}
+#red-ui-sidebar-ai-access details.ai-access-muted summary {
+  cursor: pointer;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-help {
+  margin: 4px 0 10px;
+  padding: 6px 10px;
+  background: var(--red-ui-secondary-background, #f3f3f3);
+  border-radius: 4px;
+  line-height: 1.4;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-help ol {
+  margin: 6px 0 4px 18px;
+  padding: 0;
+}
+#red-ui-sidebar-ai-access .ai-access-oauth-help li {
+  margin: 2px 0;
 }
 #red-ui-sidebar-ai-access .ai-access-oauth-client {
   display: flex;
@@ -381,7 +473,12 @@ function editorSidebarScriptPartA(): string {
         $('#ai-access-' + FIELD_IDS[key]).val(s[key] == null ? '' : s[key]);
       });
       $('#ai-access-cors').val((s.corsAllowedOrigins || []).join(', '));
-      $('#ai-access-trust-proxy').text(String(data.trustProxy));
+      var tp = data.trustProxy;
+      $('#ai-access-trust-proxy').text(
+        tp === false || tp === undefined || tp === null || tp === 0
+          ? 'Trust proxy: off (set httpServerOptions["trust proxy"] in settings.js if behind a reverse proxy)'
+          : 'Trust proxy: ' + (tp === true ? 'on' : String(tp))
+      );
       Object.keys(FIELD_IDS).forEach(function (key) {
         var locked = data.sources && data.sources[key] === 'settings.js';
         $('#ai-access-' + FIELD_IDS[key]).prop('disabled', readonly || locked);
@@ -425,13 +522,9 @@ function editorSidebarScriptPartA(): string {
 
     function refreshOAuth() {
       api('/oauth/status').then(function (status) {
-        var warnings = [];
-        if (status.httpNodeRootFallback) warnings.push('httpNodeRoot is disabled: OAuth metadata is served under the admin /mcp path.');
-        if (status.authorization && status.authorization.length) warnings.push('OAuth authorization routes collide with: ' + status.authorization.join(', '));
-        if (status.metadata && status.metadata.length) warnings.push('OAuth metadata routes collide with: ' + status.metadata.join(', '));
-        $('#ai-access-oauth-route-warning').text(warnings.join('\\n')).toggle(warnings.length > 0);
+        renderRouteWarning(status);
       }).catch(function (err) {
-        $('#ai-access-oauth-route-warning').text('OAuth route status unavailable: ' + err.message).show();
+        $('#ai-access-oauth-route-warning').empty().text('OAuth route status unavailable: ' + err.message).show();
       });
       api('/oauth/clients').then(function (data) {
         var list = $('#ai-access-oauth-clients').empty();
@@ -457,6 +550,68 @@ function editorSidebarScriptPartA(): string {
       }).catch(function (err) {
         $('#ai-access-oauth-clients').text('OAuth clients unavailable: ' + err.message);
       });
+    }
+
+    function collisionItem(c) {
+      var li = $('<li></li>');
+      var effect = c.kind === 'authorization' ? ' — OAuth login/token routes disabled' : ' — OAuth metadata disabled';
+      if (c.source === 'http-in') {
+        $('<span></span>').text('Route ').appendTo(li);
+        $('<code></code>').text(c.path).appendTo(li);
+        $('<span></span>').text(' is already used by http-in node ').appendTo(li);
+        var label = "'" + (c.nodeName || c.nodeId || 'unnamed') + "'";
+        if (c.nodeId && RED.view && RED.view.reveal) {
+          $('<a href="#"></a>').text(label).attr('title', 'Show node in the editor').appendTo(li)
+            .on('click', function (e) { e.preventDefault(); RED.view.reveal(c.nodeId); });
+        } else {
+          $('<span></span>').text(label).appendTo(li);
+        }
+      } else if (c.source === 'httpStatic') {
+        $('<span></span>').text('File ').appendTo(li);
+        $('<code></code>').text(c.path).appendTo(li);
+        $('<span></span>').text(' is served by httpStatic').appendTo(li);
+      } else if (c.source === 'middleware') {
+        $('<span></span>').text('Path ').appendTo(li);
+        $('<code></code>').text(c.path).appendTo(li);
+        $('<span></span>').text(' is already handled by other middleware (' + (c.layer || 'unknown') + ')').appendTo(li);
+      } else {
+        $('<span></span>').text('Route ').appendTo(li);
+        $('<code></code>').text(c.path).appendTo(li);
+        $('<span></span>').text(' is already registered by another node or plugin').appendTo(li);
+      }
+      $('<span></span>').text(effect).appendTo(li);
+      return li;
+    }
+
+    function renderRouteWarning(status) {
+      var box = $('#ai-access-oauth-route-warning').empty();
+      var details = status.details;
+      if (!details) {
+        details = [];
+        (status.authorization || []).forEach(function (t) { details.push({ kind: 'authorization', source: 'text', text: t }); });
+        (status.metadata || []).forEach(function (t) { details.push({ kind: 'metadata', source: 'text', text: t }); });
+      }
+      if (status.httpNodeRootFallback) {
+        $('<p></p>').text('httpNodeRoot is disabled: OAuth metadata is served under the admin /mcp path.').appendTo(box);
+      }
+      if (details.length) {
+        var intro = $('<p></p>').appendTo(box);
+        $('<strong></strong>').text('OAuth route conflict').appendTo(intro);
+        $('<span></span>').text(': these paths are already in use, so AI Access will not serve them. Remove or change the conflicting routes, then deploy.').appendTo(intro);
+        var ul = $('<ul></ul>').appendTo(box);
+        details.forEach(function (c) {
+          if (c.source === 'text') $('<li></li>').text(c.text).appendTo(ul);
+          else collisionItem(c).appendTo(ul);
+        });
+      }
+      box.toggle(!!(details.length || status.httpNodeRootFallback));
+    }
+
+    function setCheckResult(state, text) {
+      $('#ai-access-check-result')
+        .removeClass('is-ok is-fail is-pending')
+        .addClass(state ? 'is-' + state : '')
+        .text(text || '');
     }
 
     function oauthPublicUrlWarning(value) {
@@ -596,7 +751,7 @@ function editorSidebarScriptPartA(): string {
         .then(function (data) {
           applyForm(data);
           if (data.warnings && data.warnings.length) {
-            $('#ai-access-check-result').text(data.warnings.join(' '));
+            setCheckResult('fail', data.warnings.join(' '));
           }
           if (silent) showSavedToast();
           else setFlash($('#ai-access-flash'), 'Settings saved.', true);
@@ -740,21 +895,32 @@ function editorSidebarScriptPartB(): string {
         if (field[0] === 'public-url') {
           $('<button type="button" id="ai-access-check-public-url" class="red-ui-button"></button>')
             .text('Check').appendTo(controls).on('click', function () {
-              $('#ai-access-check-result').text('Checking…');
+              setCheckResult('pending', 'Checking…');
               api('/settings/check-public-url', { method: 'POST', body: JSON.stringify({ publicBaseUrl: $('#ai-access-public-url').val() }) })
                 .then(function (result) {
-                  $('#ai-access-check-result').text((result.ok ? 'OK: ' : 'Failed: ') + (result.message || result.error) + (result.status ? ' (HTTP ' + result.status + ')' : ''));
-                }).catch(function (err) { $('#ai-access-check-result').text(err.message); });
+                  setCheckResult(result.ok ? 'ok' : 'fail', (result.ok ? '✓ OK: ' : '✗ Failed: ') + (result.message || result.error) + (result.status ? ' (HTTP ' + result.status + ')' : ''));
+                }).catch(function (err) { setCheckResult('fail', '✗ ' + err.message); });
             });
-          $('<p class="form-tips"></p>').text("Loopback checks use Node-RED's listening port; behind a reverse proxy, use the internal port. Unix-socket listeners are not supported. HTTPS checks fail with self-signed certificates.").appendTo(fieldRow);
-          $('<p id="ai-access-check-result" aria-live="polite"></p>').appendTo(fieldRow);
+          $('<div id="ai-access-check-result" class="ai-access-check-result" aria-live="polite"></div>').appendTo(fieldRow);
+          var notes = $('<details class="ai-access-muted"></details>').appendTo(fieldRow);
+          $('<summary></summary>').text('About the check').appendTo(notes);
+          $('<div></div>').text("Loopback checks use Node-RED's listening port; behind a reverse proxy, use the internal port. Unix-socket listeners are not supported. HTTPS checks fail with self-signed certificates.").appendTo(notes);
+          $('<div id="ai-access-trust-proxy"></div>').appendTo(notes);
         }
       });
-      var trustRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
-      $('<label></label>').text('Express trust proxy (read-only)').appendTo(trustRow);
-      $('<span id="ai-access-trust-proxy"></span>').appendTo(trustRow);
       $('<h3></h3>').text('MCP OAuth').appendTo(body);
       $('<p class="form-tips"></p>').text('Clients can request read or propose access through OAuth. Changes apply immediately.').appendTo(body);
+      var help = $('<details class="ai-access-oauth-help"></details>').appendTo(body);
+      $('<summary></summary>').text('How to use MCP OAuth').appendTo(help);
+      var steps = $('<ol></ol>').appendTo(help);
+      [
+        'Set the Public URL above to the HTTPS address clients use to reach Node-RED, then click Check.',
+        'Enable MCP OAuth below.',
+        'In your MCP client (Claude, ChatGPT, etc.) add the server URL <Public URL>/mcp.',
+        'The client registers itself automatically (Dynamic Client Registration).',
+        'You are sent to the Node-RED login and consent page; approve read or propose access.'
+      ].forEach(function (t) { $('<li></li>').text(t).appendTo(steps); });
+      $('<div></div>').text('If another node or plugin already uses an OAuth path, the affected OAuth routes are disabled and a warning is shown below.').appendTo(help);
       row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
       $('<input id="ai-access-oauth-enabled" type="checkbox">').appendTo(row);
       $('<label for="ai-access-oauth-enabled"></label>').text('Enable MCP OAuth').appendTo(row);
@@ -769,10 +935,11 @@ function editorSidebarScriptPartB(): string {
         var id = 'ai-access-oauth-' + field[0];
         var oauthRow = $('<div class="red-ui-settings-row stacked"></div>').appendTo(body);
         $('<label></label>').attr('for', id).text(field[1]).appendTo(oauthRow);
-        $('<input type="number" step="1" style="width:80px">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(oauthRow).on('change', scheduleAutoSave);
+        var line = $('<div class="ai-access-duration"></div>').appendTo(oauthRow);
+        $('<input type="number" step="1">').attr('id', id).attr('min', field[0] === 'refresh-max' ? 0 : 1).appendTo(line).on('change', scheduleAutoSave);
         if (!field[2]) return;
         var select = $('<select></select>').attr('id', id + '-unit').attr('aria-label', field[1] + ' unit')
-          .appendTo(oauthRow).on('change', scheduleAutoSave);
+          .appendTo(line).on('change', scheduleAutoSave);
         field[2].forEach(function (u) { $('<option></option>').attr('value', u[0]).text(u[2]).appendTo(select); });
       });
       $('<p id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></p>').appendTo(body);

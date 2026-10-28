@@ -217,11 +217,83 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
   }
 }
 
+/** One OAuth route collision, with enough detail for the editor to explain and link it. */
+export interface OAuthRouteCollision {
+  /** Path (or httpStatic file) that collides. */
+  path: string;
+  source: 'http-in' | 'route' | 'middleware' | 'httpStatic';
+  /** Express layer name for route/middleware sources. */
+  layer?: string | undefined;
+  nodeId?: string | undefined;
+  nodeName?: string | undefined;
+}
+
+export interface FlowNodeLike {
+  id?: string;
+  type?: string;
+  url?: string;
+  name?: string;
+  z?: string;
+  d?: boolean;
+  disabled?: boolean;
+}
+
+/** Human readable one-line description of a collision (used for logs and string lists). */
+export function describeOAuthRouteCollision(c: OAuthRouteCollision): string {
+  switch (c.source) {
+    case 'http-in':
+      return `Route ${c.path} is already used by http-in node '${c.nodeName || c.nodeId || 'unnamed'}'`;
+    case 'httpStatic':
+      return `File ${c.path} is served by httpStatic`;
+    case 'middleware':
+      return `Path prefix is already handled by mounted middleware (${c.layer ?? 'unknown'})`;
+    default:
+      return `Route ${c.path} is already registered by another handler (${c.layer ?? 'route'})`;
+  }
+}
+
+/**
+ * Enabled `http in` nodes whose URL starts with one of `prefixes`. Disabled nodes
+ * (`d: true`) and nodes on disabled tabs/subflows never register routes, so they
+ * are not collisions.
+ */
+export function findHttpInCollisions(
+  eachNode: ((listener: (node: FlowNodeLike) => void) => void) | undefined,
+  prefixes: string[]
+): OAuthRouteCollision[] {
+  if (!eachNode) return [];
+  const all: FlowNodeLike[] = [];
+  eachNode(node => all.push(node));
+  const disabledTabs = new Set(
+    all
+      .filter(n => (n.type === 'tab' || n.type === 'subflow') && (n.disabled || n.d))
+      .map(n => n.id)
+  );
+  const found: OAuthRouteCollision[] = [];
+  for (const node of all) {
+    if (node.type !== 'http in' || typeof node.url !== 'string') continue;
+    if (node.d || (node.z && disabledTabs.has(node.z))) continue;
+    const path = node.url.startsWith('/') ? node.url : `/${node.url}`;
+    if (prefixes.some(prefix => path.startsWith(prefix)))
+      found.push({ path, source: 'http-in', nodeId: node.id, nodeName: node.name || undefined });
+  }
+  return found;
+}
+
 export function detectOAuthRouteCollisions(
   app: unknown,
   routes: string[] = ['/.well-known/oauth-', '/mcp/oauth/']
 ): string[] {
-  const found: string[] = [];
+  return detectOAuthRouteCollisionDetails(app, routes).map(c =>
+    c.source === 'middleware' ? `mounted middleware (${c.layer})` : `${c.path} (${c.layer})`
+  );
+}
+
+export function detectOAuthRouteCollisionDetails(
+  app: unknown,
+  routes: string[] = ['/.well-known/oauth-', '/mcp/oauth/']
+): OAuthRouteCollision[] {
+  const found: OAuthRouteCollision[] = [];
   interface Layer {
     route?: { path?: string | string[] };
     name?: string;
@@ -248,17 +320,23 @@ export function detectOAuthRouteCollisions(
       : [];
     for (const path of paths)
       if (routes.some(prefix => String(path).startsWith(prefix)))
-        found.push(`${String(path)} (${layer.name ?? 'route'})`);
+        found.push({ path: String(path), source: 'route', layer: layer.name ?? 'route' });
     const matchers =
       layer.matchers ?? (layer.regexp ? [(path: string) => layer.regexp?.test(path)] : undefined);
     if (!paths.length && matchers?.length && layer.name !== 'router') {
       const matches = (path: string) => matchers.some(matcher => Boolean(matcher(path)));
       const broad = matches('/unrelated-ai-access-collision-probe');
       if (!broad && routes.some(prefix => matches(`${prefix}token`) || matches(`${prefix}mcp`)))
-        found.push(`mounted middleware (${layer.name ?? 'route'})`);
+        found.push({
+          path: routes.join(', '),
+          source: 'middleware',
+          layer: layer.name ?? 'route',
+        });
     }
     if (layer.handle?.stack)
-      found.push(...detectOAuthRouteCollisions({ router: { stack: layer.handle.stack } }, routes));
+      found.push(
+        ...detectOAuthRouteCollisionDetails({ router: { stack: layer.handle.stack } }, routes)
+      );
   }
   return found;
 }
