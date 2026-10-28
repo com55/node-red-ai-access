@@ -8,8 +8,17 @@ and this project adheres to
 
 ## Unreleased
 
+## [0.2.0-beta.1] - 2026-10-28
+
+First pre-release of 0.2.0, published under the npm `beta` dist-tag.
+
 ### Added
 
+- Node-RED settings and sidebar for configuring AI Access (#91).
+- MCP OAuth authorization (#99): dynamic client registration (DCR), PKCE, an
+  owner consent page, and sliding refresh tokens with defaults of 1 hour (access
+  token), 30 days (refresh idle) and 90 days (refresh maximum).
+- Route-collision check for the OAuth and metadata endpoints.
 - MCP OAuth 2.1 authorization server and protected resource support with PKCE
   S256, dynamic client registration, resource-bound tokens, rotating refresh
   tokens, and `read`/`propose` scopes. Existing access-link tokens still work.
@@ -17,6 +26,11 @@ and this project adheres to
   revocation, route-collision and metadata-fallback warnings, and a Public URL
   warning when enabling OAuth, plus a refresh-token maximum lifetime (default 90
   days, 0 = unlimited).
+
+### Changed
+
+- CI now tests against a Node-RED 4 and Node-RED 5 matrix.
+- Requires Node.js >= 20.19.
 
 ## [0.1.1] - 2026-10-17
 
@@ -396,5 +410,7 @@ Requires Node.js 20+.
   auth, 413 limits) served at `GET /mcp/api/v1/openapi.yaml`; README install,
   config, `/mcp` usage, and AI quickstart.
 
+[0.2.0-beta.1]:
+  https://github.com/com55/node-red-ai-access/compare/v0.1.1...v0.2.0-beta.1
 [0.1.1]: https://github.com/com55/node-red-ai-access/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/com55/node-red-ai-access/releases/tag/v0.1.0

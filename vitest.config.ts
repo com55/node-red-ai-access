@@ -1,8 +1,16 @@
+import { readFileSync } from 'node:fs';
+
 import { defineConfig } from 'vitest/config';
+
+const packageJson = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf-8')
+) as {
+  version: string;
+};
 
 export default defineConfig({
   define: {
-    __AI_ACCESS_VERSION__: JSON.stringify('0.1.1'),
+    __AI_ACCESS_VERSION__: JSON.stringify(packageJson.version),
   },
   test: {
     include: ['src/**/*.test.{js,ts}', 'test/**/*.test.{js,ts}'],
