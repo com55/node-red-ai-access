@@ -1884,7 +1884,9 @@ function pageClientScriptPartBDiffPresence(): string {
       : (' <span class="muted tip-id" title="' + esc(n.id) + '">' + tipId(n.id, 8) + '</span>');
     return '<details class="node-presence node-' + kind + '"' + open + '>' +
       '<summary><span class="presence-summary-text">' + summaryText + '</span>' +
-      idHint + '</summary>' +
+      idHint +
+      (kind === 'removed' ? ' ' + editorJumpLink('node', n.id, 'Show in editor', 'editor-jump-small') : '') +
+      '</summary>' +
       '<div class="presence-body">' + body + '</div></details>';
   }
 
@@ -2005,7 +2007,8 @@ function pageClientScriptPartBDiffView2(): string {
             ? ''
             : (' <span class="muted tip-id" title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</span>');
           return '<div class="modified-node">' +
-            '<div class="modified-heading">' + heading + idHint + '</div>' +
+            '<div class="modified-heading">' + heading + idHint + ' ' +
+            editorJumpLink('node', m.id, 'Show in editor', 'editor-jump-small') + '</div>' +
             (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
             '</div>';
         }).join('') + '</div>';
@@ -2320,7 +2323,11 @@ function pageClientScriptPartB2Cards(): string {
       timeHtml = timeCell(p.createdAt);
     }
     return '<span class="proposal-meta-line">' +
-      (flowLabel ? '<span class="proposal-flow">' + esc(flowLabel) + '</span> · ' : '') +
+      (flowLabel
+        ? '<span class="proposal-flow">' +
+          (p.payload && p.payload.flowId ? editorJumpLink('flow', p.payload.flowId, flowLabel) : esc(flowLabel)) +
+          '</span> · '
+        : '') +
       timeHtml +
       ' · <span class="proposal-id-meta">id ' + proposalIdChip(p.id) + '</span>' +
       '</span>';
@@ -3505,8 +3512,134 @@ function pageClientScriptPartDBoot(): string {
     loadTabData(tab);
   });
 
+${pageClientEditorJumpScript()}
+${pageClientAutoRefreshScript()}
   boot();
 })();
+`;
+}
+
+/**
+ * Dashboard auto-refresh on visibilitychange / focus (exported for tests; runs
+ * inside the dashboard IIFE scope).
+ */
+export function pageClientEditorJumpScript(): string {
+  return `
+  /*
+   * Jump links to the editor (#flow/<id>, #node/<id>). A click first asks an
+   * already-open editor tab (BroadcastChannel 'node-red-ai-access', answered by
+   * the editor sidebar script) to reveal the item; without an ack within 300 ms
+   * it opens the editor in a named window so later clicks reuse that tab.
+   */
+  var EDITOR_WINDOW_NAME = 'node-red-editor';
+  var REVEAL_CHANNEL = 'node-red-ai-access';
+  function editorHashHref(kind, id) {
+    var base = editorRoot && editorRoot !== '/' ? String(editorRoot).replace(/\\/$/, '') + '/' : '/';
+    return base + '#' + (kind === 'flow' ? 'flow' : 'node') + '/' + encodeURIComponent(String(id));
+  }
+  function editorJumpLink(kind, id, text, extraClass) {
+    if (!id) return esc(text);
+    return '<a class="editor-jump' + (extraClass ? ' ' + extraClass : '') + '" href="' +
+      esc(editorHashHref(kind, id)) + '" target="' + EDITOR_WINDOW_NAME + '" data-reveal-kind="' +
+      esc(kind) + '" data-reveal-id="' + esc(String(id)) + '" title="Open in the Node-RED editor">' +
+      esc(text) + '</a>';
+  }
+  function revealInEditor(kind, id, href) {
+    var opened = false;
+    function openFallback() {
+      if (opened) return;
+      opened = true;
+      var w = window.open(href, EDITOR_WINDOW_NAME);
+      if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
+    }
+    if (typeof BroadcastChannel === 'undefined') { openFallback(); return; }
+    var ch;
+    try { ch = new BroadcastChannel(REVEAL_CHANNEL); } catch (e) { openFallback(); return; }
+    var reqId = String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
+    var notFound = false;
+    var timer = setTimeout(function () {
+      try { ch.close(); } catch (e) { /* ignore */ }
+      if (notFound && !opened) {
+        opened = true;
+        if (typeof showToast === 'function') {
+          showToast('Not found in the open editor (not deployed yet, or deleted)', false);
+        }
+        return;
+      }
+      openFallback();
+    }, 300);
+    ch.onmessage = function (ev) {
+      var m = ev && ev.data;
+      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || opened) return;
+      if (!m.ok) { notFound = true; return; } // another editor tab may still find it
+      opened = true;
+      clearTimeout(timer);
+      try { ch.close(); } catch (e) { /* ignore */ }
+      // Browsers do not let a page focus another tab; tell the user where it went.
+      if (typeof showToast === 'function') showToast('Shown in your open Node-RED editor tab', true);
+    };
+    ch.postMessage({ type: 'reveal', kind: kind, id: String(id), reqId: reqId });
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    var a = t && t.closest ? t.closest('a[data-reveal-id]') : null;
+    if (!a) return;
+    if (ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return; // new tab etc.
+    ev.preventDefault();
+    ev.stopPropagation();
+    revealInEditor(a.getAttribute('data-reveal-kind'), a.getAttribute('data-reveal-id'), a.getAttribute('href'));
+  });
+`;
+}
+
+export function pageClientAutoRefreshScript(): string {
+  return `
+  /*
+   * Auto-refresh when a tab left open becomes visible / focused again.
+   * Throttled; skipped while a dialog (e.g. the one-time token modal) is open or
+   * the user is typing in a field, so unsaved edits are never clobbered.
+   * Settings forms are never reloaded automatically.
+   */
+  var AUTO_REFRESH_MIN_MS = 5000;
+  var lastAutoRefresh = Date.now();
+  var autoRefreshing = false;
+  function autoRefreshBlocked() {
+    if (document.querySelector('dialog[open]')) return true;
+    var el = document.activeElement;
+    if (el && el !== document.body) {
+      var tag = (el.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable) return true;
+    }
+    return false;
+  }
+  async function autoRefresh() {
+    if (document.visibilityState === 'hidden' || autoRefreshing) return;
+    if (Date.now() - lastAutoRefresh < AUTO_REFRESH_MIN_MS || autoRefreshBlocked()) return;
+    lastAutoRefresh = Date.now();
+    autoRefreshing = true;
+    try {
+      var s = await api('/status');
+      applyStatus(s);
+      var sel = document.querySelector('[role="tab"][aria-selected="true"]');
+      var tab = sel ? sel.getAttribute('data-tab') : '';
+      if (aiOn) {
+        if (canManage) loadLinks();
+        loadProposals({ keepFlash: true });
+        loadLogs();
+      }
+      if (tab === 'oauth') { loadOAuthStatus(); loadOAuthClients(); }
+      document.documentElement.setAttribute('data-auto-refreshed', String(lastAutoRefresh));
+    } catch (e) {
+      // Quiet: the manual Refresh button still reports errors.
+    } finally {
+      autoRefreshing = false;
+    }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') autoRefresh();
+  });
+  window.addEventListener('focus', autoRefresh);
+
 `;
 }
 

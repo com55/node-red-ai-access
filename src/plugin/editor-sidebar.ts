@@ -583,6 +583,40 @@ function editorSidebarScriptBody(): string {
   return editorSidebarScriptPartA() + editorSidebarScriptPartB();
 }
 
+/**
+ * Editor-side reveal listener for dashboard jump links. Same-origin only
+ * (BroadcastChannel). Reveals a node/group (RED.view.reveal) or shows a
+ * flow/subflow tab (RED.workspaces.show) and acks so the dashboard does not
+ * open another editor tab. Ids are looked up in RED.nodes; nothing else runs.
+ */
+export function editorRevealListenerScript(): string {
+  return `(function () {
+  if (typeof RED === 'undefined' || typeof BroadcastChannel === 'undefined') return;
+  if (window.__com55AiAccessRevealListener) return;
+  window.__com55AiAccessRevealListener = true;
+  try { if (!window.name) window.name = 'node-red-editor'; } catch (e) {}
+  var ch = new BroadcastChannel('node-red-ai-access');
+  ch.onmessage = function (ev) {
+    var m = ev && ev.data;
+    if (!m || m.type !== 'reveal' || typeof m.id !== 'string' || m.id.length > 200) return;
+    var ok = false;
+    try {
+      if (m.kind === 'flow') {
+        if ((RED.nodes.workspace && RED.nodes.workspace(m.id)) || (RED.nodes.subflow && RED.nodes.subflow(m.id))) {
+          RED.workspaces.show(m.id);
+          ok = true;
+        }
+      } else if (RED.nodes.node(m.id) || (RED.nodes.group && RED.nodes.group(m.id))) {
+        RED.view.reveal(m.id);
+        ok = true;
+      }
+    } catch (e) { ok = false; }
+    ch.postMessage({ type: 'reveal-ack', reqId: m.reqId, ok: ok });
+    if (ok) { try { window.focus(); } catch (e) {} }
+  };
+})();`;
+}
+
 /** Full JS payload for GET /mcp/editor/ai-access-sidebar.js (injects CSS, then runs tab). */
 export function renderEditorSidebarJs(): string {
   const css = JSON.stringify(editorSidebarStyles());
@@ -597,6 +631,7 @@ export function renderEditorSidebarJs(): string {
     `    document.head.appendChild(style);`,
     `  }`,
     `})();`,
+    editorRevealListenerScript(),
     editorSidebarScriptBody(),
   ].join('\n');
 }

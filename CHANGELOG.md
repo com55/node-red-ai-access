@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.6] - 2026-10-28
+
+### Added
+
+- OAuth consent page signs in automatically once you sign in to the Node-RED
+  editor in another tab (it watches the editor token in `localStorage` and
+  re-checks on tab focus / visibility). Works for `adminAuth` `strategy`
+  (OIDC/passport) logins, which cannot return to the consent page by themselves.
+  The Retry button stays as a fallback.
+- Dashboard (`/ai-access`) refreshes status, access links, proposals, logs and
+  the OAuth client list when you return to a tab left open (visibility / focus,
+  at most every 5 s). It never reloads while a dialog — such as the one-time
+  token modal — is open or while you are typing in a field, and never reloads
+  settings forms.
+- Proposals view: flow names and modified/removed nodes link to the editor
+  (`#flow/<id>`, `#node/<id>`). A click reveals the item in an already open
+  editor tab (via a same-origin `BroadcastChannel` answered by the editor
+  sidebar script, using `RED.view.reveal` / `RED.workspaces.show`); with no open
+  editor it opens one in a named `node-red-editor` window that later clicks
+  reuse. Browsers do not let a page bring another tab to the front, so the
+  dashboard shows a toast when the item was revealed in the existing tab.
+
 ## [0.2.0-beta.5] - 2026-10-28
 
 ### Security

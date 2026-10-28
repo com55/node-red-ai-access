@@ -848,6 +848,10 @@ button.id-copy:focus {
 .proposal-plain-summary { margin: 0.15rem 0 0.35rem; color: var(--ink); font-size: 0.95rem; }
 .proposal-meta-line { color: var(--muted); font-size: 0.88rem; }
 .proposal-flow { color: var(--ink); font-weight: 600; }
+.editor-jump { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.editor-jump:hover { color: var(--accent, #8f0000); text-decoration-style: solid; }
+.editor-jump-small { font-size: 12px; font-weight: 500; margin-left: 6px; }
+.editor-jump-small::after { content: ' \\2197'; }
 .proposal-changes { margin: 0.35rem 0 0.55rem; }
 .delete-banner {
   margin: 0 0 0.55rem;
