@@ -40,9 +40,10 @@ import { mapErrorForChannel } from './channel-errors.js';
 import { applyDiffFormat, resolveDiffFormat } from './diff-format.js';
 import { getFlowSummary, getNodeById, getNodeField, searchFlows } from './layered-read.js';
 import { getNodeTypeDetail, listNodeTypes, searchPalette } from './node-types.js';
-import { autoClosedFields, expireStalePendingProposals } from './proposal-conflicts.js';
+import { autoClosedFields } from './proposal-conflicts.js';
 import { computeProposalDiff } from './proposal-diff.js';
 import { presentOptionsFor, presentProposalForApi } from './proposal-present.js';
+import { expireByTtl, rebaseOpenProposalsWith, tryRawLive } from './proposal-sync.js';
 import {
   accessLinkAuditActor,
   mcpOperationName,
@@ -540,13 +541,7 @@ function registerProposalTools(
           }),
           mine: true,
         };
-        const autoClosedCount = expireStalePendingProposals(
-          services.proposalStore,
-          proposal.expectedRev,
-          {
-            flowId: proposal.payload.flowId,
-          }
-        );
+        const autoClosedCount = expireByTtl(services.proposalStore);
         const conflicts = conflictWarningFields(
           findConflictingProposals(
             services.proposalStore,
@@ -616,10 +611,10 @@ function registerListProposalsTools(
   }) => {
     try {
       const include = includeSetFromPayloadFlag(args.include_payload);
-      const liveRev = await tryLiveRev(services.flowAdapter);
-      const autoClosedCount = liveRev
-        ? expireStalePendingProposals(services.proposalStore, liveRev)
-        : 0;
+      const live = await tryRawLive(services.flowAdapter);
+      const autoClosedCount = live
+        ? rebaseOpenProposalsWith(services.proposalStore, live).expired
+        : expireByTtl(services.proposalStore);
       const filter: ListProposalsFilter = {};
       if (typeof args.mine === 'boolean') {
         filter.mine = args.mine;
@@ -707,7 +702,7 @@ function registerProposalQueryTools(
     },
     async ({ id, include_payload }) => {
       try {
-        const liveRev = await tryLiveRev(services.flowAdapter);
+        const live = await tryRawLive(services.flowAdapter);
         const proposal = getAccessibleProposal(services.proposalStore, accessLink, id, presentOpts);
         return jsonResult(
           presentAccessibleProposalForApi(
@@ -718,7 +713,7 @@ function registerProposalQueryTools(
               ...presentOpts,
               include: includeSetFromPayloadFlag(include_payload),
             },
-            { ...(liveRev ? { liveRev } : {}) }
+            { ...(live ? { live } : {}) }
           )
         );
       } catch (error) {

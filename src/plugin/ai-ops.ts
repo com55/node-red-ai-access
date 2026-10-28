@@ -5,12 +5,14 @@
 
 import { FlowRevisionConflictError } from '../runtime/errors.js';
 import { normalizeFlowTab } from '../runtime/flows-util.js';
-import type { FlowAdapter, FlowTab } from '../runtime/types.js';
+import { revHistoryOf, snapshotAdapter } from '../runtime/rev-history.js';
+import type { FlowAdapter, FlowsSnapshot, FlowTab } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
   ProposalNotFoundError,
   ProposalNotOwnedError,
   ProposalNotPendingError,
+  isOpenProposalStatus,
   proposalOwnerId,
   type Proposal,
   type ProposalDecisionBy,
@@ -35,7 +37,6 @@ import { assertKnownNodeTypes, type NodeTypesAdapter } from './node-types.js';
 import {
   autoClosedFields,
   conflictWarningFields,
-  expireStalePendingProposals,
   findConflictingProposals,
   type ConflictingProposalRef,
   type ConflictingProposalsResult,
@@ -50,6 +51,8 @@ import {
   type PresentProposalApiOptions,
   type PresentProposalOptions,
 } from './proposal-present.js';
+import { applyConflictChoice, type ConflictChoice } from './proposal-rebase.js';
+import { rebaseOpenProposalsWith, syncOneProposal, syncOpenProposals } from './proposal-sync.js';
 import {
   aiRedactingAdapter,
   rawFlowAdapter,
@@ -123,6 +126,7 @@ export interface ListProposalsPage {
 
 const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
   'pending',
+  'conflict',
   'approved',
   'rejected',
   'failed',
@@ -447,7 +451,7 @@ export function withdrawMyProposal(
   if (!isMineProposal(proposal, accessLink)) {
     throw new ProposalNotOwnedError(id);
   }
-  if (proposal.status !== 'pending') {
+  if (!isOpenProposalStatus(proposal.status)) {
     throw new ProposalNotPendingError(id, proposal.status);
   }
   const cleaned =
@@ -474,7 +478,7 @@ export function conflictsForProposal(
   store: ProposalStore,
   proposal: Proposal | PresentedProposal | PresentedProposalApi,
   callerLinkId?: string,
-  options: { liveRev?: string } = {}
+  options: { live?: FlowsSnapshot } = {}
 ): Record<string, unknown> {
   // Prefer store record when we only have a presented view.
   let raw: Proposal;
@@ -483,16 +487,16 @@ export function conflictsForProposal(
   } catch {
     return {};
   }
-  // Auto-close peers (and self) that can no longer be approved against liveRev.
-  if (options.liveRev) {
-    expireStalePendingProposals(store, options.liveRev, { flowId: raw.payload.flowId });
+  // Rebase peers (and self) onto the live flows before reporting overlaps.
+  if (options.live) {
+    rebaseOpenProposalsWith(store, options.live, { flowId: raw.payload.flowId });
     try {
       raw = store.get(proposal.id);
     } catch {
       return {};
     }
   }
-  if (raw.status !== 'pending') {
+  if (!isOpenProposalStatus(raw.status)) {
     return {};
   }
   return conflictWarningFields(findConflictingProposals(store, raw, callerLinkId));
@@ -504,7 +508,7 @@ export function presentAccessibleProposalForApi(
   accessLink: AccessLinkAuthInfo,
   proposal: Proposal | PresentedProposalWithMine,
   apiOptions: PresentProposalApiOptions = {},
-  options: { includeConflicts?: boolean; liveRev?: string } = {}
+  options: { includeConflicts?: boolean; live?: FlowsSnapshot } = {}
 ): PresentedProposalApiWithMine & Record<string, unknown> {
   let presented: PresentedProposalWithMine =
     'mine' in proposal
@@ -513,12 +517,12 @@ export function presentAccessibleProposalForApi(
           ...presentProposal(proposal, apiOptions),
           mine: isMineProposal(proposal, accessLink),
         };
-  // Expire stale before presenting so list/get reflect closed status.
+  // Rebase (and TTL-expire) before presenting so list/get reflect live status.
   let autoClosedCount = 0;
-  if (options.liveRev) {
+  if (options.live) {
     try {
       const flowId = store.get(presented.id).payload.flowId;
-      autoClosedCount = expireStalePendingProposals(store, options.liveRev, { flowId });
+      autoClosedCount = rebaseOpenProposalsWith(store, options.live, { flowId }).expired;
       const refreshed = store.get(presented.id);
       presented = {
         ...presentProposal(refreshed, apiOptions),
@@ -535,8 +539,8 @@ export function presentAccessibleProposalForApi(
     mine: presented.mine,
     ...autoClosedFields(autoClosedCount),
   };
-  if (options.includeConflicts !== false && lean.status === 'pending') {
-    // Already expired above when liveRev was set — do not expire again.
+  if (options.includeConflicts !== false && isOpenProposalStatus(lean.status)) {
+    // Already rebased above when live was set — do not rebase again.
     Object.assign(out, conflictsForProposal(store, lean, accessLink.id));
   }
   return out;
@@ -745,15 +749,31 @@ function strictRestoreOrThrow(
   return restoration;
 }
 
-export async function submitReplaceFlowProposal(
-  store: ProposalStore,
-  audit: AuditLog,
-  accessLink: AccessLinkAuthInfo,
+interface PreparedSubmission {
+  safeExpectedRev: string;
+  safeFlowId: string;
+  safeFlow: Partial<FlowTab>;
+  safeBaseFlow: Partial<FlowTab>;
+  restoration: ReturnType<typeof restoreRedactedPlaceholders>;
+  flowWarnings: ReturnType<typeof secretChangeWarnings> | ProposalWarningLike[];
+  /** Live head flows at submit (raw). */
+  head: FlowsSnapshot;
+}
+
+interface ProposalWarningLike { code: string; error: string; [key: string]: unknown }
+
+/**
+ * Resolve, restore, and validate a replace_flow payload against the flows the
+ * AI read (`expectedRev`). A stale `expectedRev` is accepted when this process
+ * still knows that revision's flows (recent rev history); the proposal is then
+ * based on that snapshot and auto-rebased onto the live flows. Unknown revs
+ * still fail with `version_mismatch`.
+ */
+async function prepareReplaceFlowSubmission(
   body: SubmitReplaceFlowInput,
   adapter: FlowAdapter,
-  presentOptions: PresentProposalOptions = {},
   nodeTypesAdapter?: NodeTypesAdapter
-): Promise<PresentedProposal> {
+): Promise<PreparedSubmission> {
   const type = body.type;
   const expectedRev = resolveExpectedRev(body);
   const payload = body.payload;
@@ -771,9 +791,19 @@ export async function submitReplaceFlowProposal(
     throw new AiOpsValidationError('payload must be an object', 'invalid_payload');
   }
   const payloadObj = payload as Record<string, unknown>;
+  const rawLive = rawFlowAdapter(adapter);
+  const head = await rawLive.getFlows();
+  // Base = flows at expectedRev: live when current, else the recorded snapshot.
+  let liveAdapter = rawLive;
+  if (head.rev !== expectedRev) {
+    const known = revHistoryOf(rawLive)?.get(expectedRev);
+    if (!known) {
+      throw new FlowRevisionConflictError(expectedRev, head.rev, 'submit_proposal');
+    }
+    liveAdapter = snapshotAdapter(known, rawLive.kind);
+  }
   // Node ops run against the same redacted view the AI read; placeholders are
-  // restored from the live (raw) flows below.
-  const liveAdapter = rawFlowAdapter(adapter);
+  // restored from the base (raw) flows below.
   const resolved = await resolveReplaceFlowPayload(
     aiRedactingAdapter(liveAdapter),
     expectedRev,
@@ -804,12 +834,14 @@ export async function submitReplaceFlowProposal(
     throw new FlowRevisionConflictError(safeExpectedRev, current.rev, 'submit_proposal');
   }
   // Keep secrets the AI only saw as `[REDACTED]` (never store the placeholder).
+  // Restored from the base the AI read — a secret changed since then makes
+  // the rebase report a conflict instead of reviving the old value.
   const restoration = strictRestoreOrThrow(flow as Record<string, unknown>, current.flows);
   const safeFlow = sanitizeFlowTab(restoration.flow) as Partial<FlowTab>;
   throwValidationIssues(collectCrossFlowDuplicateIssues(safeFlow, safeFlowId, current.flows));
 
-  // Snapshot the live tab at expectedRev so later diffs stay stable if the
-  // live flow moves (other approvals, editor edits, …).
+  // Snapshot the tab at expectedRev so later diffs and rebases stay stable if
+  // the live flow moves (other approvals, editor edits, …).
   const baseSnapshot = await liveAdapter.getFlow(safeFlowId);
   if (baseSnapshot.rev !== safeExpectedRev) {
     throw new FlowRevisionConflictError(safeExpectedRev, baseSnapshot.rev, 'submit_proposal');
@@ -831,18 +863,46 @@ export async function submitReplaceFlowProposal(
       ...w,
     }))
   );
+  return {
+    safeExpectedRev,
+    safeFlowId,
+    safeFlow,
+    safeBaseFlow,
+    restoration,
+    flowWarnings,
+    head,
+  };
+}
 
-  const auditActor: {
-    kind: 'access-link';
-    linkId: string;
-    label?: string;
-  } = {
+function auditActorFor(accessLink: AccessLinkAuthInfo): {
+  kind: 'access-link';
+  linkId: string;
+  label?: string;
+} {
+  const auditActor: { kind: 'access-link'; linkId: string; label?: string } = {
     kind: 'access-link',
     linkId: accessLink.id,
   };
   if (accessLink.label !== undefined) {
     auditActor.label = accessLink.label;
   }
+  return auditActor;
+}
+
+export async function submitReplaceFlowProposal(
+  store: ProposalStore,
+  audit: AuditLog,
+  accessLink: AccessLinkAuthInfo,
+  body: SubmitReplaceFlowInput,
+  adapter: FlowAdapter,
+  presentOptions: PresentProposalOptions = {},
+  nodeTypesAdapter?: NodeTypesAdapter
+): Promise<PresentedProposal> {
+  const prepared = await prepareReplaceFlowSubmission(body, adapter, nodeTypesAdapter);
+  const { safeExpectedRev, safeFlowId, safeFlow, safeBaseFlow, restoration, flowWarnings } =
+    prepared;
+
+  const auditActor = auditActorFor(accessLink);
   const createdBy =
     accessLink.oauthClientId && accessLink.oauthUser
       ? { kind: 'oauth' as const, clientId: accessLink.oauthClientId, user: accessLink.oauthUser }
@@ -851,7 +911,7 @@ export async function submitReplaceFlowProposal(
   const title =
     sanitizeProposalTitle(body.title) ?? autoGenerateProposalTitle(safeBaseFlow, safeFlow);
 
-  const proposal = store.create({
+  const created = store.create({
     type: 'replace_flow',
     expectedRev: safeExpectedRev,
     payload: {
@@ -866,6 +926,8 @@ export async function submitReplaceFlowProposal(
     createdBy,
     ...(flowWarnings.length > 0 ? { warnings: flowWarnings } : {}),
   });
+  // Rebase immediately (stale expectedRev, or flows moved during validation).
+  const proposal = syncOneProposal(store, created, prepared.head).proposal;
 
   const presented = presentProposal(redactProposalForAi(proposal), presentOptions);
 
@@ -874,6 +936,8 @@ export async function submitReplaceFlowProposal(
     proposalId: proposal.id,
     flowId: safeFlowId,
     expectedRev: safeExpectedRev,
+    ...(prepared.head.rev !== safeExpectedRev ? { liveRev: prepared.head.rev } : {}),
+    ...(proposal.rebase ? { rebaseState: proposal.rebase.state } : {}),
     title: presented.title,
     displayName: presented.displayName,
     ...(flowLabel ? { flowLabel } : {}),
@@ -882,6 +946,156 @@ export async function submitReplaceFlowProposal(
   });
 
   return presented;
+}
+
+/**
+ * AI conflict resolution: replace the body of the caller's own open proposal
+ * with a fresh payload based on `expectedRev` (normally the current rev).
+ * Same validation and secret restoration as submit; status returns to
+ * `pending` and the proposal is rebased right away.
+ */
+export async function resolveMyProposal(
+  store: ProposalStore,
+  audit: AuditLog,
+  accessLink: AccessLinkAuthInfo,
+  id: string,
+  body: SubmitReplaceFlowInput,
+  adapter: FlowAdapter,
+  presentOptions: PresentProposalOptions = {},
+  nodeTypesAdapter?: NodeTypesAdapter
+): Promise<PresentedProposalWithMine> {
+  if (!id) {
+    throw new AiOpsValidationError('Missing proposal id', 'missing_proposal_id');
+  }
+  const existing = store.get(id);
+  if (!isMineProposal(existing, accessLink)) {
+    throw new ProposalNotOwnedError(id);
+  }
+  if (!isOpenProposalStatus(existing.status)) {
+    throw new ProposalNotPendingError(id, existing.status);
+  }
+  const prepared = await prepareReplaceFlowSubmission(
+    { type: 'replace_flow', ...body },
+    adapter,
+    nodeTypesAdapter
+  );
+  if (prepared.safeFlowId !== existing.payload.flowId) {
+    throw new AiOpsValidationError(
+      `payload.flowId must stay '${existing.payload.flowId}' (submit a new proposal for another flow)`,
+      'flow_id_mismatch'
+    );
+  }
+  const updated = store.updateBody(id, {
+    baseFlow: prepared.safeBaseFlow,
+    flow: prepared.safeFlow,
+    expectedRev: prepared.safeExpectedRev,
+    restoredSecrets: prepared.restoration.restoredFields,
+    warnings: prepared.flowWarnings,
+  });
+  const proposal = syncOneProposal(store, updated, prepared.head).proposal;
+  const presented = presentProposal(redactProposalForAi(proposal), presentOptions);
+  audit.append('proposal.resolved', auditActorFor(accessLink), {
+    proposalId: id,
+    flowId: proposal.payload.flowId,
+    expectedRev: prepared.safeExpectedRev,
+    title: presented.title,
+    displayName: presented.displayName,
+    ...(proposal.rebase ? { rebaseState: proposal.rebase.state } : {}),
+  });
+  return { ...presented, mine: true };
+}
+
+/**
+ * Dashboard conflict resolution for one conflict: keep the live node
+ * (`live`) or keep the proposal's version over it (`proposed`), then re-check.
+ */
+export async function resolveConflictChoice(
+  store: ProposalStore,
+  audit: AuditLog,
+  actor: ProposalDecisionBy,
+  id: string,
+  nodeId: unknown,
+  choice: unknown,
+  adapter: FlowAdapter
+): Promise<Proposal> {
+  if (choice !== 'live' && choice !== 'proposed') {
+    throw new AiOpsValidationError("choice must be 'live' or 'proposed'", 'invalid_choice');
+  }
+  if (typeof nodeId !== 'string' || nodeId.length === 0 || nodeId.length > 200) {
+    throw new AiOpsValidationError('nodeId is required', 'missing_node_id');
+  }
+  const proposal = store.get(id);
+  if (!isOpenProposalStatus(proposal.status)) {
+    throw new ProposalNotPendingError(id, proposal.status);
+  }
+  const live = await rawFlowAdapter(adapter).getFlows();
+  // Re-check first so the choice applies to the conflicts as they are now.
+  const checked = syncOneProposal(store, proposal, live).proposal;
+  const conflict = checked.rebase?.conflicts.find(c => c.nodeId === nodeId);
+  if (!conflict) {
+    throw new AiOpsValidationError(
+      'No current conflict for that node (it may already be resolved). Reload the proposal.',
+      'conflict_not_found',
+      { statusCode: 409 }
+    );
+  }
+  if (!conflict.choices.includes(choice)) {
+    throw new AiOpsValidationError(
+      'That choice is not available for this conflict.',
+      'invalid_choice'
+    );
+  }
+  let next: { base: Partial<FlowTab>; proposed: Partial<FlowTab> };
+  try {
+    next = applyConflictChoice({
+      flowId: checked.payload.flowId,
+      base: checked.baseFlow,
+      proposed: checked.payload.flow,
+      liveFlows: live.flows,
+      nodeId,
+      choice,
+    });
+  } catch {
+    throw new AiOpsValidationError('This conflict cannot be resolved by hand.', 'invalid_choice');
+  }
+  const updated = store.updateBody(id, {
+    baseFlow: sanitizeFlowTab(next.base),
+    flow: sanitizeFlowTab(next.proposed),
+  });
+  const result = syncOneProposal(store, updated, live).proposal;
+  audit.append('proposal.conflict_resolved', actor, {
+    proposalId: id,
+    flowId: result.payload.flowId,
+    nodeId,
+    choice,
+    kind: conflict.kind,
+    status: result.status,
+  });
+  return result;
+}
+
+/** Async rebase of all open proposals (used by list endpoints). */
+export { syncOpenProposals };
+
+/**
+ * Adapter view at `rev`: the live adapter when `rev` is current, a read-only
+ * view of the recorded snapshot when `rev` is a recent known revision, else
+ * the live adapter (the caller's own rev check then reports the mismatch).
+ * Keeps the redacting wrapper when `adapter` is an AI view.
+ */
+export async function adapterAtRev(adapter: FlowAdapter, rev: string): Promise<FlowAdapter> {
+  const raw = rawFlowAdapter(adapter);
+  let headRev: string;
+  try {
+    headRev = (await raw.getFlows()).rev;
+  } catch {
+    return adapter;
+  }
+  if (headRev === rev) return adapter;
+  const known = revHistoryOf(raw)?.get(rev);
+  if (!known) return adapter;
+  const view = snapshotAdapter(known, raw.kind);
+  return adapter === raw ? view : aiRedactingAdapter(view);
 }
 
 /**

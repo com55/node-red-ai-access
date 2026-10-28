@@ -9,6 +9,7 @@ import {
   PLUGIN_MISCONFIGURED_HTTP_AUTH_MESSAGE,
   PluginMisconfiguredError,
 } from '../runtime/errors.js';
+import { withRevHistory } from '../runtime/rev-history.js';
 import type { FlowAdapter, RedRuntimeHost } from '../runtime/types.js';
 import { AuditLog } from '../storage/audit-log.js';
 import { ensureAiAccessDirs, resolveAiAccessPaths } from '../storage/paths.js';
@@ -117,6 +118,9 @@ export function createPluginServices(
       flowAdapter = misconfiguredAdapter(message);
     }
   }
+  // Remember recent revs so a slightly stale expectedRev can still be based
+  // on the flows the AI read (then auto-rebased).
+  flowAdapter = withRevHistory(flowAdapter);
   let nodeTypesAdapter: NodeTypesAdapter;
   if (options.nodeTypesAdapter) {
     nodeTypesAdapter = options.nodeTypesAdapter;

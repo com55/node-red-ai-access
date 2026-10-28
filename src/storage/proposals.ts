@@ -18,7 +18,43 @@ import {
 import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
 
 export type ProposalStatus =
-  'pending' | 'approved' | 'rejected' | 'failed' | 'withdrawn' | 'expired' | 'superseded';
+  | 'pending'
+  | 'conflict'
+  | 'approved'
+  | 'rejected'
+  | 'failed'
+  | 'withdrawn'
+  | 'expired'
+  | 'superseded';
+
+/** Open = still awaiting a decision (`conflict` is pending with approve blocked). */
+export function isOpenProposalStatus(status: ProposalStatus): boolean {
+  return status === 'pending' || status === 'conflict';
+}
+
+/** One stored rebase conflict (field names only — never values). */
+export interface StoredRebaseConflict {
+  kind: string;
+  nodeId?: string;
+  nodeType?: string;
+  nodeName?: string;
+  fields?: string[];
+  message: string;
+  choices: ('live' | 'proposed')[];
+}
+
+/** Result of the last auto-rebase check against the live flows. */
+export interface ProposalRebaseInfo {
+  /** Live rev the check ran against. */
+  rev: string;
+  state: 'clean' | 'merged' | 'conflict';
+  /** Hash of the tab approve would deploy (absent on conflict). */
+  mergedHash?: string;
+  conflicts: StoredRebaseConflict[];
+  /** Nodes (or the tab) changed live since the base snapshot. */
+  liveChangedCount: number;
+  checkedAt: string;
+}
 
 export type ProposalType = 'replace_flow';
 
@@ -76,6 +112,8 @@ export interface Proposal {
   warnings?: ProposalWarning[];
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
+  /** Last auto-rebase result (pending / conflict proposals). */
+  rebase?: ProposalRebaseInfo;
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -142,6 +180,7 @@ export class ProposalConcurrentApproveError extends Error {
 function isProposalStatus(value: unknown): value is ProposalStatus {
   return (
     value === 'pending' ||
+    value === 'conflict' ||
     value === 'approved' ||
     value === 'rejected' ||
     value === 'failed' ||
@@ -152,6 +191,77 @@ function isProposalStatus(value: unknown): value is ProposalStatus {
 }
 
 const MAX_STORED_WARNINGS = 50;
+
+function cleanText(value: unknown, max: number): string | undefined {
+  return typeof value === 'string' && value.length > 0
+    ? value.replace(/\0/g, '').slice(0, max)
+    : undefined;
+}
+
+function sanitizeRebaseInfo(raw: unknown): ProposalRebaseInfo | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const rev = cleanText(obj.rev, 200);
+  const state = obj.state;
+  if (!rev || (state !== 'clean' && state !== 'merged' && state !== 'conflict')) return undefined;
+  const conflicts: StoredRebaseConflict[] = [];
+  if (Array.isArray(obj.conflicts)) {
+    for (const entry of obj.conflicts.slice(0, 200)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const c = entry as Record<string, unknown>;
+      const kind = cleanText(c.kind, 64);
+      const message = cleanText(c.message, 500);
+      if (!kind || !message) continue;
+      const out: StoredRebaseConflict = {
+        kind,
+        message,
+        choices: Array.isArray(c.choices)
+          ? (c.choices.filter(x => x === 'live' || x === 'proposed') as ('live' | 'proposed')[])
+          : [],
+      };
+      const nodeId = cleanText(c.nodeId, 200);
+      if (nodeId) out.nodeId = nodeId;
+      const nodeType = cleanText(c.nodeType, 200);
+      if (nodeType) out.nodeType = nodeType;
+      const nodeName = cleanText(c.nodeName, 120);
+      if (nodeName) out.nodeName = nodeName;
+      if (Array.isArray(c.fields)) {
+        out.fields = c.fields
+          .filter((f): f is string => typeof f === 'string' && f.length > 0)
+          .slice(0, 100)
+          .map(f => f.replace(/\0/g, '').slice(0, 200));
+      }
+      conflicts.push(out);
+    }
+  }
+  const info: ProposalRebaseInfo = {
+    rev,
+    state,
+    conflicts,
+    liveChangedCount:
+      typeof obj.liveChangedCount === 'number' && Number.isFinite(obj.liveChangedCount)
+        ? Math.max(0, Math.floor(obj.liveChangedCount))
+        : 0,
+    checkedAt: cleanText(obj.checkedAt, 64) ?? '',
+  };
+  const mergedHash = cleanText(obj.mergedHash, 64);
+  if (mergedHash && /^[0-9a-f]+$/.test(mergedHash)) info.mergedHash = mergedHash;
+  return info;
+}
+
+export class ProposalConflictError extends Error {
+  readonly code = 'proposal_conflict' as const;
+  readonly statusCode = 409;
+  readonly conflicts: StoredRebaseConflict[];
+  constructor(id: string, conflicts: StoredRebaseConflict[]) {
+    super(
+      `Proposal '${id}' conflicts with changes made in the editor since it was submitted; ` +
+        'resolve the conflicts before approving.'
+    );
+    this.name = 'ProposalConflictError';
+    this.conflicts = conflicts;
+  }
+}
 
 /** Field references only (node id + path), never values. */
 function sanitizeRestoredSecrets(raw: unknown): { nodeId: string; property: string }[] | undefined {
@@ -298,6 +408,13 @@ export class ProposalStore {
     if (restored) {
       record.restoredSecrets = restored;
     }
+    const rebase = sanitizeRebaseInfo(proposal.rebase);
+    if (rebase && isOpenProposalStatus(record.status)) {
+      record.rebase = rebase;
+    } else if (rebase && rebase.state !== 'conflict') {
+      // Keep the last clean/merged check on decided records (audit context).
+      record.rebase = rebase;
+    }
 
     if (proposal.decidedBy) {
       if (proposal.decidedBy.kind === 'access-link') {
@@ -414,7 +531,7 @@ export class ProposalStore {
       throw new ProposalConcurrentApproveError(id);
     }
     const proposal = this.get(id);
-    if (proposal.status !== 'pending') {
+    if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
     this.inFlight.add(id);
@@ -461,7 +578,7 @@ export class ProposalStore {
 
   markWithdrawn(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
     const proposal = this.get(id);
-    if (proposal.status !== 'pending') {
+    if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
     proposal.status = 'withdrawn';
@@ -474,7 +591,7 @@ export class ProposalStore {
 
   /**
    * Auto-close a pending proposal that can no longer be approved
-   * (`expired` = live rev moved; `superseded` = another proposal was approved).
+   * (`expired` = pending longer than the proposal TTL).
    */
   markClosed(
     id: string,
@@ -483,7 +600,7 @@ export class ProposalStore {
     decidedBy?: ProposalDecisionBy
   ): Proposal {
     const proposal = this.get(id);
-    if (proposal.status !== 'pending') {
+    if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
     proposal.status = status;
@@ -494,5 +611,78 @@ export class ProposalStore {
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
     return this.get(id);
+  }
+
+  /**
+   * Store the latest rebase check and flip `pending` ↔ `conflict`.
+   * No-op (no write) when nothing changed. Skips decided or in-flight records.
+   */
+  recordRebase(id: string, info: ProposalRebaseInfo): Proposal {
+    const proposal = this.get(id);
+    if (!isOpenProposalStatus(proposal.status)) {
+      return proposal;
+    }
+    const nextStatus: ProposalStatus = info.state === 'conflict' ? 'conflict' : 'pending';
+    const prev = proposal.rebase;
+    const same =
+      proposal.status === nextStatus &&
+      prev !== undefined &&
+      prev.rev === info.rev &&
+      prev.state === info.state &&
+      prev.mergedHash === info.mergedHash &&
+      prev.liveChangedCount === info.liveChangedCount &&
+      JSON.stringify(prev.conflicts) === JSON.stringify(info.conflicts);
+    if (same) {
+      return proposal;
+    }
+    proposal.status = nextStatus;
+    proposal.rebase = info;
+    proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  /**
+   * Replace an open proposal's base snapshot and/or body (conflict resolution).
+   * Status returns to `pending`; the caller re-runs the rebase.
+   */
+  updateBody(
+    id: string,
+    update: {
+      baseFlow: Partial<FlowTab>;
+      flow: Partial<FlowTab>;
+      expectedRev?: string;
+      restoredSecrets?: { nodeId: string; property: string }[];
+      warnings?: ProposalWarning[];
+    }
+  ): Proposal {
+    const proposal = this.get(id);
+    if (!isOpenProposalStatus(proposal.status)) {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+    if (this.inFlight.has(id)) {
+      throw new ProposalConcurrentApproveError(id);
+    }
+    proposal.baseFlow = update.baseFlow;
+    proposal.payload = { flowId: proposal.payload.flowId, flow: update.flow };
+    if (update.expectedRev !== undefined) proposal.expectedRev = update.expectedRev;
+    if (update.restoredSecrets !== undefined) {
+      if (update.restoredSecrets.length > 0) proposal.restoredSecrets = update.restoredSecrets;
+      else delete proposal.restoredSecrets;
+    }
+    if (update.warnings !== undefined) {
+      if (update.warnings.length > 0) proposal.warnings = update.warnings;
+      else delete proposal.warnings;
+    }
+    proposal.status = 'pending';
+    delete proposal.rebase;
+    proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  /** True while an approve holds this proposal's lock. */
+  isApproving(id: string): boolean {
+    return this.inFlight.has(id);
   }
 }
