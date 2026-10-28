@@ -1468,13 +1468,14 @@ function pageClientScriptPartB(): string {
    * plus a strong banner when that node's destination or code changed.
    */
   var SECRET_WARN_CODES = ['secret_destination_changed', 'secret_node_code_changed',
-    'secret_wires_changed', 'secret_scope_changed', 'outbound_node_changed', 'secret_tab_changed'];
+    'secret_wires_changed', 'secret_scope_changed', 'outbound_node_changed', 'secret_tab_changed',
+    'secret_reference_added'];
   function renderRestoredSecrets(p) {
     var fields = p && Array.isArray(p.restoredSecrets) ? p.restoredSecrets : [];
-    if (!fields.length) return '';
     var warns = (p && Array.isArray(p.warnings) ? p.warnings : []).filter(function (w) {
       return w && SECRET_WARN_CODES.indexOf(w.code) >= 0;
     });
+    if (!fields.length && !warns.length) return '';
     var strong = warns.some(function (w) { return w.code !== 'secret_node_code_changed'; });
     var items = fields.map(function (f) {
       return '<li><code>' + esc(String(f.nodeId)) + '</code> · <code>' + esc(String(f.property)) + '</code></li>';
@@ -1486,12 +1487,15 @@ function pageClientScriptPartB(): string {
       '" role="' + (strong ? 'alert' : 'status') + '">' +
       '<p class="proposal-warnings-title">' +
       esc(strong
-        ? 'Warning: secrets were restored and this proposal changes what could send them elsewhere'
+        ? 'Security review: this proposal changes what could send data (or secrets) elsewhere'
         : 'Secrets restored from the live flow (' + fields.length + ')') +
       '</p>' +
       (warnItems ? '<ul>' + warnItems + '</ul>' : '') +
-      '<p class="muted">The AI saw [REDACTED] in these fields; approving keeps the real values:</p>' +
-      '<ul>' + items + '</ul></div>';
+      (fields.length
+        ? '<p class="muted">The AI saw [REDACTED] in these fields; approving keeps the real values:</p>' +
+          '<ul>' + items + '</ul>'
+        : '') +
+      '</div>';
   }
 
   function renderValidationWarnings(warnings, opts) {

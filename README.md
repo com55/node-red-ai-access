@@ -163,12 +163,18 @@ with `[REDACTED]`. The dashboard (admin session) always shows real values.
 - Redacted nodes list the redacted field paths in `_aiRedactions`.
 - Also caught: connection strings / DSNs (`Server=…;Password=…;`), URL query
   params with a secret name (`?key=abc123&x=1` → only `abc123`), unquoted
-  `password: x` / `token=x` in non-code text fields (the value must contain a
-  digit or symbol, so prose like `Session: started` or `key: value` is kept),
-  and `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
+  `password: x` / `token=x` in non-code text fields, and
+  `Buffer.from("user:pw")` / `btoa('user:pw')` basic-auth literals. Node
   `name`/`label`/`info` are content-scanned only (no key-name rule). Any single
-  string field over 256 KB, or one whose scan exceeds a 150 ms budget, is sent
-  to AI as `[REDACTED]`. All patterns are length-bounded / linear (no ReDoS).
+  string field over 256 KB is sent to AI as `[REDACTED]` (decided by length
+  only, so reads and submits always agree). All patterns are length-bounded /
+  linear (no ReDoS).
+- **Unquoted values** depend on name strength. Strong names
+  (`PASSWORD PASSWD PASSPHRASE SECRET CLIENT_SECRET TOKEN API_KEY APIKEY PRIVATE CREDENTIAL PWD PW`):
+  any value of 3+ chars except `none`/`null`/`${VAR}`-style references. Weak
+  names (`KEY AUTH SESSION COOKIE CONN PASS …` and custom patterns): the value
+  must look random — a digit or symbol, 16+ chars, 3+ character classes, or
+  Shannon entropy ≥ 3 — so prose like `Session: started` / `key: value` stays.
 - **Proposals (strict restore)**: a `[REDACTED]` placeholder is restored to the
   original secret on submit only when it stays exactly where it was shown: same
   node id and field, env and name/value entries (headers, change rules) matched
@@ -186,9 +192,20 @@ with `[REDACTED]`. The dashboard (admin session) always shows real values.
   config node it uses, changed), `outbound_node_changed` (an http, mqtt, tcp,
   udp, email, websocket, function, exec or file node was added/changed), and
   `secret_tab_changed` (any other node in the tab changed).
+- Always flagged (with or without restored secrets): `outbound_node_changed` for
+  any added/changed http request/response, mqtt, tcp, udp, email, websocket,
+  link out/call, function, exec or file node — or any node type with a
+  `url`/`host`/`server`/`broker`/`endpoint` field — and `secret_reference_added`
+  when added/changed code or config reads a secret-named value (`env.get("X")`,
+  `$env('X')`, `${X}`, `global.get`, `flow.get`, typed inputs of type
+  `env`/`global`/`flow`).
 - Node-RED credentials (and `cred` env entries) are never part of flow output.
 - The audit log records `ai.redacted` with the count per response (never
   values).
+
+**Redaction is not exfiltration protection.** It keeps secret values out of what
+the AI reads; it cannot stop an approved flow from sending data. Review every
+proposal — especially red security banners — before approving.
 
 **Limits — redaction is best-effort.** Detection uses names and known token
 formats; secrets with unusual names or formats can still reach AI. Strict

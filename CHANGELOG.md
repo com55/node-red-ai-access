@@ -10,13 +10,21 @@ and this project adheres to
 
 ### Security
 
+- `outbound_node_changed` (now incl. http response, link out/call and
+  third-party nodes with url/host fields) and new `secret_reference_added`
+  (code/config newly reading a secret-named env/global/flow value) are emitted
+  on every proposal, not only when secrets were restored; red approve banner.
+- Unquoted values: strong secret names redact any value; weak names need a
+  random-looking value (digit/symbol, 16+ chars, or high entropy).
+- Full-field redaction is decided by length only (no time budget), so reads and
+  submits agree.
 - Redaction scanning is linear-time: the connection-string rule is a plain split
-  (was quadratic: 250k chars took ~46 s), every regex is length-bounded, and a
-  150 ms per-field budget hides the whole field from AI if exceeded.
+  (was quadratic: 250k chars took ~46 s), every regex is length-bounded, and
+  fields over 256 KB are hidden whole.
 - More reviewer warnings when secrets are restored: `secret_wires_changed`,
   `secret_scope_changed`, `outbound_node_changed`, `secret_tab_changed`.
-- Secret-named URL query params are redacted; unquoted `key: value` needs a
-  digit or symbol in the value; duplicate header names restore one-to-one.
+- Secret-named URL query params are redacted; duplicate header names restore
+  one-to-one.
 - Strict placeholder restore on proposal submit: `[REDACTED]` becomes the real
   secret only in its original node/field/line, env and header entries matched by
   exact name (never by index); added, duplicated, moved or renamed placeholders

@@ -348,7 +348,49 @@ function buildContentRules(matcher: SecretNameMatcher): ContentRule[] {
 }
 
 /** Unquoted `password: hunter2` / `token=abc` (text and config fields, not JS code). */
+/** Names that are unambiguous secrets: any unquoted value counts. */
+export const STRONG_SECRET_NAME_PATTERNS = [
+  'PASSWORD',
+  'PASSWD',
+  'PASSPHRASE',
+  'SECRET',
+  'CLIENT_SECRET',
+  'TOKEN',
+  'API_KEY',
+  'APIKEY',
+  'PRIVATE',
+  'CREDENTIAL',
+  'PWD',
+  'PW',
+];
+
+function shannonEntropy(s: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of s) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let h = 0;
+  for (const n of counts.values()) {
+    const p = n / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
+/**
+ * Weak names (KEY, AUTH, SESSION, COOKIE, CONN, PASS, custom…) appear in prose,
+ * so their unquoted values must look random: a digit or symbol, 16+ chars,
+ * or high entropy (3+ character classes, or Shannon entropy ≥ 3 bits/char).
+ */
+function looksRandom(s: string): boolean {
+  if (/[^A-Za-z]/.test(s) || s.length >= 16) return true;
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter(r => r.test(s)).length;
+  return classes >= 3 || shannonEntropy(s) >= 3;
+}
+
 function unquotedRule(matcher: SecretNameMatcher): ContentRule {
+  const strongList = matcher.patterns.filter(p =>
+    STRONG_SECRET_NAME_PATTERNS.includes(p.toUpperCase())
+  );
+  const strong = createSecretNameMatcher(strongList);
   return {
     hints: [':', '='],
     re: /(?<![\w$.-])(?<k>[A-Za-z_][\w-]{0,63})[ \t]{0,8}(?::(?!\/\/)|=)[ \t]{0,8}(?<s>[^\s;,'"`&<>(){}[\]]{3,1024})/dg,
@@ -357,9 +399,8 @@ function unquotedRule(matcher: SecretNameMatcher): ContentRule {
       isSecretLikeValue(s) &&
       !s.startsWith('$') &&
       !s.startsWith('{{') &&
-      // Prose like `Session: started` / `key: value`: plain words are skipped;
-      // a value must contain a digit or symbol to count as a secret.
-      /[^A-Za-z]/.test(s) &&
+      // Strong names: any value. Weak names: must look random (see looksRandom).
+      (strong.matches(m.groups?.k ?? '') || looksRandom(s)) &&
       // Skip code-ish references: `msg.password`, `env.get(`, `flow.get(...)`.
       !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(s) &&
       m.input.charAt(m.indices?.groups?.s?.[1] ?? 0) !== '(',
@@ -435,9 +476,6 @@ function connectionStringSpans(text: string, matcher: SecretNameMatcher): Span[]
   return out;
 }
 
-/** Per-field time budget; over budget the whole field is hidden from AI. */
-export const SCAN_TIME_BUDGET_MS = 150;
-
 const unquotedCache = new WeakMap<SecretNameMatcher, ContentRule>();
 
 export interface ScanOptions {
@@ -467,13 +505,9 @@ export function scanTextForSecrets(
     }
     rules = [...rules, extra];
   }
-  const started = performance.now();
   spans.push(...connectionStringSpans(text, matcher));
   for (const rule of rules) {
     if (rule.hints && !rule.hints.some(h => text.includes(h))) continue;
-    if (performance.now() - started > SCAN_TIME_BUDGET_MS) {
-      return { text: REDACTED_PLACEHOLDER, secrets: [text] };
-    }
     rule.re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = rule.re.exec(text)) !== null) {
@@ -1012,7 +1046,8 @@ export type SecretChangeCode =
   | 'secret_wires_changed'
   | 'secret_scope_changed'
   | 'outbound_node_changed'
-  | 'secret_tab_changed';
+  | 'secret_tab_changed'
+  | 'secret_reference_added';
 
 export interface SecretChangeWarning {
   code: SecretChangeCode;
@@ -1024,6 +1059,9 @@ export interface SecretChangeWarning {
 /** Node types that can send data off the box. */
 const OUTBOUND_TYPES = new Set([
   'http request',
+  'http response',
+  'link out',
+  'link call',
   'mqtt out',
   'mqtt-broker',
   'tcp out',
@@ -1037,6 +1075,58 @@ const OUTBOUND_TYPES = new Set([
   'exec',
   'file',
 ]);
+
+/** Fields that make an unknown (third-party) node type look outbound. */
+const OUTBOUND_HINT_KEYS = ['url', 'host', 'hostname', 'server', 'broker', 'endpoint', 'uri'];
+
+function isOutboundNode(node: Record<string, unknown>): boolean {
+  if (typeof node.type === 'string' && OUTBOUND_TYPES.has(node.type)) return true;
+  return OUTBOUND_HINT_KEYS.some(k => typeof node[k] === 'string' && node[k] !== '');
+}
+
+/** Typed-input / pair keys whose `env` / `global` / `flow` type makes the value a name reference. */
+const REF_TYPES = new Set(['env', 'global', 'flow']);
+
+/**
+ * Names of env/context values a node reads: `env.get("X")`, `$env("X")`,
+ * `${X}`, `global.get("X")`, `flow.get("X")`, and typed inputs whose type is
+ * `env` / `global` / `flow` (`fooType`, `vt`, `valueType`, `tot`, …).
+ */
+export function referencedNames(node: unknown): Set<string> {
+  const out = new Set<string>();
+  const walk = (v: unknown, depth: number): void => {
+    if (depth > 12) return;
+    if (typeof v === 'string') {
+      if (v.length > MAX_SCAN_FIELD_CHARS) return;
+      const re =
+        /(?:\b(?:env|global|flow)\.get|\$env)\([ \t]{0,8}["'`]([^"'`\r\n]{1,128})["'`]|\$\{([A-Za-z_][\w.-]{0,127})\}/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(v)) !== null) out.add(m[1] ?? m[2] ?? '');
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x, depth + 1);
+      return;
+    }
+    if (!isPlainObject(v)) return;
+    for (const [k, x] of Object.entries(v)) {
+      const typeKeys = [
+        `${k}Type`,
+        k === 'v' ? 'vt' : '',
+        k === 'to' ? 'tot' : '',
+        k === 'value' ? 'type' : '',
+        k === 'valueValue' ? 'valueType' : '',
+        k === 'keyValue' ? 'keyType' : '',
+      ];
+      const typed = typeKeys.some(t => t && typeof v[t] === 'string' && REF_TYPES.has(v[t]));
+      if (typed && typeof x === 'string') out.add(x);
+      walk(x, depth + 1);
+    }
+  };
+  walk(node, 0);
+  out.delete('');
+  return out;
+}
 
 /** Layout-only keys ignored when deciding whether a node "changed". */
 const LAYOUT_KEYS = new Set(['x', 'y', 'w', 'h', 'l']);
@@ -1161,31 +1251,47 @@ function scopeWarnings(
   return out;
 }
 
-/** Added/changed outbound nodes, and any other change in the tab. */
+/** Added/changed outbound nodes, secret-name references, and other tab changes. */
 function tabWarnings(
   ids: readonly string[],
   live: NodeMap,
   proposed: NodeMap,
-  tabId: string
+  tabId: string,
+  matcher: SecretNameMatcher
 ): SecretChangeWarning[] {
   const out: SecretChangeWarning[] = [];
   const otherChanged: string[] = [];
   for (const [nid, after] of proposed) {
-    if (nid === tabId || ids.includes(nid)) continue;
+    if (nid === tabId) continue;
     const before = live.get(nid);
     if (before && !nodeChanged(before, after)) continue;
-    otherChanged.push(nid);
-    if (typeof after.type === 'string' && OUTBOUND_TYPES.has(after.type)) {
+    if (!ids.includes(nid)) otherChanged.push(nid);
+    const type = typeof after.type === 'string' ? after.type : 'node';
+    if (isOutboundNode(after) && !ids.includes(nid)) {
       out.push({
         code: 'outbound_node_changed',
         error:
-          `SECURITY: this proposal carries restored secrets and ${before ? 'changes' : 'adds'} ` +
-          `outbound-capable node ${nid} (${after.type}). Check it cannot send secret data elsewhere.`,
+          `SECURITY: this proposal ${before ? 'changes' : 'adds'} outbound-capable node ${nid} ` +
+          `(${type}). Check where it sends data before approving.`,
         nodeId: nid,
         property: 'type',
       });
     }
+    const had = before ? referencedNames(before) : new Set<string>();
+    const added = [...referencedNames(after)].filter(n => !had.has(n) && matcher.matches(n));
+    if (added.length > 0) {
+      out.push({
+        code: 'secret_reference_added',
+        error:
+          `SECURITY: node ${nid} (${type}) now reads secret-named value(s) ${added.slice(0, 5).join(', ')} ` +
+          '(env / global / flow). The AI cannot see these values but the flow will use them at runtime; ' +
+          'check they are not sent anywhere unexpected.',
+        nodeId: nid,
+        property: added.slice(0, 5).join(','),
+      });
+    }
   }
+  if (ids.length === 0) return out;
   for (const [nid, before] of live) {
     if (before.z === tabId && !proposed.has(nid)) otherChanged.push(nid);
   }
@@ -1226,10 +1332,10 @@ function proposedNodeMap(flow: Record<string, unknown>, tabId: string): NodeMap 
 export function secretChangeWarnings(
   restoredFields: readonly RestoredField[],
   flow: Record<string, unknown>,
-  liveFlows: readonly Record<string, unknown>[]
+  liveFlows: readonly Record<string, unknown>[],
+  patterns: readonly string[] = currentSecretNamePatterns()
 ): SecretChangeWarning[] {
   const ids = [...new Set(restoredFields.map(f => f.nodeId))];
-  if (ids.length === 0) return [];
   const tabId = String(flow.id);
   const live: NodeMap = new Map();
   for (const n of liveFlows) if (isPlainObject(n) && typeof n.id === 'string') live.set(n.id, n);
@@ -1243,6 +1349,6 @@ export function secretChangeWarnings(
     out.push(...secretNodeWarnings(id, restoredFieldList(restoredFields, id), before, after));
     out.push(...scopeWarnings(id, before, live, proposed, tabId, flagged));
   }
-  out.push(...tabWarnings(ids, live, proposed, tabId));
+  out.push(...tabWarnings(ids, live, proposed, tabId, createSecretNameMatcher(patterns)));
   return out;
 }

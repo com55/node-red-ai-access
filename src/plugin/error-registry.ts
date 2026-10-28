@@ -333,7 +333,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   e(
     'outbound_node_changed',
     201,
-    'Warning: proposal with restored secrets adds/changes an outbound-capable node (http, mqtt, tcp, udp, email, websocket, function, exec, file)',
+    'Warning: proposal adds/changes an outbound-capable node (http request/response, mqtt, tcp, udp, email, websocket, link out/call, function, exec, file, or any node with url/host fields)',
     'Reviewer must check it cannot send secret data elsewhere',
     ALL,
     'warning'
@@ -343,6 +343,14 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     201,
     'Warning: proposal with restored secrets also changes other nodes in the tab',
     'Review every change before approving',
+    ALL,
+    'warning'
+  ),
+  e(
+    'secret_reference_added',
+    201,
+    'Warning: an added/changed node now reads a secret-named env/global/flow value (env.get, $env, ${…}, typed input)',
+    'Reviewer must check the value is not sent anywhere unexpected',
     ALL,
     'warning'
   ),
