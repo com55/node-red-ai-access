@@ -29,15 +29,24 @@ and this project adheres to
 - Editor sidebar: Public URL "Check" result is shown as a clear green/red
   status; loopback notes and the trust proxy state are moved into a muted,
   collapsible "About the check" section with human-readable wording.
-
+- OAuth route collision check also honours `httpStaticRoot` (and per-entry
+  `httpStatic` roots).
 - `/mcp` page Access links: the area under the form now always shows generic
   usage (with a `<YOUR_TOKEN>` placeholder) for the currently selected channel
   and updates when the channel changes. The real token and client setup are
   shown once in a modal right after creation; closing it removes the token from
   the page.
-- Access tokens can no longer be viewed or copied after creation:
-  `GET /mcp/api/v1/links` no longer returns `token` or `url`, and the links
-  table only offers Revoke.
+- Access link create/list responses are sent with `Cache-Control: no-store` and
+  `Pragma: no-cache`.
+- Access link tokens are kept in memory as a SHA-256 hash only (the raw token is
+  no longer retained after creation).
+
+### Breaking
+
+- **Access tokens can no longer be viewed or copied after creation:**
+  `GET /mcp/api/v1/links` no longer returns `token` (rest/mcp) or `url`
+  (get_link), and the links table only offers Revoke. Revoke and create a new
+  token instead.
 
 ### Added
 

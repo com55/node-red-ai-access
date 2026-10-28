@@ -59,6 +59,26 @@ describe('AccessLinkStore', () => {
     expect(store.getById('legacy-1')?.kind).toBe('get_link');
   });
 
+  it('keeps only the token hash in memory (legacy raw tokens are dropped but still validate)', () => {
+    const store = new AccessLinkStore({ randomToken: () => 'aia_new-token-value' });
+    const created = store.create({ kind: 'rest' });
+    store.upsertRecordForTest({
+      id: 'legacy-raw',
+      tokenHash: createHash('sha256').update('aia_old-raw', 'utf8').digest('hex'),
+      token: 'aia_old-raw',
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 3_600_000,
+    });
+    const records = [
+      ...(store as unknown as { links: Map<string, Record<string, unknown>> }).links.values(),
+    ];
+    expect(records.every(r => !('token' in r))).toBe(true);
+    expect(JSON.stringify(records)).not.toContain('aia_new-token-value');
+    expect(JSON.stringify(records)).not.toContain('aia_old-raw');
+    expect(store.validate(created.token)?.id).toBe(created.id);
+    expect(store.validate('aia_old-raw')?.id).toBe('legacy-raw');
+  });
+
   it('honors creator-supplied ttlSeconds', () => {
     const now = 1_000_000;
     const store = new AccessLinkStore({ now: () => now });

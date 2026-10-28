@@ -955,6 +955,28 @@ describe('MCP OAuth backend', () => {
       fileExists: p => p === '/srv/static/mcp/oauth/token',
     });
     expect(scan.authorization.map(c => c.source)).toEqual(['route', 'httpStatic']);
+    // httpStaticRoot '/static': files are served under /static, so no collision.
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpAdminRoot: '/',
+        metadataFallback: true,
+        staticDirs: ['/srv/static'],
+        httpStaticRoot: '/static',
+        fileExists: p => p === '/srv/static/mcp/oauth/token',
+      }).authorization
+    ).toEqual([]);
+    // per-entry root that reaches the OAuth path collides
+    expect(
+      scanOAuthRouteCollisions({
+        httpAdmin: express(),
+        httpAdminRoot: '/',
+        metadataFallback: true,
+        staticDirs: [{ path: '/srv/x', root: '/mcp' }],
+        httpStaticRoot: '/static',
+        fileExists: p => p === '/srv/x/oauth/token',
+      }).authorization
+    ).toEqual([{ path: '/mcp/oauth/token', source: 'httpStatic', file: '/srv/x/oauth/token' }]);
     expect(scan.authorization[1]).toMatchObject({
       path: '/mcp/oauth/token',
       file: '/srv/static/mcp/oauth/token',

@@ -325,14 +325,16 @@ export function findHttpInCollisions(
   return found;
 }
 
-const STATIC_OAUTH_FILES = [
-  '.well-known/oauth-authorization-server',
-  '.well-known/oauth-protected-resource',
-  'mcp/oauth/authorize',
-  'mcp/oauth/token',
-  'mcp/oauth/register',
-  'mcp/oauth/revoke',
-];
+/** Express route-dispatch layer names: 'bound dispatch' (Express 4), 'handle' (Express 5). */
+const ROUTE_DISPATCH_LAYERS = new Set(['bound dispatch', 'handle']);
+const AUTH_ENDPOINTS = ['authorize', 'token', 'register', 'revoke'];
+const METADATA_ENDPOINTS = ['authorization-server', 'protected-resource'];
+
+/** One httpStatic mount: a directory served at `root` (httpStaticRoot or per-entry root). */
+export interface StaticMount {
+  path: string;
+  root?: string | undefined;
+}
 
 export interface OAuthRouteScanInput {
   httpAdmin: unknown;
@@ -342,7 +344,9 @@ export interface OAuthRouteScanInput {
   /** Serve metadata under the admin /mcp path (httpNodeRoot disabled). */
   metadataFallback: boolean;
   eachNode?: ((listener: (node: FlowNodeLike) => void) => void) | undefined;
-  staticDirs?: string[];
+  staticDirs?: (string | StaticMount)[];
+  /** Node-RED `httpStaticRoot` (default '/') for string entries of httpStatic. */
+  httpStaticRoot?: string | undefined;
   fileExists?: (path: string) => boolean;
 }
 
@@ -380,7 +384,12 @@ export function scanOAuthRouteCollisions(input: OAuthRouteScanInput): OAuthRoute
     const nodePaths = new Set(nodes.map(c => c.path.toLowerCase()));
     const fromNode = nodePrefix
       ? detectOAuthRouteCollisionDetails(input.httpNode, [nodePrefix]).filter(
-          c => !(c.source === 'route' && nodePaths.has(c.path.toLowerCase()))
+          c =>
+            !(
+              c.source === 'route' &&
+              ROUTE_DISPATCH_LAYERS.has(c.layer ?? '') &&
+              nodePaths.has(c.path.toLowerCase())
+            )
         )
       : [];
     const fromAdmin = adminPrefix
@@ -391,17 +400,28 @@ export function scanOAuthRouteCollisions(input: OAuthRouteScanInput): OAuthRoute
   const authorization = scan(authTarget);
   const metadata = scan(metaTarget);
   const exists = input.fileExists ?? (() => false);
-  for (const dir of input.staticDirs ?? []) {
-    for (const rel of STATIC_OAUTH_FILES) {
-      if (!exists(`${dir.replace(/\/+$/, '')}/${rel}`)) continue;
-      const entry: OAuthRouteCollision = {
-        path: `/${rel}`,
-        source: 'httpStatic',
-        file: `${dir.replace(/\/+$/, '')}/${rel}`,
-      };
-      (rel.startsWith('mcp/') ? authorization : metadata).push(entry);
+  const mounts = (input.staticDirs ?? []).map(m =>
+    typeof m === 'string' ? { path: m, root: input.httpStaticRoot } : m
+  );
+  const checkStatic = (endpoints: string[], into: OAuthRouteCollision[]) => {
+    for (const mount of mounts) {
+      const root = normalizeRoot(mount.root);
+      const dir = mount.path.replace(/\/+$/, '');
+      for (const abs of endpoints) {
+        const rel = relativePrefix(root, abs);
+        if (!rel || !exists(`${dir}${rel}`)) continue;
+        into.push({ path: abs, source: 'httpStatic', file: `${dir}${rel}` });
+      }
     }
-  }
+  };
+  checkStatic(
+    AUTH_ENDPOINTS.map(e => `${authTarget}${e}`),
+    authorization
+  );
+  checkStatic(
+    METADATA_ENDPOINTS.map(e => `${metaTarget}${e}`),
+    metadata
+  );
   return { authorization, metadata };
 }
 

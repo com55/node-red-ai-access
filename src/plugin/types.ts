@@ -150,7 +150,8 @@ export interface NodeRedPluginSettings {
   userDir: string;
   httpAdminRoot?: string;
   httpNodeRoot?: string | false;
-  httpStatic?: string | string[];
+  httpStatic?: string | (string | { path: string; root?: string })[];
+  httpStaticRoot?: string;
   adminAuth?: unknown;
   aiAccess?: AiAccessSettings;
 }

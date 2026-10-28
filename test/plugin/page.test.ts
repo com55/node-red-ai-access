@@ -172,9 +172,13 @@ describe('/mcp admin page', () => {
     // Real token only in a one-time modal that is emptied on close.
     expect(res.text).toMatch(/This is the only time the token is shown\./);
     expect(res.text).toMatch(/aria-labelledby', 'token-modal-title'/);
-    expect(res.text).toMatch(
-      /dialog\.addEventListener\('close', function \(\) \{\s*dialog\.innerHTML = '';/
-    );
+    expect(res.text).toMatch(/function cleanup\(\) \{[\s\S]*?dialog\.innerHTML = '';/);
+    expect(res.text).toMatch(/dialog\.addEventListener\('close', cleanup\)/);
+    // Fallback without native showModal: Esc and form submit still clear the token.
+    expect(res.text).toMatch(/document\.addEventListener\('keydown', onKey, true\)/);
+    expect(res.text).toMatch(/e\.preventDefault\(\);\s*closeTokenModal\(\);/);
+    // Labels are escaped in the links table.
+    expect(res.text).toMatch(/esc\(l\.label \|\| '—'\)/);
     expect(res.text).toMatch(/esc\(label \|\| 'Access token created'\)/);
     // The links table no longer offers copying existing tokens.
     expect(res.text).not.toMatch(/class="action secondary copy-link"/);

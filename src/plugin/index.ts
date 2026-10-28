@@ -53,6 +53,7 @@ import {
 import {
   describeOAuthRouteCollision,
   scanOAuthRouteCollisions,
+  type StaticMount,
   type OAuthRouteCollision,
   LocalOAuthProvider,
   OAuthStore,
@@ -201,6 +202,16 @@ export function registerRoutes(
     RED.httpAdmin,
     aiCorsMiddleware(() => services.settingsStore.getEffective().corsAllowedOrigins)
   );
+  const staticMounts = (value: unknown): (string | StaticMount)[] =>
+    (Array.isArray(value) ? value : value ? [value] : []).flatMap(
+      (m: unknown): (string | StaticMount)[] => {
+        if (typeof m === 'string') return [m];
+        const o = m as { path?: unknown; root?: unknown } | null;
+        return o && typeof o.path === 'string'
+          ? [{ path: o.path, root: typeof o.root === 'string' ? o.root : undefined }]
+          : [];
+      }
+    );
   const routeStatus = {
     authorization: [] as string[],
     metadata: [] as string[],
@@ -216,7 +227,8 @@ export function registerRoutes(
       httpNodeRoot: RED.settings.httpNodeRoot,
       metadataFallback: routeStatus.httpNodeRootFallback,
       eachNode: RED.nodes ? listener => RED.nodes?.eachNode(listener) : undefined,
-      staticDirs: RED.settings.httpStatic ? [RED.settings.httpStatic].flat().map(String) : [],
+      staticDirs: staticMounts(RED.settings.httpStatic),
+      httpStaticRoot: RED.settings.httpStaticRoot,
       fileExists: existsSync,
     });
     const auth = scan.authorization;

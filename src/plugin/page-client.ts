@@ -1297,11 +1297,33 @@ function pageClientScriptPartB(): string {
       '<div class="row dialog-actions"><button type="submit" value="done" class="action">Done</button></div>' +
       '</form>';
     var opener = document.activeElement;
-    dialog.addEventListener('close', function () {
+    var cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
       dialog.innerHTML = '';
+      document.removeEventListener('keydown', onKey, true);
       if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
       if (opener && typeof opener.focus === 'function') opener.focus();
-    });
+    }
+    function closeTokenModal() {
+      // Native <dialog>: close() fires 'close' -> cleanup. Fallback (open attribute): clean up directly.
+      if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+      cleanup();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();
+        closeTokenModal();
+      }
+    }
+    dialog.addEventListener('close', cleanup);
+    dialog.addEventListener('cancel', function (e) { e.preventDefault(); closeTokenModal(); });
+    document.addEventListener('keydown', onKey, true);
+    var form = dialog.querySelector('form');
+    if (form) {
+      form.addEventListener('submit', function (e) { e.preventDefault(); closeTokenModal(); });
+    }
     document.body.appendChild(dialog);
     return dialog;
   }
