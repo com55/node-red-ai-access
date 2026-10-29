@@ -101,14 +101,14 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     409,
     'The requested conflict no longer exists',
     'Reload the proposal and its conflicts',
-    ['admin']
+    [...REST_MCP, 'admin']
   ),
   e(
     'invalid_choice',
     400,
     'Invalid manual conflict choice',
-    'Use an available live or proposed choice',
-    ['admin']
+    'Use nodeId plus an available live or proposed choice, without replacement payload or revision',
+    [...REST_MCP, 'admin']
   ),
   e(
     'flow_id_mismatch',
@@ -256,8 +256,8 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   e(
     'proposal_not_owned',
     403,
-    'Withdraw of another token’s proposal',
-    'Only the creating token can withdraw'
+    'Resolve or withdraw another token’s proposal',
+    'Use the creating token; lost-token withdrawal requires a full admin session'
   ),
   e(
     'validation_failed',

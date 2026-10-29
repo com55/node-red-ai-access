@@ -18,6 +18,8 @@ const FLOW_TAB_KEYS = ['id', 'type', 'label', 'disabled', 'info', 'env'] as cons
 /** Audit detail keys we persist (strings unless listed in {@link AUDIT_DETAIL_NUMBER_KEYS}). */
 const AUDIT_DETAIL_KEYS = [
   'proposalId',
+  'withdrawalAuthority',
+  'originalOwnerId',
   'flowId',
   'expectedRev',
   'resultRev',

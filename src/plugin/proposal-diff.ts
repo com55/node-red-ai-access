@@ -116,6 +116,7 @@ export interface DiffSectionSummary {
 }
 
 export interface DiffSections {
+  tabProperties?: ScalarPropertyChange[];
   summary: DiffSectionSummary;
   added: PresenceNodeDiff[];
   removed: PresenceNodeDiff[];
@@ -128,23 +129,31 @@ export interface ProposalDiffResult extends DiffSections {
   proposalId: string;
   flowId: string;
   expectedRev: string;
+  baseRev: string;
   currentRev: string;
   /**
-   * True only for **pending** proposals when expectedRev !== live rev
+   * True only for **open** proposals when expectedRev !== live rev
    * (informational). Never true for approved/rejected/failed.
    */
-  baseRevStale: boolean;
+  baseRevChanged: boolean;
   /** What the primary sections were compared against. */
   compareAgainst: 'base' | 'current';
   /** True when the proposal has no stored baseFlow (legacy). */
   baseSnapshotMissing?: boolean;
   /**
-   * When pending + baseRevStale and a base snapshot exists: proposal vs live
+   * When pending + baseRevChanged and a base snapshot exists: proposal vs live
    * flow (what would apply / conflict with the current editor state).
    */
   vsCurrent?: DiffSections;
   liveChanges?: DiffSections;
-  rebase?: Pick<RebaseResult, 'state' | 'mergedHash' | 'conflicts'>;
+  /** Values for the conflicting paths, using the same redacted view as this diff. */
+  conflictValues?: {
+    nodeId: string;
+    fields: { field: string; base?: unknown; live?: unknown; proposed?: unknown }[];
+  }[];
+  /** Live editor values the AI chose to replace, and the reviewed deploy values. */
+  aiOverrideValues?: ProposalDiffResult['conflictValues'];
+  rebase?: Pick<RebaseResult, 'state' | 'rev' | 'mergedHash' | 'conflicts'>;
   /** Diff payload format (`summary` default collapses unchanged runs). */
   format?: 'summary' | 'full';
 }
@@ -402,7 +411,8 @@ function compareTabMeta(before: Partial<FlowTab>, after: Partial<FlowTab>): stri
   const keys = ['label', 'disabled', 'info', 'env'] as const;
   const out: string[] = [];
   for (const key of keys) {
-    if (!valuesEqual(before[key], after[key])) {
+    const fallback = key === 'disabled' ? false : key === 'env' ? [] : '';
+    if (!valuesEqual(before[key] ?? fallback, after[key] ?? fallback)) {
       out.push(key);
     }
   }
@@ -434,6 +444,31 @@ export function isLargeDelete(
  */
 function flowLabelOf(flow: Partial<FlowTab>): string {
   return typeof flow.label === 'string' && flow.label.trim() ? flow.label.trim() : '';
+}
+
+/** Resolve merge paths such as env["API_URL"].value without evaluating code. */
+export function conflictFieldValue(object: unknown, path: string): unknown {
+  const parts = path.match(/\["(?:[^"\\]|\\.)*"\]|[^.[\]]+/g) ?? [];
+  let value = object;
+  for (const part of parts) {
+    if (part.startsWith('[')) {
+      const name: unknown = JSON.parse(part.slice(1, -1));
+      value = Array.isArray(value)
+        ? (value as unknown[]).find(
+            entry =>
+              !!entry &&
+              typeof entry === 'object' &&
+              (entry as Record<string, unknown>).name === name
+          )
+        : undefined;
+    } else {
+      value =
+        value && typeof value === 'object' && Object.hasOwn(value, part)
+          ? (value as Record<string, unknown>)[part]
+          : undefined;
+    }
+  }
+  return value;
 }
 
 export function buildDiffSections(
@@ -503,6 +538,12 @@ export function buildDiffSections(
       beforeNodeCount: beforeNodes.size,
       afterNodeCount: afterNodes.size,
     },
+    tabProperties: compareTabMeta(beforeFlow, afterFlow).map(key => ({
+      key,
+      kind: 'scalar',
+      before: beforeFlow[key],
+      after: afterFlow[key],
+    })),
     added,
     removed,
     modified,
@@ -520,23 +561,24 @@ export function buildProposalDiff(
     currentRev?: string;
     compareAgainst?: 'base' | 'current';
     baseSnapshotMissing?: boolean;
-    /** Override stale banner (default: pending && expectedRev !== currentRev). */
-    baseRevStale?: boolean;
+    /** Informational revision difference (default: open && expectedRev !== currentRev). */
+    baseRevChanged?: boolean;
     vsCurrent?: DiffSections;
   } = {}
 ): ProposalDiffResult {
   const sections = buildDiffSections(proposal.payload.flow, before.flow);
   const currentRev = options.currentRev ?? before.rev;
   const expectedRev = proposal.expectedRev;
-  const baseRevStale =
-    options.baseRevStale ?? (isOpenProposalStatus(proposal.status) && expectedRev !== currentRev);
+  const baseRevChanged =
+    options.baseRevChanged ?? (isOpenProposalStatus(proposal.status) && expectedRev !== currentRev);
 
   const result: ProposalDiffResult = {
     proposalId: proposal.id,
     flowId: proposal.payload.flowId,
     expectedRev,
+    baseRev: expectedRev,
     currentRev,
-    baseRevStale,
+    baseRevChanged,
     compareAgainst: options.compareAgainst ?? 'current',
     ...sections,
   };
@@ -555,7 +597,7 @@ export function buildProposalDiff(
 /**
  * Diff a proposal against its stored baseFlow snapshot when present.
  * Pending + stale also attaches `vsCurrent` (proposal vs live flow).
- * Approved/rejected/failed never set `baseRevStale` (no "approve would fail").
+ * Approved/rejected/failed never set `baseRevChanged` (no "approve would fail").
  */
 export async function computeProposalDiff(
   proposal: Proposal,
@@ -584,7 +626,7 @@ export async function computeProposalDiff(
   }
 
   const pending = isOpenProposalStatus(proposal.status);
-  const baseRevStale = pending && proposal.expectedRev !== liveRev;
+  const baseRevChanged = pending && proposal.expectedRev !== liveRev;
   const storedBase = proposal.baseFlow;
 
   if (pending) {
@@ -602,14 +644,51 @@ export async function computeProposalDiff(
         currentRev: live.rev,
         compareAgainst: view.baseFlow ? 'base' : 'current',
         baseSnapshotMissing: view.baseFlow === undefined,
-        baseRevStale: proposal.expectedRev !== live.rev,
+        baseRevChanged: proposal.expectedRev !== live.rev,
       }
     );
     result.rebase = {
+      rev: rebase.rev,
       state: rebase.state,
       conflicts: ai ? redactConflictLabels(rebase.conflicts) : rebase.conflicts,
       ...(rebase.mergedHash ? { mergedHash: rebase.mergedHash } : {}),
     };
+    const target = (tab: Partial<FlowTab> | undefined, nodeId: string | undefined) =>
+      nodeId === flowId
+        ? tab
+        : [...(tab?.nodes ?? []), ...(tab?.configs ?? [])].find(n => n.id === nodeId);
+    result.conflictValues = rebase.conflicts.map(c => ({
+      nodeId: c.nodeId ?? '',
+      fields: (c.fields?.length ? c.fields : ['']).map(field => ({
+        field,
+        base: field
+          ? conflictFieldValue(target(view.baseFlow, c.nodeId), field)
+          : target(view.baseFlow, c.nodeId),
+        live: field
+          ? conflictFieldValue(target(currentTab, c.nodeId), field)
+          : target(currentTab, c.nodeId),
+        proposed: field
+          ? conflictFieldValue(target(view.payload.flow, c.nodeId), field)
+          : target(view.payload.flow, c.nodeId),
+      })),
+    }));
+    const deployTab = rebase.merged
+      ? ai
+        ? redactFlowData(rebase.merged).value
+        : rebase.merged
+      : view.payload.flow;
+    result.aiOverrideValues = (view.aiConflictOverrides ?? []).map(c => ({
+      nodeId: c.nodeId,
+      fields: c.fields.map(field => ({
+        field,
+        live: field
+          ? conflictFieldValue(target(currentTab, c.nodeId), field)
+          : target(currentTab, c.nodeId),
+        proposed: field
+          ? conflictFieldValue(target(deployTab, c.nodeId), field)
+          : target(deployTab, c.nodeId),
+      })),
+    }));
     result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);
     if (rebase.state !== 'conflict' && rebase.merged) {
       result.vsCurrent = buildDiffSections(
@@ -621,14 +700,16 @@ export async function computeProposalDiff(
   }
 
   if (storedBase !== undefined) {
-    const vsCurrent = baseRevStale ? buildDiffSections(proposal.payload.flow, liveFlow) : undefined;
+    const vsCurrent = baseRevChanged
+      ? buildDiffSections(proposal.payload.flow, liveFlow)
+      : undefined;
     return buildProposalDiff(
       proposal,
       { rev: proposal.expectedRev, flow: storedBase },
       {
         currentRev: liveRev,
         compareAgainst: 'base',
-        baseRevStale,
+        baseRevChanged,
         ...(vsCurrent ? { vsCurrent } : {}),
       }
     );
@@ -641,7 +722,7 @@ export async function computeProposalDiff(
     {
       compareAgainst: 'current',
       baseSnapshotMissing: true,
-      baseRevStale,
+      baseRevChanged,
     }
   );
 }

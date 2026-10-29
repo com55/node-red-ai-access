@@ -89,6 +89,7 @@ function pageClientScriptPartA(): string {
   function showFlash(el, message, ok) {
     if (!el) return;
     el.className = 'flash ' + (ok ? 'ok' : 'error');
+    el.setAttribute('role', ok ? 'status' : 'alert');
     el.textContent = message;
     el.hidden = !message;
   }
@@ -141,6 +142,7 @@ function pageClientScriptPartA(): string {
     if (!st) return;
     st.textContent = text;
     st.className = 'sg-status' + (isError ? ' error' : '');
+    st.setAttribute('role', isError ? 'alert' : 'status');
     st.hidden = !text;
   }
   function authGateContinue() {
@@ -251,6 +253,7 @@ ${editorSignInHelpers}
     opts = opts || {};
     var el = document.createElement('div');
     el.className = 'toast ' + (ok ? 'ok' : 'error');
+    el.setAttribute('role', ok ? 'status' : 'alert');
     if (opts.title) {
       var titleEl = document.createElement('span');
       titleEl.className = 'toast-title';
@@ -324,7 +327,11 @@ ${editorSignInHelpers}
       topic: 'Topic',
       payload: 'Payload',
       complete: 'Complete',
-      info: 'Info',
+      info: 'Description',
+      label: 'Flow name',
+      env: 'Environment variables',
+      disabled: 'Flow disabled',
+      credentials: 'Credentials',
       format: 'Format',
       syntax: 'Syntax',
       outputs: 'Outputs',
@@ -1575,6 +1582,7 @@ function pageClientScriptPartB(): string {
 
   function plainDiffSentence(diff, flowLabel) {
     if (!diff || !diff.summary) return '';
+    if (proposalHasNoNetChange(diff)) return 'Nothing changes in the live flow';
     var sum = diff.summary;
     var parts = [];
     if (sum.added) parts.push('Adds ' + sum.added + (sum.added === 1 ? ' node' : ' nodes'));
@@ -1582,7 +1590,8 @@ function pageClientScriptPartB(): string {
       (sum.removed === 1 ? ' node' : ' nodes'));
     if (sum.modified) parts.push((parts.length ? 'changes ' : 'Changes ') + sum.modified +
       (sum.modified === 1 ? ' node' : ' nodes'));
-    if (!parts.length) parts.push('No node changes');
+    if ((sum.tabChanges || []).length) parts.push('Changes flow settings');
+    if (!parts.length) parts.push('No changes');
     var sentence = parts.join(', ');
     if (flowLabel) sentence += ' in ' + flowLabel;
     return sentence;
@@ -1616,10 +1625,14 @@ function pageClientScriptPartB(): string {
 
   /** Soft validation notes from the proposal and/or its diff. */
   function proposalWarnings(proposal, diff) {
-    var fromDiff = diff && Array.isArray(diff.warnings) ? diff.warnings : [];
-    if (fromDiff.length) return fromDiff;
-    if (proposal && Array.isArray(proposal.warnings)) return proposal.warnings;
-    return [];
+    var all = (proposal && Array.isArray(proposal.warnings) ? proposal.warnings : [])
+      .concat(diff && Array.isArray(diff.warnings) ? diff.warnings : []);
+    var seen = {};
+    return all.filter(function (w) {
+      var key = JSON.stringify([w.code, w.nodeId, w.property, w.error]);
+      if (seen[key]) return false;
+      seen[key] = true; return true;
+    });
   }
 
   /**
@@ -1628,33 +1641,22 @@ function pageClientScriptPartB(): string {
    */
   var SECRET_WARN_CODES = ['secret_destination_changed', 'secret_node_code_changed',
     'secret_wires_changed', 'secret_scope_changed', 'outbound_node_changed', 'secret_tab_changed',
-    'secret_reference_added'];
-  function renderRestoredSecrets(p) {
+    'secret_reference_added', 'secret_may_revert'];
+  function renderReviewWarnings(p, diff) {
+    if (proposalHasNoNetChange(diff)) return '';
+    var warnings = proposalWarnings(p, diff);
+    var security = warnings.filter(function (w) { return SECRET_WARN_CODES.indexOf(w.code) >= 0; });
+    var config = warnings.filter(function (w) { return SECRET_WARN_CODES.indexOf(w.code) < 0; });
     var fields = p && Array.isArray(p.restoredSecrets) ? p.restoredSecrets : [];
-    var warns = (p && Array.isArray(p.warnings) ? p.warnings : []).filter(function (w) {
-      return w && SECRET_WARN_CODES.indexOf(w.code) >= 0;
-    });
-    if (!fields.length && !warns.length) return '';
-    var strong = warns.some(function (w) { return w.code !== 'secret_node_code_changed'; });
-    var items = fields.map(function (f) {
-      return '<li><code>' + esc(String(f.nodeId)) + '</code> · <code>' + esc(String(f.property)) + '</code></li>';
-    }).join('');
-    var warnItems = warns.map(function (w) {
-      return '<li><strong>' + esc(String(w.code)) + '</strong> — ' + esc(String(w.error || '')) + '</li>';
-    }).join('');
-    return '<div class="proposal-warnings restored-secrets' + (strong ? ' restored-secrets-danger' : '') +
-      '" role="' + (strong ? 'alert' : 'status') + '">' +
-      '<p class="proposal-warnings-title">' +
-      esc(strong
-        ? 'Security review: this proposal changes what could send data (or secrets) elsewhere'
-        : 'Secrets restored from the live flow (' + fields.length + ')') +
-      '</p>' +
-      (warnItems ? '<ul>' + warnItems + '</ul>' : '') +
-      (fields.length
-        ? '<p class="muted">The AI saw [REDACTED] in these fields; approving keeps the real values:</p>' +
-          '<ul>' + items + '</ul>'
-        : '') +
-      '</div>';
+    var count = warnings.length + fields.length;
+    if (!count) return '';
+    return '<aside class="proposal-warnings review-warnings" role="' + (security.length ? 'alert' : 'status') + '">' +
+      '<h3>Review notes (' + count + ')</h3>' +
+      renderValidationWarnings(security, { title: 'Security review (' + security.length + ')' }) +
+      (fields.length ? '<details class="restored-secrets"><summary>Secrets retained from the live flow (' + fields.length + ')</summary><ul>' + fields.map(function (f) {
+        return '<li><code>' + esc(f.nodeId) + '</code> · ' + esc(f.property) + '</li>';
+      }).join('') + '</ul></details>' : '') +
+      renderValidationWarnings(config, { title: 'Needs configuration (' + config.length + ')' }) + '</aside>';
   }
 
   function renderValidationWarnings(warnings, opts) {
@@ -2146,6 +2148,9 @@ function pageClientScriptPartBDiffView2(): string {
   function renderDiffSections(sections, mode, emptyMsg) {
     var parts = sections.summary && (sections.summary.tabChanges || []).length
       ? '<p>Flow settings changed: ' + esc(sections.summary.tabChanges.join(', ')) + '</p>' : '';
+    if (sections.tabProperties && sections.tabProperties.length) {
+      parts += sections.tabProperties.map(function (ch) { return renderPropertyChange(ch, mode); }).join('');
+    }
     if (sections.added && sections.added.length) {
       parts += '<div class="diff-section"><h4>Added nodes</h4>' +
         sections.added.map(function (n) { return renderPresenceNode(n, 'added'); }).join('') +
@@ -2179,6 +2184,23 @@ function pageClientScriptPartBDiffView2(): string {
     return parts;
   }
 
+  function diffHasChanges(diff) {
+    if (!diff || !diff.summary) return false;
+    var sum = diff.summary;
+    return !!(sum.added || sum.removed || sum.modified || (sum.tabChanges || []).length);
+  }
+  function proposalHasNoNetChange(diff) {
+    return !!(diff && diff.rebase && diff.rebase.state !== 'conflict' &&
+      diff.vsCurrent && diff.vsCurrent.summary && !diffHasChanges(diff.vsCurrent));
+  }
+  function diffComparisonKey(diff) {
+    if (!diff) return '';
+    return JSON.stringify([diff.summary && diff.summary.tabChanges, diff.tabProperties || [],
+      (diff.added || []).map(function (n) { return [n.id, n.properties]; }),
+      (diff.removed || []).map(function (n) { return [n.id, n.properties]; }),
+      (diff.modified || []).map(function (n) { return [n.id, n.changes]; })]);
+  }
+
   function renderHumanDiff(diff, mode) {
     if (!diff) return '<p class="muted">Diff unavailable.</p>';
     mode = mode || getDiffMode();
@@ -2200,61 +2222,121 @@ function pageClientScriptPartBDiffView2(): string {
         (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
         '</div></div>';
     }
-    var warnHtml = renderValidationWarnings(diff.warnings, {
-      title: 'Scaffold warnings — configure before deploy if needed',
-      className: 'diff-warnings'
-    });
-    var sections = renderDiffSections(
-      diff,
-      mode,
-      diff.compareAgainst === 'base'
-        ? 'No node changes compared with what the AI started from.'
-        : 'No node changes compared with the live flow.'
-    );
-    var liveChanges = diff.liveChanges;
-    var liveHtml = liveChanges && ((liveChanges.added || []).length ||
-      (liveChanges.removed || []).length || (liveChanges.modified || []).length ||
-      (liveChanges.summary && (liveChanges.summary.tabChanges || []).length))
-      ? '<h3>Changed in editor since submit</h3>' + renderDiffSections(liveChanges, mode, 'No editor node changes.') : '';
+    var sections = renderDiffSections(diff, mode, 'Nothing changes.');
+    var liveChanged = diffHasChanges(diff.liveChanges);
+    var identical = diff.vsCurrent && diffComparisonKey(diff) === diffComparisonKey(diff.vsCurrent);
+    var liveHtml = liveChanged
+      ? '<details class="editor-changes"><summary>Changed in editor since submit</summary>' +
+        renderDiffSections(diff.liveChanges, mode, 'No editor changes.') + '</details>' : '';
     var deployHtml = diff.vsCurrent
-      ? renderDiffSections(diff.vsCurrent, mode, 'No node changes compared with the live flow.')
-      : '<p class="muted">' + (diff.rebase && diff.rebase.state === 'conflict'
-        ? 'Resolve conflicts to preview what will deploy.' : 'Deployment preview unavailable.') + '</p>';
-    return missing + warnHtml + toolbar + '<h3>Proposed change (vs base)</h3>' + sections +
+      ? renderDiffSections(diff.vsCurrent, mode, 'Nothing changes in the live flow.')
+      : '<p class="muted">Resolve conflicts to preview what will deploy.</p>';
+    if (proposalHasNoNetChange(diff)) {
+      return '<p class="no-net-change" role="status"><strong>Nothing changes in the live flow.</strong> ' +
+        'The proposal is already reflected in the editor. You can reject it to close it.</p>' + liveHtml;
+    }
+    if (identical || (!liveChanged && !(diff.rebase && diff.rebase.state === 'conflict'))) {
+      return missing + toolbar + '<h3>Proposed change</h3>' + sections + liveHtml;
+    }
+    return missing + toolbar + '<h3>Proposed change (vs base)</h3>' + sections +
       liveHtml + '<h3>Will deploy (vs live)</h3>' + deployHtml;
+  }
+
+  function conflictReason(c) {
+    var reasons = {
+      node_changed_both: 'The editor and proposal changed the same fields on this node.',
+      tab_changed_both: 'The editor and proposal changed the same flow settings.',
+      node_deleted_live: 'This node was deleted in the editor and edited in the proposal.',
+      node_deleted_in_proposal_modified_live: 'The proposal deletes a node that was edited in the editor.',
+      id_collision: 'The editor and proposal added different nodes with the same ID.',
+      tab_deleted: 'This flow was deleted in the editor.',
+      base_unavailable: 'The original flow snapshot is unavailable. Ask the AI to submit a new proposal.',
+      dangling_reference: 'A connection or configuration refers to a missing node.',
+      redacted_placeholder: 'A hidden secret could not be matched safely. Review it in the editor.'
+    };
+    return reasons[c.kind] || c.message || 'Review the competing changes.';
+  }
+  function conflictValueText(value) {
+    return value === undefined ? '(not present)' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  }
+  function renderConflictValues(c, diff) {
+    var entry = ((diff && diff.conflictValues) || []).filter(function (v) { return v.nodeId === (c.nodeId || ''); })[0];
+    if (!entry) return '<p class="muted">Loading before and after values…</p>';
+    return entry.fields.map(function (v) {
+      return '<div class="conflict-values"><h4>' + esc(v.field || 'Node') + '</h4><dl>' +
+        ['base', 'live', 'proposed'].map(function (side) {
+          return '<div><dt>' + (side === 'base' ? 'Base (before submission)' : side === 'live' ? 'Live (in editor)' : 'Proposed (by AI)') +
+            '</dt><dd><pre>' + esc(conflictValueText(v[side])) + '</pre></dd></div>';
+        }).join('') + '</dl></div>';
+    }).join('');
   }
 
   function renderConflictPanel(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
-    if (!rebase || rebase.state !== 'conflict') return '';
-    return '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
+    var selected = p.conflictChoice;
+    var chosen = selected ? '<div class="conflict-choice" role="status"><strong>Chosen: ' +
+      (selected.choice === 'live' ? 'Keep live' : 'Use proposed') + '</strong> · ' + esc(selected.nodeId) +
+      (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
+        '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
+      '<p>This choice changes the proposal only. Nothing is deployed until approval. Undo is available until the next proposal edit or choice.</p></div>' : '';
+    if ((p.aiConflictOverrides || []).length) {
+      chosen += '<div class="warning ai-conflict-override" role="alert"><strong>AI chose its own value over your editor change</strong>' +
+        '<p>Review the fields below before approving this proposal.</p>' +
+        ((diff && diff.aiOverrideValues) || []).map(function (entry) {
+          return '<h4>' + esc(entry.nodeId) + '</h4>' + entry.fields.map(function (v) {
+            return '<div class="conflict-values"><h4>' + esc(v.field || 'Node') + '</h4><dl>' +
+              '<div><dt>Before (live editor)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
+              '<div><dt>After (AI proposed)</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl></div>';
+          }).join('');
+        }).join('') + (!diff ? '<p>Loading before and after values…</p>' : '') + '</div>';
+    }
+    if (!rebase || rebase.state !== 'conflict') return chosen;
+    return chosen + '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
       '<h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>' +
       (rebase.conflicts || []).map(function (c) {
-        return '<div class="proposal-conflict"><strong>' + esc(c.nodeName || 'Unnamed node') + '</strong>' +
-          ' · ' + esc(c.nodeType || 'unknown type') + ' · <code>' + esc(c.nodeId || '') + '</code>' +
-          '<p>' + esc(c.kind) + '</p><p>Fields: ' + esc((c.fields || []).join(', ')) + '</p>' +
-          '<p>' + esc(c.message) + '</p>' + (canApprove ? (c.choices || []).filter(function (choice) {
+        var tabConflict = c.nodeId === proposalFlowId(p) || /^tab_/.test(c.kind || '');
+        return '<div class="proposal-conflict"><strong>' + esc(flowLabelOf(p) || 'Flow') + ' · ' +
+          esc(c.nodeName || (tabConflict ? 'Flow settings' : 'Unnamed node')) + '</strong>' +
+          ' · ' + esc(c.nodeType || (tabConflict ? 'tab' : 'unknown type')) + ' · <code>' + esc(c.nodeId || '') + '</code>' +
+          '<p>' + esc(conflictReason(c)) + '</p>' + renderConflictValues(c, diff) +
+          (canApprove ? (c.choices || []).filter(function (choice) {
             return choice === 'live' || choice === 'proposed';
           }).map(function (choice) {
-            return '<button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
+            return '<div class="conflict-option"><button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
               '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(choice) + '">' +
-              (choice === 'live' ? 'Keep live' : 'Use proposed') + '</button> ';
+              (choice === 'live' ? 'Keep live' : 'Use proposed') + '</button>' +
+              '<p class="hint">' + (choice === 'live' ? 'Keep the editor value for the conflicting fields.' :
+                'Replace the conflicting editor fields with the AI values.') + ' Other field changes are preserved.</p></div>';
           }).join('') : '') + '</div>';
       }).join('') + (canApprove ? '<button type="button" class="action secondary recheck-btn" data-id="' +
         esc(p.id) + '">Re-check</button>' : '') + '</div>';
   }
 
-  async function updateProposalConflict(id, nodeId, choice) {
+  async function updateProposalConflict(id, nodeId, choice, button) {
+    proposalActionsInFlight += 1;
+    var label = button && button.textContent;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + (choice ? 'Saving…' : 'Re-checking…');
+    }
     try {
-      await api('/proposals/' + encodeURIComponent(id) + (choice ? '/resolve-conflict' : '/recheck'), {
+      var result = await api('/proposals/' + encodeURIComponent(id) + (choice ? '/resolve-conflict' : '/recheck'), {
         method: 'POST', body: JSON.stringify(choice ? { nodeId: nodeId, choice: choice } : {})
       });
       delete proposalDiffCache[id];
       await loadProposals();
       await loadProposalDiff(id);
+      var current = cachedProposals.filter(function (p) { return p.id === id; })[0];
+      var conflict = current ? proposalIsStale(current) : result && result.proposal && result.proposal.status === 'conflict';
+      showToast(choice === 'undo' ? 'Choice undone. Review the conflict again.' :
+        conflict ? 'Still conflicting. Review the remaining conflicts.' : 'Resolved. Review the updated proposal.', true);
       notifySidebarPendingRefresh();
     } catch (e) {
       showFlash($('proposals-flash'), e.message || String(e), false);
+    } finally {
+      proposalActionsInFlight -= 1;
+      if (button) { button.disabled = false; button.removeAttribute('aria-busy'); button.textContent = label; }
     }
   }
 
@@ -2284,12 +2366,12 @@ function pageClientScriptPartB2(): string {
       badge.title = fullText;
     }
     var filterCount = $('filter-pending-count');
-    if (filterCount) filterCount.textContent = fullText;
+    if (filterCount) { filterCount.textContent = String(counts.pending); filterCount.title = fullText; }
     var decidedCount = $('filter-decided-count');
     if (decidedCount) decidedCount.textContent = String(counts.decided);
     var dashPending = $('dash-pending');
     if (dashPending) {
-      dashPending.textContent = fullText;
+      dashPending.textContent = String(counts.pending);
       dashPending.title = fullText;
     }
   }
@@ -2328,11 +2410,18 @@ function pageClientScriptPartB2(): string {
       });
     });
     list.querySelectorAll('.resolve-conflict-btn, .recheck-btn').forEach(function (btn) {
-      bindOnce(btn, 'click', async function () {
+      bindOnce(btn, 'click', function () {
         if (btn.disabled) return;
-        btn.disabled = true;
-        await updateProposalConflict(btn.getAttribute('data-id'), btn.getAttribute('data-node-id'), btn.getAttribute('data-choice'));
-        btn.disabled = false;
+        var id = btn.getAttribute('data-id'), nodeId = btn.getAttribute('data-node-id'), choice = btn.getAttribute('data-choice');
+        if (!choice) { updateProposalConflict(id, nodeId, choice, btn); return; }
+        openConfirmDialog({
+          title: choice === 'undo' ? 'Undo this choice?' : choice === 'live' ? 'Keep live values?' : 'Use proposed values?',
+          message: choice === 'undo' ? 'Restore the proposal before the latest choice, then re-check against the current editor.' :
+            (choice === 'live' ? 'The conflicting fields will keep the editor values.' : 'The conflicting fields will use the AI values.') +
+            ' Independent field changes are preserved. This updates the proposal; it does not deploy.',
+          confirmLabel: choice === 'undo' ? 'Undo choice' : 'Confirm choice',
+          onConfirm: function () { updateProposalConflict(id, nodeId, choice, btn); }
+        });
       });
     });
     list.querySelectorAll('.approve-btn').forEach(function (btn) {
@@ -2394,16 +2483,10 @@ function pageClientScriptPartB2Actions(): string {
   function renderPendingActions(p, stale) {
     if (!canApprove || (p.status !== 'pending' && p.status !== 'conflict')) return '';
     var cached = proposalDiffCache[p.id];
-    var warns = proposalWarnings(p, cached);
-    var warnNote = warns.length
-      ? renderValidationWarnings(warns, {
-          title: 'Approve will deploy with ' + warns.length +
-            ' configuration warning' + (warns.length === 1 ? '' : 's') +
-            ' — you can finish setup in the editor afterward'
-        })
-      : '';
-    return warnNote +
-      '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
+    if (proposalHasNoNetChange(cached)) {
+      return '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) + '">Reject to close</button>';
+    }
+    return       '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
       '<div class="row">' +
       '<button type="button" class="action approve-btn" data-id="' + esc(p.id) +
       '"' + (stale ? ' disabled title="Resolve conflicts before approving"' : (!cached ? ' disabled title="Wait for the diff to load"' : '')) + '>Approve &amp; deploy</button>' +
@@ -2483,7 +2566,7 @@ function pageClientScriptPartB2Cards(): string {
 
   function renderRebaseChip(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
-    var count = p.rebase && p.rebase.liveChangedCount;
+    var count = rebase && rebase.liveChangedCount;
     return '<span class="rebase-chip"' + (p.status === 'pending' && rebase && rebase.state === 'merged' ? '' : ' hidden') +
       '>Rebased · ' + esc(count == null ? 0 : count) + ' live changes</span>';
   }
@@ -2498,18 +2581,15 @@ function pageClientScriptPartB2Cards(): string {
       : '';
     var plain = cached ? plainDiffSentence(cached, flowLabel) : '';
     // Show for any large delete — including stale — so owners see the risk.
-    var deleteBanner = cached ? renderDeleteBanner(cached) : '';
+    var deleteBanner = cached && !proposalHasNoNetChange(cached) ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
-    var cardWarns = proposalWarnings(p, cached);
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
           : p.deployPending.reason) + '</p></div>'
       : '';
-    var warnBanner = deployBanner + renderRestoredSecrets(p) + (cardWarns.length && !cached
-      ? renderValidationWarnings(cardWarns)
-      : '');
+    var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
     var changes =
@@ -2528,12 +2608,12 @@ function pageClientScriptPartB2Cards(): string {
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
       (plain ? esc(plain) : '<span class="muted">Loading summary…</span>') + '</p>' +
       deleteBanner +
-      warnBanner +
+      '<div class="proposal-review-notes">' + warnBanner + '</div>' +
       reason +
       '<div class="proposal-conflict-host">' + renderConflictPanel(p, cached) + '</div>' +
       changes +
       renderProposalTech(p, cached) +
-      actions +
+      '<div class="proposal-actions">' + actions + '</div>' +
       '</article>';
   }
 `;
@@ -2710,7 +2790,7 @@ function pageClientScriptPartB2Focus(): string {
         if (id && label) cachedFlowLabels[id] = String(label);
       });
       var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
-        return [p.id, p.status, p.updatedAt, p.baseRevStale, p.flowLabel, p.title];
+        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title];
       })]);
       var unchanged = sameAsLastRender('proposals', sig);
       if (opts.skipRender || (opts.auto && unchanged)) {
@@ -2869,8 +2949,8 @@ function pageClientScriptPartB2Apply(): string {
       p.rebase = Object.assign({}, p.rebase || {}, diff.rebase);
       p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
     }
-    if (p && typeof diff.baseRevStale === 'boolean') {
-      p.baseRevStale = diff.baseRevStale;
+    if (p && typeof diff.baseRevChanged === 'boolean') {
+      p.baseRevChanged = diff.baseRevChanged;
     }
     // Move cards between review and conflict groups when the rebase state changes.
     if (p && (p.status === 'pending' || p.status === 'conflict') && wasStale !== proposalIsStale(p)) {
@@ -2901,8 +2981,10 @@ function pageClientScriptPartB2Apply(): string {
       if (pill) { pill.className = 'status-pill ' + p.status; pill.textContent = p.status === 'conflict' ? 'Conflict' : p.status; }
       var conflictHost = article.querySelector('.proposal-conflict-host');
       if (conflictHost) conflictHost.innerHTML = renderConflictPanel(p, diff);
-      var approveBtn = article.querySelector('.approve-btn');
-      if (approveBtn) { approveBtn.disabled = proposalIsStale(p); approveBtn.title = approveBtn.disabled ? 'Resolve conflicts before approving' : ''; }
+      var actionHost = article.querySelector('.proposal-actions');
+      if (actionHost) actionHost.innerHTML = renderPendingActions(p, proposalIsStale(p));
+      var notes = article.querySelector('.proposal-review-notes');
+      if (notes && !p.deployPending) notes.innerHTML = renderReviewWarnings(p, diff);
       var chip = article.querySelector('.rebase-chip');
       if (chip) chip.outerHTML = renderRebaseChip(p, diff);
       bindProposalActions(article);
@@ -2912,7 +2994,7 @@ function pageClientScriptPartB2Apply(): string {
 
     // Banner for any large delete (stale or live) — owners must see the risk.
     var existingBanner = article.querySelector('.delete-banner');
-    if (isLargeDelete(diff)) {
+    if (!proposalHasNoNetChange(diff) && isLargeDelete(diff)) {
       var beforeN = diff.summary.beforeNodeCount || 0;
       var removedN = diff.summary.removed || 0;
       var html = 'Deletes ' + removedN + ' of ' + beforeN + ' nodes';
@@ -2971,7 +3053,7 @@ function pageClientScriptPartB2Apply(): string {
       }
     } catch (e) {
       if (host) {
-        host.innerHTML = '<p class="muted">Could not load changes: ' +
+        host.innerHTML = '<p class="muted" role="alert">Could not load changes: ' +
           esc(e.message || String(e)) + '</p>';
       }
     }
@@ -3082,7 +3164,7 @@ function pageClientScriptPartC(): string {
       } else if (destructive) {
         heading.textContent = 'Confirm approve & deploy';
       } else if (warns.length) {
-        heading.textContent = 'Approve with configuration warnings';
+        heading.textContent = 'Approve with review notes';
       } else {
         heading.textContent = 'Confirm approve & deploy';
       }
@@ -3108,7 +3190,7 @@ function pageClientScriptPartC(): string {
         msg.className = 'danger-text';
         msg.hidden = false;
       } else if (warns.length) {
-        msg.textContent = 'This proposal has configuration gaps (scaffold). You can approve now and finish setup in the editor afterward.';
+        msg.textContent = 'Review the notes below before deploying. Configuration gaps can be completed in the editor.';
         msg.className = 'muted';
         msg.hidden = false;
       } else {
@@ -3122,9 +3204,7 @@ function pageClientScriptPartC(): string {
     if (warnEl) {
       if (warns.length) {
         warnEl.hidden = false;
-        warnEl.innerHTML = renderValidationWarnings(warns, {
-          title: 'Configuration warnings'
-        });
+        warnEl.innerHTML = renderReviewWarnings(p, diff);
       } else {
         warnEl.hidden = true;
         warnEl.innerHTML = '';
@@ -3226,7 +3306,7 @@ function pageClientScriptPartC(): string {
       cachedProposals.forEach(function (peer) {
         if (peer.id !== id && (peer.status === 'pending' || peer.status === 'conflict') && peer.expectedRev === expectedRev) {
           delete proposalDiffCache[peer.id];
-          peer.baseRevStale = true;
+          peer.baseRevChanged = true;
         }
       });
       await loadProposals({ skipRender: true });
@@ -3274,6 +3354,7 @@ function pageClientScriptPartC(): string {
       showToast('Review the loaded diff, then click Approve again.', false);
       return;
     }
+    if (proposalHasNoNetChange(diff)) { showToast('Nothing changes in the live flow. Reject this proposal to close it.', true); return; }
     if (needsApproveConfirm(diff, p)) {
       openDeleteConfirmDialog(id, deploymentType, diff);
       return;
@@ -3480,8 +3561,8 @@ function pageClientScriptPartD(): string {
     }
 
     $('proposals-hint').textContent = canApprove
-      ? 'Review changes from your AI assistant. Each card shows a short id (first 8 hex after prop-; click to copy the full id). Approve & deploy makes them live; Reject leaves the flow unchanged. Resolve conflicts to review the merged change.'
-      : 'Approve, reject, and dismiss require full admin permission (*). You can still review proposals. Short ids are the first 8 hex characters after prop- (click to copy the full id).';
+      ? 'Review your AI assistant’s changes. Approve & deploy applies them to Node-RED. Reject closes a proposal without changing the flow.'
+      : 'Review proposals here. A full Node-RED admin can approve or reject them.';
 
     renderLinksManage();
   }
@@ -3490,10 +3571,14 @@ function pageClientScriptPartD(): string {
     var nav = $('main-nav');
     if (!nav) return;
     function updateStuck() {
-      var top = nav.getBoundingClientRect().top;
+      var rect = nav.getBoundingClientRect();
+      if (rect.height > 0) document.documentElement.style.setProperty('--nav-height', (rect.height + 20) + 'px');
+      var top = rect.top;
       nav.classList.toggle('is-stuck', top <= 0);
     }
     window.addEventListener('scroll', updateStuck, { passive: true });
+    window.addEventListener('resize', updateStuck);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updateStuck).observe(nav);
     updateStuck();
   }
 

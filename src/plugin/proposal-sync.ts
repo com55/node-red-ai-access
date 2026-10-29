@@ -65,7 +65,7 @@ export function expireByTtl(store: ProposalStore, options: { flowId?: string } =
 
 /** Pure rebase of one stored proposal against a raw live snapshot. */
 export function rebaseProposal(proposal: Proposal, live: FlowsSnapshot): RebaseResult {
-  return rebaseFlowTab({
+  const result = rebaseFlowTab({
     flowId: proposal.payload.flowId,
     base: proposal.baseFlow,
     proposed: proposal.payload.flow,
@@ -73,6 +73,10 @@ export function rebaseProposal(proposal: Proposal, live: FlowsSnapshot): RebaseR
     liveRev: live.rev,
     baseRev: proposal.expectedRev,
   });
+  // Resolving a conflict rewrites the base. Preserve the AI override review gate
+  // even when that rewritten base would otherwise make the merge look clean.
+  if (result.state === 'clean' && proposal.aiConflictOverrides?.length) result.state = 'merged';
+  return result;
 }
 
 export function rebaseInfoFrom(result: RebaseResult, at = nowProvider()): ProposalRebaseInfo {

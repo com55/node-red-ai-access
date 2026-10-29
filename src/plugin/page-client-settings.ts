@@ -119,9 +119,9 @@ function settingsPartForm(): string {
     var payload = {
       enabled: $('set-enabled').checked,
       allowWithoutAdminAuth: $('set-allow-without').checked,
-      defaultLinkTtlSeconds: Math.max(1, Math.floor(Number($('set-ttl').value || 4) * 3600)),
+      defaultLinkTtlSeconds: Number($('set-ttl').value) * 3600,
       defaultDeploymentType: $('set-deploy').value,
-      proposalTtlDays: Math.min(365, Math.max(1, Math.floor(Number($('set-proposal-ttl').value) || 7))),
+      proposalTtlDays: Number($('set-proposal-ttl').value),
       maxActiveLinks: Number($('set-max-links').value),
       publicBaseUrl: String($('set-public-url').value).trim(),
       corsAllowedOrigins: String($('set-cors').value).split(',').map(function (x) { return x.trim(); }).filter(Boolean),
@@ -265,7 +265,6 @@ function settingsPartSave(): string {
       loadOAuthStatus();
     } catch (e) {
       settingsFlash(e.message || String(e), false);
-      loadSettings();
     } finally {
       settingsSaving = false;
     }
@@ -273,6 +272,20 @@ function settingsPartSave(): string {
 
   function saveSettingsNow() {
     if (!settingsCanEdit() || settingsSaving) return;
+    var fields = ['set-ttl', 'set-proposal-ttl', 'set-max-links', 'set-rate-window', 'set-rate-ip', 'set-rate-token',
+      'oauth-access-ttl', 'oauth-refresh-ttl', 'oauth-refresh-max', 'oauth-dcr-cap'];
+    for (var i = 0; i < fields.length; i++) {
+      var input = $(fields[i]);
+      if (!input || input.disabled) continue;
+      var n = Number(input.value), min = Number(input.min || 0);
+      var max = input.max ? Number(input.max) : Infinity;
+      if (!input.value.trim() || !Number.isInteger(n) || n < min || n > max) {
+        input.setAttribute('aria-invalid', 'true');
+        settingsFlash('Enter a whole number with a minimum of ' + min + (max < Infinity ? ' and a maximum of ' + max : '') + '.', false);
+        return;
+      }
+      input.removeAttribute('aria-invalid');
+    }
     var payload = collectSettingsPayload();
     var was = settingsData && settingsData.settings && settingsData.settings.oauth && settingsData.settings.oauth.enabled;
     if (!was && payload.oauth && payload.oauth.enabled) {
@@ -315,6 +328,7 @@ function settingsPartSave(): string {
     el.className = 'check-result' + (state ? ' is-' + state : '');
     el.textContent = text || '';
     el.hidden = !text;
+    el.setAttribute('role', state === 'fail' ? 'alert' : 'status');
   }
 
   async function checkPublicUrl() {

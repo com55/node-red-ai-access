@@ -50,7 +50,7 @@ function expectConflict(result: ReturnType<typeof rebase>, kind: string, nodeId 
   expect(result.mergedHash).toBeUndefined();
 }
 
-describe('strict proposal three-way rebase', () => {
+describe('per-field proposal three-way rebase', () => {
   it('is clean across unrelated global revisions, without mutating inputs', () => {
     const p = clone(base);
     p.nodes![0]!.func = 'proposal';
@@ -99,24 +99,255 @@ describe('strict proposal three-way rebase', () => {
     }
   );
 
-  it.each(['different fields', 'same field', 'identical content'])(
-    'conflicts on both-side node edits: %s',
-    mode => {
+  it.each(['same field', 'identical content'])('conflicts on both-side node edits: %s', mode => {
+    const p = clone(base),
+      c = clone(base);
+    p.nodes![0]!.func = 'proposal';
+    c.nodes![0]!.func = mode === 'identical content' ? 'proposal' : 'live';
+    expectConflict(rebase(p, c), 'node_changed_both');
+  });
+
+  it.each(['libs', 'initialize', 'finalize', 'outputs'])(
+    'conflicts when func and %s change on opposite sides',
+    field => {
       const p = clone(base),
         c = clone(base);
-      p.nodes![0]!.func = 'proposal';
-      if (mode === 'different fields') c.nodes![0]!.name = 'live';
-      else c.nodes![0]!.func = mode === 'identical content' ? 'proposal' : 'live';
-      expectConflict(rebase(p, c), 'node_changed_both');
+      p.nodes![0]!.func = 'AI code';
+      c.nodes![0]![field] =
+        field === 'libs' ? [{ var: 'x', module: 'x' }] : field === 'outputs' ? 2 : 'editor code';
+      if (field === 'outputs') c.nodes![0]!.wires = [[], ['b']];
+      const result = rebase(p, c);
+      expectConflict(result, 'node_changed_both');
+      expect(result.conflicts[0]!.fields).toEqual(expect.arrayContaining(['func', field]));
+      // Both choices keep the entire execution group from the chosen side.
+      for (const choice of ['live', 'proposed'] as const) {
+        const resolved = applyConflictChoice({
+          flowId: 'tab',
+          base,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId: 'a',
+          choice,
+        });
+        const node = resolved.proposed.nodes!.find(n => n.id === 'a')!;
+        const expected = choice === 'live' ? c.nodes![0]! : p.nodes![0]!;
+        for (const key of ['func', field, 'wires']) expect(node[key]).toEqual(expected[key]);
+        expect(
+          rebaseFlowTab({ flowId: 'tab', ...resolved, liveFlows: flat(c), liveRev: 'r2' }).state
+        ).not.toBe('conflict');
+      }
     }
   );
 
-  it('conflicts on both-side config edits', () => {
+  it.each(['live', 'proposed'] as const)(
+    'couples %s output changes to competing wire edits',
+    side => {
+      const p = clone(base),
+        c = clone(base);
+      const outputSide = side === 'live' ? c : p;
+      const wireSide = side === 'live' ? p : c;
+      outputSide.nodes![0]!.outputs = 2;
+      outputSide.nodes![0]!.wires = [[], []];
+      wireSide.nodes![0]!.wires = [['b']];
+      const result = rebase(p, c);
+      expectConflict(result, 'node_changed_both');
+      expect(result.conflicts[0]!.fields).toEqual(expect.arrayContaining(['outputs', 'wires']));
+      for (const choice of ['live', 'proposed'] as const) {
+        const resolved = applyConflictChoice({
+          flowId: 'tab',
+          base,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId: 'a',
+          choice,
+        });
+        const expected = choice === 'live' ? c.nodes![0]! : p.nodes![0]!;
+        expect(resolved.proposed.nodes!.find(n => n.id === 'a')).toMatchObject({
+          wires: expected.wires,
+        });
+        expect(resolved.proposed.nodes!.find(n => n.id === 'a')!.outputs).toBe(expected.outputs);
+      }
+    }
+  );
+
+  it('merges wire-only editor changes with function code when output schema is unchanged', () => {
+    const p = clone(base),
+      c = clone(base);
+    p.nodes![0]!.func = 'AI';
+    c.nodes![0]!.wires = [['b']];
+    expect(rebase(p, c)).toMatchObject({
+      state: 'merged',
+      merged: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: 'a', func: 'AI', wires: [['b']] }),
+        ]),
+      },
+    });
+  });
+
+  it('keeps ordered switch rules strict', () => {
+    const b = clone(base);
+    b.nodes![0] = {
+      id: 'a',
+      type: 'switch',
+      rules: [{ t: 'eq', v: '1' }, { t: 'else' }],
+      wires: [[], []],
+    };
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.rules = [...(b.nodes![0].rules as unknown[])].reverse();
+    c.nodes![0]!.rules = [{ t: 'eq', v: '2' }, { t: 'else' }];
+    expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+  });
+
+  it('merges disjoint config fields', () => {
     const p = clone(base),
       c = clone(base);
     p.configs![0]!.broker = 'proposal';
     c.configs![0]!.port = 1884;
-    expectConflict(rebase(p, c), 'node_changed_both', 'cfg');
+    expect(rebase(p, c).merged!.configs![0]).toMatchObject({ broker: 'proposal', port: 1884 });
+  });
+
+  it('merges disjoint fields of one node, including removals, and reports only overlapping fields', () => {
+    const b = clone(base);
+    Object.assign(b.nodes![0]!, { name: 'before', outputs: 1 });
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.func = 'proposal';
+    delete p.nodes![0]!.outputs;
+    c.nodes![0]!.name = 'live';
+    const before = clone({ b, p, c });
+    expect(rebase(p, c, { base: b }).merged!.nodes![0]).toMatchObject({
+      name: 'live',
+      func: 'proposal',
+    });
+    expect(rebase(p, c, { base: b }).merged!.nodes![0]).not.toHaveProperty('outputs');
+    p.nodes![0]!.name = 'proposed name';
+    const result = rebase(p, c, { base: b });
+    expect(result.conflicts[0]!.fields).toEqual(['name']);
+    for (const choice of ['live', 'proposed'] as const) {
+      const next = applyConflictChoice({
+        flowId: 'tab',
+        base: b,
+        proposed: p,
+        liveFlows: flat(c),
+        nodeId: 'a',
+        choice,
+      });
+      expect(
+        rebase(next.proposed as FlowTab, c, { base: next.base }).merged!.nodes!.find(
+          n => n.id === 'a'
+        )
+      ).toMatchObject({
+        name: choice === 'live' ? 'live' : 'proposed name',
+        func: 'proposal',
+      });
+    }
+    expect(b).toEqual(before.b);
+    expect(c).toEqual(before.c);
+  });
+
+  it.each(['tab', 'node', 'config'] as const)(
+    'merges env per unique name and entry field on %s',
+    location => {
+      const b = clone(base);
+      const entity = (tab: FlowTab) =>
+        location === 'tab'
+          ? tab
+          : location === 'node'
+            ? tab.nodes!.find(n => n.id === 'a')!
+            : tab.configs![0]!;
+      entity(b).env = [
+        { name: 'A', value: 'old', type: 'str' },
+        { name: 'PASSWORD', value: 'old-secret', type: 'str' },
+      ];
+      const p = clone(b),
+        c = clone(b);
+      entity(p).env = [
+        { name: 'A', value: 'proposed', type: 'str' },
+        { name: 'PASSWORD', value: 'old-secret', type: 'str' },
+        { name: 'NEW', value: 'new' },
+      ];
+      entity(c).env = [
+        { name: 'PASSWORD', value: 'live-secret', type: 'str' },
+        { name: 'A', value: 'old', type: 'num' },
+      ];
+      const result = rebase(p, c, { base: b });
+      expect(result.state).toBe('merged');
+      expect(entity(result.merged!).env).toEqual([
+        { name: 'A', value: 'proposed', type: 'num' },
+        { name: 'PASSWORD', value: 'live-secret', type: 'str' },
+        { name: 'NEW', value: 'new' },
+      ]);
+      (entity(c).env as { name: string; value: string }[]).find(e => e.name === 'A')!.value =
+        'live';
+      expect(rebase(p, c, { base: b }).conflicts[0]!.fields).toEqual(['env["A"].value']);
+      for (const choice of ['live', 'proposed'] as const) {
+        const nodeId = location === 'tab' ? 'tab' : location === 'node' ? 'a' : 'cfg';
+        const next = applyConflictChoice({
+          flowId: 'tab',
+          base: b,
+          proposed: p,
+          liveFlows: flat(c),
+          nodeId,
+          choice,
+        });
+        const resolved = rebase(next.proposed as FlowTab, c, { base: next.base });
+        expect(resolved.state).not.toBe('conflict');
+        expect(entity(resolved.merged!).env).toEqual(
+          expect.arrayContaining([
+            { name: 'A', value: choice === 'live' ? 'live' : 'proposed', type: 'num' },
+            { name: 'PASSWORD', value: 'live-secret', type: 'str' },
+            { name: 'NEW', value: 'new' },
+          ])
+        );
+      }
+    }
+  );
+
+  it('merges credentials per key without reverting live secrets and conflicts on the same key', () => {
+    const b = clone(base);
+    b.configs![0]!.credentials = { user: 'old', password: 'old-secret', nested: { a: 1, b: 1 } };
+    const p = clone(b),
+      c = clone(b);
+    p.configs![0]!.credentials = {
+      user: 'proposed',
+      password: 'old-secret',
+      nested: { a: 2, b: 1 },
+    };
+    c.configs![0]!.credentials = { user: 'old', password: 'live-secret', nested: { a: 1, b: 2 } };
+    expect(rebase(p, c, { base: b }).merged!.configs![0]!.credentials).toEqual({
+      user: 'proposed',
+      password: 'live-secret',
+      nested: { a: 2, b: 2 },
+    });
+    (c.configs![0]!.credentials as Record<string, unknown>).user = 'live';
+    expect(rebase(p, c, { base: b }).conflicts[0]!.fields).toEqual(['credentials.user']);
+  });
+
+  it('merges disjoint credential keys even when the credentials container is new', () => {
+    const p = clone(base),
+      c = clone(base);
+    p.configs![0]!.credentials = { user: 'proposed' };
+    c.configs![0]!.credentials = { password: 'live-secret' };
+    expect(rebase(p, c).merged!.configs![0]!.credentials).toEqual({
+      user: 'proposed',
+      password: 'live-secret',
+    });
+  });
+
+  it('conflicts on env removal versus an edit, and uses atomic fallback for duplicate names', () => {
+    const b = clone(base);
+    b.env = [{ name: 'A', value: 'old' }];
+    const p = clone(b),
+      c = clone(b);
+    p.env = [];
+    c.env![0]!.value = 'live';
+    expect(rebase(p, c, { base: b }).conflicts[0]!.fields).toEqual(['env["A"]']);
+    b.env.push({ name: 'A', value: 'duplicate' });
+    p.env = [...b.env].reverse();
+    c.env = [{ name: 'A', value: 'live' }, b.env[1]!];
+    expect(rebase(p, c, { base: b }).conflicts[0]!.fields).toEqual(['env']);
   });
 
   it('accepts live deletion when proposal left the node alone, and accepts proposal-only and shared deletions', () => {
@@ -222,12 +453,12 @@ describe('strict proposal three-way rebase', () => {
     }
   );
 
-  it('conflicts even if both sides edit different tab properties', () => {
+  it('merges different tab properties', () => {
     const p = clone(base),
       c = clone(base);
     p.label = 'proposal';
     c.info = 'editor';
-    expectConflict(rebase(p, c), 'tab_changed_both', 'tab');
+    expect(rebase(p, c).merged).toMatchObject({ label: 'proposal', info: 'editor' });
   });
 
   it.each(['wire', 'group', 'group member', 'link'])(
@@ -678,7 +909,7 @@ describe('secrets during rebase', () => {
   });
 
   it.each(['content', 'position'])(
-    'conflicts if the editor changes a secret and the proposal touches the node (%s)',
+    'handles an editor secret rotation alongside a proposal %s edit',
     mode => {
       const b = secretBase(),
         p = clone(b),
@@ -686,7 +917,12 @@ describe('secrets during rebase', () => {
       c.nodes![0]!.func = 'const API_KEY = "new-live-secret";\nreturn msg;';
       if (mode === 'position') p.nodes![0]!.x = 999;
       else p.nodes![0]!.func = (p.nodes![0]!.func as string) + '\n// proposed';
-      expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+      if (mode === 'content') expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+      else
+        expect(rebase(p, c, { base: b }).merged!.nodes![0]).toMatchObject({
+          x: 999,
+          func: c.nodes![0]!.func,
+        });
     }
   );
   it('keeps the live secret on an untouched node after restoring the base placeholder', () => {

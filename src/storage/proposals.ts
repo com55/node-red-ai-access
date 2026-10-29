@@ -32,7 +32,7 @@ export function isOpenProposalStatus(status: ProposalStatus): boolean {
   return status === 'pending' || status === 'conflict';
 }
 
-/** One stored rebase conflict (field names only — never values). */
+/** One stored rebase conflict (field paths only, including env names / credential keys; never values). */
 export interface StoredRebaseConflict {
   kind: string;
   nodeId?: string;
@@ -41,6 +41,12 @@ export interface StoredRebaseConflict {
   fields?: string[];
   message: string;
   choices: ('live' | 'proposed')[];
+}
+
+/** Paths where an AI conflict choice replaced a live editor change. */
+export interface AiConflictOverride {
+  nodeId: string;
+  fields: string[];
 }
 
 /** Result of the last auto-rebase check against the live flows. */
@@ -116,6 +122,20 @@ export interface Proposal {
   deployPending?: { mergedHash: string; reason: string; queueReleased?: boolean };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
+  /** AI resolutions that replace editor changes and still require reviewer acknowledgement. */
+  aiConflictOverrides?: AiConflictOverride[];
+  /** Latest manual resolution, retained for admin undo until the next body edit. */
+  conflictChoice?: {
+    nodeId: string;
+    choice: 'live' | 'proposed';
+    chooser?: 'ai' | 'human';
+    undo?: {
+      baseFlow: Partial<FlowTab>;
+      flow: Partial<FlowTab>;
+      warnings: ProposalWarning[];
+      aiConflictOverrides?: AiConflictOverride[];
+    };
+  };
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -322,6 +342,23 @@ function sanitizeProposalWarnings(raw: unknown): ProposalWarning[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+function sanitizeAiOverrides(raw: unknown): AiConflictOverride[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const entries = raw.filter((v: unknown): v is AiConflictOverride => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+    const entry = v as Record<string, unknown>;
+    return typeof entry.nodeId === 'string' && Array.isArray(entry.fields);
+  });
+  return entries.length
+    ? entries.map(v => ({
+        nodeId: v.nodeId.replace(/\0/g, '').slice(0, 200),
+        fields: v.fields
+          .filter((f): f is string => typeof f === 'string')
+          .map(f => f.replace(/\0/g, '').slice(0, 500)),
+      }))
+    : undefined;
+}
+
 export class ProposalStore {
   private readonly inFlight = new Set<string>();
   private readonly now: () => number;
@@ -418,6 +455,30 @@ export class ProposalStore {
         if (proposal.deployPending.queueReleased === true)
           record.deployPending.queueReleased = true;
       }
+    }
+    const overrides = sanitizeAiOverrides(proposal.aiConflictOverrides);
+    if (overrides && isOpenProposalStatus(record.status)) record.aiConflictOverrides = overrides;
+    const choice = proposal.conflictChoice;
+    if (
+      choice &&
+      isOpenProposalStatus(record.status) &&
+      (choice.choice === 'live' || choice.choice === 'proposed') &&
+      typeof choice.nodeId === 'string' &&
+      choice.undo
+    ) {
+      record.conflictChoice = {
+        nodeId: choice.nodeId.replace(/\0/g, '').slice(0, 200),
+        choice: choice.choice,
+        ...(choice.chooser === 'ai' || choice.chooser === 'human'
+          ? { chooser: choice.chooser }
+          : {}),
+        undo: {
+          baseFlow: sanitizeFlowTab(choice.undo.baseFlow),
+          flow: sanitizeFlowTab(choice.undo.flow),
+          warnings: sanitizeProposalWarnings(choice.undo.warnings) ?? [],
+          aiConflictOverrides: sanitizeAiOverrides(choice.undo.aiConflictOverrides) ?? [],
+        },
+      };
     }
     const rebase = sanitizeRebaseInfo(proposal.rebase);
     if (rebase && isOpenProposalStatus(record.status)) {
@@ -682,6 +743,8 @@ export class ProposalStore {
       title?: string;
       restoredSecrets?: { nodeId: string; property: string }[];
       warnings?: ProposalWarning[];
+      conflictChoice?: Proposal['conflictChoice'];
+      aiConflictOverrides?: AiConflictOverride[];
     }
   ): Proposal {
     const proposal = this.get(id);
@@ -703,6 +766,11 @@ export class ProposalStore {
       if (update.warnings.length > 0) proposal.warnings = update.warnings;
       else delete proposal.warnings;
     }
+    if (update.aiConflictOverrides?.length)
+      proposal.aiConflictOverrides = update.aiConflictOverrides;
+    else delete proposal.aiConflictOverrides;
+    if (update.conflictChoice) proposal.conflictChoice = update.conflictChoice;
+    else delete proposal.conflictChoice;
     proposal.status = 'pending';
     delete proposal.rebase;
     proposal.updatedAt = new Date(this.now()).toISOString();

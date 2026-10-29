@@ -1,6 +1,6 @@
 /**
  * Cross-token conflict detection for pending proposals on the same flow.
- * Like a git conflict check: same-rev peers or truly overlapping edits.
+ * Only overlapping field edits warn; disjoint edits auto-merge.
  */
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
@@ -12,8 +12,9 @@ import {
 } from '../storage/proposals.js';
 
 import { buildProposalDisplayName, resolveProposalTitle } from './proposal-present.js';
+import { changedFieldPaths } from './proposal-rebase.js';
 
-const IGNORE_TOUCH_KEYS = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
+const IGNORE_TOUCH_KEYS = new Set(['x', 'y', 'id', 'z']);
 
 /** Fields changed on a node (`*` = added or removed wholesale). */
 export type NodeTouchMap = Map<string, Set<string>>;
@@ -45,16 +46,11 @@ function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
   return map;
 }
 
-function changedFieldKeys(before: FlowNode, after: FlowNode): string[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  const out: string[] = [];
-  for (const key of keys) {
-    if (IGNORE_TOUCH_KEYS.has(key)) continue;
-    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-      out.push(key);
-    }
-  }
-  return out.sort();
+function changedFieldKeys(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): string[] {
+  return changedFieldPaths(before, after).filter(key => !IGNORE_TOUCH_KEYS.has(key));
 }
 
 /** Map nodeId → changed field names (`*` for add/remove). */
@@ -79,6 +75,20 @@ export function computeProposalTouches(proposal: Proposal): NodeTouchMap {
       touches.set(id, new Set(['*']));
     }
   }
+  const tabBefore = Object.fromEntries(
+    ['label', 'disabled', 'info', 'env'].map(key => [
+      key,
+      (proposal.baseFlow as Record<string, unknown> | undefined)?.[key],
+    ])
+  );
+  const tabAfter = Object.fromEntries(
+    ['label', 'disabled', 'info', 'env'].map(key => [
+      key,
+      (proposal.payload.flow as Record<string, unknown>)[key],
+    ])
+  );
+  const tabFields = changedFieldKeys(tabBefore, tabAfter);
+  if (tabFields.length > 0) touches.set(proposal.payload.flowId, new Set(tabFields));
   return touches;
 }
 
@@ -91,7 +101,6 @@ function overlapBetween(
   for (const [nodeId, aFields] of a) {
     const bFields = b.get(nodeId);
     if (!bFields) continue;
-    nodeIds.push(nodeId);
     const shared: string[] = [];
     for (const f of aFields) {
       if (f === '*') {
@@ -100,12 +109,23 @@ function overlapBetween(
         if (bFields.has('*')) shared.push('*');
         continue;
       }
-      if (bFields.has(f) || bFields.has('*')) {
+      if (
+        bFields.has('*') ||
+        [...bFields].some(
+          other =>
+            other === f ||
+            other.startsWith(`${f}.`) ||
+            f.startsWith(`${other}.`) ||
+            other.startsWith(`${f}[`) ||
+            f.startsWith(`${other}[`)
+        )
+      ) {
         shared.push(f);
       }
     }
     const uniq = [...new Set(shared)].sort();
     if (uniq.length > 0) {
+      nodeIds.push(nodeId);
       fields.push({ nodeId, fields: uniq });
     }
   }
@@ -114,7 +134,7 @@ function overlapBetween(
 }
 
 /**
- * Open proposals on the same flowId that touch the same nodes (approving one
+ * Open proposals on the same flowId that touch the same fields (approving one
  * will put the other into `conflict`). Non-overlapping peers are skipped:
  * they auto-rebase. Closed proposals are never conflicts.
  */

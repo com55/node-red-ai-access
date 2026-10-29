@@ -184,7 +184,7 @@ function renderMcpPageSettingsSection(): string {
             <label for="set-ttl">Default access token expiry</label>
             <div class="field-line">
               <input type="number" id="set-ttl" min="1" step="1" class="num" />
-              <span class="unit">hours</span>
+              <span class="unit">hours (minimum 1)</span>
               ${lockBadge('ttl')}
             </div>
           </div>
@@ -378,7 +378,7 @@ function renderMcpPageProposalsSection(): string {
         </button>
         <input type="search" id="proposals-search" class="proposals-search"
           placeholder="Search title or id (e.g. efd159aa)…"
-          aria-label="Search proposals by title or short id (first 8 hex after prop-)"
+          aria-label="Search proposals by title or id"
           autocomplete="off" />
       </div>
       <div id="proposals-flash" class="flash" hidden></div>

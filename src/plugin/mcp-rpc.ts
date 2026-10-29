@@ -694,7 +694,7 @@ function registerProposalQueryTools(
       description:
         'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
         'open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. ' +
-        'Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
+        'baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
         'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
@@ -770,16 +770,58 @@ function registerProposalActionTools(
     'resolve_proposal_conflict',
     {
       description:
-        'Replace your own open proposal with a resolution based on expectedRev. Revision changes auto-rebase; conflict blocks approval until resolved. Open proposals expire after the configured TTL (default 7 days). Read the current flow first; payload accepts a full flow or nodes ops as in submit_proposal.',
+        'Resolve your own open proposal. Different node/tab fields auto-merge; only fields changed on both sides conflict (x/y never conflict). ' +
+        'Choose one current conflict using nodeId + choice, preserving all non-conflicting fields. ' +
+        'Alternatively replace the proposal using expectedRev + payload: nodes ops apply to the flow snapshot at expectedRev, NOT the stored proposal or merged result; include every intended proposal edit. ' +
+        'Read get_proposal_diff for conflicts and get_flow for a fresh rev. These two modes cannot be mixed.',
       inputSchema: {
-        id: z.string().min(1),
-        expectedRev: z.string().min(1),
-        title: z.string().max(80).optional(),
-        payload: z.object({
-          flowId: z.string().min(1),
-          flow: z.record(z.string(), z.unknown()).optional(),
-          nodes: z.array(z.record(z.string(), z.unknown())).optional(),
-        }),
+        id: z.string().min(1).describe('Your open proposal id (prop-…)'),
+        nodeId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Conflict nodeId from rebase.conflicts; use the flow id for tab/env conflicts. Required with choice.'
+          ),
+        choice: z
+          .enum(['live', 'proposed'])
+          .optional()
+          .describe(
+            'For this conflict, keep live or proposed values of overlapping fields only. Disjoint edits survive. Use with nodeId, without expectedRev/title/payload.'
+          ),
+        expectedRev: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Revision of the flow snapshot on which replacement payload ops run. Required with payload; normally the current get_flow rev.'
+          ),
+        title: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('Optional replacement title (body replacement mode only)'),
+        payload: z
+          .object({
+            flowId: z
+              .string()
+              .min(1)
+              .describe('Target flow id; must remain the proposal’s flow id'),
+            flow: z
+              .record(z.string(), z.unknown())
+              .optional()
+              .describe(
+                'Full replacement tab based on expectedRev; preserve all desired edits. Use either flow or nodes.'
+              ),
+            nodes: z
+              .array(z.record(z.string(), z.unknown()))
+              .optional()
+              .describe(
+                'set/add/remove/replace_text operations applied to the flow at expectedRev, not to the stored proposal. Env merges by unique name and credentials by key; same-field edits conflict.'
+              ),
+          })
+          .optional()
+          .describe('Replacement body; required with expectedRev, omitted with nodeId + choice'),
       },
     },
     async ({ id, ...body }) => {
@@ -808,7 +850,7 @@ function registerProposalActionTools(
     {
       description:
         'Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). ' +
-        'Optional reason. Only the creating access link can withdraw; other tokens get 403. ' +
+        'Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. ' +
         'Cite displayName + reviewUrl when telling the user.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…) owned by this access link'),

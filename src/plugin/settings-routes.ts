@@ -99,8 +99,8 @@ function parsePositiveIntField(
 ): void {
   const value = body[key];
   if (value === undefined) return;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
-    throw new Error(`${key} must be a positive number`);
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
+    throw new Error(`${key} must be an integer with a minimum of 1`);
   patch[key] = Math.floor(value);
 }
 
@@ -200,7 +200,7 @@ export function putSettingsHandler(
               value[key] < 1 ||
               value[key] > 31_536_000
             )
-              throw new Error(`oauth.${key} must be a positive integer`);
+              throw new Error(`oauth.${key} must be an integer with a minimum of 1`);
             oauth[key] = value[key];
           }
         }

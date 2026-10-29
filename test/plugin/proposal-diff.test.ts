@@ -67,7 +67,7 @@ describe('buildProposalDiff', () => {
       afterNodeCount: 2,
     });
     expect(diff.compareAgainst).toBe('base');
-    expect(diff.baseRevStale).toBe(false);
+    expect(diff.baseRevChanged).toBe(false);
     expect(diff.added).toHaveLength(1);
     expect(diff.added[0]).toMatchObject({ id: 'n3', type: 'debug', name: 'out' });
     expect(diff.added[0]?.summary).toMatch(/Adds debug node "out"/);
@@ -133,16 +133,16 @@ describe('buildProposalDiff', () => {
       {
         currentRev: 'rev-2',
         compareAgainst: 'base',
-        baseRevStale: true,
+        baseRevChanged: true,
         vsCurrent: vsLive,
       }
     );
     expect(diff.summary.removed).toBe(0);
-    expect(diff.baseRevStale).toBe(true);
+    expect(diff.baseRevChanged).toBe(true);
     expect(diff.vsCurrent?.removed.some(n => n.id === 'html20k')).toBe(true);
   });
 
-  it('does not flag baseRevStale for approved proposals even when live rev moved', () => {
+  it('does not flag baseRevChanged for approved proposals even when live rev moved', () => {
     const diff = buildProposalDiff(
       proposal({
         status: 'approved',
@@ -153,7 +153,7 @@ describe('buildProposalDiff', () => {
       { rev: 'old-rev', flow: { nodes: [] } },
       { currentRev: 'new-rev', compareAgainst: 'base' }
     );
-    expect(diff.baseRevStale).toBe(false);
+    expect(diff.baseRevChanged).toBe(false);
     expect(diff.currentRev).toBe('new-rev');
   });
 
@@ -250,7 +250,7 @@ describe('buildProposalDiff', () => {
       }),
       { rev: 'new-rev', flow: { nodes: [] } }
     );
-    expect(diff.baseRevStale).toBe(true);
+    expect(diff.baseRevChanged).toBe(true);
     expect(diff.currentRev).toBe('new-rev');
     expect(diff.expectedRev).toBe('old-rev');
   });
@@ -274,6 +274,33 @@ describe('isLargeDelete', () => {
     // and require typing DELETE before doApproveProposal (see page-client approveProposal).
     const summary = { beforeNodeCount: 8, removed: 7, added: 0, modified: 0, tabChanges: [] };
     expect(isLargeDelete(summary)).toBe(true);
-    expect(isLargeDelete(summary) && !false /* baseRevStale */).toBe(true);
+    expect(isLargeDelete(summary) && !false /* baseRevChanged */).toBe(true);
+  });
+});
+
+describe('flow settings comparisons', () => {
+  it('does not invent editor changes when omitted flow settings equal Node-RED defaults', () => {
+    const result = buildDiffSections(
+      { id: 'tab', nodes: [], disabled: false, env: [], info: '' },
+      { id: 'tab', nodes: [] }
+    );
+    expect(result.summary.tabChanges).toEqual([]);
+    expect(result.tabProperties).toEqual([]);
+  });
+
+  it('includes real before/after flow settings values so equal field names do not hide distinct comparisons', () => {
+    const result = buildDiffSections(
+      { id: 'tab', label: 'proposed', env: [{ name: 'MODE', value: 'next', type: 'str' }] },
+      { id: 'tab', label: 'live', env: [{ name: 'MODE', value: 'current', type: 'str' }] }
+    );
+    expect(result.tabProperties).toEqual([
+      { key: 'label', kind: 'scalar', before: 'live', after: 'proposed' },
+      {
+        key: 'env',
+        kind: 'scalar',
+        before: [{ name: 'MODE', value: 'current', type: 'str' }],
+        after: [{ name: 'MODE', value: 'next', type: 'str' }],
+      },
+    ]);
   });
 });

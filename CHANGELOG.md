@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.8] - 2026-10-29
+
+- Proposal review shows human conflict reasons and Base / Live / Proposed field
+  values, including flow environment variables. Choices have explanations,
+  confirmation, a visible chosen state, and persisted undo of the latest choice.
+- Proposals with no net deployment change clearly say nothing changes and hide
+  approval and security notes.
+- Consolidate review notes with a count and separate security from
+  configuration; omit duplicate comparisons and unchanged editor diffs. Re-check
+  shows progress and a result toast. Pending totals match the badge, including
+  conflicts.
+- Improve light-theme readability, settings width, sticky navigation clearance,
+  sign-in footer visibility and stable sign-in button colors; errors use alerts.
+- Reject invalid TTL settings with a minimum of 1; keep invalid input visible
+  and never report it saved. Investigate the NR4 Active link (box-only
+  findings).
+
+- Merge disjoint fields on the same node and tab, including env entries by
+  unique name and credentials by key. Conflict choices preserve independent
+  changes from both sides and retain secret safeguards and warnings.
+- Keep peer proposals mergeable after approval of a different field on the same
+  node.
+- Report actual changed fields in `outbound_node_changed` warnings.
+- Expose `baseRev` and rename the informational revision flag to
+  `baseRevChanged`; use `rebase.state` and `rebase.rev` to assess the checked
+  merge.
+- Add `nodeId` + `choice` to MCP/REST proposal resolution and clarify that
+  replacement operations apply to the flow snapshot at `expectedRev`.
+- Allow full admins to withdraw proposals after token loss, with recovery
+  authority and original ownership in the audit log. Other tokens remain
+  blocked.
+
 ## [0.2.0-beta.7] - 2026-10-28
 
 ### Fixed

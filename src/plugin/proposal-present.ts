@@ -89,16 +89,20 @@ export interface PresentedProposalApi {
   createdAt: string;
   updatedAt: string;
   expectedRev: string;
+  /** Revision of the stored base snapshot; alias of expectedRev. */
+  baseRev: string;
   createdBy: Proposal['createdBy'];
   /** Short classify-counts summary, e.g. `Adds 1 node`. */
   changeSummary: string;
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
+  aiConflictOverrides?: Proposal['aiConflictOverrides'];
+  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed'; chooser?: 'ai' | 'human' };
   deployPending?: Proposal['deployPending'];
   /** Soft validation notes (missing config, unwired, …) — not blocking. */
   warnings?: Proposal['warnings'];
-  baseRevStale?: boolean;
+  baseRevChanged?: boolean;
   decidedBy?: Proposal['decidedBy'];
   reason?: string;
   resultRev?: string;
@@ -172,7 +176,7 @@ export interface PresentedProposal extends Proposal {
    * Pending only: true when `expectedRev` does not match the live flows rev.
    * Omitted for decided proposals or when the live rev could not be read.
    */
-  baseRevStale?: boolean;
+  baseRevChanged?: boolean;
   /**
    * `title · <server local datetime with offset>`, e.g.
    * `Add inject node "tick2" · 16 Oct 01:35 +00:00`.
@@ -659,6 +663,17 @@ export function presentProposal(
   const reviewUrl = options.req ? absolutizePath(options.req, reviewPath) : reviewPath;
   return {
     ...proposal,
+    ...(proposal.conflictChoice
+      ? {
+          conflictChoice: {
+            nodeId: proposal.conflictChoice.nodeId,
+            choice: proposal.conflictChoice.choice,
+            ...(proposal.conflictChoice.chooser
+              ? { chooser: proposal.conflictChoice.chooser }
+              : {}),
+          },
+        }
+      : {}),
     title,
     storedTitle,
     flowLabel,
@@ -736,6 +751,7 @@ export function presentProposalForApi(
     createdAt: full.createdAt,
     updatedAt: full.updatedAt,
     expectedRev: full.expectedRev,
+    baseRev: full.expectedRev,
     createdBy: presentCreatedByForApi(full.createdBy),
     changeSummary: buildChangeSummary(proposal),
   };
@@ -755,11 +771,16 @@ export function presentProposalForApi(
     lean.restoredSecrets = proposal.restoredSecrets;
   }
   if (full.deployPending) lean.deployPending = full.deployPending;
+  if (full.aiConflictOverrides) lean.aiConflictOverrides = full.aiConflictOverrides;
+  if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;
   if (full.rebase) {
     lean.rebase = full.rebase;
   }
-  if (full.baseRevStale !== undefined) {
-    lean.baseRevStale = full.baseRevStale;
+  if (full.rebase && (full.status === 'pending' || full.status === 'conflict')) {
+    lean.baseRevChanged = full.expectedRev !== full.rebase.rev;
+  }
+  if (full.baseRevChanged !== undefined) {
+    lean.baseRevChanged = full.baseRevChanged;
   }
   if (full.decidedBy !== undefined) {
     lean.decidedBy = full.decidedBy;

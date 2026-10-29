@@ -177,6 +177,7 @@ interface FakeEl {
   appendChild(child: FakeEl): FakeEl;
   removeChild(child: FakeEl): FakeEl;
   setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
   [extra: string]: unknown;
 }
 
@@ -208,6 +209,9 @@ function makeEl(id: string, tagName = 'div'): FakeEl {
     setAttribute(name, value) {
       this.attrs[name] = String(value);
     },
+    removeAttribute(name) {
+      delete this.attrs[name];
+    },
     addEventListener(ev, fn) {
       (this.listeners[ev] ??= []).push(fn);
     },
@@ -223,6 +227,14 @@ function fakeDom() {
     let el = els.get(id);
     if (!el) {
       el = makeEl(id);
+      if (
+        /^(set-(ttl|proposal-ttl|max-links|rate-ip|rate-token)|oauth-(access-ttl|refresh-ttl|dcr-cap))$/.test(
+          id
+        )
+      )
+        el.min = '1';
+      if (id === 'set-proposal-ttl') el.max = '365';
+      if (id === 'set-rate-window') el.min = '100';
       els.set(id, el);
     }
     return el;
@@ -234,11 +246,15 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
   const dom = fakeDom();
   const calls: { path: string; options?: { method?: string; body?: string } }[] = [];
   const confirm: { opts?: { onConfirm?: () => unknown } } = {};
+  const toasts: { message: string; ok: boolean }[] = [];
   const ctx = {
     dom,
+    toasts,
     api: async (path: string, options?: { method?: string; body?: string }) => {
       calls.push({ path, ...(options ? { options } : {}) });
-      return responses[path] ?? {};
+      const result = responses[path];
+      if (result instanceof Error) throw result;
+      return result ?? {};
     },
     location: { origin: 'http://nr.local:1880' },
     document: { querySelector: () => null, createElement: (tag: string) => makeEl('', tag) },
@@ -254,7 +270,7 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       function esc(s) {
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       }
-      function showToast() {}
+      function showToast(message, ok) { toasts.push({ message: message, ok: ok }); }
       function showFlash(el, msg) { if (el) { el.textContent = msg; el.hidden = !msg; } }
       function openConfirmDialog(opts) { confirm.opts = opts; }
       function applyStatus() {}
@@ -267,12 +283,13 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       out.renderOAuthRouteWarning = renderOAuthRouteWarning;
       out.loadOAuthClients = loadOAuthClients;
       out.saveSettingsNow = saveSettingsNow;
+      out.persistSettings = persistSettings;
       out.addSecretPattern = addSecretPattern;
       out.resetSecretPatterns = resetSecretPatterns;
     })();`,
     ctx
   );
-  return { dom, calls, out: ctx.out, confirm };
+  return { dom, calls, out: ctx.out, confirm, toasts };
 }
 
 describe('light theme only', () => {
@@ -311,16 +328,52 @@ describe('helpers', () => {
 });
 
 describe('dashboard settings client', () => {
-  it('loads, saves, bounds and locks proposal expiry days', () => {
+  it('shows a server TTL validation error without resetting the input or reporting success', async () => {
+    const { dom, calls, out, toasts } = loadSettingsClient({
+      '/settings': new Error('defaultLinkTtlSeconds must be an integer with a minimum of 1'),
+    });
+    dom.get('set-ttl').value = '0';
+    await out.persistSettings!({ defaultLinkTtlSeconds: 0 });
+    expect(dom.get('settings-flash').textContent).toContain('minimum of 1');
+    expect(dom.get('set-ttl').value).toBe('0');
+    expect(toasts).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each(['set-ttl', 'set-proposal-ttl', 'oauth-access-ttl', 'oauth-refresh-ttl'])(
+    'shows the minimum for %s = 0 and never says settings saved',
+    async id => {
+      const { dom, calls, out } = loadSettingsClient({});
+      out.applySettings!({
+        canEdit: true,
+        settings: {
+          maxActiveLinks: 10,
+          rateLimitWindowMs: 60000,
+          rateLimitMaxPerIp: 600,
+          rateLimitMaxPerToken: 300,
+        },
+        sources: {},
+      });
+      dom.get(id).value = '0';
+      out.saveSettingsNow!();
+      await new Promise(r => setTimeout(r, 0));
+      expect(calls.filter(c => c.options?.method === 'PUT')).toHaveLength(0);
+      expect(dom.get('settings-flash').textContent).toContain('minimum of 1');
+      expect(dom.get('settings-flash').textContent).not.toContain('Settings saved');
+      expect(dom.get(id).value).toBe('0');
+      expect(dom.get(id).attrs['aria-invalid']).toBe('true');
+    }
+  );
+  it('loads expiry days without silently clamping invalid input and locks configured values', () => {
     const { dom, out } = loadSettingsClient({});
     out.applySettings!({ canEdit: true, settings: {}, sources: {} });
     expect(dom.get('set-proposal-ttl').value).toBe('7');
     dom.get('set-proposal-ttl').value = '30';
     expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 30 });
     dom.get('set-proposal-ttl').value = '999';
-    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 365 });
+    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 999 });
     dom.get('set-proposal-ttl').value = '-1';
-    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: 1 });
+    expect(out.collectSettingsPayload!()).toMatchObject({ proposalTtlDays: -1 });
     out.applySettings!({
       canEdit: true,
       settings: { proposalTtlDays: 14 },
@@ -489,7 +542,14 @@ describe('dashboard settings client', () => {
     out.applySettings!({
       canEdit: true,
       adminAuthEnabled: true,
-      settings: { publicBaseUrl: '', oauth: { enabled: false } },
+      settings: {
+        publicBaseUrl: '',
+        oauth: { enabled: false },
+        maxActiveLinks: 10,
+        rateLimitWindowMs: 60000,
+        rateLimitMaxPerIp: 600,
+        rateLimitMaxPerToken: 300,
+      },
       sources: {},
     });
     dom.get('oauth-enabled').checked = true;
@@ -503,7 +563,13 @@ describe('dashboard settings client', () => {
     const base = {
       canEdit: true,
       adminAuthEnabled: true,
-      settings: { secretNamePatterns: ['PASSWORD', '<img src=x onerror=alert(1)>'] },
+      settings: {
+        secretNamePatterns: ['PASSWORD', '<img src=x onerror=alert(1)>'],
+        maxActiveLinks: 10,
+        rateLimitWindowMs: 60000,
+        rateLimitMaxPerIp: 600,
+        rateLimitMaxPerToken: 300,
+      },
       sources: { secretNamePatterns: 'disk' },
     };
 

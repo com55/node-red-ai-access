@@ -68,6 +68,9 @@ function gateHarness(loginType: string, tokenOk = true, editorRoot = '/') {
         className: '',
         disabled: false,
         focus() {},
+        setAttribute(name: string, value: string) {
+          this[name] = value;
+        },
         ...emitter(),
       };
       els.set(id, e);

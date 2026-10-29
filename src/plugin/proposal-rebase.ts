@@ -1,14 +1,14 @@
 /**
- * Auto-rebase for pending proposals (3-way merge with strict conflict rules).
+ * Auto-rebase for pending proposals (3-way merge by field).
  *
  * A proposal stores the tab it was based on (`baseFlow`, B) and the tab it
  * wants (`payload.flow`, P). When the live flows (C) move, we compute what to
  * deploy without overwriting anything the user changed since B:
  *
  * - Node changed only in P → take P. Changed only in C → keep C.
- * - Node changed in both → conflict (strict), except when one side changed only
- *   `x` / `y` (position): then the other side's content wins and the position
- *   edit is kept.
+ * - Different fields changed in both → merge; the same field changed in both
+ *   → conflict. Env entries merge by unique name, credentials by key.
+ * - `x` / `y` changes never conflict; a proposed position edit wins a tie.
  * - Node deleted live and untouched by P → accept the deletion.
  * - Node deleted live but changed in P, or deleted in P but changed live → conflict.
  * - New node id in P that also exists live (any tab) → conflict.
@@ -30,7 +30,6 @@ import {
   hasNewLiteralPlaceholder,
   duplicateEnvWarnings,
   preserveLiveSecrets,
-  secretValuesChanged,
   stableElementKey,
 } from './secret-redaction.js';
 
@@ -78,6 +77,7 @@ export interface RebaseResult {
 }
 
 const TAB_FIELDS = ['label', 'disabled', 'info', 'env'] as const;
+const FUNCTION_FIELDS = ['func', 'libs', 'initialize', 'finalize', 'outputs'];
 const POSITION_FIELDS = new Set(['x', 'y']);
 const EMPTY_TAB_PROPS = { label: '', disabled: false, info: '', env: [] };
 /** Keys never compared (set by the deploy path / runtime). */
@@ -143,17 +143,124 @@ export function changedFields(
   return out.sort();
 }
 
-function positionOnly(fields: string[]): boolean {
-  return fields.length > 0 && fields.every(f => POSITION_FIELDS.has(f));
+/** Unique env names are identities, never array indices. Ambiguous arrays stay atomic. */
+function envMap(value: unknown): Map<string, Record<string, unknown>> | undefined {
+  if (value === undefined) return new Map();
+  if (!Array.isArray(value)) return undefined;
+  const entries = new Map<string, Record<string, unknown>>();
+  for (const entry of value as unknown[]) {
+    if (
+      !isObject(entry) ||
+      typeof entry.name !== 'string' ||
+      !entry.name ||
+      entries.has(entry.name)
+    )
+      return undefined;
+    entries.set(entry.name, entry);
+  }
+  return entries;
 }
 
-function withPosition(target: FlowNode, from: FlowNode): FlowNode {
-  const out: FlowNode = { ...target };
-  for (const key of POSITION_FIELDS) {
-    if (from[key] === undefined) delete out[key];
-    else out[key] = from[key];
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Changed paths used by peer warnings as well as the actual three-way merge. */
+export function changedFieldPaths(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): string[] {
+  const paths: string[] = [];
+  mergeFields(before, after, before, undefined, paths);
+  return paths.sort();
+}
+
+/**
+ * Merge fields, recording only overlapping paths. `choice` resolves those paths
+ * alone; all non-conflicting changes on either side survive.
+ */
+function mergeFields(
+  base: Record<string, unknown>,
+  proposed: Record<string, unknown>,
+  live: Record<string, unknown>,
+  choice?: ConflictChoice,
+  changed?: string[]
+): { value: Record<string, unknown>; conflicts: string[] } {
+  const conflicts: string[] = [];
+  const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
+  const functionFields = new Set(
+    [base.type, proposed.type, live.type].includes('function') ? FUNCTION_FIELDS : []
+  );
+  // Output count and wiring are coupled: never combine one side's output
+  // schema with the other side's wires. Wire-only edits still merge with code.
+  if (
+    functionFields.size &&
+    (!same(base.outputs, proposed.outputs) || !same(base.outputs, live.outputs))
+  ) {
+    functionFields.add('wires');
   }
-  return out;
+  const changedInGroup = (node: Record<string, unknown>) =>
+    [...functionFields].some(key => !same(base[key], node[key]));
+  const groupConflict = changedInGroup(proposed) && changedInGroup(live);
+  const merge = (b: unknown, p: unknown, c: unknown, path: string): unknown => {
+    if (same(b, p)) return c;
+    // Expand these containers even when only one side changed, so peer warnings
+    // use the same field identities as rebase.
+    if (path === 'env') {
+      const bm = envMap(b),
+        pm = envMap(p),
+        cm = envMap(c);
+      if (bm && pm && cm) {
+        const entries: unknown[] = [];
+        for (const name of new Set([...pm.keys(), ...cm.keys(), ...bm.keys()])) {
+          const value = merge(
+            bm.get(name),
+            pm.get(name),
+            cm.get(name),
+            `env[${JSON.stringify(name)}]`
+          );
+          if (value !== undefined) entries.push(value);
+        }
+        return entries;
+      }
+    }
+    if (
+      (path === 'credentials' || path.startsWith('credentials.') || path.startsWith('env[')) &&
+      isObject(p) &&
+      (isObject(c) || (c === undefined && b === undefined)) &&
+      (b === undefined || isObject(b))
+    ) {
+      const before = isObject(b) ? b : {};
+      return mergeObject(before, p, isObject(c) ? c : {}, path);
+    }
+    changed?.push(path);
+    if (same(b, c) || POSITION_FIELDS.has(path)) return p;
+    conflicts.push(path);
+    return choice === 'live' ? c : p;
+  };
+  const mergeObject = (
+    b: Record<string, unknown>,
+    p: Record<string, unknown>,
+    c: Record<string, unknown>,
+    prefix: string
+  ): Record<string, unknown> => {
+    const entries: [string, unknown][] = [];
+    for (const key of new Set([...Object.keys(b), ...Object.keys(p), ...Object.keys(c)])) {
+      if (!prefix && IGNORED_FIELDS.has(key)) continue;
+      const path = prefix ? `${prefix}.${key}` : key;
+      let value: unknown;
+      if (!prefix && groupConflict && functionFields.has(key)) {
+        if (!same(b[key], p[key]) || !same(b[key], c[key])) conflicts.push(key);
+        if (!same(b[key], p[key])) changed?.push(key);
+        value = choice === 'live' ? c[key] : p[key];
+      } else {
+        value = merge(b[key], p[key], c[key], path);
+      }
+      if (value !== undefined) entries.push([key, value]);
+    }
+    return Object.fromEntries(entries);
+  };
+  return { value: mergeObject(base, proposed, live, ''), conflicts: conflicts.sort() };
 }
 
 function nodeLabel(node: FlowNode | undefined): { nodeType?: string; nodeName?: string } {
@@ -290,21 +397,17 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
   const cTab = tabProps(live.tab);
   const pTab = tabProps(proposed);
   const tabLive = changedFields(bTab, cTab);
-  const tabProp = changedFields(bTab, pTab);
-  let mergedTabProps = pTab;
-  if (tabLive.length > 0) {
-    liveChangedIds.push(flowId);
-    if (tabProp.length === 0) {
-      mergedTabProps = cTab;
-    } else {
-      push({
-        kind: 'tab_changed_both',
-        nodeId: flowId,
-        fields: [...new Set([...tabLive, ...tabProp])].sort(),
-        message: 'Both the editor and the proposal changed the flow tab settings.',
-        choices: ['live', 'proposed'],
-      });
-    }
+  const tabMerge = mergeFields(bTab, pTab, cTab);
+  let mergedTabProps = tabMerge.value;
+  if (tabLive.length > 0) liveChangedIds.push(flowId);
+  if (tabMerge.conflicts.length > 0) {
+    push({
+      kind: 'tab_changed_both',
+      nodeId: flowId,
+      fields: tabMerge.conflicts,
+      message: 'Both the editor and the proposal changed the same flow tab fields.',
+      choices: ['live', 'proposed'],
+    });
   }
 
   // updateFlow preserves omitted settings, so express a requested removal
@@ -342,18 +445,16 @@ export function rebaseFlowTab(input: RebaseInput): RebaseResult {
         choices: ['live'],
       });
     } else if (b && c && p) {
-      if (dP.length === 0) resolved.set(id, c);
-      else if (dC.length === 0) resolved.set(id, p);
-      else if (positionOnly(dC)) resolved.set(id, { ...p, node: withPosition(p.node, c.node) });
-      else if (positionOnly(dP) && !secretValuesChanged(b.node, c.node))
-        resolved.set(id, { ...c, node: withPosition(c.node, p.node) });
-      else {
+      const merged = mergeFields(b.node, p.node, c.node);
+      if (merged.conflicts.length === 0) {
+        resolved.set(id, { ...p, node: merged.value as FlowNode });
+      } else {
         push({
           kind: 'node_changed_both',
           nodeId: id,
           ...nodeLabel(c.node),
-          fields: [...new Set([...dC, ...dP])].filter(f => !POSITION_FIELDS.has(f)).sort(),
-          message: 'Both the editor and the proposal changed this node.',
+          fields: merged.conflicts,
+          message: 'Both the editor and the proposal changed the same node fields.',
           choices: ['live', 'proposed'],
         });
       }
@@ -569,8 +670,8 @@ function dedupe(ids: string[]): string[] {
 }
 
 /**
- * Apply a manual per-conflict choice by moving the base (and, for `live`,
- * the proposal) to the live version of that node. Returns new base/proposed tabs.
+ * Resolve overlapping fields and move this node’s base to live, retaining
+ * independent edits from both sides. Returns new base/proposed tabs.
  */
 export function applyConflictChoice(input: {
   flowId: string;
@@ -609,13 +710,14 @@ export function applyConflictChoice(input: {
             { id: flowId, type: current.type ?? 'tab', ...live },
             warnings
           )
-        : live;
+        : tabProps(proposed);
+    const resolved = mergeFields(tabProps(base), chosen, live, choice).value;
     for (const key of TAB_FIELDS) {
       delete (base as Record<string, unknown>)[key];
       if (live[key] !== undefined) (base as Record<string, unknown>)[key] = clone(live[key]);
       delete (proposed as Record<string, unknown>)[key];
-      if (chosen[key] !== undefined)
-        (proposed as Record<string, unknown>)[key] = clone(chosen[key]);
+      if (resolved[key] !== undefined)
+        (proposed as Record<string, unknown>)[key] = clone(resolved[key]);
     }
     return { base, proposed, warnings };
   }
@@ -623,16 +725,19 @@ export function applyConflictChoice(input: {
   const liveNode = liveMap.get(nodeId);
   const baseNode = mapTab(base).get(nodeId);
   const proposedNode = mapTab(proposed).get(nodeId);
-  if (choice === 'proposed' && baseNode && proposedNode && liveNode) {
+  if (baseNode && proposedNode && liveNode) {
+    const chosen =
+      choice === 'proposed'
+        ? preserveLiveSecrets(baseNode.node, proposedNode.node, liveNode.node, warnings)
+        : proposedNode.node;
     setNode(proposed, nodeId, {
       ...proposedNode,
-      node: preserveLiveSecrets(baseNode.node, proposedNode.node, liveNode.node, warnings),
+      node: mergeFields(baseNode.node, chosen, liveNode.node, choice).value as FlowNode,
     });
-  }
-  setNode(base, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
-  if (choice === 'live') {
+  } else if (choice === 'live') {
     setNode(proposed, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
   }
+  setNode(base, nodeId, liveNode ? { ...liveNode, node: clone(liveNode.node) } : undefined);
   return { base, proposed, warnings };
 }
 

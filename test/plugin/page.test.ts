@@ -201,7 +201,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Copy GET link for AI chat/);
     expect(res.text).toMatch(/kind-badge|data-kind/);
     expect(res.text).toMatch(/wrong_token_kind|separate tokens/);
-    expect(res.text).toMatch(/max-width:\s*min\(1400px,\s*95vw\)/);
+    expect(res.text).toMatch(/max-width:\s*min\(1640px,\s*97vw\)/);
     expect(res.text).toMatch(/Side by side|data-diff-mode/);
     expect(res.text).toMatch(/diff-split|diff-line/);
     expect(res.text).toMatch(/Node added|Node removed/);
@@ -254,7 +254,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/needsApproveConfirm/);
     expect(res.text).toMatch(/openDeleteConfirmDialog/);
     expect(res.text).toMatch(/deleteInput\.value !== 'DELETE'/);
-    expect(res.text).toMatch(/diff\.baseRevStale/);
+    expect(res.text).toMatch(/diff\.baseRevChanged/);
     expect(res.text).toMatch(/Type DELETE to confirm/);
     expect(res.text).toMatch(/formatDiffActionSummary|Summary:/);
     expect(res.text).toMatch(/toast-title|toast-link|View/);

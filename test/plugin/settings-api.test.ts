@@ -248,6 +248,29 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const got = await request(app).get('/mcp/api/v1/settings');
     expect(got.status).toBe(401);
   });
+  it.each([0, -1, 0.5])(
+    'rejects invalid default TTL %s with minimum 1 and preserves settings',
+    async ttl => {
+      const { app } = createApp({ userDir, authenticate: asUser('*') });
+      const before = await request(app).get('/mcp/api/v1/settings');
+      const invalid = await request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ defaultLinkTtlSeconds: ttl });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body).toMatchObject({
+        code: 'invalid_body',
+        error: expect.stringContaining('minimum of 1'),
+      });
+      const after = await request(app).get('/mcp/api/v1/settings');
+      expect(after.body.settings.defaultLinkTtlSeconds).toBe(
+        before.body.settings.defaultLinkTtlSeconds
+      );
+      expect(
+        (await request(app).put('/mcp/api/v1/settings').send({ defaultLinkTtlSeconds: 1 })).status
+      ).toBe(200);
+    }
+  );
+
   it('edits, validates, and resets secretNamePatterns', async () => {
     const { app } = createApp({ userDir, authenticate: asUser('*') });
     const initial = await request(app).get('/mcp/api/v1/settings');

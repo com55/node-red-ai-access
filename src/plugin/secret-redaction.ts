@@ -809,6 +809,13 @@ export function redactProposalForAi<P extends Proposal>(
     ...proposal,
     payload: { ...proposal.payload, flow: redactFlowData(proposal.payload.flow, patterns).value },
   };
+  if (proposal.conflictChoice) {
+    out.conflictChoice = {
+      nodeId: proposal.conflictChoice.nodeId,
+      choice: proposal.conflictChoice.choice,
+      ...(proposal.conflictChoice.chooser ? { chooser: proposal.conflictChoice.chooser } : {}),
+    };
+  }
   if (proposal.baseFlow !== undefined) {
     out.baseFlow = redactFlowData(proposal.baseFlow, patterns).value;
   }
@@ -1598,7 +1605,16 @@ function tabWarnings(
           `SECURITY: this proposal ${before ? 'changes' : 'adds'} outbound-capable node ${nid} ` +
           `(${type}). Check where it sends data before approving.`,
         nodeId: nid,
-        property: 'type',
+        property: [...new Set([...Object.keys(before ?? {}), ...Object.keys(after)])]
+          .filter(
+            key =>
+              !LAYOUT_KEYS.has(key) &&
+              key !== 'nodes' &&
+              key !== 'configs' &&
+              !sameJson(before?.[key], after[key])
+          )
+          .sort()
+          .join(','),
       });
     }
     const had = before ? referencedNames(before) : new Set<string>();
