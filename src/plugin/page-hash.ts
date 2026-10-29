@@ -21,7 +21,9 @@ export function hashForTab(tab: string): string {
  * legacy #logs). Returns '' for empty, unknown, or #proposal=<id>.
  */
 export function tabFromHash(hash: string): McpTabId | '' {
-  const raw = String(hash || '').replace(/^#/, '');
+  const raw = String(hash || '')
+    .replace(/^#/, '')
+    .replace(/^section-/, '');
   if (!raw || raw.startsWith('proposal=')) return '';
   if (raw === 'audit' || raw === 'logs') return 'logs';
   if (raw === 'overview') return 'status';

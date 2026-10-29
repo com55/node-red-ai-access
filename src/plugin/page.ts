@@ -38,11 +38,6 @@ function renderMcpPageHeader(): string {
       <p class="lede">
         Let an AI assistant suggest changes to your flows — nothing changes until you approve.
       </p>
-      <ol class="how-it-works" id="how-it-works" aria-label="How it works">
-        <li><strong>Create a link</strong> — temporary access for your AI assistant.</li>
-        <li><strong>Give it to your AI</strong> — paste the link in the chat.</li>
-        <li><strong>Review proposals</strong> — approve to deploy, or reject.</li>
-      </ol>
     </header>
     <div id="boot-flash" class="flash" hidden></div>
     <div id="auth-gate" class="auth-gate" hidden>
@@ -67,24 +62,91 @@ function renderMcpPageHeader(): string {
       </div>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
-    <nav class="tabs" aria-label="Admin views" hidden id="main-nav">
-      <button type="button" data-tab="status" aria-selected="true">Overview</button>
-      <button type="button" data-tab="settings" aria-selected="false">Settings</button>
-      <button type="button" data-tab="links" aria-selected="false">Access tokens</button>
-      <button type="button" data-tab="oauth" aria-selected="false">OAuth</button>
-      <button type="button" data-tab="proposals" aria-selected="false">
-        Proposals <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>
-      </button>
-      <button type="button" data-tab="logs" aria-selected="false">Audit log</button>
-    </nav>`;
+    <div class="settings-layout">
+    ${renderMcpPageNav()}`;
+}
+
+// Octicons-style inline icons, inspired by GitHub Octicons (MIT license).
+// Bundled SVG paths require no external resources or CSP exceptions.
+function renderMcpPageNav(): string {
+  const groups = [
+    {
+      title: 'Overview',
+      items: [
+        ['status', 'Overview', 'M8 1 1 7v8h5v-5h4v5h5V7L8 1Zm0 2 5.5 4.8V13H12V8H4v5H2.5V7.8Z'],
+      ],
+    },
+    {
+      title: 'Access',
+      items: [
+        [
+          'links',
+          'Access tokens',
+          'M10.5 1a4.5 4.5 0 0 0-4.3 5.8L1 12v3h4v-2h2v-2h2l.8-.8A4.5 4.5 0 1 0 10.5 1Zm0 1.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM2.5 12.6l4.5-4.5 1 1-1.4 1.4H5.5v1H4v2H2.5Z',
+        ],
+        [
+          'oauth',
+          'OAuth',
+          'M8 0 1 3v5c0 4 7 8 7 8s7-4 7-8V3L8 0Zm0 1.6 5.5 2.4v4c0 2.5-3.8 5.3-5.5 6.3C6.3 13.3 2.5 10.5 2.5 8V4Z',
+        ],
+      ],
+    },
+    {
+      title: 'Proposals',
+      items: [
+        [
+          'proposals',
+          'Proposals',
+          'M3 1a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM2.25 6v5a2 2 0 1 0 1.5 0V6ZM11 1v3H7v1.5h4V9h1.5V5.5H16V4h-3.5V1Z',
+        ],
+      ],
+    },
+    {
+      title: 'Advanced',
+      items: [
+        [
+          'settings',
+          'Settings',
+          'M0 3h3V1h1.5v2H16v1.5H4.5V7H3V4.5H0Zm0 8h10V9h1.5v2H16v1.5h-4.5V15H10v-2.5H0Z',
+        ],
+        [
+          'logs',
+          'Audit log',
+          'M3 1h10v14H3V1Zm1.5 1.5v11h7v-11ZM6 4h4v1.5H6Zm0 3h4v1.5H6Zm0 3h4v1.5H6Z',
+        ],
+      ],
+    },
+  ];
+  return `<nav class="tabs" aria-label="Admin views" hidden id="main-nav">
+    ${groups
+      .map(
+        group => `<div class="nav-group"${group.items.length === 1 && group.items[0]?.[1] === group.title ? '' : ` role="group" aria-labelledby="nav-group-${group.title.toLowerCase()}"`}>
+      <div class="nav-group-title" id="nav-group-${group.title.toLowerCase()}"${group.items.length === 1 && group.items[0]?.[1] === group.title ? ' aria-hidden="true"' : ''}>${group.title}</div>
+      ${group.items
+        .map(
+          ([
+            id,
+            label,
+            path,
+          ]) => `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-current="${id === 'status' ? 'page' : 'false'}">
+        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="${path}"/></svg>
+        <span>${label}</span>${id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}
+      </button>`
+        )
+        .join('')}
+    </div>`
+      )
+      .join('')}
+  </nav>`;
 }
 
 function renderMcpPageStatusSection(): string {
   return `
     <section class="panel active" id="section-status" aria-label="Overview" hidden>
-      <h2>Overview</h2>
+      <h2 tabindex="-1">Overview</h2>
       <div id="status-flash" class="flash" hidden></div>
       <aside id="status-warning" class="warning" role="status" hidden></aside>
+      <h3>Activity</h3>
       <div class="dash-grid" id="status-dashboard">
         <div class="dash-card">
           <div class="dash-label">AI access</div>
@@ -130,15 +192,15 @@ function renderMcpPageStatusSection(): string {
 function renderMcpPageLinksSection(): string {
   return `
     <section class="panel" id="section-links" aria-label="Access tokens" hidden>
-      <h2>Access tokens</h2>
+      <h2 tabindex="-1">Access tokens</h2>
       <p class="muted" id="links-intro">
         Create a token for the channel your AI uses: a GET link to paste in chat,
         a REST Bearer, or an MCP token. It can read flows and submit proposals —
         it cannot deploy anything until you approve.
       </p>
       <div id="links-flash" class="flash" hidden></div>
-      <div id="links-manage"></div>
-      <div id="links-list"></div>
+      <div class="settings-subpart"><h3>Create access token</h3><div id="links-manage"></div></div>
+      <h3>Access tokens</h3><div id="links-list"></div>
     </section>`;
 }
 
@@ -149,7 +211,7 @@ function lockBadge(field: string): string {
 function renderMcpPageSettingsSection(): string {
   return `
     <section class="panel" id="section-settings" aria-label="Settings" hidden>
-      <h2>Settings</h2>
+      <h2 tabindex="-1">Settings</h2>
       <p class="muted">Changes save automatically and apply immediately (no restart).</p>
       <div id="settings-flash" class="flash" hidden></div>
       <p id="settings-readonly" class="notice" hidden>Read-only: full admin permission (*) is required to change these settings.</p>
@@ -288,7 +350,7 @@ function renderMcpPageSettingsSection(): string {
 function renderMcpPageOAuthSection(): string {
   return `
     <section class="panel" id="section-oauth" aria-label="OAuth" hidden>
-      <h2>MCP OAuth</h2>
+      <h2 tabindex="-1">MCP OAuth</h2>
       <p class="muted">MCP clients (ChatGPT, Claude, …) can request read or propose access through OAuth.</p>
       <div id="oauth-flash" class="flash" hidden></div>
       <div id="oauth-route-warning" class="warning" role="status" hidden></div>
@@ -367,7 +429,7 @@ function renderMcpPageOAuthSection(): string {
 function renderMcpPageProposalsSection(): string {
   return `
     <section class="panel" id="section-proposals" aria-label="Proposals" hidden>
-      <h2>Proposals</h2>
+      <h2 tabindex="-1">Proposals</h2>
       <p id="proposals-hint" class="muted"></p>
       <div class="filter-row" id="proposals-filters" hidden>
         <button type="button" class="filter-chip" data-filter="pending" aria-pressed="true">
@@ -389,7 +451,7 @@ function renderMcpPageProposalsSection(): string {
 function renderMcpPageLogsSection(): string {
   return `
     <section class="panel" id="section-logs" aria-label="Audit log" hidden>
-      <h2>Audit log</h2>
+      <h2 tabindex="-1">Audit log</h2>
       <div id="logs-flash" class="flash" hidden></div>
       <div class="row logs-toolbar">
         <label>Show
@@ -486,6 +548,7 @@ ${renderMcpPageLinksSection()}
 ${renderMcpPageOAuthSection()}
 ${renderMcpPageProposalsSection()}
 ${renderMcpPageLogsSection()}
+</div>
 ${renderMcpPageDialogs()}
   </main>
   <script>${pageClientScript()}</script>
