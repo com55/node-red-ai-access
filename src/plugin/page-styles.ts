@@ -568,7 +568,7 @@ function pageStylesPartD(): string {
 .prop-change { margin: 0.25rem 0 0.35rem; font-size: 0.88rem; }
 .prop-change-scalar.split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 1fr auto 1fr;
   gap: 0.45rem;
   align-items: start;
 }
@@ -632,7 +632,7 @@ function pageStylesPartE(): string {
 .diff-blank { background: #f0f3f6; color: transparent; }
 .diff-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 0;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -650,7 +650,7 @@ function pageStylesPartE(): string {
   background: var(--soft);
 }
 .diff-split .diff-pane + .diff-pane {
-  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 .diff-split .pane-head {
   position: sticky;
@@ -1228,11 +1228,10 @@ function pageStylesDashboard(): string {
 section.panel:not(#section-proposals) .row { flex-direction: column; align-items: flex-start; }
 .logs-toolbar { padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
 .logs-toolbar .debug-toggle { margin-left: 0; }
-.prop-change-scalar .scalar-arrow { display: none; }
 section.panel { scroll-margin-top: 1rem; }
 .proposal-conflict, .conflict-choice { padding: 1rem; margin: 0.75rem 0; border: 1px solid var(--warn-border); border-radius: 8px; background: var(--warn-bg); }
 .conflict-option { margin: 0.8rem 0; }
-.conflict-values dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+.conflict-values dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
 .conflict-values dl > div { min-width: 0; }
 .conflict-values dd { margin: 0; }
 .conflict-values pre { max-height: 20rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.92rem; }
@@ -1240,6 +1239,7 @@ section.panel { scroll-margin-top: 1rem; }
 .no-net-change { padding: 1rem; border: 1px solid var(--line); border-radius: 8px; }
 .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: recheck-spin .7s linear infinite; }
 @keyframes recheck-spin { to { transform: rotate(360deg); } }
+@media (max-width: 850px) { .conflict-values dl { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 .form-row { margin: 0 0 0.9rem; }
 .form-row:last-child { margin-bottom: 0; }
