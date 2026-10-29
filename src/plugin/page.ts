@@ -38,11 +38,6 @@ function renderMcpPageHeader(): string {
       <p class="lede">
         Let an AI assistant suggest changes to your flows — nothing changes until you approve.
       </p>
-      <ol class="how-it-works" id="how-it-works" aria-label="How it works">
-        <li><strong>Create a link</strong> — temporary access for your AI assistant.</li>
-        <li><strong>Give it to your AI</strong> — paste the link in the chat.</li>
-        <li><strong>Review proposals</strong> — approve to deploy, or reject.</li>
-      </ol>
     </header>
     <div id="boot-flash" class="flash" hidden></div>
     <div id="auth-gate" class="auth-gate" hidden>
