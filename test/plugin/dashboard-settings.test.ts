@@ -242,7 +242,11 @@ function fakeDom() {
   return { get };
 }
 
-function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/') {
+function loadSettingsClient(
+  responses: Record<string, unknown>,
+  editorRoot = '/',
+  activeTab = 'settings'
+) {
   const dom = fakeDom();
   const calls: { path: string; options?: { method?: string; body?: string } }[] = [];
   const confirm: { opts?: { onConfirm?: () => unknown } } = {};
@@ -257,7 +261,13 @@ function loadSettingsClient(responses: Record<string, unknown>, editorRoot = '/'
       return result ?? {};
     },
     location: { origin: 'http://nr.local:1880' },
-    document: { querySelector: () => null, createElement: (tag: string) => makeEl('', tag) },
+    document: {
+      querySelector: (selector: string) =>
+        selector === 'nav.tabs button[aria-current="page"]'
+          ? { getAttribute: (name: string) => (name === 'data-tab' ? activeTab : null) }
+          : null,
+      createElement: (tag: string) => makeEl('', tag),
+    },
     URL,
     setTimeout,
     clearTimeout,
@@ -328,6 +338,20 @@ describe('helpers', () => {
 });
 
 describe('dashboard settings client', () => {
+  it.each(['settings', 'oauth'])('shows save errors in the current %s section', async activeTab => {
+    const { dom, out } = loadSettingsClient(
+      { '/settings': new Error('Settings save failed') },
+      '/',
+      activeTab
+    );
+
+    await out.persistSettings({});
+
+    expect(dom.get(activeTab + '-flash').textContent).toBe('Settings save failed');
+    const inactiveTab = activeTab === 'oauth' ? 'settings' : 'oauth';
+    expect(dom.get(inactiveTab + '-flash').textContent).toBe('');
+  });
+
   it('shows a server TTL validation error without resetting the input or reporting success', async () => {
     const { dom, calls, out, toasts } = loadSettingsClient({
       '/settings': new Error('defaultLinkTtlSeconds must be an integer with a minimum of 1'),

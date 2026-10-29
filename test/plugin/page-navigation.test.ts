@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { pageClientScript } from '../../src/plugin/page-client.js';
 import { initialTabFromHash, tabFromHash } from '../../src/plugin/page-hash.js';
@@ -13,7 +13,7 @@ describe('settings navigation', () => {
       editorRoot: '/',
       authTokenKey: 'auth-tokens',
     });
-    const nav = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)![0];
+    const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(html)![0];
     expect([...nav.matchAll(/class="nav-group-title"[^>]*>([^<]+)/g)].map(m => m[1])).toEqual([
       'Overview',
       'Access',
@@ -36,6 +36,18 @@ describe('settings navigation', () => {
       expect(item[0]).not.toMatch(/<use|src=|https?:/);
       expect(html).toContain('id="section-' + item[1] + '"');
     }
+    expect(nav).not.toContain('aria-selected');
+    expect(nav).not.toContain('<h2');
+    for (const label of ['overview', 'proposals']) {
+      expect(nav).toContain(`id="nav-group-${label}" aria-hidden="true"`);
+      expect(nav).not.toContain(`aria-labelledby="nav-group-${label}"`);
+    }
+    for (const label of ['access', 'advanced']) {
+      expect(nav).toContain(`role="group" aria-labelledby="nav-group-${label}"`);
+    }
+    expect(html.match(/<h2 tabindex="-1">/g)).toHaveLength(6);
+    expect(html).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)');
+    expect(html).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)');
     expect(nav).toContain('id="proposals-pending-badge"');
     expect(html).toContain('@media (max-width: 768px)');
   });
@@ -51,8 +63,10 @@ describe('settings navigation', () => {
   it('routes clicks, hashes and back/forward through the actual client script', () => {
     const ids = ['status', 'links', 'settings', 'oauth', 'proposals', 'logs'];
     const buttons = ids.map(id => ({
-      attrs: { 'data-tab': id } as Record<string, string>,
-      click: () => {},
+      attrs: { 'data-tab': id },
+      click: () => {
+        // Replaced by the click listener when the client script initializes.
+      },
       getAttribute(key: string) {
         return this.attrs[key];
       },
@@ -63,7 +77,9 @@ describe('settings navigation', () => {
         this.click = callback;
       },
     }));
+    const focusHeading = vi.fn();
     const panels = ids.map(id => ({
+      querySelector: () => ({ focus: () => focusHeading(id) }),
       id: 'section-' + id,
       active: false,
       classList: {
@@ -99,11 +115,11 @@ describe('settings navigation', () => {
         },
       },
       authGateShown: false,
-      loadSettings() {},
-      loadOAuthTab() {},
-      loadLinks() {},
-      loadProposals() {},
-      loadLogs() {},
+      loadSettings: vi.fn(),
+      loadOAuthTab: vi.fn(),
+      loadLinks: vi.fn(),
+      loadProposals: vi.fn(),
+      loadLogs: vi.fn(),
       readProposalHashId() {
         return '';
       },
@@ -120,6 +136,7 @@ describe('settings navigation', () => {
     );
     runInNewContext(tabs + routes, context);
     buttons[1].click();
+    expect(focusHeading).not.toHaveBeenCalled();
     expect(location.hash).toBe('#links');
     expect(historyEntries).toEqual(['/ai-access#links']);
     expect(buttons[1].attrs['aria-current']).toBe('page');
@@ -133,11 +150,36 @@ describe('settings navigation', () => {
       ['#tokens', 'links', 'hashchange'],
     ]) {
       location.hash = hash;
+      focusHeading.mockClear();
       listeners[event]();
+      const focusCount = focusHeading.mock.calls.length;
+      const oauthLoads = context.loadOAuthTab.mock.calls.length;
+      listeners.hashchange();
+      listeners.popstate();
+      expect(focusHeading).toHaveBeenCalledTimes(focusCount);
+      expect(context.loadOAuthTab).toHaveBeenCalledTimes(oauthLoads);
+      if (focusCount) expect(focusHeading).toHaveBeenLastCalledWith(expected);
       expect(panels.filter(p => p.active).map(p => p.id)).toEqual(['section-' + expected]);
       expect(
         buttons.filter(b => b.attrs['aria-current'] === 'page').map(b => b.attrs['data-tab'])
       ).toEqual([expected]);
     }
+    for (const hash of ['#proposal=first', '#proposal=second']) {
+      location.hash = hash;
+      const loads = context.loadProposals.mock.calls.length;
+      context.readProposalHashId = () => hash.slice('#proposal='.length);
+      listeners.popstate();
+      listeners.hashchange();
+      expect(context.loadProposals).toHaveBeenCalledTimes(loads + 1);
+      expect(focusHeading).toHaveBeenLastCalledWith('proposals');
+    }
+    focusHeading.mockClear();
+    location.hash = '#oauth';
+    const initialRoute = script.slice(
+      script.indexOf('      var initialTab = initialTabFromHash'),
+      script.indexOf("      if (initialTab === 'settings')")
+    );
+    runInNewContext(initialRoute, context);
+    expect(focusHeading).toHaveBeenCalledExactlyOnceWith('oauth');
   });
 });

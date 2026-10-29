@@ -132,8 +132,8 @@ nav.tabs button {
 nav.tabs button svg { flex: 0 0 16px; }
 nav.tabs button:hover { background: var(--soft); }
 nav.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-nav.tabs button[aria-selected="true"] { background: var(--accent-soft); font-weight: 600; }
-nav.tabs button[aria-selected="true"]::before {
+nav.tabs button[aria-current="page"] { background: var(--accent-soft); font-weight: 600; }
+nav.tabs button[aria-current="page"]::before {
   content: "";
   position: absolute;
   left: 0;
@@ -176,7 +176,7 @@ section.panel > h3 { margin: 1.4rem 0 0.75rem; font-size: 1.15rem; font-weight: 
   overflow: hidden;
   text-overflow: ellipsis;
 }
-nav.tabs button[aria-selected="true"] .tab-badge {
+nav.tabs button[aria-current="page"] .tab-badge {
   background: rgba(255, 255, 255, 0.92);
   color: var(--accent);
 }
@@ -568,7 +568,7 @@ function pageStylesPartD(): string {
 .prop-change { margin: 0.25rem 0 0.35rem; font-size: 0.88rem; }
 .prop-change-scalar.split {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 0.45rem;
   align-items: start;
 }
@@ -632,7 +632,7 @@ function pageStylesPartE(): string {
 .diff-blank { background: #f0f3f6; color: transparent; }
 .diff-split {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0;
   border: 1px solid var(--line);
   border-radius: 5px;

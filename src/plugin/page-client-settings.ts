@@ -244,7 +244,7 @@ function settingsPartSecrets(): string {
 function settingsPartSave(): string {
   return `
   function settingsFlash(msg, ok) {
-    var tab = document.querySelector('nav.tabs button[aria-selected="true"]');
+    var tab = document.querySelector('nav.tabs button[aria-current="page"]');
     var target = tab && tab.getAttribute('data-tab') === 'oauth' ? 'oauth-flash' : 'settings-flash';
     if (ok) showToast(msg, true);
     else showFlash($(target), msg, false);

@@ -809,15 +809,19 @@ function pageClientScriptPartATabs(): string {
     });
   }
 
+  var selectedLocationHash;
   function selectTab(target, options) {
     options = options || {};
     if (!target) return;
     document.querySelectorAll('nav.tabs button').forEach(function (b) {
-      b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
       b.setAttribute('aria-current', b.getAttribute('data-tab') === target ? 'page' : 'false');
     });
     document.querySelectorAll('section.panel').forEach(function (sec) {
       sec.classList.toggle('active', sec.id === 'section-' + target);
+      if (options.focusHeading && sec.id === 'section-' + target) {
+        var heading = sec.querySelector('h2');
+        if (heading) heading.focus();
+      }
     });
     if (target !== 'proposals') {
       clearProposalHighlight();
@@ -829,6 +833,7 @@ function pageClientScriptPartATabs(): string {
         replaceLocationHash('#' + hashForTab(target));
       }
     }
+    selectedLocationHash = String(location.hash || '');
   }
 
   function loadTabData(target) {
@@ -3691,7 +3696,7 @@ function pageClientScriptPartDBoot(): string {
       setupStickyNav();
       // Restore tab from hash (or default #status); keep #proposal=<id> until focus consumes it.
       var initialTab = initialTabFromHash(location.hash || '');
-      selectTab(initialTab, { skipHash: !!readProposalHashId() });
+      selectTab(initialTab, { skipHash: !!readProposalHashId(), focusHeading: !!location.hash });
       if (initialTab === 'settings') loadSettings();
       if (initialTab === 'oauth') loadOAuthTab();
       if (aiOn) {
@@ -3765,14 +3770,16 @@ function pageClientScriptPartDBoot(): string {
 
   function routeFromLocation() {
     if (authGateShown) return;
+    // A history traversal may emit both popstate and hashchange for the same URL.
+    if (selectedLocationHash === String(location.hash || '')) return;
     var proposalId = readProposalHashId();
     if (proposalId) {
-      selectTab('proposals', { skipHash: true });
+      selectTab('proposals', { skipHash: true, focusHeading: true });
       loadTabData('proposals');
       return;
     }
     var tab = tabFromHash(location.hash) || 'status';
-    selectTab(tab, { skipHash: true });
+    selectTab(tab, { skipHash: true, focusHeading: true });
     loadTabData(tab);
   }
   window.addEventListener('hashchange', routeFromLocation);
@@ -3889,7 +3896,7 @@ export function pageClientAutoRefreshScript(): string {
       var s = await api('/status');
       if (!isLatestLoad('status', gen)) return;
       applyStatus(s);
-      var sel = document.querySelector('nav.tabs button[aria-selected="true"]');
+      var sel = document.querySelector('nav.tabs button[aria-current="page"]');
       var tab = sel ? sel.getAttribute('data-tab') : '';
       if (aiOn) {
         if (canManage) loadLinks({ auto: true });

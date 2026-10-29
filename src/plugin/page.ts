@@ -120,15 +120,15 @@ function renderMcpPageNav(): string {
   return `<nav class="tabs" aria-label="Admin views" hidden id="main-nav">
     ${groups
       .map(
-        group => `<div class="nav-group" role="group" aria-labelledby="nav-group-${group.title.toLowerCase()}">
-      <h2 class="nav-group-title" id="nav-group-${group.title.toLowerCase()}">${group.title}</h2>
+        group => `<div class="nav-group"${group.items.length === 1 && group.items[0]?.[1] === group.title ? '' : ` role="group" aria-labelledby="nav-group-${group.title.toLowerCase()}"`}>
+      <div class="nav-group-title" id="nav-group-${group.title.toLowerCase()}"${group.items.length === 1 && group.items[0]?.[1] === group.title ? ' aria-hidden="true"' : ''}>${group.title}</div>
       ${group.items
         .map(
           ([
             id,
             label,
             path,
-          ]) => `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-selected="${id === 'status'}" aria-current="${id === 'status' ? 'page' : 'false'}">
+          ]) => `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-current="${id === 'status' ? 'page' : 'false'}">
         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="${path}"/></svg>
         <span>${label}</span>${id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}
       </button>`
@@ -143,7 +143,7 @@ function renderMcpPageNav(): string {
 function renderMcpPageStatusSection(): string {
   return `
     <section class="panel active" id="section-status" aria-label="Overview" hidden>
-      <h2>Overview</h2>
+      <h2 tabindex="-1">Overview</h2>
       <div id="status-flash" class="flash" hidden></div>
       <aside id="status-warning" class="warning" role="status" hidden></aside>
       <h3>Activity</h3>
@@ -192,7 +192,7 @@ function renderMcpPageStatusSection(): string {
 function renderMcpPageLinksSection(): string {
   return `
     <section class="panel" id="section-links" aria-label="Access tokens" hidden>
-      <h2>Access tokens</h2>
+      <h2 tabindex="-1">Access tokens</h2>
       <p class="muted" id="links-intro">
         Create a token for the channel your AI uses: a GET link to paste in chat,
         a REST Bearer, or an MCP token. It can read flows and submit proposals —
@@ -211,7 +211,7 @@ function lockBadge(field: string): string {
 function renderMcpPageSettingsSection(): string {
   return `
     <section class="panel" id="section-settings" aria-label="Settings" hidden>
-      <h2>Settings</h2>
+      <h2 tabindex="-1">Settings</h2>
       <p class="muted">Changes save automatically and apply immediately (no restart).</p>
       <div id="settings-flash" class="flash" hidden></div>
       <p id="settings-readonly" class="notice" hidden>Read-only: full admin permission (*) is required to change these settings.</p>
@@ -350,7 +350,7 @@ function renderMcpPageSettingsSection(): string {
 function renderMcpPageOAuthSection(): string {
   return `
     <section class="panel" id="section-oauth" aria-label="OAuth" hidden>
-      <h2>MCP OAuth</h2>
+      <h2 tabindex="-1">MCP OAuth</h2>
       <p class="muted">MCP clients (ChatGPT, Claude, …) can request read or propose access through OAuth.</p>
       <div id="oauth-flash" class="flash" hidden></div>
       <div id="oauth-route-warning" class="warning" role="status" hidden></div>
@@ -429,7 +429,7 @@ function renderMcpPageOAuthSection(): string {
 function renderMcpPageProposalsSection(): string {
   return `
     <section class="panel" id="section-proposals" aria-label="Proposals" hidden>
-      <h2>Proposals</h2>
+      <h2 tabindex="-1">Proposals</h2>
       <p id="proposals-hint" class="muted"></p>
       <div class="filter-row" id="proposals-filters" hidden>
         <button type="button" class="filter-chip" data-filter="pending" aria-pressed="true">
@@ -451,7 +451,7 @@ function renderMcpPageProposalsSection(): string {
 function renderMcpPageLogsSection(): string {
   return `
     <section class="panel" id="section-logs" aria-label="Audit log" hidden>
-      <h2>Audit log</h2>
+      <h2 tabindex="-1">Audit log</h2>
       <div id="logs-flash" class="flash" hidden></div>
       <div class="row logs-toolbar">
         <label>Show
