@@ -67,16 +67,82 @@ function renderMcpPageHeader(): string {
       </div>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
-    <nav class="tabs" aria-label="Admin views" hidden id="main-nav">
-      <button type="button" data-tab="status" aria-selected="true">Overview</button>
-      <button type="button" data-tab="settings" aria-selected="false">Settings</button>
-      <button type="button" data-tab="links" aria-selected="false">Access tokens</button>
-      <button type="button" data-tab="oauth" aria-selected="false">OAuth</button>
-      <button type="button" data-tab="proposals" aria-selected="false">
-        Proposals <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>
-      </button>
-      <button type="button" data-tab="logs" aria-selected="false">Audit log</button>
-    </nav>`;
+    <div class="settings-layout">
+    ${renderMcpPageNav()}`;
+}
+
+// Octicons-style inline icons, inspired by GitHub Octicons (MIT license).
+// Bundled SVG paths require no external resources or CSP exceptions.
+function renderMcpPageNav(): string {
+  const groups = [
+    {
+      title: 'Overview',
+      items: [
+        ['status', 'Overview', 'M8 1 1 7v8h5v-5h4v5h5V7L8 1Zm0 2 5.5 4.8V13H12V8H4v5H2.5V7.8Z'],
+      ],
+    },
+    {
+      title: 'Access',
+      items: [
+        [
+          'links',
+          'Access tokens',
+          'M10.5 1a4.5 4.5 0 0 0-4.3 5.8L1 12v3h4v-2h2v-2h2l.8-.8A4.5 4.5 0 1 0 10.5 1Zm0 1.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM2.5 12.6l4.5-4.5 1 1-1.4 1.4H5.5v1H4v2H2.5Z',
+        ],
+        [
+          'oauth',
+          'OAuth',
+          'M8 0 1 3v5c0 4 7 8 7 8s7-4 7-8V3L8 0Zm0 1.6 5.5 2.4v4c0 2.5-3.8 5.3-5.5 6.3C6.3 13.3 2.5 10.5 2.5 8V4Z',
+        ],
+      ],
+    },
+    {
+      title: 'Proposals',
+      items: [
+        [
+          'proposals',
+          'Proposals',
+          'M3 1a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM2.25 6v5a2 2 0 1 0 1.5 0V6ZM11 1v3H7v1.5h4V9h1.5V5.5H16V4h-3.5V1Z',
+        ],
+      ],
+    },
+    {
+      title: 'Advanced',
+      items: [
+        [
+          'settings',
+          'Settings',
+          'M0 3h3V1h1.5v2H16v1.5H4.5V7H3V4.5H0Zm0 8h10V9h1.5v2H16v1.5h-4.5V15H10v-2.5H0Z',
+        ],
+        [
+          'logs',
+          'Audit log',
+          'M3 1h10v14H3V1Zm1.5 1.5v11h7v-11ZM6 4h4v1.5H6Zm0 3h4v1.5H6Zm0 3h4v1.5H6Z',
+        ],
+      ],
+    },
+  ];
+  return `<nav class="tabs" aria-label="Admin views" hidden id="main-nav">
+    ${groups
+      .map(
+        group => `<div class="nav-group" role="group" aria-labelledby="nav-group-${group.title.toLowerCase()}">
+      <h2 class="nav-group-title" id="nav-group-${group.title.toLowerCase()}">${group.title}</h2>
+      ${group.items
+        .map(
+          ([
+            id,
+            label,
+            path,
+          ]) => `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-selected="${id === 'status'}" aria-current="${id === 'status' ? 'page' : 'false'}">
+        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="${path}"/></svg>
+        <span>${label}</span>${id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}
+      </button>`
+        )
+        .join('')}
+    </div>`
+      )
+      .join('')}
+  </nav>`;
 }
 
 function renderMcpPageStatusSection(): string {
@@ -85,6 +151,7 @@ function renderMcpPageStatusSection(): string {
       <h2>Overview</h2>
       <div id="status-flash" class="flash" hidden></div>
       <aside id="status-warning" class="warning" role="status" hidden></aside>
+      <h3>Activity</h3>
       <div class="dash-grid" id="status-dashboard">
         <div class="dash-card">
           <div class="dash-label">AI access</div>
@@ -137,8 +204,8 @@ function renderMcpPageLinksSection(): string {
         it cannot deploy anything until you approve.
       </p>
       <div id="links-flash" class="flash" hidden></div>
-      <div id="links-manage"></div>
-      <div id="links-list"></div>
+      <div class="settings-subpart"><h3>Create access token</h3><div id="links-manage"></div></div>
+      <h3>Access tokens</h3><div id="links-list"></div>
     </section>`;
 }
 
@@ -486,6 +553,7 @@ ${renderMcpPageLinksSection()}
 ${renderMcpPageOAuthSection()}
 ${renderMcpPageProposalsSection()}
 ${renderMcpPageLogsSection()}
+</div>
 ${renderMcpPageDialogs()}
   </main>
   <script>${pageClientScript()}</script>

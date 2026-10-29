@@ -41,7 +41,9 @@ describe('built dist/plugin.cjs UI contracts', () => {
     expect(bundle).toMatch(/Registered OAuth clients/);
     expect(bundle).toMatch(/OAuth route conflict/);
     expect(bundle).toMatch(/How to connect with OAuth/);
-    expect(bundle).toMatch(/data-tab=\\?"oauth\\?"|data-tab="oauth"/);
+    // Navigation items are generated from grouped section definitions.
+    expect(bundle).toMatch(/renderMcpPageNav/);
+    expect(bundle).toMatch(/["']oauth["'],\s*["']OAuth["']/);
     expect(bundle).toMatch(/Enable OAuth anyway/);
   });
 });

@@ -766,7 +766,7 @@ function pageClientScriptPartATabs(): string {
   }
 
   function tabFromHash(hash) {
-    var raw = String(hash || '').replace(/^#/, '');
+    var raw = String(hash || '').replace(/^#/, '').replace(/^section-/, '');
     if (!raw || raw.indexOf('proposal=') === 0) return '';
     if (raw === 'audit' || raw === 'logs') return 'logs';
     if (raw === 'overview') return 'status';
@@ -814,6 +814,7 @@ function pageClientScriptPartATabs(): string {
     if (!target) return;
     document.querySelectorAll('nav.tabs button').forEach(function (b) {
       b.setAttribute('aria-selected', b.getAttribute('data-tab') === target ? 'true' : 'false');
+      b.setAttribute('aria-current', b.getAttribute('data-tab') === target ? 'page' : 'false');
     });
     document.querySelectorAll('section.panel').forEach(function (sec) {
       sec.classList.toggle('active', sec.id === 'section-' + target);
@@ -845,7 +846,10 @@ function pageClientScriptPartATabs(): string {
   document.querySelectorAll('nav.tabs button').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var target = btn.getAttribute('data-tab');
-      selectTab(target);
+      if (location.hash !== '#' + hashForTab(target)) {
+        history.pushState(null, '', location.pathname + location.search + '#' + hashForTab(target));
+      }
+      selectTab(target, { skipHash: true });
       loadTabData(target);
     });
   });
@@ -3759,7 +3763,8 @@ function pageClientScriptPartDBoot(): string {
 
   setupDialogs();
 
-  window.addEventListener('hashchange', function () {
+  function routeFromLocation() {
+    if (authGateShown) return;
     var proposalId = readProposalHashId();
     if (proposalId) {
       selectTab('proposals', { skipHash: true });
@@ -3769,7 +3774,9 @@ function pageClientScriptPartDBoot(): string {
     var tab = tabFromHash(location.hash) || 'status';
     selectTab(tab, { skipHash: true });
     loadTabData(tab);
-  });
+  }
+  window.addEventListener('hashchange', routeFromLocation);
+  window.addEventListener('popstate', routeFromLocation);
 
 ${pageClientEditorJumpScript()}
 ${pageClientAutoRefreshScript()}
@@ -3882,7 +3889,7 @@ export function pageClientAutoRefreshScript(): string {
       var s = await api('/status');
       if (!isLatestLoad('status', gen)) return;
       applyStatus(s);
-      var sel = document.querySelector('[role="tab"][aria-selected="true"]');
+      var sel = document.querySelector('nav.tabs button[aria-selected="true"]');
       var tab = sel ? sel.getAttribute('data-tab') : '';
       if (aiOn) {
         if (canManage) loadLinks({ auto: true });
