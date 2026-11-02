@@ -52,6 +52,31 @@ describe('settings navigation', () => {
     expect(html).toContain('@media (max-width: 768px)');
   });
 
+  it('keeps form rows and filters left-aligned with responsive token fields', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    const script = pageClientScript();
+    expect(script).toContain('<div class="row token-create-row">');
+    expect(script).not.toContain('style="align-items:flex-end"');
+    expect(html).toMatch(/\.row \{[^}]*justify-content: flex-start;/);
+    expect(html).toMatch(/\.filter-row \{[^}]*justify-content: flex-start;/);
+    expect(html).toContain(
+      'section.panel:not(#section-proposals) .row { flex-direction: column; align-items: flex-start; }'
+    );
+    expect(html).toContain(
+      '#section-links .token-create-row { flex-direction: row; align-items: flex-end; }'
+    );
+    expect(html).toMatch(
+      /@media \(max-width: 640px\) \{\s*#section-links \.token-create-row \{ flex-direction: column; align-items: flex-start; \}/
+    );
+    expect(html).toContain('flex: 0 0 auto; max-width: 100%');
+    expect(html).toContain('#link-label { width: 16rem; }');
+    expect(html).toContain('.logs-toolbar .debug-toggle { margin-left: 0; }');
+  });
+
   it.each(['status', 'links', 'settings', 'oauth', 'proposals', 'logs'])(
     'accepts section hash alias %s',
     id => {
@@ -79,7 +104,7 @@ describe('settings navigation', () => {
     }));
     const focusHeading = vi.fn();
     const panels = ids.map(id => ({
-      querySelector: () => ({ focus: () => focusHeading(id) }),
+      querySelector: () => ({ focus: (options: unknown) => focusHeading(id, options) }),
       id: 'section-' + id,
       active: false,
       classList: {
@@ -91,6 +116,7 @@ describe('settings navigation', () => {
     const listeners: Record<string, () => void> = {};
     const location = { hash: '', pathname: '/ai-access', search: '' };
     const historyEntries: string[] = [];
+    const scrollTo = vi.fn();
     const context = {
       location,
       history: {
@@ -110,6 +136,7 @@ describe('settings navigation', () => {
         },
       },
       window: {
+        scrollTo,
         addEventListener(event: string, callback: () => void) {
           listeners[event] = callback;
         },
@@ -137,6 +164,7 @@ describe('settings navigation', () => {
     runInNewContext(tabs + routes, context);
     buttons[1].click();
     expect(focusHeading).not.toHaveBeenCalled();
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
     expect(location.hash).toBe('#links');
     expect(historyEntries).toEqual(['/ai-access#links']);
     expect(buttons[1].attrs['aria-current']).toBe('page');
@@ -151,14 +179,23 @@ describe('settings navigation', () => {
     ]) {
       location.hash = hash;
       focusHeading.mockClear();
+      scrollTo.mockClear();
       listeners[event]();
       const focusCount = focusHeading.mock.calls.length;
+      const scrollCount = scrollTo.mock.calls.length;
       const oauthLoads = context.loadOAuthTab.mock.calls.length;
       listeners.hashchange();
       listeners.popstate();
       expect(focusHeading).toHaveBeenCalledTimes(focusCount);
       expect(context.loadOAuthTab).toHaveBeenCalledTimes(oauthLoads);
-      if (focusCount) expect(focusHeading).toHaveBeenLastCalledWith(expected);
+      expect(scrollTo).toHaveBeenCalledTimes(scrollCount);
+      if (focusCount) {
+        expect(focusHeading).toHaveBeenLastCalledWith(expected, { preventScroll: true });
+        expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
+        expect(focusHeading.mock.invocationCallOrder.at(-1)).toBeLessThan(
+          scrollTo.mock.invocationCallOrder.at(-1)!
+        );
+      }
       expect(panels.filter(p => p.active).map(p => p.id)).toEqual(['section-' + expected]);
       expect(
         buttons.filter(b => b.attrs['aria-current'] === 'page').map(b => b.attrs['data-tab'])
@@ -171,7 +208,7 @@ describe('settings navigation', () => {
       listeners.popstate();
       listeners.hashchange();
       expect(context.loadProposals).toHaveBeenCalledTimes(loads + 1);
-      expect(focusHeading).toHaveBeenLastCalledWith('proposals');
+      expect(focusHeading).toHaveBeenLastCalledWith('proposals', { preventScroll: true });
     }
     focusHeading.mockClear();
     location.hash = '#oauth';
@@ -180,6 +217,6 @@ describe('settings navigation', () => {
       script.indexOf("      if (initialTab === 'settings')")
     );
     runInNewContext(initialRoute, context);
-    expect(focusHeading).toHaveBeenCalledExactlyOnceWith('oauth');
+    expect(focusHeading).toHaveBeenCalledExactlyOnceWith('oauth', { preventScroll: true });
   });
 });

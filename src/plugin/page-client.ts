@@ -823,7 +823,7 @@ function pageClientScriptPartATabs(): string {
       sec.classList.toggle('active', sec.id === 'section-' + target);
       if (options.focusHeading && sec.id === 'section-' + target) {
         var heading = sec.querySelector('h2');
-        if (heading) heading.focus();
+        if (heading) heading.focus({ preventScroll: true });
       }
     });
     if (target !== 'proposals') {
@@ -837,6 +837,7 @@ function pageClientScriptPartATabs(): string {
       }
     }
     selectedLocationHash = String(location.hash || '');
+    window.scrollTo(0, 0);
   }
 
   function loadTabData(target) {
@@ -1006,7 +1007,7 @@ function pageClientScriptPartATabs(): string {
     }
     host.innerHTML =
       '<form id="create-link-form">' +
-      '<div class="row" style="align-items:flex-end">' +
+      '<div class="row token-create-row">' +
       '<label>Channel<select id="link-kind" aria-label="Token channel">' +
       '<option value="get_link" selected>GET link (chat paste)</option>' +
       '<option value="rest">REST Bearer</option>' +
