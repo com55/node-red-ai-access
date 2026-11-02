@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   build: vi.fn(),
-  modified: new Map<string, number>(),
+  contents: new Map<string, string>(),
   missing: new Set<string>(),
 }));
 vi.mock('node:child_process', () => ({ execFileSync: mocks.build }));
 vi.mock('node:fs', () => ({
   existsSync: (path: string) => !mocks.missing.has(path),
+  readFileSync: (path: string) => mocks.contents.get(path) ?? path,
   readdirSync: (path: string) =>
     path === '.'
       ? [
@@ -22,9 +23,11 @@ vi.mock('node:fs', () => ({
       : ['nested.ts'],
   statSync: (path: string) => ({
     isDirectory: () => path === 'src',
-    mtimeMs: mocks.modified.get(path) ?? (path.startsWith('dist/') ? 200 : 100),
+    mtimeMs: 100,
   }),
 }));
+
+import { buildStamp, hashBuildInputs } from '../src/build-inputs.js';
 
 import setup from './global-setup.js';
 
@@ -32,24 +35,38 @@ describe('test build setup', () => {
   afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     mocks.build.mockReset();
-    mocks.modified.clear();
+    mocks.contents.clear();
     mocks.missing.clear();
+    mocks.missing.add('dist/plugin.cjs.map');
+    mocks.contents.set(buildStamp, hashBuildInputs());
     vi.stubEnv('SKIP_TEST_BUILD', '');
   });
 
-  it('skips a build when both dist outputs are newer than source and config', () => {
+  it('skips a build when the production stamp matches the input contents', () => {
     setup();
     expect(mocks.build).not.toHaveBeenCalled();
   });
 
   it.each(['src/nested.ts', 'tsup.config.ts', 'tsconfig.json', 'package.json', 'yarn.lock'])(
-    'builds when %s is newer than dist',
+    'builds when %s content changes despite identical mtimes',
     path => {
-      mocks.modified.set(path, 300);
+      mocks.contents.set(path, 'changed');
       setup();
       expect(mocks.build).toHaveBeenCalledWith('yarn', ['build:prod'], { stdio: 'inherit' });
     }
   );
+
+  it('rebuilds a dev build even with a matching stamp', () => {
+    mocks.missing.delete('dist/plugin.cjs.map');
+    setup();
+    expect(mocks.build).toHaveBeenCalledOnce();
+  });
+
+  it('rebuilds when there is no production stamp', () => {
+    mocks.missing.add(buildStamp);
+    setup();
+    expect(mocks.build).toHaveBeenCalledOnce();
+  });
 
   it('builds when a required dist output is missing', () => {
     mocks.missing.add('dist/plugin.d.cts');

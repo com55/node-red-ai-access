@@ -194,9 +194,13 @@ describe('auto-rebase service and HTTP API', () => {
     expect(audit.list().some(e => e.action === 'proposal.live_checked')).toBe(false);
   });
 
-  it.each(['approved', 'rejected', 'withdrawn', 'expired'] as const)(
-    'alerts a %s decision on another overwritten tab, including decisions before the cap',
-    async status => {
+  it.each(
+    (['approved', 'rejected', 'withdrawn', 'expired', 'editor'] as const).flatMap(status =>
+      (['rejected', 'expired', 'failed'] as const).map(priorStatus => ({ status, priorStatus }))
+    )
+  )(
+    'alerts only post-cap $status decisions, ignoring a prior $priorStatus decision',
+    async ({ status, priorStatus }) => {
       head.flows.push(
         { id: 'tab2', type: 'tab', label: 'Other' },
         { id: 'tab3', type: 'tab', label: 'Unchanged' },
@@ -225,7 +229,12 @@ describe('auto-rebase service and HTTP API', () => {
         payload: { flowId: 'tab2', flow: base },
         baseFlow: base,
       });
-      store.markRejected(prior.id, { kind: 'admin' }, 'Earlier decision');
+      if (priorStatus === 'rejected')
+        store.markRejected(prior.id, { kind: 'admin' }, 'Earlier decision');
+      else if (priorStatus === 'failed')
+        store.markFailed(prior.id, { kind: 'admin' }, 'Earlier failure');
+      else store.markClosed(prior.id, 'expired', 'Earlier expiry');
+      const warning = vi.spyOn(console, 'warn').mockImplementation(vi.fn());
       const unaffected = store.create({
         type: 'replace_flow',
         expectedRev: 'r1',
@@ -257,14 +266,14 @@ describe('auto-rebase service and HTTP API', () => {
       const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
         code: 'deploy_timeout',
       });
-      if (status !== 'approved') {
-        // Close before the cap: alerts must not depend on decisions changing after it.
+      await vi.advanceTimersByTimeAsync(100);
+      await first;
+      if (status !== 'approved' && status !== 'editor') {
+        // Close after the cap snapshot.
         if (status === 'rejected') store.markRejected(other.id, { kind: 'admin' }, 'No');
         else if (status === 'withdrawn') store.markWithdrawn(other.id, { kind: 'admin' }, 'No');
         else store.markClosed(other.id, 'expired', 'TTL');
       }
-      await vi.advanceTimersByTimeAsync(100);
-      await first;
       if (status === 'approved') {
         await expect(service.approve(other.id, { kind: 'admin' })).rejects.toMatchObject({
           code: 'deploy_outcome_unknown',
@@ -276,14 +285,17 @@ describe('auto-rebase service and HTTP API', () => {
       }
       finish();
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.get(other.id).status).toBe(status);
-      expect(store.get(other.id).deploymentAlert).toContain('Late deployment');
-      expect(store.get(prior.id).deploymentAlert).toContain('Late deployment');
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('Late deployment'));
+      warning.mockRestore();
+      expect(store.get(other.id).status).toBe(status === 'editor' ? 'pending' : status);
+      if (status === 'editor') expect(store.get(other.id).deploymentAlert).toBeUndefined();
+      else expect(store.get(other.id).deploymentAlert).toContain('Late deployment');
+      expect(store.get(prior.id).deploymentAlert).toBeUndefined();
       expect(store.get(unaffected.id).deploymentAlert).toBeUndefined();
       expect(
         audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
       ).toMatchObject({
-        affectedProposalIds: expect.arrayContaining([other.id, prior.id]),
+        affectedProposalIds: status === 'editor' ? [] : [other.id],
         changedFlowIds: expect.arrayContaining(['tab2']),
       });
     }
@@ -1507,7 +1519,7 @@ describe('auto-rebase service and HTTP API', () => {
       expect(store.get(p.body.id)).toMatchObject(decision);
       expect(store.get(p.body.id).deployPending).toBeUndefined();
       if (status === 'withdrawn') {
-        expect(store.get(p.body.id).deploymentAlert).toBeUndefined();
+        expect(store.get(p.body.id).landedAfterWithdraw).toBe(true);
         expect(
           audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
             ?.affectedProposalIds

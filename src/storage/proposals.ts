@@ -123,6 +123,7 @@ export interface Proposal {
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
   deploymentAlert?: string;
+  landedAfterWithdraw?: boolean;
   rejectedWhileDeployUnknown?: boolean;
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
   deployPending?: {
@@ -455,6 +456,7 @@ export class ProposalStore {
     if (warnings) {
       record.warnings = warnings;
     }
+    if (proposal.landedAfterWithdraw === true) record.landedAfterWithdraw = true;
     if (typeof proposal.deploymentAlert === 'string')
       record.deploymentAlert = cleanText(proposal.deploymentAlert, 500) ?? '';
     const restored = sanitizeRestoredSecrets(proposal.restoredSecrets);
@@ -656,6 +658,12 @@ export class ProposalStore {
     proposal.rejectedWhileDeployUnknown = true;
     this.writeAtomic(id, proposal);
     return this.get(id);
+  }
+
+  flagLandedAfterWithdraw(id: string): void {
+    const proposal = this.get(id);
+    proposal.landedAfterWithdraw = true;
+    this.writeAtomic(id, proposal);
   }
 
   flagDeployment(id: string, message: string): void {

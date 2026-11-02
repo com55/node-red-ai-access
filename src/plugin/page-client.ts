@@ -2643,7 +2643,7 @@ function pageClientScriptPartB2Cards(): string {
       '<header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status === 'conflict' ? 'Conflict' : p.status) + '</span> ' +
-      renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
+      renderLandedAfterWithdraw(p) + renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
       '</header>' +
       (createdBy ? createdBy + '<br/>' : '') +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
@@ -2662,13 +2662,17 @@ function pageClientScriptPartB2Cards(): string {
 
 function pageClientScriptPartB2CardsList(): string {
   return `
+  function renderLandedAfterWithdraw(p) {
+    return p.status === 'withdrawn' && p.landedAfterWithdraw
+      ? '<span class="status-pill withdrawn">Landed after withdraw</span> ' : '';
+  }
   function renderCompactProposal(p) {
     var title = titleForProposalCard(p);
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
       '" role="button" tabindex="0" aria-expanded="false">' +
       '<strong>' + esc(title) + '</strong>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' +
-      renderProposalMetaLine(p) +
+      renderLandedAfterWithdraw(p) + renderProposalMetaLine(p) +
       '</div>' +
       '<div class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) +
       '" data-status="' + esc(p.status) + '" hidden></div>';

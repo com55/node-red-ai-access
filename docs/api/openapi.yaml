@@ -2441,6 +2441,9 @@ components:
         rejectedWhileDeployUnknown:
           type: boolean
           description: Rejected while a full-snapshot deploy could still land. Check live flows; late landing triggers an alert and audit entry.
+        landedAfterWithdraw:
+          type: boolean
+          description: The withdrawn proposal’s outstanding deployment landed later; shown as a dashboard badge.
         deploymentAlert:
           type: string
           description: Warning that a late deployment may have overwritten an intervening decision.

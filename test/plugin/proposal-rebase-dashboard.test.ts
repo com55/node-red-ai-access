@@ -140,6 +140,17 @@ describe('dashboard auto-rebase review', () => {
     expect(JSON.parse(api.mock.calls[1]![1].body).overrideDeployOutcomeUnknown).toBe(true);
   });
 
+  it('badges a withdrawn proposal whose deployment landed later', () => {
+    const html = dashboard().renderProposalCard({
+      id: 'p',
+      status: 'withdrawn',
+      landedAfterWithdraw: true,
+      payload: { flowId: 'tab', flow: {} },
+    });
+    expect(html).toContain('Landed after withdraw');
+    expect(html).toContain('status-pill');
+  });
+
   it('renders persisted late deployment alerts', () => {
     const ui = dashboard();
     expect(

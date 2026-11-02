@@ -329,6 +329,9 @@ export class ProposalService {
           attemptId,
         });
       let timedOut = false;
+      let decisionsAtCap = new Map<string, string>();
+      const decisionKey = (p: Proposal) =>
+        JSON.stringify([p.status, p.decidedBy, p.reason, p.resultRev]);
       const clearUnknown = () => {
         const latest = this.proposals.get(id);
         if (latest.deployPending?.attemptId === attemptId)
@@ -355,6 +358,7 @@ export class ProposalService {
             onTimeout(error);
           },
           () => {
+            decisionsAtCap = new Map(this.proposals.list().map(p => [p.id, decisionKey(p)]));
             this.proposals.recordDeployPending(id, {
               mergedHash,
               attemptId,
@@ -390,14 +394,23 @@ export class ProposalService {
                 mergedHash;
             const affected = this.proposals
               .list()
-              .filter(p => changedTabs.has(p.payload.flowId) && !isOpenProposalStatus(p.status));
-            if (affected.length) {
-              const message = `Late deployment of ${id} changed live tabs containing closed proposals. Check live flows; those decisions may have been overwritten.`;
+              .filter(
+                p =>
+                  changedTabs.has(p.payload.flowId) &&
+                  !isOpenProposalStatus(p.status) &&
+                  decisionsAtCap.get(p.id) !== decisionKey(p)
+              );
+            if (latest.status === 'withdrawn') this.proposals.flagLandedAfterWithdraw(id);
+            if (
+              affected.length ||
+              [...changedTabs].some(flowId => flowId !== current.payload.flowId)
+            ) {
+              const message = `Late deployment of ${id} changed live tabs after the hard cap. Check live flows; intervening edits or decisions may have been overwritten.`;
               for (const p of affected) {
                 if (p.id !== id || p.status !== 'withdrawn')
                   this.proposals.flagDeployment(p.id, message);
               }
-              if (latest.status !== 'withdrawn') this.proposals.flagDeployment(id, message);
+              if (isOpenProposalStatus(latest.status)) this.proposals.flagDeployment(id, message);
               this.audit.append('proposal.late_deploy_overwrite', decidedBy, {
                 ...meta,
                 attemptId,
