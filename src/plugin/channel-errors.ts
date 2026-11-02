@@ -52,6 +52,8 @@ export const CANONICAL_ERROR_TEXT: Record<string, string> = {
   proposal_conflict: 'Proposal conflicts with current editor changes',
   rebase_ack_required: 'Review and acknowledge the merged proposal',
   rebase_race: 'Flows kept changing during approval',
+  deploy_outcome_unknown:
+    'A past-cap deployment may still change live flows. Wait for settlement or explicitly override after reviewing the risk.',
   deploy_timeout:
     'Deployment timed out; the deploy outcome is unknown. The proposal remains pending with deployPending set. Approvals wait until the runtime settles or the deploy hard cap is reached. Check the live flow before approving again.',
   approve_queue_timeout:

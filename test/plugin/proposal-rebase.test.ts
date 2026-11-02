@@ -256,6 +256,16 @@ describe('per-field proposal three-way rebase', () => {
     });
   });
 
+  it('conflicts when switch rules grow without outputs while the editor rewires', () => {
+    const b = clone(base);
+    b.nodes![0] = { id: 'a', type: 'switch', rules: [{ t: 'else' }], wires: [[]] };
+    const p = clone(b),
+      c = clone(b);
+    p.nodes![0]!.rules = [{ t: 'eq', v: '1' }, { t: 'else' }];
+    c.nodes![0]!.wires = [['b']];
+    expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+  });
+
   it('keeps ordered switch rules strict', () => {
     const b = clone(base);
     b.nodes![0] = {

@@ -61,6 +61,7 @@ import {
   ProposalRebaseAckRequiredError,
   ProposalRebaseRaceError,
   ProposalDeployTimeoutError,
+  ProposalDeployOutcomeUnknownError,
   ProposalApproveQueueTimeoutError,
   type ProposalService,
 } from './proposal-service.js';
@@ -303,8 +304,25 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
       res.status(400).json({ error: 'Missing proposal id' });
       return;
     }
-    const body = (req.body ?? {}) as { deploymentType?: unknown; mergedHash?: unknown };
-    const approveOptions: { deploymentType?: 'nodes' | 'flows' | 'full'; mergedHash?: string } = {};
+    const body = (req.body ?? {}) as {
+      deploymentType?: unknown;
+      mergedHash?: unknown;
+      overrideDeployOutcomeUnknown?: unknown;
+    };
+    const approveOptions: {
+      deploymentType?: 'nodes' | 'flows' | 'full';
+      mergedHash?: string;
+      overrideDeployOutcomeUnknown?: boolean;
+    } = {};
+    if (body.overrideDeployOutcomeUnknown !== undefined) {
+      if (typeof body.overrideDeployOutcomeUnknown !== 'boolean') {
+        res
+          .status(400)
+          .json({ error: 'overrideDeployOutcomeUnknown must be boolean', code: 'invalid_body' });
+        return;
+      }
+      approveOptions.overrideDeployOutcomeUnknown = body.overrideDeployOutcomeUnknown;
+    }
     if (body.mergedHash !== undefined) {
       if (typeof body.mergedHash !== 'string' || !/^[0-9a-f]{8,64}$/.test(body.mergedHash)) {
         res.status(400).json({ error: 'mergedHash must be a hex string', code: 'invalid_body' });
@@ -339,6 +357,7 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
         return;
       }
       if (
+        error instanceof ProposalDeployOutcomeUnknownError ||
         error instanceof ProposalRebaseRaceError ||
         error instanceof ProposalDeployTimeoutError ||
         error instanceof ProposalApproveQueueTimeoutError
@@ -347,6 +366,7 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
         return;
       }
       if (
+        error instanceof ProposalDeployOutcomeUnknownError ||
         error instanceof ProposalNotFoundError ||
         error instanceof ProposalNotPendingError ||
         error instanceof ProposalConcurrentApproveError ||
@@ -378,6 +398,7 @@ export function rejectProposalHandler(service: ProposalService, httpAdminRoot?: 
       res.json(proposal);
     } catch (error) {
       if (
+        error instanceof ProposalDeployOutcomeUnknownError ||
         error instanceof ProposalNotFoundError ||
         error instanceof ProposalNotPendingError ||
         error instanceof StoragePayloadTooLargeError

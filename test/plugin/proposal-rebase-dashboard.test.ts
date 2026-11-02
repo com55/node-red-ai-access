@@ -53,6 +53,37 @@ function dashboard() {
 }
 
 describe('dashboard auto-rebase review', () => {
+  it('requires confirmation before overriding an unknown deployment', async () => {
+    const ui = dashboard();
+    const confirm = vi.fn();
+    const api = vi
+      .fn()
+      .mockRejectedValue({ status: 409, body: { code: 'deploy_outcome_unknown' } });
+    ui.setConfirm(confirm);
+    ui.setToast(vi.fn());
+    ui.setApi(api);
+    ui.setProposal({ id: 'p', status: 'pending' }, {});
+    await ui.doApproveProposal('p', 'nodes');
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmLabel: 'Override & deploy', danger: true })
+    );
+    await confirm.mock.calls[0]![0].onConfirm();
+    expect(JSON.parse(api.mock.calls[1]![1].body).overrideDeployOutcomeUnknown).toBe(true);
+  });
+
+  it('renders persisted late deployment alerts', () => {
+    const ui = dashboard();
+    expect(
+      ui.renderProposalCard({
+        id: 'p',
+        status: 'approved',
+        deploymentAlert: 'Late deployment overwrote a decision',
+        payload: { flowId: 'tab', flow: {} },
+      })
+    ).toContain('role="alert"');
+  });
+
   it.each(['clean', 'merged'])(
     'allows approval after a revision change with %s rebase',
     async state => {

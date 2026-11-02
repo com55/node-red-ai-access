@@ -779,7 +779,11 @@ describe('auto-rebase service and HTTP API', () => {
     expect(response.body).toMatchObject({ code: 'approve_queue_timeout' });
     expect(store.get(b.body.id).status).toBe('pending');
     expect(read).not.toHaveBeenCalled();
-    const successor = service.approve(c.body.id, { kind: 'admin' });
+    const successor = service.approve(
+      c.body.id,
+      { kind: 'admin' },
+      { overrideDeployOutcomeUnknown: true }
+    );
     await vi.advanceTimersByTimeAsync(startedAt + 300_000 - Date.now() - 1);
     expect(updateFlow).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
@@ -860,6 +864,64 @@ describe('auto-rebase service and HTTP API', () => {
     }
   );
 
+  it.each(['approve', 'reject'] as const)(
+    'guards an unknown late deploy against intervening %s',
+    async decision => {
+      const p = await submit();
+      const other = await submit('b', 'r1', { name: 'later' });
+      vi.useFakeTimers();
+      let finish!: () => void;
+      updateFlow.mockImplementationOnce(
+        params =>
+          new Promise(resolve => {
+            finish = () => {
+              head = {
+                rev: 'late',
+                flows: replaceFlowTabInFlatFlows(head.flows, params.flowId, params.flow),
+              };
+              resolve({ flowId: params.flowId, rev: head.rev });
+            };
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 50,
+        deployHardCapMs: 300,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      await first;
+      await expect(service.approve(other.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_outcome_unknown',
+      });
+      expect(() => service.reject(p.body.id, { kind: 'admin' }, 'No')).toThrow(
+        expect.objectContaining({ code: 'deploy_outcome_unknown' })
+      );
+      if (decision === 'approve') {
+        await service.approve(
+          other.body.id,
+          { kind: 'admin' },
+          { overrideDeployOutcomeUnknown: true }
+        );
+        expect(head.flows.find(n => n.id === 'b')?.name).toBe('later');
+      } else {
+        // Simulate a decision through another store consumer while the write is outstanding.
+        store.markRejected(p.body.id, { kind: 'admin' }, 'No');
+      }
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(head.flows.find(n => n.id === 'b')?.name).toBe('base');
+      expect(head.flows.find(n => n.id === 'a')?.func).toBe('proposal');
+      const affected = store.get(decision === 'approve' ? other.body.id : p.body.id);
+      expect(affected.status).toBe(decision === 'approve' ? 'approved' : 'rejected');
+      expect(affected.deploymentAlert).toContain('Late deployment');
+      expect(presentProposalForApi(affected).deploymentAlert).toContain('Late deployment');
+      expect(audit.list().some(e => e.action === 'proposal.late_deploy_overwrite')).toBe(true);
+      expect(store.get(p.body.id).deployPending).toBeUndefined();
+    }
+  );
+
   it('releases a never-settling deployment at the configured cap with a persisted API note', async () => {
     const a = await submit(),
       b = await submit('b', 'r1', { name: 'second' });
@@ -878,13 +940,18 @@ describe('auto-rebase service and HTTP API', () => {
     const first = expect(service.approve(a.body.id, { kind: 'admin' })).rejects.toMatchObject({
       code: 'deploy_timeout',
     });
-    const queued = service.approve(b.body.id, { kind: 'admin' });
+    const queued = expect(service.approve(b.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_outcome_unknown',
+    });
     await vi.advanceTimersByTimeAsync(499);
     await first;
     expect(store.isApproving(a.body.id)).toBe(true);
     expect(store.get(a.body.id).deployPending?.queueReleased).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect((await queued).status).toBe('approved');
+    await queued;
+    expect(() => service.reject(a.body.id, { kind: 'admin' }, 'No')).toThrow(
+      expect.objectContaining({ code: 'deploy_outcome_unknown' })
+    );
     expect(store.isApproving(a.body.id)).toBe(false);
     const pending = new ProposalStore(resolveAiAccessPaths(dir)).get(a.body.id);
     expect(presentProposalForApi(pending)).toMatchObject({
@@ -896,9 +963,9 @@ describe('auto-rebase service and HTTP API', () => {
     });
     const read = vi.spyOn(adapter, 'getFlows');
     const retry = await service.approve(a.body.id, { kind: 'admin' }).catch(error => error);
-    expect(read).toHaveBeenCalled();
-    expect(retry).toBeInstanceOf(ProposalRebaseAckRequiredError);
-    expect(updateFlow).toHaveBeenCalledTimes(2);
+    expect(read).not.toHaveBeenCalled();
+    expect(retry).toMatchObject({ code: 'deploy_outcome_unknown' });
+    expect(updateFlow).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -969,15 +1036,22 @@ describe('auto-rebase service and HTTP API', () => {
       });
       await vi.advanceTimersByTimeAsync(500);
       await first;
-      const newer = await service.approve(p.body.id, { kind: 'admin', username: 'newer' });
+      const newer = await service.approve(
+        p.body.id,
+        { kind: 'admin', username: 'newer' },
+        { overrideDeployOutcomeUnknown: true }
+      );
       const otherState = store.get(other.body.id);
       const entries = audit.list();
       if (outcome === 'success') finish({ rev: 'obsolete' });
       else fail(new Error('obsolete failure'));
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.get(p.body.id)).toEqual(newer);
+      expect(store.get(p.body.id)).toMatchObject(newer);
+      if (outcome === 'success')
+        expect(store.get(p.body.id).deploymentAlert).toContain('Late deployment');
       expect(store.get(other.body.id)).toEqual(otherState);
-      expect(audit.list()).toEqual(entries);
+      if (outcome === 'failure') expect(audit.list()).toEqual(entries);
+      else expect(audit.list()[0]?.action).toBe('proposal.late_deploy_overwrite');
       expect(vi.getTimerCount()).toBe(0);
     }
   );
@@ -1014,7 +1088,11 @@ describe('auto-rebase service and HTTP API', () => {
       );
       const retryStore = new ProposalStore(resolveAiAccessPaths(dir));
       const retryService = new ProposalService(retryStore, audit, adapter, () => 'nodes');
-      const retry = retryService.approve(p.body.id, { kind: 'admin' });
+      const retry = retryService.approve(
+        p.body.id,
+        { kind: 'admin' },
+        { overrideDeployOutcomeUnknown: true }
+      );
       await vi.advanceTimersByTimeAsync(0);
       const pending = store.get(p.body.id);
       if (outcome === 'success') finish({ rev: 'obsolete' });
@@ -1048,12 +1126,17 @@ describe('auto-rebase service and HTTP API', () => {
     });
     await vi.advanceTimersByTimeAsync(500);
     await first;
-    const newer = await service.approve(other.body.id, { kind: 'admin' });
+    const newer = await service.approve(
+      other.body.id,
+      { kind: 'admin' },
+      { overrideDeployOutcomeUnknown: true }
+    );
     const read = vi.spyOn(adapter, 'getFlows');
     finish({ rev: 'late' });
     await vi.advanceTimersByTimeAsync(0);
     expect(store.get(p.body.id)).toMatchObject({ status: 'approved', resultRev: 'late' });
-    expect(store.get(other.body.id)).toEqual(newer);
+    expect(store.get(other.body.id)).toMatchObject(newer);
+    expect(store.get(other.body.id).deploymentAlert).toContain('Late deployment');
     expect(read).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -1109,7 +1192,9 @@ describe('auto-rebase service and HTTP API', () => {
       if (outcome === 'success') finish({ flowId: 'tab', rev: 'late' });
       else fail(new Error('late failure'));
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.get(p.body.id)).toEqual(withdrawn);
+      const { deployPending: _pending, updatedAt: _updated, ...decision } = withdrawn;
+      expect(store.get(p.body.id)).toMatchObject(decision);
+      expect(store.get(p.body.id).deployPending).toBeUndefined();
       expect(store.isApproving(p.body.id)).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     }

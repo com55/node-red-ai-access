@@ -561,6 +561,7 @@ function pageClientScriptPartAFormat(): string {
   function actionBadge(action) {
     var labels = {
       'proposal.created': 'Created',
+      'proposal.late_deploy_overwrite': 'Late deploy warning',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
@@ -582,6 +583,7 @@ function pageClientScriptPartAFormat(): string {
   function actionFilterLabel(action) {
     var labels = {
       'proposal.created': 'Created',
+      'proposal.late_deploy_overwrite': 'Late deploy warning',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
@@ -2592,6 +2594,7 @@ function pageClientScriptPartB2Cards(): string {
     // Show for any large delete — including stale — so owners see the risk.
     var deleteBanner = cached && !proposalHasNoNetChange(cached) ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
+    reason += p.deploymentAlert ? '<div role="alert" class="warning">' + esc(p.deploymentAlert) + '</div>' : '';
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
@@ -3271,16 +3274,16 @@ function pageClientScriptPartC(): string {
     renderProposalsList();
   }
 
-  async function doApproveProposal(id, deploymentType) {
+  async function doApproveProposal(id, deploymentType, overrideDeployOutcomeUnknown) {
     proposalActionsInFlight += 1;
     try {
-      return await doApproveProposalInner(id, deploymentType);
+      return await doApproveProposalInner(id, deploymentType, overrideDeployOutcomeUnknown);
     } finally {
       proposalActionsInFlight -= 1;
     }
   }
 
-  async function doApproveProposalInner(id, deploymentType) {
+  async function doApproveProposalInner(id, deploymentType, overrideDeployOutcomeUnknown) {
     var flash = $('proposals-flash');
     var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var toastTitle = proposalToastTitle(pBefore);
@@ -3291,9 +3294,11 @@ function pageClientScriptPartC(): string {
         }).length
       : 0;
     try {
+      var approveBody = { deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash };
+      if (overrideDeployOutcomeUnknown === true) approveBody.overrideDeployOutcomeUnknown = true;
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
-        body: JSON.stringify({ deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash })
+        body: JSON.stringify(approveBody)
       });
       var viewOpts = { title: toastTitle, href: proposalViewHref(id), linkLabel: 'View' };
       if (result.status === 'rejected') {
@@ -3333,6 +3338,15 @@ function pageClientScriptPartC(): string {
       loadLogs();
     } catch (e) {
       var code = e.body && e.body.code;
+      if (code === 'deploy_outcome_unknown' && !overrideDeployOutcomeUnknown) {
+        openConfirmDialog({
+          title: 'Deployment outcome unknown',
+          message: 'An earlier deployment can still overwrite this approval. Override the safety block and deploy anyway?',
+          confirmLabel: 'Override & deploy', danger: true,
+          onConfirm: function () { return doApproveProposal(id, deploymentType, true); }
+        });
+        return;
+      }
       var errMsg = e.message || String(e);
       if (e.status === 409 && (code === 'rebase_ack_required' || code === 'proposal_conflict')) {
         errMsg = code === 'rebase_ack_required'

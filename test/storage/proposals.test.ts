@@ -67,6 +67,18 @@ describe('ProposalStore + ProposalService', () => {
     });
   }
 
+  it('beginApprove preserves the pending attempt token on retry', () => {
+    const p = createPending();
+    store.recordDeployPending(p.id, {
+      mergedHash: 'abc12345',
+      attemptId: 'original',
+      reason: 'Unknown',
+    });
+    expect(store.beginApprove(p.id).deployPending?.attemptId).toBe('original');
+    expect(store.get(p.id).deployPending?.attemptId).toBe('original');
+    store.releaseLock(p.id);
+  });
+
   it('persists proposals as JSON and lists them', () => {
     const created = createPending();
     expect(store.get(created.id).status).toBe('pending');

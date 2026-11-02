@@ -100,6 +100,16 @@ export class ProposalApproveQueueTimeoutError extends Error {
   }
 }
 
+export class ProposalDeployOutcomeUnknownError extends Error {
+  readonly code = 'deploy_outcome_unknown' as const;
+  readonly statusCode = 409;
+  constructor() {
+    super(
+      'A past-cap deployment can still change live flows. Wait for settlement or explicitly override after reviewing the risk.'
+    );
+  }
+}
+
 class DeployHardCapError extends Error {}
 
 export interface ProposalServiceOptions {
@@ -122,8 +132,10 @@ function deadlineMs(configured: number | undefined, fallback: number): number {
 // Shared by every service/entry point: adapter revision checks are not atomic
 // with deployment, so only one approval may read, merge and deploy at a time.
 let approveQueue = Promise.resolve();
+const unknownDeploys = new WeakMap<FlowAdapter, Set<string>>();
 
 export interface ApproveOptions {
+  overrideDeployOutcomeUnknown?: boolean;
   deploymentType?: DeploymentType;
   /**
    * `mergedHash` the reviewer last saw. Required when the rebase merged live
@@ -141,11 +153,22 @@ export class ProposalService {
     private readonly serviceOptions: ProposalServiceOptions = {}
   ) {}
 
+  private guardUnknown(override = false): void {
+    if (
+      !override &&
+      (unknownDeploys.get(rawFlowAdapter(this.adapter))?.size ||
+        this.proposals.list().some(p => p.deployPending?.queueReleased))
+    ) {
+      throw new ProposalDeployOutcomeUnknownError();
+    }
+  }
+
   async approve(
     id: string,
     decidedBy: ProposalDecisionBy,
     options: ApproveOptions = {}
   ): Promise<Proposal> {
+    this.guardUnknown(options.overrideDeployOutcomeUnknown);
     const initial = this.proposals.get(id);
     const waitingForOutcome = initial.deployPending !== undefined;
     if (!isOpenProposalStatus(initial.status)) {
@@ -177,6 +200,9 @@ export class ProposalService {
           await Promise.race([previous, deadline]);
           clearTimeout(timer);
           const current = this.proposals.get(id);
+          if (!isOpenProposalStatus(current.status) && current.status !== 'approved')
+            throw new ProposalNotPendingError(id, current.status);
+          this.guardUnknown(options.overrideDeployOutcomeUnknown);
           if (waitingForOutcome && current.status === 'approved') return current;
           const proposal = this.proposals.beginApprove(id);
           ownsLock = true;
@@ -273,7 +299,19 @@ export class ProposalService {
         const latest = this.proposals.get(id);
         return isOpenProposalStatus(latest.status) && latest.deployPending?.attemptId === attemptId;
       };
+      if (current.deployPending)
+        this.proposals.recordDeployPending(id, {
+          ...current.deployPending,
+          attemptId,
+        });
       let timedOut = false;
+      let decisionsAtCap = new Map<string, string>();
+      const clearUnknown = () => {
+        const latest = this.proposals.get(id);
+        unknownDeploys.get(raw)?.delete(attemptId);
+        if (latest.deployPending?.attemptId === attemptId)
+          this.proposals.recordDeployPending(id, undefined);
+      };
       try {
         const applied = await this.withDeployDeadline(
           () =>
@@ -295,6 +333,10 @@ export class ProposalService {
             onTimeout(error);
           },
           () => {
+            const unknown = unknownDeploys.get(raw) ?? new Set<string>();
+            unknown.add(attemptId);
+            unknownDeploys.set(raw, unknown);
+            decisionsAtCap = new Map(this.proposals.list().map(p => [p.id, JSON.stringify(p)]));
             this.proposals.recordDeployPending(id, {
               mergedHash,
               attemptId,
@@ -305,7 +347,30 @@ export class ProposalService {
             onTimeout(new ProposalDeployTimeoutError());
           },
           applied => {
-            if (!ownsOutcome()) return;
+            unknownDeploys.get(raw)?.delete(attemptId);
+            const affected = this.proposals
+              .list()
+              .filter(
+                p =>
+                  p.payload.flowId === current.payload.flowId &&
+                  (p.status === 'approved' || p.status === 'rejected') &&
+                  decisionsAtCap.get(p.id) !== JSON.stringify(p)
+              );
+            if (affected.length) {
+              const message = `Late deployment of ${id} landed after intervening decisions. Check live flows; those decisions may have been overwritten.`;
+              for (const p of affected) this.proposals.flagDeployment(p.id, message);
+              this.proposals.flagDeployment(id, message);
+              this.audit.append('proposal.late_deploy_overwrite', decidedBy, {
+                ...meta,
+                affectedProposalIds: affected.map(p => p.id),
+                reason: message,
+              });
+              console.warn(message);
+            }
+            if (!ownsOutcome()) {
+              clearUnknown();
+              return;
+            }
             this.proposals.markApproved(id, decidedBy, applied.rev);
             this.audit.append('proposal.approved', decidedBy, {
               ...meta,
@@ -317,7 +382,7 @@ export class ProposalService {
             // Do not sync other proposals: the queue may have moved on.
           },
           () => {
-            if (ownsOutcome()) this.proposals.recordDeployPending(id, undefined);
+            clearUnknown();
           }
         );
         approved = this.proposals.markApproved(id, decidedBy, applied.rev);
@@ -412,6 +477,7 @@ export class ProposalService {
   }
 
   reject(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
+    this.guardUnknown();
     const proposal = this.proposals.get(id);
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);

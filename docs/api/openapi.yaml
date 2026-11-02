@@ -1569,6 +1569,7 @@ components:
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
         - `approve_queue_timeout` (504): Approval exceeded its queue-wait deadline (default 60 seconds); no deployment was started for this request
+        - `deploy_outcome_unknown` (409): A past-cap deployment can still change live flows
         - `deploy_timeout` (504): Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes)
         - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
         - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
@@ -1630,6 +1631,7 @@ components:
         - `internal_error` (500): Unexpected server error
       enum:
         - approve_queue_timeout
+        - deploy_outcome_unknown
         - deploy_timeout
         - proposal_conflict
         - rebase_ack_required
@@ -2385,6 +2387,9 @@ components:
             choice:
               type: string
               enum: [live, proposed]
+        deploymentAlert:
+          type: string
+          description: Warning that a late deployment may have overwritten an intervening decision.
         deployPending:
           type: object
           description: Timed-out deployment has an unknown outcome; approvals wait until settlement or the hard cap. Check live flows before approving again.
@@ -2396,7 +2401,7 @@ components:
               type: string
             queueReleased:
               type: boolean
-              description: True when the deploy hard cap released the queue. Late settlement no longer updates this proposal; approval always re-reads live flows.
+              description: True when the deploy hard cap released the queue. Approvals and rejections are blocked until settlement; approval requires explicit override to proceed. Late settlement updates the proposal or flags intervening decisions.
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:
@@ -2674,6 +2679,10 @@ components:
     ApproveProposalRequest:
       type: object
       properties:
+        overrideDeployOutcomeUnknown:
+          type: boolean
+          default: false
+          description: Explicitly allow approval while a past-cap deploy can still overwrite live flows.
         mergedHash:
           type: string
           description: Hash of the reviewed merged result; required when editor changes are merged.

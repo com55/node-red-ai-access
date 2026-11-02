@@ -120,6 +120,7 @@ export interface Proposal {
   warnings?: ProposalWarning[];
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
+  deploymentAlert?: string;
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
   deployPending?: {
     mergedHash: string;
@@ -450,11 +451,13 @@ export class ProposalStore {
     if (warnings) {
       record.warnings = warnings;
     }
+    if (typeof proposal.deploymentAlert === 'string')
+      record.deploymentAlert = cleanText(proposal.deploymentAlert, 500) ?? '';
     const restored = sanitizeRestoredSecrets(proposal.restoredSecrets);
     if (restored) {
       record.restoredSecrets = restored;
     }
-    if (proposal.deployPending && isOpenProposalStatus(record.status)) {
+    if (proposal.deployPending) {
       const mergedHash = cleanText(proposal.deployPending.mergedHash, 64);
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
@@ -615,12 +618,6 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
-    // A retry takes ownership even before it reaches updateFlow. Keep the hash
-    // for already-applied detection, but invalidate the old completion token.
-    if (proposal.deployPending?.attemptId) {
-      delete proposal.deployPending.attemptId;
-      this.writeAtomic(id, proposal);
-    }
     this.inFlight.add(id);
     return proposal;
   }
@@ -631,15 +628,21 @@ export class ProposalStore {
 
   recordDeployPending(id: string, pending: Proposal['deployPending']): Proposal {
     const proposal = this.get(id);
-    if (!isOpenProposalStatus(proposal.status)) {
+    if (pending && !isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
     if (pending) proposal.deployPending = pending;
     else delete proposal.deployPending;
-    proposal.status = 'pending';
+    if (isOpenProposalStatus(proposal.status)) proposal.status = 'pending';
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
     return this.get(id);
+  }
+
+  flagDeployment(id: string, message: string): void {
+    const proposal = this.get(id);
+    proposal.deploymentAlert = message;
+    this.writeAtomic(id, proposal);
   }
 
   markApproved(id: string, decidedBy: ProposalDecisionBy, resultRev: string): Proposal {

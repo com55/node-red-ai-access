@@ -14,6 +14,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
 | `approve_queue_timeout` | 504 | Approval exceeded its queue-wait deadline (default 60 seconds); no deployment was started for this request | Check the live flow and retry approval | admin |
+| `deploy_outcome_unknown` | 409 | A past-cap deployment can still change live flows | Wait for settlement or explicitly override approval after reviewing the risk; rejection is blocked until settlement | admin |
 | `deploy_timeout` | 504 | Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes) | Before the cap, late settlement updates the proposal; after the cap, deployPending.queueReleased is true and the outcome stays unknown. Check the live flow before approving again; approval always re-reads live | admin |
 | `proposal_conflict` | 409 | Editor and proposal changes conflict (conflicts contains field names only) | Read the current flow and resolve the proposal before approval | GET, REST, MCP, admin |
 | `rebase_ack_required` | 409 | The merged result needs review (mergedHash included) | Review the diff and approve with its mergedHash | admin |

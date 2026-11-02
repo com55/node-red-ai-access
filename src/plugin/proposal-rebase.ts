@@ -198,6 +198,11 @@ function mergeFields(
     coupledFields.add('outputs');
     coupledFields.add('wires');
   }
+  if ([base.type, proposed.type, live.type].includes('switch')) {
+    coupledFields.add('rules');
+    coupledFields.add('outputs');
+    coupledFields.add('wires');
+  }
   const changedInGroup = (node: Record<string, unknown>) =>
     [...coupledFields].some(key => !same(base[key], node[key]));
   const groupConflict = changedInGroup(proposed) && changedInGroup(live);
