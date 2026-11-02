@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.9] - 2026-11-02
+
+- Redesign the dashboard with a GitHub-Settings-style grouped left sidebar and
+  inline SVG icons. Show one section at a time with hash routing and browser
+  back/forward navigation, single-column rows, a 1200px container and a narrow
+  top menu. Improve current-page semantics, group labels and heading focus
+  (#110).
+- Harden the approval queue against deployments that finish after the
+  five-minute cap. Block approvals with `deploy_outcome_unknown` until
+  settlement, restart or an attempt-matched "Confirm live checked", unless an
+  audited override is used; allow rejection with a warning. Audit late
+  overwrites across tabs, alert on affected later decisions, show a dashboard
+  banner and mark proposals that landed after withdrawal (#111).
+- Keep `outputs`, `wires` and switch `rules` coupled during rebase for every
+  node type. Preserve the owner acknowledgement flag when an unchanged
+  replacement body still differs from base (#111).
+- Fix OpenAPI loading in the CommonJS build with `import.meta` shims and an
+  `__dirname` fallback (#111).
+- Reuse production builds in tests through a content-hash build stamp, with
+  `SKIP_TEST_BUILD=1` support (#111). Exclude `dist/.production-build-hash` from
+  the npm package.
+
 ## [0.2.0-beta.8] - 2026-10-29
 
 - Proposal review shows human conflict reasons and Base / Live / Proposed field
