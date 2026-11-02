@@ -883,7 +883,7 @@ describe('auto-rebase service and HTTP API', () => {
   });
 
   it.each(['success', 'failure'] as const)(
-    'ignores late %s after the hard cap and rechecks live on retry',
+    'records late %s after the hard cap and rechecks live on retry',
     async outcome => {
       const p = await submit();
       vi.useFakeTimers();
@@ -909,16 +909,134 @@ describe('auto-rebase service and HTTP API', () => {
       if (outcome === 'success') finish();
       else fail(new Error('failure after cap'));
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.get(p.body.id)).toEqual(pending);
-      expect(audit.list().filter(e => e.action === 'proposal.approved')).toHaveLength(0);
-      const read = vi.spyOn(adapter, 'getFlows');
-      expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
-      expect(read).toHaveBeenCalled();
+      expect(store.get(p.body.id).status).toBe(outcome === 'success' ? 'approved' : 'pending');
+      expect(store.get(p.body.id).deployPending).toBeUndefined();
+      expect(audit.list().filter(e => e.action === 'proposal.approved')).toHaveLength(
+        outcome === 'success' ? 1 : 0
+      );
+      if (outcome === 'failure') {
+        const read = vi.spyOn(adapter, 'getFlows');
+        expect((await service.approve(p.body.id, { kind: 'admin' })).status).toBe('approved');
+        expect(read).toHaveBeenCalled();
+      }
       expect(updateFlow).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 2);
       expect(store.get(p.body.id).deployPending).toBeUndefined();
       expect(vi.getTimerCount()).toBe(0);
     }
   );
+
+  it.each(['success', 'failure'] as const)(
+    'preserves a newer approval and other proposals on late %s',
+    async outcome => {
+      const p = await submit();
+      const other = await submit('b', 'r1', { name: 'later' });
+      vi.useFakeTimers();
+      let finish!: (result: { rev: string }) => void;
+      let fail!: (error: Error) => void;
+      updateFlow.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 100,
+        deployHardCapMs: 500,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await first;
+      const newer = await service.approve(p.body.id, { kind: 'admin', username: 'newer' });
+      const otherState = store.get(other.body.id);
+      const entries = audit.list();
+      if (outcome === 'success') finish({ rev: 'obsolete' });
+      else fail(new Error('obsolete failure'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get(p.body.id)).toEqual(newer);
+      expect(store.get(other.body.id)).toEqual(otherState);
+      expect(audit.list()).toEqual(entries);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it.each(['success', 'failure'] as const)(
+    'does not alter an active retry on late %s across store instances',
+    async outcome => {
+      const p = await submit();
+      vi.useFakeTimers();
+      let finish!: (result: { rev: string }) => void;
+      let fail!: (error: Error) => void;
+      let finishRetry!: (result: { rev: string }) => void;
+      updateFlow.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 100,
+        deployHardCapMs: 500,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await first;
+      updateFlow.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishRetry = resolve;
+          })
+      );
+      const retryStore = new ProposalStore(resolveAiAccessPaths(dir));
+      const retryService = new ProposalService(retryStore, audit, adapter, () => 'nodes');
+      const retry = retryService.approve(p.body.id, { kind: 'admin' });
+      await vi.advanceTimersByTimeAsync(0);
+      const pending = store.get(p.body.id);
+      if (outcome === 'success') finish({ rev: 'obsolete' });
+      else fail(new Error('obsolete failure'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get(p.body.id)).toEqual(pending);
+      expect(retryStore.isApproving(p.body.id)).toBe(true);
+      finishRetry({ rev: 'newer' });
+      expect((await retry).resultRev).toBe('newer');
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('records a late success without rebasing state written by another approval', async () => {
+    const p = await submit();
+    const other = await submit('b', 'r1', { name: 'later' });
+    vi.useFakeTimers();
+    let finish!: (result: { rev: string }) => void;
+    updateFlow.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+      deployTimeoutMs: 100,
+      deployHardCapMs: 500,
+    });
+    const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    await first;
+    const newer = await service.approve(other.body.id, { kind: 'admin' });
+    const read = vi.spyOn(adapter, 'getFlows');
+    finish({ rev: 'late' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.get(p.body.id)).toMatchObject({ status: 'approved', resultRev: 'late' });
+    expect(store.get(other.body.id)).toEqual(newer);
+    expect(read).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it('returns deploy_timeout even when the hard cap is configured before the caller deadline', async () => {
     const p = await submit();

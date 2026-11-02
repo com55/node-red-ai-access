@@ -119,7 +119,12 @@ export interface Proposal {
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
-  deployPending?: { mergedHash: string; reason: string; queueReleased?: boolean };
+  deployPending?: {
+    mergedHash: string;
+    reason: string;
+    queueReleased?: boolean;
+    attemptId?: string;
+  };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
   /** AI resolutions that replace editor changes and still require reviewer acknowledgement. */
@@ -452,6 +457,8 @@ export class ProposalStore {
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
         record.deployPending = { mergedHash, reason };
+        const attemptId = cleanText(proposal.deployPending.attemptId, 36);
+        if (attemptId) record.deployPending.attemptId = attemptId;
         if (proposal.deployPending.queueReleased === true)
           record.deployPending.queueReleased = true;
       }
@@ -605,6 +612,12 @@ export class ProposalStore {
     const proposal = this.get(id);
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
+    }
+    // A retry takes ownership even before it reaches updateFlow. Keep the hash
+    // for already-applied detection, but invalidate the old completion token.
+    if (proposal.deployPending?.attemptId) {
+      delete proposal.deployPending.attemptId;
+      this.writeAtomic(id, proposal);
     }
     this.inFlight.add(id);
     return proposal;

@@ -2,6 +2,8 @@
  * Approve / reject proposals through the FlowAdapter with audit logging.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { FlowRevisionConflictError } from '../runtime/errors.js';
 import type { DeploymentType, FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
@@ -266,6 +268,11 @@ export class ProposalService {
       }
       const merged = result.merged;
       const mergedHash = result.mergedHash;
+      const attemptId = randomUUID();
+      const ownsOutcome = (): boolean => {
+        const latest = this.proposals.get(id);
+        return isOpenProposalStatus(latest.status) && latest.deployPending?.attemptId === attemptId;
+      };
       let timedOut = false;
       try {
         const applied = await this.withDeployDeadline(
@@ -281,6 +288,7 @@ export class ProposalService {
             const error = new ProposalDeployTimeoutError();
             this.proposals.recordDeployPending(id, {
               mergedHash,
+              attemptId,
               reason: 'Deploy outcome unknown: the runtime has not settled. Approvals are waiting.',
             });
             this.audit.append('proposal.deploy_timeout', decidedBy, { ...meta, code: error.code });
@@ -289,11 +297,27 @@ export class ProposalService {
           () => {
             this.proposals.recordDeployPending(id, {
               mergedHash,
+              attemptId,
               queueReleased: true,
               reason:
                 'Deploy outcome unknown: the runtime did not settle before the hard cap. The approval queue was released. Check the live flow before approving again.',
             });
             onTimeout(new ProposalDeployTimeoutError());
+          },
+          applied => {
+            if (!ownsOutcome()) return;
+            this.proposals.markApproved(id, decidedBy, applied.rev);
+            this.audit.append('proposal.approved', decidedBy, {
+              ...meta,
+              resultRev: applied.rev,
+              baseRev: current.expectedRev,
+              liveRev: live.rev,
+              rebaseState: result.state,
+            });
+            // Do not sync other proposals: the queue may have moved on.
+          },
+          () => {
+            if (ownsOutcome()) this.proposals.recordDeployPending(id, undefined);
           }
         );
         approved = this.proposals.markApproved(id, decidedBy, applied.rev);
@@ -342,15 +366,19 @@ export class ProposalService {
   private async withDeployDeadline<T>(
     deploy: () => Promise<T>,
     onTimeout: () => void,
-    onHardCap: () => void
+    onHardCap: () => void,
+    onLateSuccess: (result: T) => void,
+    onLateFailure: () => void
   ): Promise<T> {
     const timer = setTimeout(onTimeout, deadlineMs(this.serviceOptions.deployTimeoutMs, 60_000));
     timer.unref?.();
+    let hardCapped = false;
     let capTimer: ReturnType<typeof setTimeout>;
     const cap = new Promise<never>((_resolve, reject) => {
       capTimer = setTimeout(
         () => {
           try {
+            hardCapped = true;
             onHardCap();
           } finally {
             reject(new DeployHardCapError());
@@ -361,9 +389,22 @@ export class ProposalService {
       capTimer.unref?.();
     });
     try {
-      // Race consumes late rejections too. After the cap no detached deploy
-      // bookkeeping may overwrite a newer approval, rejection or withdrawal.
-      return await Promise.race([deploy(), cap]);
+      const operation = deploy();
+      // Consume detached errors (including bookkeeping errors). The callbacks
+      // only own the original proposal while its persisted token still matches.
+      void operation
+        .then(
+          result => {
+            if (hardCapped) onLateSuccess(result);
+          },
+          () => {
+            if (hardCapped) onLateFailure();
+          }
+        )
+        .catch(() => {
+          // Best-effort bookkeeping after the caller and queue have moved on.
+        });
+      return await Promise.race([operation, cap]);
     } finally {
       clearTimeout(timer);
       clearTimeout(capTimer!);
