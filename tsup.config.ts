@@ -35,6 +35,8 @@ export default defineConfig({
     return { js: '.cjs' };
   },
   platform: 'node',
+  // Preserve import.meta.url when bundling ESM sources for Node-RED's CJS loader.
+  shims: true,
   keepNames: true,
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
