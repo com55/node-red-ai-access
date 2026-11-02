@@ -67,11 +67,29 @@ describe('settings navigation', () => {
       'section.panel:not(#section-proposals) .row { flex-direction: column; align-items: flex-start; }'
     );
     expect(html).toContain(
-      '#section-links .token-create-row { flex-direction: row; align-items: flex-end; }'
+      'section.panel#section-links .row.token-create-row { flex-direction: row; flex-wrap: wrap; gap: 0.55rem; justify-content: flex-start; align-items: flex-end; }'
     );
     expect(html).toMatch(
-      /@media \(max-width: 640px\) \{\s*#section-links \.token-create-row \{ flex-direction: column; align-items: flex-start; \}/
+      /@media \(max-width: 600px\) \{\s*section\.panel#section-links \.row\.token-create-row \{ flex-direction: column; align-items: flex-start; \}/
     );
+    // :not() contributes its argument's specificity. Source order alone cannot
+    // make the old #section-links .token-create-row selector beat the settings rule.
+    const specificity = (selector: string) => {
+      const expanded = selector.replace(/\/\*[\s\S]*?\*\//g, '').replace(/:not\(([^)]+)\)/g, '$1');
+      return [
+        (expanded.match(/#[\w-]+/g) ?? []).length,
+        (expanded.match(/\.[\w-]+/g) ?? []).length,
+        (expanded.match(/(?:^|\s)[a-z]+/g) ?? []).length,
+      ];
+    };
+    const settingsSelector = /([^{}]+)\{ flex-direction: column; align-items: flex-start; \}/
+      .exec(html)![1]
+      .trim();
+    const tokenSelector = /([^{}]+)\{ flex-direction: row; flex-wrap: wrap; gap: 0.55rem;/
+      .exec(html)![1]
+      .trim();
+    expect(specificity(settingsSelector)).toEqual([1, 2, 1]);
+    expect(specificity(tokenSelector)).toEqual([1, 3, 1]);
     expect(html).toContain('flex: 0 0 auto; max-width: 100%');
     expect(html).toContain('#link-label { width: 16rem; }');
     expect(html).toContain('.logs-toolbar .debug-toggle { margin-left: 0; }');
@@ -116,10 +134,18 @@ describe('settings navigation', () => {
     const listeners: Record<string, () => void> = {};
     const location = { hash: '', pathname: '/ai-access', search: '' };
     const historyEntries: string[] = [];
-    const scrollTo = vi.fn();
+    const animationFrames: (() => void)[] = [];
+    let scrollY = 0;
+    const scrollTo = vi.fn((_x: number, y: number) => {
+      scrollY = y;
+    });
+    const flushAnimationFrames = () => {
+      animationFrames.splice(0).forEach(callback => callback());
+    };
     const context = {
       location,
       history: {
+        scrollRestoration: 'auto',
         pushState(_a: unknown, _b: string, url: string) {
           historyEntries.push(url);
           location.hash = url.slice(url.indexOf('#'));
@@ -137,6 +163,9 @@ describe('settings navigation', () => {
       },
       window: {
         scrollTo,
+        requestAnimationFrame(callback: () => void) {
+          animationFrames.push(callback);
+        },
         addEventListener(event: string, callback: () => void) {
           listeners[event] = callback;
         },
@@ -162,9 +191,12 @@ describe('settings navigation', () => {
         "  window.addEventListener('popstate', routeFromLocation);".length
     );
     runInNewContext(tabs + routes, context);
+    expect(context.history.scrollRestoration).toBe('manual');
     buttons[1].click();
     expect(focusHeading).not.toHaveBeenCalled();
     expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
+    flushAnimationFrames();
+    expect(scrollY).toBe(0);
     expect(location.hash).toBe('#links');
     expect(historyEntries).toEqual(['/ai-access#links']);
     expect(buttons[1].attrs['aria-current']).toBe('page');
@@ -196,6 +228,11 @@ describe('settings navigation', () => {
           scrollTo.mock.invocationCallOrder.at(-1)!
         );
       }
+      // Model a late browser scroll restoration/fragment jump after dispatch.
+      scrollY = 350;
+      flushAnimationFrames();
+      expect(scrollY).toBe(0);
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
       expect(panels.filter(p => p.active).map(p => p.id)).toEqual(['section-' + expected]);
       expect(
         buttons.filter(b => b.attrs['aria-current'] === 'page').map(b => b.attrs['data-tab'])

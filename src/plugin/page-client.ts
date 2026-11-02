@@ -761,6 +761,10 @@ function pageClientScriptPartAAudit(): string {
 function pageClientScriptPartATabs(): string {
   return `
   // Hash helpers — keep in sync with page-hash.ts
+  // Sections own their scroll position, including browser history traversal.
+  if (typeof history !== 'undefined' && 'scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+  }
   var TAB_IDS = ['status', 'settings', 'links', 'oauth', 'proposals'];
   function hashForTab(tab) {
     if (tab === 'logs') return 'audit';
@@ -838,6 +842,10 @@ function pageClientScriptPartATabs(): string {
     }
     selectedLocationHash = String(location.hash || '');
     window.scrollTo(0, 0);
+    // Run after history traversal's scroll restoration and fragment scrolling.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () { window.scrollTo(0, 0); });
+    }
   }
 
   function loadTabData(target) {
