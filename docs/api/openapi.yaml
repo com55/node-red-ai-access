@@ -952,7 +952,7 @@ paths:
                       $ref: '#/components/schemas/Proposal'
                   deployUnknownBlocks:
                     type: array
-                    description: Admin-only active process blocks, independent of status filters and pagination. Each replace_flow deployment touches one tab.
+                    description: Admin-only active process blocks, independent of status filters and pagination. Each deployment submits a full flow snapshot, so these blocks apply to all approvals, including after proposal closure.
                     items:
                       type: object
                       required: [proposalId, flowIds]
@@ -1263,12 +1263,22 @@ paths:
     post:
       tags: [Proposals]
       summary: Confirm live flows checked and clear the unknown deployment block
-      description: Requires full admin permission (*). Records the actor and attempt in proposal.live_checked audit. Does not cancel a detached deploy; a later landing is still monitored.
+      description: Requires full admin permission (*). Records the actor and attempt in proposal.live_checked audit. Requires a post-cap deployPending.queueReleased flag and its matching attemptId. Does not cancel a detached deploy; a later landing is still monitored on every changed tab.
       operationId: confirmProposalLiveChecked
       security:
         - AdminSession: []
       parameters:
         - $ref: '#/components/parameters/ProposalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attemptId]
+              properties:
+                attemptId:
+                  type: string
       responses:
         '200':
           description: Block cleared
@@ -1280,6 +1290,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: deploy_outcome_unknown — no post-cap deployment or attemptId does not match
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -2428,7 +2440,7 @@ components:
               enum: [live, proposed]
         rejectedWhileDeployUnknown:
           type: boolean
-          description: Rejected while a same-tab deploy could still land. Check live flows; late landing triggers an alert and audit entry.
+          description: Rejected while a full-snapshot deploy could still land. Check live flows; late landing triggers an alert and audit entry.
         deploymentAlert:
           type: string
           description: Warning that a late deployment may have overwritten an intervening decision.
@@ -2448,7 +2460,7 @@ components:
               type: string
             queueReleased:
               type: boolean
-              description: True when the deploy hard cap released the queue. Same-tab approvals are blocked until settlement, closure, restart, or confirm-live-checked; approval may proceed with an audited override. Rejection is allowed with rejectedWhileDeployUnknown warning. Late settlement updates the proposal or flags intervening decisions.
+              description: True when the deploy hard cap released the queue. All approvals are blocked until settlement, restart, or confirm-live-checked with a matching attemptId; closing the proposal does not clear the block; approval may proceed with an audited override. Rejection is allowed with rejectedWhileDeployUnknown warning. Late settlement updates the proposal or flags intervening decisions.
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:

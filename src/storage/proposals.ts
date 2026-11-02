@@ -461,10 +461,7 @@ export class ProposalStore {
     if (restored) {
       record.restoredSecrets = restored;
     }
-    if (
-      proposal.deployPending?.bootId === proposalProcessBootId &&
-      isOpenProposalStatus(record.status)
-    ) {
+    if (proposal.deployPending?.bootId === proposalProcessBootId) {
       const mergedHash = cleanText(proposal.deployPending.mergedHash, 64);
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
@@ -575,10 +572,7 @@ export class ProposalStore {
   }
 
   private currentProcessProposal(proposal: Proposal): Proposal {
-    if (
-      proposal.deployPending?.bootId !== proposalProcessBootId ||
-      !isOpenProposalStatus(proposal.status)
-    ) {
+    if (proposal.deployPending?.bootId !== proposalProcessBootId) {
       delete proposal.deployPending;
     }
     return proposal;
@@ -685,7 +679,6 @@ export class ProposalStore {
     if (this.inFlight.has(id)) throw new ProposalConcurrentApproveError(id);
     const proposal = this.get(id);
     proposal.rejectedWhileDeployUnknown = proposal.deployPending?.queueReleased === true;
-    delete proposal.deployPending;
     proposal.status = 'rejected';
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
@@ -698,7 +691,6 @@ export class ProposalStore {
 
   markFailed(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
     const proposal = this.get(id);
-    delete proposal.deployPending;
     proposal.status = 'failed';
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
@@ -715,7 +707,6 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
-    delete proposal.deployPending;
     proposal.status = 'withdrawn';
     proposal.decidedBy = decidedBy;
     proposal.reason = reason;
@@ -738,7 +729,6 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
-    delete proposal.deployPending;
     proposal.status = status;
     if (decidedBy) {
       proposal.decidedBy = decidedBy;

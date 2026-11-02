@@ -130,7 +130,7 @@ describe('auto-rebase service and HTTP API', () => {
     head.rev += '-editor';
   }
 
-  it('scopes unknown blocks to their tab and audits the exact overridden attempt', async () => {
+  it('globally blocks unknown deployments and audits the exact overridden attempt', async () => {
     const p = await submit();
     store.recordDeployPending(p.body.id, {
       mergedHash: 'a'.repeat(64),
@@ -147,7 +147,14 @@ describe('auto-rebase service and HTTP API', () => {
       baseFlow: { id: 'other-tab', label: 'Other', nodes: [] },
     });
     const service = new ProposalService(store, audit, adapter, () => 'nodes');
-    const result = await service.approve(unrelated.id, { kind: 'admin' });
+    await expect(service.approve(unrelated.id, { kind: 'admin' })).rejects.toMatchObject({
+      code: 'deploy_outcome_unknown',
+    });
+    const result = await service.approve(
+      unrelated.id,
+      { kind: 'admin' },
+      { overrideDeployOutcomeUnknown: true }
+    );
     expect(result.status).toBe('approved');
     await expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
       code: 'deploy_outcome_unknown',
@@ -165,6 +172,151 @@ describe('auto-rebase service and HTTP API', () => {
       },
     });
   });
+
+  it.each([
+    { queueReleased: false, supplied: 'attempt' },
+    { queueReleased: true, supplied: undefined },
+    { queueReleased: true, supplied: 'stale-attempt' },
+  ])('rejects unsafe live confirmation: %j', async ({ queueReleased, supplied }) => {
+    const p = await submit();
+    store.recordDeployPending(p.body.id, {
+      mergedHash: 'a'.repeat(64),
+      reason: 'Unknown',
+      attemptId: 'attempt',
+      queueReleased,
+    });
+    const before = store.get(p.body.id);
+    const response = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/confirm-live-checked`)
+      .send({ attemptId: supplied });
+    expect(response.status).toBe(409);
+    expect(store.get(p.body.id)).toEqual(before);
+    expect(audit.list().some(e => e.action === 'proposal.live_checked')).toBe(false);
+  });
+
+  it.each(['approved', 'rejected', 'withdrawn', 'expired'] as const)(
+    'alerts a %s decision on another overwritten tab, including decisions before the cap',
+    async status => {
+      head.flows.push(
+        { id: 'tab2', type: 'tab', label: 'Other' },
+        { id: 'tab3', type: 'tab', label: 'Unchanged' },
+        { id: 'n2', type: 'debug', z: 'tab2', name: 'base' }
+      );
+      const p = await submit();
+      const base = {
+        id: 'tab2',
+        label: 'Other',
+        nodes: [{ id: 'n2', type: 'debug', z: 'tab2', name: 'base' }],
+      };
+      const other = store.create({
+        type: 'replace_flow',
+        expectedRev: 'r1',
+        createdBy: { kind: 'admin' },
+        payload: {
+          flowId: 'tab2',
+          flow: { ...base, nodes: [{ ...base.nodes[0]!, name: 'approved' }] },
+        },
+        baseFlow: base,
+      });
+      const prior = store.create({
+        type: 'replace_flow',
+        expectedRev: 'r1',
+        createdBy: { kind: 'admin' },
+        payload: { flowId: 'tab2', flow: base },
+        baseFlow: base,
+      });
+      store.markRejected(prior.id, { kind: 'admin' }, 'Earlier decision');
+      const unaffected = store.create({
+        type: 'replace_flow',
+        expectedRev: 'r1',
+        createdBy: { kind: 'admin' },
+        payload: { flowId: 'tab3', flow: { id: 'tab3', label: 'Unchanged', nodes: [] } },
+      });
+      store.markRejected(unaffected.id, { kind: 'admin' }, 'Unchanged tab');
+      vi.useFakeTimers();
+      let finish!: () => void;
+      updateFlow.mockImplementationOnce(
+        params =>
+          new Promise(resolve => {
+            const fullSnapshot = replaceFlowTabInFlatFlows(
+              clone(head.flows),
+              params.flowId,
+              params.flow
+            );
+            finish = () => {
+              head = { rev: 'late-full', flows: fullSnapshot };
+              events.emit('flows:stopping', { config: clone(head) });
+              resolve({ flowId: params.flowId, rev: head.rev });
+            };
+          })
+      );
+      const service = new ProposalService(store, audit, adapter, () => 'nodes', {
+        deployTimeoutMs: 50,
+        deployHardCapMs: 100,
+      });
+      const first = expect(service.approve(p.body.id, { kind: 'admin' })).rejects.toMatchObject({
+        code: 'deploy_timeout',
+      });
+      if (status !== 'approved') {
+        // Close before the cap: alerts must not depend on decisions changing after it.
+        if (status === 'rejected') store.markRejected(other.id, { kind: 'admin' }, 'No');
+        else if (status === 'withdrawn') store.markWithdrawn(other.id, { kind: 'admin' }, 'No');
+        else store.markClosed(other.id, 'expired', 'TTL');
+      }
+      await vi.advanceTimersByTimeAsync(100);
+      await first;
+      if (status === 'approved') {
+        await expect(service.approve(other.id, { kind: 'admin' })).rejects.toMatchObject({
+          code: 'deploy_outcome_unknown',
+        });
+        await service.approve(other.id, { kind: 'admin' }, { overrideDeployOutcomeUnknown: true });
+      } else {
+        edit('n2', { name: 'editor' });
+        events.emit('flows:started', { config: clone(head) });
+      }
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.get(other.id).status).toBe(status);
+      expect(store.get(other.id).deploymentAlert).toContain('Late deployment');
+      expect(store.get(prior.id).deploymentAlert).toContain('Late deployment');
+      expect(store.get(unaffected.id).deploymentAlert).toBeUndefined();
+      expect(
+        audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
+      ).toMatchObject({
+        affectedProposalIds: expect.arrayContaining([other.id, prior.id]),
+        changedFlowIds: expect.arrayContaining(['tab2']),
+      });
+    }
+  );
+
+  it.each(['withdrawn', 'rejected', 'expired'] as const)(
+    'keeps a global block after %s until the matching live confirmation',
+    async status => {
+      const p = await submit();
+      const other = await submit('b', 'r1', { name: 'later' });
+      store.recordDeployPending(p.body.id, {
+        mergedHash: 'a'.repeat(64),
+        reason: 'Unknown',
+        attemptId: 'closed-attempt',
+        queueReleased: true,
+      });
+      if (status === 'withdrawn') store.markWithdrawn(p.body.id, { kind: 'admin' }, 'Stop');
+      else if (status === 'rejected') store.markRejected(p.body.id, { kind: 'admin' }, 'Stop');
+      else store.markClosed(p.body.id, 'expired', 'TTL');
+      expect((await approve(other.body.id)).body.code).toBe('deploy_outcome_unknown');
+      expect(
+        (await request(app).get('/mcp/api/v1/proposals?status=pending')).body.deployUnknownBlocks
+      ).toEqual([{ proposalId: p.body.id, attemptId: 'closed-attempt', flowIds: ['tab'] }]);
+      expect(
+        (
+          await request(app)
+            .post(`/mcp/api/v1/proposals/${p.body.id}/confirm-live-checked`)
+            .send({ attemptId: 'closed-attempt' })
+        ).status
+      ).toBe(200);
+      expect((await approve(other.body.id)).status).toBe(200);
+    }
+  );
 
   it('persists a distinct override audit with reviewer and skipped attempt', async () => {
     const p = await submit();
@@ -203,7 +355,7 @@ describe('auto-rebase service and HTTP API', () => {
     ]);
     const response = await request(app)
       .post(`/mcp/api/v1/proposals/${p.body.id}/confirm-live-checked`)
-      .send({});
+      .send({ attemptId: 'checked-attempt' });
     expect(response.status).toBe(200);
     expect(store.get(p.body.id).deployPending).toBeUndefined();
     expect(audit.list().find(e => e.action === 'proposal.live_checked')).toMatchObject({
@@ -259,6 +411,19 @@ describe('auto-rebase service and HTTP API', () => {
     expect(rejected.status).toBe(200);
     expect(rejected.body).toMatchObject({ status: 'rejected', rejectedWhileDeployUnknown: true });
     expect((await list()).body.proposals[0].rejectedWhileDeployUnknown).toBe(true);
+    const other = store.create({
+      type: 'replace_flow',
+      expectedRev: 'r1',
+      createdBy: { kind: 'admin' },
+      payload: { flowId: 'tab2', flow: { id: 'tab2', nodes: [] } },
+    });
+    const otherRejected = await request(app)
+      .post(`/mcp/api/v1/proposals/${other.id}/reject`)
+      .send({});
+    expect(otherRejected.body).toMatchObject({
+      status: 'rejected',
+      rejectedWhileDeployUnknown: true,
+    });
   });
 
   it('reports no net deployment change after keeping the editor values during rebase', async () => {
@@ -1096,7 +1261,7 @@ describe('auto-rebase service and HTTP API', () => {
     expect(service.reject(a.body.id, { kind: 'admin' }, 'No').rejectedWhileDeployUnknown).toBe(
       true
     );
-    expect(store.get(a.body.id).deployPending).toBeUndefined();
+    expect(store.get(a.body.id).deployPending?.queueReleased).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -1178,11 +1343,11 @@ describe('auto-rebase service and HTTP API', () => {
       else fail(new Error('obsolete failure'));
       await vi.advanceTimersByTimeAsync(0);
       expect(store.get(p.body.id)).toMatchObject(newer);
-      if (outcome === 'success')
-        expect(store.get(p.body.id).deploymentAlert).toContain('Late deployment');
+      expect(store.get(p.body.id).deploymentAlert).toBeUndefined();
       expect(store.get(other.body.id)).toEqual(otherState);
       if (outcome === 'failure') expect(audit.list()).toEqual(entries);
-      else expect(audit.list()[0]?.action).toBe('proposal.late_deploy_overwrite');
+      else
+        expect(audit.list().some(e => e.action === 'proposal.late_deploy_overwrite')).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     }
   );
@@ -1243,9 +1408,13 @@ describe('auto-rebase service and HTTP API', () => {
     vi.useFakeTimers();
     let finish!: (result: { rev: string }) => void;
     updateFlow.mockImplementationOnce(
-      () =>
+      params =>
         new Promise(resolve => {
-          finish = resolve;
+          const landed = replaceFlowTabInFlatFlows(clone(head.flows), params.flowId, params.flow);
+          finish = result => {
+            head = { rev: result.rev, flows: landed };
+            resolve(result);
+          };
         })
     );
     const service = new ProposalService(store, audit, adapter, () => 'nodes', {
@@ -1303,9 +1472,15 @@ describe('auto-rebase service and HTTP API', () => {
       vi.useFakeTimers();
       let finish!: (result: { flowId: string; rev: string }) => void;
       updateFlow.mockImplementationOnce(
-        () =>
+        params =>
           new Promise(resolve => {
-            finish = resolve;
+            finish = result => {
+              head = {
+                rev: result.rev,
+                flows: replaceFlowTabInFlatFlows(head.flows, params.flowId, params.flow),
+              };
+              resolve(result);
+            };
           })
       );
       const service = new ProposalService(store, audit, adapter, () => 'nodes', {
@@ -1325,17 +1500,25 @@ describe('auto-rebase service and HTTP API', () => {
             : status === 'failed'
               ? store.markFailed(p.body.id, { kind: 'admin' }, 'Stop')
               : store.markClosed(p.body.id, status, 'Stop');
-      expect(withdrawn.deployPending).toBeUndefined();
+      expect(withdrawn.deployPending?.queueReleased).toBe(true);
       finish({ flowId: 'tab', rev: 'late' });
       await vi.advanceTimersByTimeAsync(0);
       const { deployPending: _pending, updatedAt: _updated, ...decision } = withdrawn;
       expect(store.get(p.body.id)).toMatchObject(decision);
       expect(store.get(p.body.id).deployPending).toBeUndefined();
-      expect(store.get(p.body.id).deploymentAlert).toContain('Late deployment');
-      expect(
-        audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
-          ?.affectedProposalIds
-      ).toEqual([p.body.id]);
+      if (status === 'withdrawn') {
+        expect(store.get(p.body.id).deploymentAlert).toBeUndefined();
+        expect(
+          audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
+            ?.affectedProposalIds
+        ).toEqual([p.body.id]);
+      } else {
+        expect(store.get(p.body.id).deploymentAlert).toContain('Late deployment');
+        expect(
+          audit.list().find(e => e.action === 'proposal.late_deploy_overwrite')?.details
+            ?.affectedProposalIds
+        ).toEqual([p.body.id]);
+      }
       expect(store.isApproving(p.body.id)).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     }

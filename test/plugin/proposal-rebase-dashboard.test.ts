@@ -76,6 +76,51 @@ describe('dashboard auto-rebase review', () => {
     ).toContain('An earlier deploy may still land');
   });
 
+  it('confirms before sending the displayed deployment attempt, and uses non-submit buttons', async () => {
+    const ui = dashboard();
+    const confirm = vi.fn();
+    const api = vi.fn().mockRejectedValue(new Error('stop after request'));
+    ui.setConfirm(confirm);
+    ui.setToast(vi.fn());
+    ui.setApi(api);
+    let click!: () => Promise<void>;
+    const btn = {
+      dataset: {},
+      setAttribute: vi.fn(),
+      getAttribute: (name: string) => (name === 'data-id' ? 'p' : 'attempt-123'),
+      addEventListener: (_: string, fn: () => Promise<void>) => {
+        click = fn;
+      },
+    };
+    ui.bindProposalActions({
+      querySelectorAll: (selector: string) =>
+        selector === '.confirm-live-checked-btn' ? [btn] : [],
+    });
+    await click();
+    expect(api).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmLabel: 'Confirm live checked', danger: true })
+    );
+    await confirm.mock.calls[0]![0].onConfirm();
+    expect(api).toHaveBeenCalledWith(
+      '/proposals/p/confirm-live-checked',
+      expect.objectContaining({ body: JSON.stringify({ attemptId: 'attempt-123' }) })
+    );
+    const card = ui.renderProposalCard({
+      id: 'p',
+      status: 'pending',
+      payload: { flowId: 'tab', flow: {} },
+      deployPending: { attemptId: 'attempt-123', queueReleased: true },
+    });
+    const banner = ui.renderDeployUnknownBlocks([
+      { proposalId: 'p', attemptId: 'attempt-123', flowIds: ['tab'] },
+    ]);
+    for (const html of [card, banner]) {
+      expect(html).toContain('<button type="button" class="confirm-live-checked-btn"');
+      expect(html).toContain('data-attempt-id="attempt-123"');
+    }
+  });
+
   it('requires confirmation before overriding an unknown deployment', async () => {
     const ui = dashboard();
     const confirm = vi.fn();

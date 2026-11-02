@@ -151,6 +151,11 @@ export function sanitizeAuditDetails(details: Record<string, unknown>): Record<s
       };
     });
   }
+  if (Array.isArray(details.changedFlowIds)) {
+    out.changedFlowIds = details.changedFlowIds
+      .map(value => sanitizeString(value, 200))
+      .filter(value => value !== undefined);
+  }
   if (Array.isArray(details.affectedProposalIds)) {
     out.affectedProposalIds = details.affectedProposalIds
       .map(value => sanitizeString(value, 200))

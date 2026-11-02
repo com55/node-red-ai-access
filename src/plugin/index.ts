@@ -9,6 +9,8 @@ import { existsSync } from 'node:fs';
 
 import type { NextFunction, Request, Response } from 'express';
 
+import { recordLiveSnapshot } from '../runtime/live-observer.js';
+import type { FlowsSnapshot } from '../runtime/types.js';
 import { resolveAiAccessPaths } from '../storage/paths.js';
 
 import { requireAccessLink } from './access-link-auth.js';
@@ -80,7 +82,7 @@ import {
 import { createAiAccessRateLimiter, createLiveAiAccessDualRateLimiters } from './rate-limit.js';
 import { redactionAuditMiddleware } from './redaction-audit.js';
 import { asyncRoute } from './route-errors.js';
-import { aiRedactingAdapter } from './secret-redaction.js';
+import { aiRedactingAdapter, rawFlowAdapter } from './secret-redaction.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import {
   checkPublicUrlHandler,
@@ -196,11 +198,19 @@ export function registerRoutes(
     () => syncOpenProposals(services.proposalStore, services.flowAdapter),
     500
   );
+  const observeRuntimeDeploy = (event?: { config?: FlowsSnapshot }) => {
+    if (event?.config?.rev && Array.isArray(event.config.flows))
+      recordLiveSnapshot(rawFlowAdapter(services.flowAdapter), event.config);
+  };
   const cleanup = () => {
     proposalSync.cancel();
+    RED.events?.removeListener?.('flows:stopping', observeRuntimeDeploy);
+    RED.events?.removeListener?.('flows:started', observeRuntimeDeploy);
     RED.events?.removeListener?.('flows:started', proposalSync.trigger);
   };
   syncCleanup.set(RED, cleanup);
+  RED.events?.on('flows:stopping', observeRuntimeDeploy);
+  RED.events?.on('flows:started', observeRuntimeDeploy);
   RED.events?.on('flows:started', proposalSync.trigger);
 
   const dualLimiters = createLiveAiAccessDualRateLimiters(() =>

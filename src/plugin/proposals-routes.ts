@@ -238,7 +238,7 @@ export function listProposalsHandler(
       proposals,
       deployUnknownBlocks: store
         .list()
-        .filter(p => isOpenProposalStatus(p.status) && p.deployPending?.queueReleased)
+        .filter(p => p.deployPending?.queueReleased)
         .map(p => ({
           proposalId: p.id,
           attemptId: p.deployPending?.attemptId,
@@ -394,10 +394,22 @@ export function confirmProposalLiveCheckedHandler(
   httpAdminRoot?: string
 ) {
   return (req: AuthenticatedRequest, res: Response): void => {
+    const body = (req.body ?? {}) as { attemptId?: unknown };
     try {
-      const proposal = service.confirmLiveChecked(String(req.params.id), adminActor(req));
+      const proposal = service.confirmLiveChecked(
+        String(req.params.id),
+        adminActor(req),
+        body.attemptId
+      );
       res.json(presentProposal(proposal, presentOptionsFor(req, httpAdminRoot)));
     } catch (error) {
+      if (
+        error instanceof ProposalDeployOutcomeUnknownError ||
+        error instanceof ProposalNotFoundError
+      ) {
+        sendSafeJsonError(res, error.statusCode, error.code);
+        return;
+      }
       sendCaughtRouteError(res, error);
     }
   };

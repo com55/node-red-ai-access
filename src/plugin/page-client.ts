@@ -2454,11 +2454,19 @@ function pageClientScriptPartB2(): string {
     });
     list.querySelectorAll('.confirm-live-checked-btn').forEach(function (btn) {
       bindOnce(btn, 'click', async function () {
-        try {
-          await api('/proposals/' + encodeURIComponent(btn.getAttribute('data-id')) + '/confirm-live-checked', { method: 'POST', body: '{}' });
-          await loadProposals();
-          loadLogs();
-        } catch (e) { showToast(e.message || String(e), false); }
+        openConfirmDialog({
+          title: 'Confirm live flows checked',
+          message: 'Have you checked the live flows? This clears the global approval block, but the earlier deploy may still land.',
+          confirmLabel: 'Confirm live checked',
+          danger: true,
+          onConfirm: async function () {
+            try {
+              await api('/proposals/' + encodeURIComponent(btn.getAttribute('data-id')) + '/confirm-live-checked', { method: 'POST', body: JSON.stringify({ attemptId: btn.getAttribute('data-attempt-id') }) });
+              await loadProposals();
+              loadLogs();
+            } catch (e) { showToast(e.message || String(e), false); }
+          }
+        });
       });
     });
     list.querySelectorAll('.reject-btn').forEach(function (btn) {
@@ -2620,7 +2628,7 @@ function pageClientScriptPartB2Cards(): string {
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
-          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button class="confirm-live-checked-btn" data-id="' + esc(p.id) + '">Confirm live checked</button></div>'
+          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(p.deployPending.attemptId || '') + '" data-id="' + esc(p.id) + '">Confirm live checked</button></div>'
       : '';
     var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
@@ -2723,9 +2731,9 @@ function pageClientScriptPartB2CardsList(): string {
 
   function renderDeployUnknownBlocks(blocks) {
     return blocks.map(function (b) {
-      return '<div role="alert" class="proposal-warnings">Approvals blocked for tabs: ' +
+      return '<div role="alert" class="proposal-warnings">All approvals blocked. Deployment target tabs: ' +
         esc(b.flowIds.join(', ')) + ' — proposal ' + esc(b.proposalId) + ', attempt ' + esc(b.attemptId || '') +
-        '. An earlier deploy may still land. <button class="confirm-live-checked-btn" data-id="' + esc(b.proposalId) + '">Confirm live checked</button></div>';
+        '. An earlier deploy may still land. <button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(b.attemptId || '') + '" data-id="' + esc(b.proposalId) + '">Confirm live checked</button></div>';
     }).join('');
   }
 

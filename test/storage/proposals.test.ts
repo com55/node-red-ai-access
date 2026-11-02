@@ -67,8 +67,8 @@ describe('ProposalStore + ProposalService', () => {
     });
   }
 
-  it.each(['withdrawn', 'rejected', 'expired'] as const)(
-    'clears unknown deploy blocks when %s',
+  it.each(['withdrawn', 'rejected', 'expired', 'superseded', 'failed'] as const)(
+    'retains unknown deploy blocks when %s',
     status => {
       const p = createPending();
       store.recordDeployPending(p.id, {
@@ -78,8 +78,12 @@ describe('ProposalStore + ProposalService', () => {
       });
       if (status === 'withdrawn') store.markWithdrawn(p.id, { kind: 'admin' }, 'Stop');
       else if (status === 'rejected') store.markRejected(p.id, { kind: 'admin' }, 'Stop');
-      else store.markClosed(p.id, 'expired', 'TTL');
-      expect(store.get(p.id).deployPending).toBeUndefined();
+      else if (status === 'failed') store.markFailed(p.id, { kind: 'admin' }, 'Stop');
+      else store.markClosed(p.id, status, 'TTL');
+      expect(store.get(p.id).deployPending?.queueReleased).toBe(true);
+      expect(
+        new ProposalStore(resolveAiAccessPaths(root)).get(p.id).deployPending?.queueReleased
+      ).toBe(true);
     }
   );
 

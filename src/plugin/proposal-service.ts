@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { FlowRevisionConflictError } from '../runtime/errors.js';
+import { liveBeforeRevision, observeFlowSnapshots } from '../runtime/live-observer.js';
 import type { DeploymentType, FlowAdapter } from '../runtime/types.js';
 import type { AuditLog } from '../storage/audit-log.js';
 import {
@@ -150,22 +151,19 @@ export class ProposalService {
     private readonly adapter: FlowAdapter,
     private readonly getDeploymentType: () => DeploymentType,
     private readonly serviceOptions: ProposalServiceOptions = {}
-  ) {}
-
-  unknownDeployBlocks(flowId?: string): Proposal[] {
-    return this.proposals
-      .list()
-      .filter(
-        p =>
-          isOpenProposalStatus(p.status) &&
-          p.deployPending?.queueReleased &&
-          (flowId === undefined || p.payload.flowId === flowId)
-      );
+  ) {
+    observeFlowSnapshots(rawFlowAdapter(adapter));
   }
 
-  confirmLiveChecked(id: string, actor: ProposalDecisionBy): Proposal {
+  unknownDeployBlocks(): Proposal[] {
+    return this.proposals.list().filter(p => p.deployPending?.queueReleased);
+  }
+
+  confirmLiveChecked(id: string, actor: ProposalDecisionBy, expectedAttemptId: unknown): Proposal {
     const proposal = this.proposals.get(id);
     const attemptId = proposal.deployPending?.attemptId;
+    if (!proposal.deployPending?.queueReleased || !attemptId || expectedAttemptId !== attemptId)
+      throw new ProposalDeployOutcomeUnknownError();
     this.audit.append('proposal.live_checked', actor, {
       ...auditProposalMeta(proposal),
       attemptId,
@@ -173,8 +171,8 @@ export class ProposalService {
     return this.proposals.recordDeployPending(id, undefined);
   }
 
-  private guardUnknown(flowId: string, override = false): Proposal[] {
-    const blocks = this.unknownDeployBlocks(flowId);
+  private guardUnknown(override = false): Proposal[] {
+    const blocks = this.unknownDeployBlocks();
     if (!override && blocks.length) throw new ProposalDeployOutcomeUnknownError();
     return blocks;
   }
@@ -185,7 +183,7 @@ export class ProposalService {
     options: ApproveOptions = {}
   ): Promise<Proposal> {
     const initial = this.proposals.get(id);
-    this.guardUnknown(initial.payload.flowId, options.overrideDeployOutcomeUnknown);
+    this.guardUnknown(options.overrideDeployOutcomeUnknown);
     const waitingForOutcome = initial.deployPending !== undefined;
     if (!isOpenProposalStatus(initial.status)) {
       throw new ProposalNotPendingError(id, initial.status);
@@ -218,10 +216,7 @@ export class ProposalService {
           const current = this.proposals.get(id);
           if (!isOpenProposalStatus(current.status) && current.status !== 'approved')
             throw new ProposalNotPendingError(id, current.status);
-          const skipped = this.guardUnknown(
-            current.payload.flowId,
-            options.overrideDeployOutcomeUnknown
-          );
+          const skipped = this.guardUnknown(options.overrideDeployOutcomeUnknown);
           if (options.overrideDeployOutcomeUnknown && skipped.length) {
             this.audit.append('proposal.deploy_unknown_override', decidedBy, {
               ...auditProposalMeta(current),
@@ -334,7 +329,6 @@ export class ProposalService {
           attemptId,
         });
       let timedOut = false;
-      let decisionsAtCap = new Map<string, string>();
       const clearUnknown = () => {
         const latest = this.proposals.get(id);
         if (latest.deployPending?.attemptId === attemptId)
@@ -361,7 +355,6 @@ export class ProposalService {
             onTimeout(error);
           },
           () => {
-            decisionsAtCap = new Map(this.proposals.list().map(p => [p.id, JSON.stringify(p)]));
             this.proposals.recordDeployPending(id, {
               mergedHash,
               attemptId,
@@ -372,7 +365,20 @@ export class ProposalService {
             onTimeout(new ProposalDeployTimeoutError());
           },
           async applied => {
+            const beforeLanding = liveBeforeRevision(raw, applied.rev) ?? live;
             const landedLive = await raw.getFlows().catch(() => undefined);
+            const changedTabs = new Set<string>();
+            const tabs = new Set(
+              [...beforeLanding.flows, ...(landedLive?.flows ?? [])]
+                .filter(n => n.type === 'tab')
+                .map(n => n.id)
+            );
+            for (const flowId of tabs) {
+              const before = nestedLiveTab(beforeLanding.flows, flowId, {});
+              const after = landedLive && nestedLiveTab(landedLive.flows, flowId, {});
+              if (!landedLive || hashFlowTab(before ?? {}) !== hashFlowTab(after ?? {}))
+                changedTabs.add(flowId);
+            }
             const latest = this.proposals.get(id);
             const alreadyLive =
               latest.status === 'approved' &&
@@ -384,20 +390,19 @@ export class ProposalService {
                 mergedHash;
             const affected = this.proposals
               .list()
-              .filter(
-                p =>
-                  p.payload.flowId === current.payload.flowId &&
-                  !isOpenProposalStatus(p.status) &&
-                  decisionsAtCap.get(p.id) !== JSON.stringify(p)
-              );
-            if (affected.length && !alreadyLive) {
-              const message = `Late deployment of ${id} landed after intervening decisions. Check live flows; those decisions may have been overwritten.`;
-              for (const p of affected) this.proposals.flagDeployment(p.id, message);
-              this.proposals.flagDeployment(id, message);
+              .filter(p => changedTabs.has(p.payload.flowId) && !isOpenProposalStatus(p.status));
+            if (affected.length) {
+              const message = `Late deployment of ${id} changed live tabs containing closed proposals. Check live flows; those decisions may have been overwritten.`;
+              for (const p of affected) {
+                if (p.id !== id || p.status !== 'withdrawn')
+                  this.proposals.flagDeployment(p.id, message);
+              }
+              if (latest.status !== 'withdrawn') this.proposals.flagDeployment(id, message);
               this.audit.append('proposal.late_deploy_overwrite', decidedBy, {
                 ...meta,
                 attemptId,
                 affectedProposalIds: affected.map(p => p.id),
+                changedFlowIds: [...changedTabs],
                 reason: message,
               });
               console.warn(message);
@@ -521,7 +526,7 @@ export class ProposalService {
 
   reject(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
     const proposal = this.proposals.get(id);
-    const unknown = this.unknownDeployBlocks(proposal.payload.flowId);
+    const unknown = this.unknownDeployBlocks();
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
