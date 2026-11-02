@@ -188,19 +188,18 @@ function mergeFields(
 ): { value: Record<string, unknown>; conflicts: string[] } {
   const conflicts: string[] = [];
   const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
-  const functionFields = new Set(
+  const coupledFields = new Set(
     [base.type, proposed.type, live.type].includes('function') ? FUNCTION_FIELDS : []
   );
   // Output count and wiring are coupled: never combine one side's output
-  // schema with the other side's wires. Wire-only edits still merge with code.
-  if (
-    functionFields.size &&
-    (!same(base.outputs, proposed.outputs) || !same(base.outputs, live.outputs))
-  ) {
-    functionFields.add('wires');
+  // schema with the other side's wires, regardless of node type. Wire-only
+  // edits still merge with function code when the output count is unchanged.
+  if (!same(base.outputs, proposed.outputs) || !same(base.outputs, live.outputs)) {
+    coupledFields.add('outputs');
+    coupledFields.add('wires');
   }
   const changedInGroup = (node: Record<string, unknown>) =>
-    [...functionFields].some(key => !same(base[key], node[key]));
+    [...coupledFields].some(key => !same(base[key], node[key]));
   const groupConflict = changedInGroup(proposed) && changedInGroup(live);
   const merge = (b: unknown, p: unknown, c: unknown, path: string): unknown => {
     if (same(b, p)) return c;
@@ -249,7 +248,7 @@ function mergeFields(
       if (!prefix && IGNORED_FIELDS.has(key)) continue;
       const path = prefix ? `${prefix}.${key}` : key;
       let value: unknown;
-      if (!prefix && groupConflict && functionFields.has(key)) {
+      if (!prefix && groupConflict && coupledFields.has(key)) {
         if (!same(b[key], p[key]) || !same(b[key], c[key])) conflicts.push(key);
         if (!same(b[key], p[key])) changed?.push(key);
         value = choice === 'live' ? c[key] : p[key];

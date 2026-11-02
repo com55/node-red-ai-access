@@ -170,6 +170,77 @@ describe('per-field proposal three-way rebase', () => {
     }
   );
 
+  describe.each(['switch', 'change', 'custom-node'])('%s output wiring', type => {
+    it.each(['live', 'proposed'] as const)(
+      'couples %s output changes and removals to competing wire edits',
+      side => {
+        for (const outputs of [undefined, 0, 2]) {
+          const b = clone(base);
+          b.nodes![0] = { id: 'a', type, outputs: 1, wires: [[]], name: 'before' };
+          const p = clone(b),
+            c = clone(b);
+          const outputSide = side === 'live' ? c : p;
+          const wireSide = side === 'live' ? p : c;
+          if (outputs === undefined) delete outputSide.nodes![0]!.outputs;
+          else outputSide.nodes![0]!.outputs = outputs;
+          // The output count alone changes, so per-field merging would silently
+          // combine it with the competing wiring (including an invalid port).
+          wireSide.nodes![0]!.wires = [['b']];
+          p.nodes![0]!.name = 'proposal';
+          c.nodes![0]!.x = 100;
+          const result = rebase(p, c, { base: b });
+          expectConflict(result, 'node_changed_both');
+          expect(result.conflicts[0]!.fields).toEqual(['outputs', 'wires']);
+          for (const choice of ['live', 'proposed'] as const) {
+            const resolved = applyConflictChoice({
+              flowId: 'tab',
+              base: b,
+              proposed: p,
+              liveFlows: flat(c),
+              nodeId: 'a',
+              choice,
+            });
+            const node = resolved.proposed.nodes!.find(n => n.id === 'a')!;
+            const expected = choice === 'live' ? c.nodes![0]! : p.nodes![0]!;
+            expect(node.outputs).toEqual(expected.outputs);
+            expect(node.wires).toEqual(expected.wires);
+            expect(node).toMatchObject({ name: 'proposal', x: 100 });
+            expect(
+              rebaseFlowTab({ flowId: 'tab', ...resolved, liveFlows: flat(c), liveRev: 'r2' }).state
+            ).not.toBe('conflict');
+          }
+        }
+      }
+    );
+
+    it('couples newly added outputs to competing wires', () => {
+      const b = clone(base);
+      b.nodes![0] = { id: 'a', type, wires: [[]] };
+      const p = clone(b),
+        c = clone(b);
+      p.nodes![0]!.outputs = 2;
+      c.nodes![0]!.wires = [['b']];
+      expectConflict(rebase(p, c, { base: b }), 'node_changed_both');
+    });
+
+    it('merges wiring with unrelated fields when outputs are unchanged', () => {
+      const b = clone(base);
+      b.nodes![0] = { id: 'a', type, outputs: 1, wires: [[]] };
+      const p = clone(b),
+        c = clone(b);
+      p.nodes![0]!.name = 'proposal';
+      c.nodes![0]!.wires = [['b']];
+      expect(rebase(p, c, { base: b })).toMatchObject({
+        state: 'merged',
+        merged: {
+          nodes: expect.arrayContaining([
+            expect.objectContaining({ id: 'a', outputs: 1, name: 'proposal', wires: [['b']] }),
+          ]),
+        },
+      });
+    });
+  });
+
   it('merges wire-only editor changes with function code when output schema is unchanged', () => {
     const p = clone(base),
       c = clone(base);
