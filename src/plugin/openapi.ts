@@ -12,6 +12,7 @@ import { parse as parseYaml } from 'yaml';
 import type { AuthenticatedRequest } from './types.js';
 
 function moduleDir(): string {
+  // tsup's CJS bundle must use its own location, never an empty import.meta.
   if (typeof __dirname !== 'undefined') {
     return __dirname;
   }

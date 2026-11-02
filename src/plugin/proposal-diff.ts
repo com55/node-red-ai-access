@@ -8,6 +8,7 @@
 
 import { FlowNotFoundError } from '../runtime/errors.js';
 import type { FlowAdapter, FlowNode, FlowTab } from '../runtime/types.js';
+import { conflictFieldValue } from '../storage/field-value.js';
 import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
@@ -20,6 +21,8 @@ import {
   redactFlowData,
   redactProposalForAi,
 } from './secret-redaction.js';
+
+export { conflictFieldValue } from '../storage/field-value.js';
 
 /** Node property keys treated as multi-line text for line diffs. */
 const TEXT_PROPERTY_KEYS = new Set([
@@ -444,31 +447,6 @@ export function isLargeDelete(
  */
 function flowLabelOf(flow: Partial<FlowTab>): string {
   return typeof flow.label === 'string' && flow.label.trim() ? flow.label.trim() : '';
-}
-
-/** Resolve merge paths such as env["API_URL"].value without evaluating code. */
-export function conflictFieldValue(object: unknown, path: string): unknown {
-  const parts = path.match(/\["(?:[^"\\]|\\.)*"\]|[^.[\]]+/g) ?? [];
-  let value = object;
-  for (const part of parts) {
-    if (part.startsWith('[')) {
-      const name: unknown = JSON.parse(part.slice(1, -1));
-      value = Array.isArray(value)
-        ? (value as unknown[]).find(
-            entry =>
-              !!entry &&
-              typeof entry === 'object' &&
-              (entry as Record<string, unknown>).name === name
-          )
-        : undefined;
-    } else {
-      value =
-        value && typeof value === 'object' && Object.hasOwn(value, part)
-          ? (value as Record<string, unknown>)[part]
-          : undefined;
-    }
-  }
-  return value;
 }
 
 export function buildDiffSections(

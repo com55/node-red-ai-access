@@ -2,7 +2,7 @@
  * Proposal store + service lifecycle tests (temp directory).
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -67,6 +67,52 @@ describe('ProposalStore + ProposalService', () => {
     });
   }
 
+  it.each(['withdrawn', 'rejected', 'expired', 'superseded', 'failed'] as const)(
+    'retains unknown deploy blocks when %s',
+    status => {
+      const p = createPending();
+      store.recordDeployPending(p.id, {
+        mergedHash: 'a'.repeat(64),
+        reason: 'Unknown',
+        queueReleased: true,
+      });
+      if (status === 'withdrawn') store.markWithdrawn(p.id, { kind: 'admin' }, 'Stop');
+      else if (status === 'rejected') store.markRejected(p.id, { kind: 'admin' }, 'Stop');
+      else if (status === 'failed') store.markFailed(p.id, { kind: 'admin' }, 'Stop');
+      else store.markClosed(p.id, status, 'TTL');
+      expect(store.get(p.id).deployPending?.queueReleased).toBe(true);
+      expect(
+        new ProposalStore(resolveAiAccessPaths(root)).get(p.id).deployPending?.queueReleased
+      ).toBe(true);
+    }
+  );
+
+  it.each([undefined, 'previous-boot'])('ignores unknown deploy flags from boot %s', bootId => {
+    const p = createPending();
+    store.recordDeployPending(p.id, {
+      mergedHash: 'a'.repeat(64),
+      reason: 'Unknown',
+      queueReleased: true,
+    });
+    const file = join(resolveAiAccessPaths(root).proposals, p.id + '.json');
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    raw.deployPending.bootId = bootId;
+    writeFileSync(file, JSON.stringify(raw));
+    expect(new ProposalStore(resolveAiAccessPaths(root)).get(p.id).deployPending).toBeUndefined();
+  });
+
+  it('beginApprove preserves the pending attempt token on retry', () => {
+    const p = createPending();
+    store.recordDeployPending(p.id, {
+      mergedHash: 'abc12345',
+      attemptId: 'original',
+      reason: 'Unknown',
+    });
+    expect(store.beginApprove(p.id).deployPending?.attemptId).toBe('original');
+    expect(store.get(p.id).deployPending?.attemptId).toBe('original');
+    store.releaseLock(p.id);
+  });
+
   it('persists proposals as JSON and lists them', () => {
     const created = createPending();
     expect(store.get(created.id).status).toBe('pending');
@@ -77,6 +123,51 @@ describe('ProposalStore + ProposalService', () => {
     expect(store.list({ status: 'approved' })).toHaveLength(0);
     expect(store.list({ flowId: 'tab-1' })).toHaveLength(1);
     expect(store.list({ flowId: 'other-tab' })).toHaveLength(0);
+  });
+
+  it('keeps acknowledgement on body replacement until each overridden field matches base', () => {
+    const created = createPending();
+    const baseFlow = {
+      id: 'tab-1',
+      env: [{ name: 'MODE', value: 'live' }],
+      nodes: [{ id: 'n1', type: 'inject', credentials: { token: 'live' }, name: 'live' }],
+      configs: [{ id: 'cfg', type: 'config', name: 'live' }],
+    };
+    const flow = {
+      ...baseFlow,
+      env: [{ name: 'MODE', value: 'AI' }],
+      nodes: [{ id: 'n1', type: 'inject', credentials: { token: 'AI' }, name: 'AI' }],
+      configs: [{ id: 'cfg', type: 'config', name: 'AI' }],
+    };
+    const overrides = [
+      { nodeId: 'tab-1', fields: ['env["MODE"].value'] },
+      { nodeId: 'n1', fields: ['credentials.token', 'name'] },
+      { nodeId: 'cfg', fields: [''] },
+    ];
+    store.updateBody(created.id, { baseFlow, flow, aiConflictOverrides: overrides });
+    expect(store.updateBody(created.id, { baseFlow, flow }).aiConflictOverrides).toEqual(overrides);
+
+    flow.nodes[0]!.credentials.token = 'live';
+    expect(store.updateBody(created.id, { baseFlow, flow }).aiConflictOverrides).toEqual([
+      overrides[0],
+      { nodeId: 'n1', fields: ['name'] },
+      overrides[2],
+    ]);
+    expect(
+      store.updateBody(created.id, { baseFlow, flow: baseFlow }).aiConflictOverrides
+    ).toBeUndefined();
+  });
+
+  it('allows explicit override restoration or clearing for conflict choices and undo', () => {
+    const created = createPending();
+    const update = { baseFlow: created.baseFlow!, flow: created.payload.flow };
+    store.updateBody(created.id, {
+      ...update,
+      aiConflictOverrides: [{ nodeId: 'tab-1', fields: ['label'] }],
+    });
+    expect(
+      store.updateBody(created.id, { ...update, aiConflictOverrides: [] }).aiConflictOverrides
+    ).toBeUndefined();
   });
 
   it('approve calls the adapter and marks approved with audit', async () => {

@@ -31,7 +31,7 @@ function dashboard() {
       '  boot();',
       `
     globalThis.dashboard = {
-      proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
+      renderDeployUnknownBlocks: typeof renderDeployUnknownBlocks === 'function' ? renderDeployUnknownBlocks : undefined, proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
       renderConflictPanel, updateProposalConflict, updatePendingBadges, showFlash, authGateStatus, bindProposalActions, renderPendingActions, renderRebaseChip, countPendingBuckets, renderProposalCard,
       setElement: function (id, el) { elements.set(id, el); },
       setProposals: function (value) { cachedProposals = value; proposalDiffCache = {}; },
@@ -53,6 +53,116 @@ function dashboard() {
 }
 
 describe('dashboard auto-rebase review', () => {
+  it('shows block identity, affected tabs and the confirmation action', () => {
+    const ui = dashboard();
+    const html = ui.renderDeployUnknownBlocks([
+      { proposalId: 'proposal-1', attemptId: 'attempt-2', flowIds: ['tab-3'] },
+    ]);
+    for (const text of [
+      'proposal-1',
+      'attempt-2',
+      'tab-3',
+      'Confirm live checked',
+      'confirm-live-checked-btn',
+    ])
+      expect(html).toContain(text);
+    expect(
+      ui.renderProposalCard({
+        id: 'p',
+        status: 'rejected',
+        rejectedWhileDeployUnknown: true,
+        payload: { flowId: 'tab', flow: {} },
+      })
+    ).toContain('An earlier deploy may still land');
+  });
+
+  it('confirms before sending the displayed deployment attempt, and uses non-submit buttons', async () => {
+    const ui = dashboard();
+    const confirm = vi.fn();
+    const api = vi.fn().mockRejectedValue(new Error('stop after request'));
+    ui.setConfirm(confirm);
+    ui.setToast(vi.fn());
+    ui.setApi(api);
+    let click!: () => Promise<void>;
+    const btn = {
+      dataset: {},
+      setAttribute: vi.fn(),
+      getAttribute: (name: string) => (name === 'data-id' ? 'p' : 'attempt-123'),
+      addEventListener: (_: string, fn: () => Promise<void>) => {
+        click = fn;
+      },
+    };
+    ui.bindProposalActions({
+      querySelectorAll: (selector: string) =>
+        selector === '.confirm-live-checked-btn' ? [btn] : [],
+    });
+    await click();
+    expect(api).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmLabel: 'Confirm live checked', danger: true })
+    );
+    await confirm.mock.calls[0]![0].onConfirm();
+    expect(api).toHaveBeenCalledWith(
+      '/proposals/p/confirm-live-checked',
+      expect.objectContaining({ body: JSON.stringify({ attemptId: 'attempt-123' }) })
+    );
+    const card = ui.renderProposalCard({
+      id: 'p',
+      status: 'pending',
+      payload: { flowId: 'tab', flow: {} },
+      deployPending: { attemptId: 'attempt-123', queueReleased: true },
+    });
+    const banner = ui.renderDeployUnknownBlocks([
+      { proposalId: 'p', attemptId: 'attempt-123', flowIds: ['tab'] },
+    ]);
+    for (const html of [card, banner]) {
+      expect(html).toContain('<button type="button" class="confirm-live-checked-btn"');
+      expect(html).toContain('data-attempt-id="attempt-123"');
+    }
+  });
+
+  it('requires confirmation before overriding an unknown deployment', async () => {
+    const ui = dashboard();
+    const confirm = vi.fn();
+    const api = vi
+      .fn()
+      .mockRejectedValue({ status: 409, body: { code: 'deploy_outcome_unknown' } });
+    ui.setConfirm(confirm);
+    ui.setToast(vi.fn());
+    ui.setApi(api);
+    ui.setProposal({ id: 'p', status: 'pending' }, {});
+    await ui.doApproveProposal('p', 'nodes');
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmLabel: 'Override & deploy', danger: true })
+    );
+    await confirm.mock.calls[0]![0].onConfirm();
+    expect(JSON.parse(api.mock.calls[1]![1].body).overrideDeployOutcomeUnknown).toBe(true);
+  });
+
+  it('badges a withdrawn proposal whose deployment landed later', () => {
+    const html = dashboard().renderProposalCard({
+      id: 'p',
+      status: 'withdrawn',
+      landedAfterWithdraw: true,
+      payload: { flowId: 'tab', flow: {} },
+    });
+    expect(html).toContain('Landed after withdraw');
+    expect(html).toContain('status-pill');
+  });
+
+  it('renders persisted late deployment alerts', () => {
+    const ui = dashboard();
+    expect(
+      ui.renderProposalCard({
+        id: 'p',
+        status: 'approved',
+        deploymentAlert: 'Late deployment overwrote a decision',
+        payload: { flowId: 'tab', flow: {} },
+      })
+    ).toContain('role="alert"');
+  });
+
   it.each(['clean', 'merged'])(
     'allows approval after a revision change with %s rebase',
     async state => {

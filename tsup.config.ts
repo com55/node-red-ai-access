@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from 'tsup';
 
+import { buildStamp, hashBuildInputs } from './src/build-inputs.js';
+
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 
 const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8')) as {
@@ -35,6 +37,8 @@ export default defineConfig({
     return { js: '.cjs' };
   },
   platform: 'node',
+  // Preserve import.meta.url when bundling ESM sources for Node-RED's CJS loader.
+  shims: true,
   keepNames: true,
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
@@ -44,6 +48,7 @@ export default defineConfig({
     options.packages = 'external';
   },
   async onSuccess() {
+    rmSync(buildStamp, { force: true });
     // The OpenAPI spec ships once, from docs/api/openapi.yaml; drop any stale dist copy.
     rmSync(join(repoRoot, 'dist', 'openapi.yaml'), { force: true });
 
@@ -60,6 +65,9 @@ export default defineConfig({
     };
     const render =
       plugin.renderEditorSidebarLoaderHtml ?? plugin.default?.renderEditorSidebarLoaderHtml;
+    if (process.env.NODE_ENV === 'production') {
+      writeFileSync(buildStamp, hashBuildInputs(), 'utf8');
+    }
     if (typeof render === 'function') {
       writeFileSync(join(repoRoot, 'ai-access.html'), render(packageJson.version), 'utf8');
     }

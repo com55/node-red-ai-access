@@ -950,6 +950,21 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Proposal'
+                  deployUnknownBlocks:
+                    type: array
+                    description: Admin-only active process blocks, independent of status filters and pagination. Each deployment submits a full flow snapshot, so these blocks apply to all approvals, including after proposal closure.
+                    items:
+                      type: object
+                      required: [proposalId, flowIds]
+                      properties:
+                        proposalId:
+                          type: string
+                        attemptId:
+                          type: string
+                        flowIds:
+                          type: array
+                          items:
+                            type: string
                   total:
                     type: integer
                     description: Count after filters, before limit/offset
@@ -1243,6 +1258,42 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+
+  /proposals/{id}/confirm-live-checked:
+    post:
+      tags: [Proposals]
+      summary: Confirm live flows checked and clear the unknown deployment block
+      description: Requires full admin permission (*). Records the actor and attempt in proposal.live_checked audit. Requires a post-cap deployPending.queueReleased flag and its matching attemptId. Does not cancel a detached deploy; a later landing is still monitored on every changed tab.
+      operationId: confirmProposalLiveChecked
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attemptId]
+              properties:
+                attemptId:
+                  type: string
+      responses:
+        '200':
+          description: Block cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: deploy_outcome_unknown — no post-cap deployment or attemptId does not match
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /proposals/{id}/reject:
     post:
@@ -1569,6 +1620,7 @@ components:
         Machine-readable `code` on JSON error bodies. See docs/errors.md.
 
         - `approve_queue_timeout` (504): Approval exceeded its queue-wait deadline (default 60 seconds); no deployment was started for this request
+        - `deploy_outcome_unknown` (409): A past-cap deployment can still change live flows
         - `deploy_timeout` (504): Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes)
         - `proposal_conflict` (409): Editor and proposal changes conflict (conflicts contains field names only)
         - `rebase_ack_required` (409): The merged result needs review (mergedHash included)
@@ -1630,6 +1682,7 @@ components:
         - `internal_error` (500): Unexpected server error
       enum:
         - approve_queue_timeout
+        - deploy_outcome_unknown
         - deploy_timeout
         - proposal_conflict
         - rebase_ack_required
@@ -2385,18 +2438,32 @@ components:
             choice:
               type: string
               enum: [live, proposed]
+        rejectedWhileDeployUnknown:
+          type: boolean
+          description: Rejected while a full-snapshot deploy could still land. Check live flows; late landing triggers an alert and audit entry.
+        landedAfterWithdraw:
+          type: boolean
+          description: The withdrawn proposal’s outstanding deployment landed later; shown as a dashboard badge.
+        deploymentAlert:
+          type: string
+          description: Warning that a late deployment may have overwritten an intervening decision.
         deployPending:
           type: object
           description: Timed-out deployment has an unknown outcome; approvals wait until settlement or the hard cap. Check live flows before approving again.
           required: [mergedHash, reason]
           properties:
+            attemptId:
+              type: string
+            bootId:
+              type: string
+              description: Process identity; flags from previous processes are ignored.
             mergedHash:
               type: string
             reason:
               type: string
             queueReleased:
               type: boolean
-              description: True when the deploy hard cap released the queue. Late settlement no longer updates this proposal; approval always re-reads live flows.
+              description: True when the deploy hard cap released the queue. All approvals are blocked until settlement, restart, or confirm-live-checked with a matching attemptId; closing the proposal does not clear the block; approval may proceed with an audited override. Rejection is allowed with rejectedWhileDeployUnknown warning. Late settlement updates the proposal or flags intervening decisions.
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:
@@ -2674,6 +2741,10 @@ components:
     ApproveProposalRequest:
       type: object
       properties:
+        overrideDeployOutcomeUnknown:
+          type: boolean
+          default: false
+          description: Explicitly allow approval while a past-cap deploy can still overwrite live flows.
         mergedHash:
           type: string
           description: Hash of the reviewed merged result; required when editor changes are merged.

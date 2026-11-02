@@ -61,6 +61,13 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     ADMIN
   ),
   e(
+    'deploy_outcome_unknown',
+    409,
+    'A past-cap deployment can still change live flows',
+    'All approvals require settlement, confirm live checked with the matching attempt, restart, or an audited override; rejection is allowed with a warning',
+    ADMIN
+  ),
+  e(
     'deploy_timeout',
     504,
     'Deployment exceeded its deadline (default 60 seconds); approvals wait for settlement or the hard cap (default 5 minutes)',

@@ -50,6 +50,7 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     reporters: ['verbose'],
+    globalSetup: ['./test/global-setup.ts'],
     setupFiles: ['./test/setup.ts'],
   },
 });

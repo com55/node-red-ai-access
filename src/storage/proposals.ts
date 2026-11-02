@@ -5,9 +5,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { FlowTab } from '../runtime/types.js';
 
+import { conflictFieldValue } from './field-value.js';
 import type { AiAccessPaths } from './paths.js';
 import {
   assertSafeProposalId,
@@ -16,6 +18,8 @@ import {
   sanitizeFlowTab,
 } from './safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
+
+export const proposalProcessBootId = randomBytes(16).toString('hex');
 
 export type ProposalStatus =
   | 'pending'
@@ -118,8 +122,17 @@ export interface Proposal {
   warnings?: ProposalWarning[];
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
+  deploymentAlert?: string;
+  landedAfterWithdraw?: boolean;
+  rejectedWhileDeployUnknown?: boolean;
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
-  deployPending?: { mergedHash: string; reason: string; queueReleased?: boolean };
+  deployPending?: {
+    mergedHash: string;
+    bootId?: string;
+    reason: string;
+    queueReleased?: boolean;
+    attemptId?: string;
+  };
   /** Last auto-rebase result (pending / conflict proposals). */
   rebase?: ProposalRebaseInfo;
   /** AI resolutions that replace editor changes and still require reviewer acknowledgement. */
@@ -443,15 +456,20 @@ export class ProposalStore {
     if (warnings) {
       record.warnings = warnings;
     }
+    if (proposal.landedAfterWithdraw === true) record.landedAfterWithdraw = true;
+    if (typeof proposal.deploymentAlert === 'string')
+      record.deploymentAlert = cleanText(proposal.deploymentAlert, 500) ?? '';
     const restored = sanitizeRestoredSecrets(proposal.restoredSecrets);
     if (restored) {
       record.restoredSecrets = restored;
     }
-    if (proposal.deployPending && isOpenProposalStatus(record.status)) {
+    if (proposal.deployPending?.bootId === proposalProcessBootId) {
       const mergedHash = cleanText(proposal.deployPending.mergedHash, 64);
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
-        record.deployPending = { mergedHash, reason };
+        record.deployPending = { mergedHash, reason, bootId: proposalProcessBootId };
+        const attemptId = cleanText(proposal.deployPending.attemptId, 36);
+        if (attemptId) record.deployPending.attemptId = attemptId;
         if (proposal.deployPending.queueReleased === true)
           record.deployPending.queueReleased = true;
       }
@@ -509,6 +527,7 @@ export class ProposalStore {
     if (typeof proposal.reason === 'string') {
       record.reason = proposal.reason.replace(/\0/g, '').slice(0, 2_000);
     }
+    if (proposal.rejectedWhileDeployUnknown === true) record.rejectedWhileDeployUnknown = true;
     if (typeof proposal.resultRev === 'string') {
       record.resultRev = assertSafeSegment(proposal.resultRev.slice(0, 200), 'resultRev');
     }
@@ -554,12 +573,19 @@ export class ProposalStore {
     return this.get(id);
   }
 
+  private currentProcessProposal(proposal: Proposal): Proposal {
+    if (proposal.deployPending?.bootId !== proposalProcessBootId) {
+      delete proposal.deployPending;
+    }
+    return proposal;
+  }
+
   get(id: string): Proposal {
     const path = this.fileFor(id);
     if (!existsSync(path)) {
       throw new ProposalNotFoundError(id);
     }
-    return JSON.parse(readFileSync(path, 'utf8')) as Proposal;
+    return this.currentProcessProposal(JSON.parse(readFileSync(path, 'utf8')) as Proposal);
   }
 
   list(filter?: { linkId?: string; status?: ProposalStatus; flowId?: string }): Proposal[] {
@@ -586,7 +612,7 @@ export class ProposalStore {
         if (filter?.flowId && proposal.payload.flowId !== filter.flowId) {
           continue;
         }
-        proposals.push(proposal);
+        proposals.push(this.currentProcessProposal(proposal));
       } catch {
         // skip corrupt / unsafe
       }
@@ -616,15 +642,34 @@ export class ProposalStore {
 
   recordDeployPending(id: string, pending: Proposal['deployPending']): Proposal {
     const proposal = this.get(id);
-    if (!isOpenProposalStatus(proposal.status)) {
+    if (pending && !isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
-    if (pending) proposal.deployPending = pending;
+    if (pending) proposal.deployPending = { ...pending, bootId: proposalProcessBootId };
     else delete proposal.deployPending;
-    proposal.status = 'pending';
+    if (isOpenProposalStatus(proposal.status)) proposal.status = 'pending';
     proposal.updatedAt = new Date(this.now()).toISOString();
     this.writeAtomic(id, proposal);
     return this.get(id);
+  }
+
+  flagRejectedWhileDeployUnknown(id: string): Proposal {
+    const proposal = this.get(id);
+    proposal.rejectedWhileDeployUnknown = true;
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  flagLandedAfterWithdraw(id: string): void {
+    const proposal = this.get(id);
+    proposal.landedAfterWithdraw = true;
+    this.writeAtomic(id, proposal);
+  }
+
+  flagDeployment(id: string, message: string): void {
+    const proposal = this.get(id);
+    proposal.deploymentAlert = message;
+    this.writeAtomic(id, proposal);
   }
 
   markApproved(id: string, decidedBy: ProposalDecisionBy, resultRev: string): Proposal {
@@ -641,6 +686,7 @@ export class ProposalStore {
   markRejected(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
     if (this.inFlight.has(id)) throw new ProposalConcurrentApproveError(id);
     const proposal = this.get(id);
+    proposal.rejectedWhileDeployUnknown = proposal.deployPending?.queueReleased === true;
     proposal.status = 'rejected';
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
@@ -766,8 +812,28 @@ export class ProposalStore {
       if (update.warnings.length > 0) proposal.warnings = update.warnings;
       else delete proposal.warnings;
     }
-    if (update.aiConflictOverrides?.length)
-      proposal.aiConflictOverrides = update.aiConflictOverrides;
+    // Omission means a body edit, not acknowledgement. Only discard tracked
+    // fields once they match the new base. Explicit lists support choices/undo.
+    const target = (tab: Partial<FlowTab>, nodeId: string) =>
+      nodeId === proposal.payload.flowId
+        ? tab
+        : [...(tab.nodes ?? []), ...(tab.configs ?? [])].find(node => node.id === nodeId);
+    const overrides =
+      update.aiConflictOverrides ??
+      (proposal.aiConflictOverrides ?? [])
+        .map(override => ({
+          nodeId: override.nodeId,
+          fields: override.fields.filter(field => {
+            const base = target(update.baseFlow, override.nodeId);
+            const proposed = target(update.flow, override.nodeId);
+            return !isDeepStrictEqual(
+              field ? conflictFieldValue(base, field) : base,
+              field ? conflictFieldValue(proposed, field) : proposed
+            );
+          }),
+        }))
+        .filter(override => override.fields.length > 0);
+    if (overrides.length) proposal.aiConflictOverrides = overrides;
     else delete proposal.aiConflictOverrides;
     if (update.conflictChoice) proposal.conflictChoice = update.conflictChoice;
     else delete proposal.conflictChoice;

@@ -418,22 +418,28 @@ minute hard cap is reached. Before the cap, a late success marks the proposal
 approved with its `resultRev`; a late failure clears `deployPending` and keeps
 it pending for retry. At the cap the queue and proposal lock are released,
 `deployPending.queueReleased` becomes true, and the card asks reviewers to check
-the live flow before approving again. Later runtime settlement leaves this
-unknown-outcome record unchanged. Every subsequent approval re-reads live flows
-before rebasing and deploying, recognizing already-applied results. Queued
-approvals time out after 60 seconds with **504** `approve_queue_timeout` without
-deploying. Queued proposals can still be rejected or withdrawn; their approvals
-then return `proposal_not_pending` when dequeued. These three deadlines are
-configurable in `settings.js` under `aiAccess` (positive milliseconds; invalid
-values use the defaults shown above). When choosing **proposed** during conflict
-resolution, unchanged secret spans keep their live editor values. If spans
-cannot be aligned safely, proposed values are retained with a
-`secret_may_revert` warning on the dashboard card. Deliberately deleted secret
-spans do not raise this warning. Deleting one of several identical secret lines
-while their live values changed keeps the proposal in conflict; resolve that
-field against the live flow or choose **live**. Changed env arrays with
-duplicate names show `duplicate_env_keys`, since pairing by name is ambiguous
-when entries are reordered.
+the live flow before approving again. Approvals remain blocked until settlement
+or a matching confirm-live-checked action, unless explicitly overridden with an
+audit entry. Late settlement clears the matching unknown-outcome record. A late
+deploy that changes other tabs writes a warning and a `late_deploy_overwrite`
+audit entry, even when only editor changes were overwritten. Closed proposals
+are alerted only if their decision changed after the cap snapshot. A withdrawn
+proposal keeps its decision and shows “Landed after withdraw” if its deploy
+lands. Every subsequent approval re-reads live flows before rebasing and
+deploying, recognizing already-applied results. Queued approvals time out after
+60 seconds with **504** `approve_queue_timeout` without deploying. Queued
+proposals can still be rejected or withdrawn; their approvals then return
+`proposal_not_pending` when dequeued. These three deadlines are configurable in
+`settings.js` under `aiAccess` (positive milliseconds; invalid values use the
+defaults shown above). When choosing **proposed** during conflict resolution,
+unchanged secret spans keep their live editor values. If spans cannot be aligned
+safely, proposed values are retained with a `secret_may_revert` warning on the
+dashboard card. Deliberately deleted secret spans do not raise this warning.
+Deleting one of several identical secret lines while their live values changed
+keeps the proposal in conflict; resolve that field against the live flow or
+choose **live**. Changed env arrays with duplicate names show
+`duplicate_env_keys`, since pairing by name is ambiguous when entries are
+reordered.
 
 Open proposals merge changes per node and tab field. Different fields on the
 same node merge automatically; changes to the same field conflict even when both

@@ -23,6 +23,7 @@ function pageClientScriptPartA(): string {
   var proposalsFilter = 'pending';
   var proposalsSearchQuery = '';
   var cachedProposals = [];
+  var deployUnknownBlocks = [];
   // Decided proposals load in pages (Load more); pending always load in full.
   var DECIDED_PAGE_SIZE = 50;
   var DECIDED_STATUSES = 'approved,rejected,failed,withdrawn,expired,superseded';
@@ -561,6 +562,7 @@ function pageClientScriptPartAFormat(): string {
   function actionBadge(action) {
     var labels = {
       'proposal.created': 'Created',
+      'proposal.late_deploy_overwrite': 'Late deploy warning',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
@@ -582,6 +584,7 @@ function pageClientScriptPartAFormat(): string {
   function actionFilterLabel(action) {
     var labels = {
       'proposal.created': 'Created',
+      'proposal.late_deploy_overwrite': 'Late deploy warning',
       'proposal.approved': 'Approved',
       'proposal.rejected': 'Rejected',
       'proposal.failed': 'Failed',
@@ -2387,6 +2390,16 @@ function pageClientScriptPartB2(): string {
 
   function setProposalsFilter(next) {
     proposalsFilter = next === 'decided' ? 'decided' : 'pending';
+    var blockBanner = document.getElementById('deploy-unknown-blocks');
+    if (!blockBanner && list.parentNode) {
+      blockBanner = document.createElement('div');
+      blockBanner.id = 'deploy-unknown-blocks';
+      list.parentNode.insertBefore(blockBanner, list);
+    }
+    if (blockBanner) {
+      blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
+      bindProposalActions(blockBanner);
+    }
     var filters = $('proposals-filters');
     if (filters) {
       filters.querySelectorAll('.filter-chip').forEach(function (chip) {
@@ -2437,6 +2450,23 @@ function pageClientScriptPartB2(): string {
       bindOnce(btn, 'click', function () {
         if (btn.disabled) return;
         approveProposal(btn.getAttribute('data-id'));
+      });
+    });
+    list.querySelectorAll('.confirm-live-checked-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', async function () {
+        openConfirmDialog({
+          title: 'Confirm live flows checked',
+          message: 'Have you checked the live flows? This clears the global approval block, but the earlier deploy may still land.',
+          confirmLabel: 'Confirm live checked',
+          danger: true,
+          onConfirm: async function () {
+            try {
+              await api('/proposals/' + encodeURIComponent(btn.getAttribute('data-id')) + '/confirm-live-checked', { method: 'POST', body: JSON.stringify({ attemptId: btn.getAttribute('data-attempt-id') }) });
+              await loadProposals();
+              loadLogs();
+            } catch (e) { showToast(e.message || String(e), false); }
+          }
+        });
       });
     });
     list.querySelectorAll('.reject-btn').forEach(function (btn) {
@@ -2592,11 +2622,13 @@ function pageClientScriptPartB2Cards(): string {
     // Show for any large delete — including stale — so owners see the risk.
     var deleteBanner = cached && !proposalHasNoNetChange(cached) ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
+    reason += p.deploymentAlert ? '<div role="alert" class="warning">' + esc(p.deploymentAlert) + '</div>' : '';
+    reason += p.rejectedWhileDeployUnknown ? '<div role="alert" class="warning">Rejected while deploy outcome unknown. An earlier deploy may still land.</div>' : '';
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
-          : p.deployPending.reason) + '</p></div>'
+          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(p.deployPending.attemptId || '') + '" data-id="' + esc(p.id) + '">Confirm live checked</button></div>'
       : '';
     var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
@@ -2611,7 +2643,7 @@ function pageClientScriptPartB2Cards(): string {
       '<header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status === 'conflict' ? 'Conflict' : p.status) + '</span> ' +
-      renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
+      renderLandedAfterWithdraw(p) + renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
       '</header>' +
       (createdBy ? createdBy + '<br/>' : '') +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
@@ -2630,13 +2662,17 @@ function pageClientScriptPartB2Cards(): string {
 
 function pageClientScriptPartB2CardsList(): string {
   return `
+  function renderLandedAfterWithdraw(p) {
+    return p.status === 'withdrawn' && p.landedAfterWithdraw
+      ? '<span class="status-pill withdrawn">Landed after withdraw</span> ' : '';
+  }
   function renderCompactProposal(p) {
     var title = titleForProposalCard(p);
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
       '" role="button" tabindex="0" aria-expanded="false">' +
       '<strong>' + esc(title) + '</strong>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' +
-      renderProposalMetaLine(p) +
+      renderLandedAfterWithdraw(p) + renderProposalMetaLine(p) +
       '</div>' +
       '<div class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) +
       '" data-status="' + esc(p.status) + '" hidden></div>';
@@ -2697,9 +2733,27 @@ function pageClientScriptPartB2CardsList(): string {
       '</div>';
   }
 
+  function renderDeployUnknownBlocks(blocks) {
+    return blocks.map(function (b) {
+      return '<div role="alert" class="proposal-warnings">All approvals blocked. Deployment target tabs: ' +
+        esc(b.flowIds.join(', ')) + ' — proposal ' + esc(b.proposalId) + ', attempt ' + esc(b.attemptId || '') +
+        '. An earlier deploy may still land. <button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(b.attemptId || '') + '" data-id="' + esc(b.proposalId) + '">Confirm live checked</button></div>';
+    }).join('');
+  }
+
   function renderProposalsList() {
     var list = $('proposals-list');
     if (!list) return;
+    var blockBanner = document.getElementById('deploy-unknown-blocks');
+    if (!blockBanner && list.parentNode) {
+      blockBanner = document.createElement('div');
+      blockBanner.id = 'deploy-unknown-blocks';
+      list.parentNode.insertBefore(blockBanner, list);
+    }
+    if (blockBanner) {
+      blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
+      bindProposalActions(blockBanner);
+    }
     var filters = $('proposals-filters');
     var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
     var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
@@ -2792,6 +2846,7 @@ function pageClientScriptPartB2Focus(): string {
       decidedLoaded = decidedList.length;
       decidedTotal = Number(decidedData && decidedData.total) || decidedList.length;
       decidedHasMore = !!(decidedData && decidedData.hasMore);
+      deployUnknownBlocks = (pendingData && pendingData.deployUnknownBlocks) || [];
       cachedProposals = ((pendingData && pendingData.proposals) || []).concat(decidedList);
       cachedProposals.forEach(function (p) {
         var id = proposalFlowId(p);
@@ -3271,16 +3326,16 @@ function pageClientScriptPartC(): string {
     renderProposalsList();
   }
 
-  async function doApproveProposal(id, deploymentType) {
+  async function doApproveProposal(id, deploymentType, overrideDeployOutcomeUnknown) {
     proposalActionsInFlight += 1;
     try {
-      return await doApproveProposalInner(id, deploymentType);
+      return await doApproveProposalInner(id, deploymentType, overrideDeployOutcomeUnknown);
     } finally {
       proposalActionsInFlight -= 1;
     }
   }
 
-  async function doApproveProposalInner(id, deploymentType) {
+  async function doApproveProposalInner(id, deploymentType, overrideDeployOutcomeUnknown) {
     var flash = $('proposals-flash');
     var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var toastTitle = proposalToastTitle(pBefore);
@@ -3291,9 +3346,11 @@ function pageClientScriptPartC(): string {
         }).length
       : 0;
     try {
+      var approveBody = { deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash };
+      if (overrideDeployOutcomeUnknown === true) approveBody.overrideDeployOutcomeUnknown = true;
       var result = await api('/proposals/' + encodeURIComponent(id) + '/approve', {
         method: 'POST',
-        body: JSON.stringify({ deploymentType: deploymentType, mergedHash: proposalDiffCache[id] && proposalDiffCache[id].rebase && proposalDiffCache[id].rebase.mergedHash })
+        body: JSON.stringify(approveBody)
       });
       var viewOpts = { title: toastTitle, href: proposalViewHref(id), linkLabel: 'View' };
       if (result.status === 'rejected') {
@@ -3333,6 +3390,15 @@ function pageClientScriptPartC(): string {
       loadLogs();
     } catch (e) {
       var code = e.body && e.body.code;
+      if (code === 'deploy_outcome_unknown' && !overrideDeployOutcomeUnknown) {
+        openConfirmDialog({
+          title: 'Deployment outcome unknown',
+          message: 'An earlier deployment can still overwrite this approval. Override the safety block and deploy anyway?',
+          confirmLabel: 'Override & deploy', danger: true,
+          onConfirm: function () { return doApproveProposal(id, deploymentType, true); }
+        });
+        return;
+      }
       var errMsg = e.message || String(e);
       if (e.status === 409 && (code === 'rebase_ack_required' || code === 'proposal_conflict')) {
         errMsg = code === 'rebase_ack_required'
@@ -3390,13 +3456,14 @@ function pageClientScriptPartC(): string {
     var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var toastTitle = proposalToastTitle(pBefore);
     try {
-      await api('/proposals/' + encodeURIComponent(id) + '/reject', {
+      var rejected = await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
         body: JSON.stringify({ reason: reason })
       });
       delete proposalDiffCache[id];
       if (!silent) {
         var okMsg = dismissed ? 'Proposal dismissed.' : 'Proposal rejected.';
+        if (rejected.rejectedWhileDeployUnknown) okMsg += ' Warning: an earlier deploy may still land.';
         showFlash(flash, okMsg + (toastTitle ? ' — ' + toastTitle : ''), true);
         showToast(okMsg, true, {
           title: toastTitle,
