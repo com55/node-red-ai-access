@@ -19,6 +19,8 @@ import {
 } from './safe.js';
 import { MAX_PROPOSAL_JSON_BYTES, encodeTrustedJson, writeTrustedAtomic } from './trusted-write.js';
 
+export const proposalProcessBootId = randomBytes(16).toString('hex');
+
 export type ProposalStatus =
   | 'pending'
   | 'conflict'
@@ -121,9 +123,11 @@ export interface Proposal {
   /** Fields whose `[REDACTED]` placeholder was restored to the live secret at submit. */
   restoredSecrets?: { nodeId: string; property: string }[];
   deploymentAlert?: string;
+  rejectedWhileDeployUnknown?: boolean;
   /** Persisted while a timed-out runtime deployment has an unknown outcome. */
   deployPending?: {
     mergedHash: string;
+    bootId?: string;
     reason: string;
     queueReleased?: boolean;
     attemptId?: string;
@@ -457,11 +461,14 @@ export class ProposalStore {
     if (restored) {
       record.restoredSecrets = restored;
     }
-    if (proposal.deployPending) {
+    if (
+      proposal.deployPending?.bootId === proposalProcessBootId &&
+      isOpenProposalStatus(record.status)
+    ) {
       const mergedHash = cleanText(proposal.deployPending.mergedHash, 64);
       const reason = cleanText(proposal.deployPending.reason, 500);
       if (mergedHash && /^[0-9a-f]+$/.test(mergedHash) && reason) {
-        record.deployPending = { mergedHash, reason };
+        record.deployPending = { mergedHash, reason, bootId: proposalProcessBootId };
         const attemptId = cleanText(proposal.deployPending.attemptId, 36);
         if (attemptId) record.deployPending.attemptId = attemptId;
         if (proposal.deployPending.queueReleased === true)
@@ -521,6 +528,7 @@ export class ProposalStore {
     if (typeof proposal.reason === 'string') {
       record.reason = proposal.reason.replace(/\0/g, '').slice(0, 2_000);
     }
+    if (proposal.rejectedWhileDeployUnknown === true) record.rejectedWhileDeployUnknown = true;
     if (typeof proposal.resultRev === 'string') {
       record.resultRev = assertSafeSegment(proposal.resultRev.slice(0, 200), 'resultRev');
     }
@@ -566,12 +574,22 @@ export class ProposalStore {
     return this.get(id);
   }
 
+  private currentProcessProposal(proposal: Proposal): Proposal {
+    if (
+      proposal.deployPending?.bootId !== proposalProcessBootId ||
+      !isOpenProposalStatus(proposal.status)
+    ) {
+      delete proposal.deployPending;
+    }
+    return proposal;
+  }
+
   get(id: string): Proposal {
     const path = this.fileFor(id);
     if (!existsSync(path)) {
       throw new ProposalNotFoundError(id);
     }
-    return JSON.parse(readFileSync(path, 'utf8')) as Proposal;
+    return this.currentProcessProposal(JSON.parse(readFileSync(path, 'utf8')) as Proposal);
   }
 
   list(filter?: { linkId?: string; status?: ProposalStatus; flowId?: string }): Proposal[] {
@@ -598,7 +616,7 @@ export class ProposalStore {
         if (filter?.flowId && proposal.payload.flowId !== filter.flowId) {
           continue;
         }
-        proposals.push(proposal);
+        proposals.push(this.currentProcessProposal(proposal));
       } catch {
         // skip corrupt / unsafe
       }
@@ -631,10 +649,17 @@ export class ProposalStore {
     if (pending && !isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
-    if (pending) proposal.deployPending = pending;
+    if (pending) proposal.deployPending = { ...pending, bootId: proposalProcessBootId };
     else delete proposal.deployPending;
     if (isOpenProposalStatus(proposal.status)) proposal.status = 'pending';
     proposal.updatedAt = new Date(this.now()).toISOString();
+    this.writeAtomic(id, proposal);
+    return this.get(id);
+  }
+
+  flagRejectedWhileDeployUnknown(id: string): Proposal {
+    const proposal = this.get(id);
+    proposal.rejectedWhileDeployUnknown = true;
     this.writeAtomic(id, proposal);
     return this.get(id);
   }
@@ -659,6 +684,8 @@ export class ProposalStore {
   markRejected(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
     if (this.inFlight.has(id)) throw new ProposalConcurrentApproveError(id);
     const proposal = this.get(id);
+    proposal.rejectedWhileDeployUnknown = proposal.deployPending?.queueReleased === true;
+    delete proposal.deployPending;
     proposal.status = 'rejected';
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
@@ -671,6 +698,7 @@ export class ProposalStore {
 
   markFailed(id: string, decidedBy: ProposalDecisionBy | undefined, reason: string): Proposal {
     const proposal = this.get(id);
+    delete proposal.deployPending;
     proposal.status = 'failed';
     if (decidedBy) {
       proposal.decidedBy = decidedBy;
@@ -687,6 +715,7 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
+    delete proposal.deployPending;
     proposal.status = 'withdrawn';
     proposal.decidedBy = decidedBy;
     proposal.reason = reason;
@@ -709,6 +738,7 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
+    delete proposal.deployPending;
     proposal.status = status;
     if (decidedBy) {
       proposal.decidedBy = decidedBy;

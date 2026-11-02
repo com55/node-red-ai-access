@@ -2,7 +2,7 @@
  * Proposal store + service lifecycle tests (temp directory).
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,6 +66,36 @@ describe('ProposalStore + ProposalService', () => {
       createdBy: { kind: 'access-link', linkId: 'link-1', label: 'bot' },
     });
   }
+
+  it.each(['withdrawn', 'rejected', 'expired'] as const)(
+    'clears unknown deploy blocks when %s',
+    status => {
+      const p = createPending();
+      store.recordDeployPending(p.id, {
+        mergedHash: 'a'.repeat(64),
+        reason: 'Unknown',
+        queueReleased: true,
+      });
+      if (status === 'withdrawn') store.markWithdrawn(p.id, { kind: 'admin' }, 'Stop');
+      else if (status === 'rejected') store.markRejected(p.id, { kind: 'admin' }, 'Stop');
+      else store.markClosed(p.id, 'expired', 'TTL');
+      expect(store.get(p.id).deployPending).toBeUndefined();
+    }
+  );
+
+  it.each([undefined, 'previous-boot'])('ignores unknown deploy flags from boot %s', bootId => {
+    const p = createPending();
+    store.recordDeployPending(p.id, {
+      mergedHash: 'a'.repeat(64),
+      reason: 'Unknown',
+      queueReleased: true,
+    });
+    const file = join(resolveAiAccessPaths(root).proposals, p.id + '.json');
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    raw.deployPending.bootId = bootId;
+    writeFileSync(file, JSON.stringify(raw));
+    expect(new ProposalStore(resolveAiAccessPaths(root)).get(p.id).deployPending).toBeUndefined();
+  });
 
   it('beginApprove preserves the pending attempt token on retry', () => {
     const p = createPending();

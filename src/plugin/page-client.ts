@@ -23,6 +23,7 @@ function pageClientScriptPartA(): string {
   var proposalsFilter = 'pending';
   var proposalsSearchQuery = '';
   var cachedProposals = [];
+  var deployUnknownBlocks = [];
   // Decided proposals load in pages (Load more); pending always load in full.
   var DECIDED_PAGE_SIZE = 50;
   var DECIDED_STATUSES = 'approved,rejected,failed,withdrawn,expired,superseded';
@@ -2389,6 +2390,16 @@ function pageClientScriptPartB2(): string {
 
   function setProposalsFilter(next) {
     proposalsFilter = next === 'decided' ? 'decided' : 'pending';
+    var blockBanner = document.getElementById('deploy-unknown-blocks');
+    if (!blockBanner && list.parentNode) {
+      blockBanner = document.createElement('div');
+      blockBanner.id = 'deploy-unknown-blocks';
+      list.parentNode.insertBefore(blockBanner, list);
+    }
+    if (blockBanner) {
+      blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
+      bindProposalActions(blockBanner);
+    }
     var filters = $('proposals-filters');
     if (filters) {
       filters.querySelectorAll('.filter-chip').forEach(function (chip) {
@@ -2439,6 +2450,15 @@ function pageClientScriptPartB2(): string {
       bindOnce(btn, 'click', function () {
         if (btn.disabled) return;
         approveProposal(btn.getAttribute('data-id'));
+      });
+    });
+    list.querySelectorAll('.confirm-live-checked-btn').forEach(function (btn) {
+      bindOnce(btn, 'click', async function () {
+        try {
+          await api('/proposals/' + encodeURIComponent(btn.getAttribute('data-id')) + '/confirm-live-checked', { method: 'POST', body: '{}' });
+          await loadProposals();
+          loadLogs();
+        } catch (e) { showToast(e.message || String(e), false); }
       });
     });
     list.querySelectorAll('.reject-btn').forEach(function (btn) {
@@ -2595,11 +2615,12 @@ function pageClientScriptPartB2Cards(): string {
     var deleteBanner = cached && !proposalHasNoNetChange(cached) ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
     reason += p.deploymentAlert ? '<div role="alert" class="warning">' + esc(p.deploymentAlert) + '</div>' : '';
+    reason += p.rejectedWhileDeployUnknown ? '<div role="alert" class="warning">Rejected while deploy outcome unknown. An earlier deploy may still land.</div>' : '';
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
-          : p.deployPending.reason) + '</p></div>'
+          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button class="confirm-live-checked-btn" data-id="' + esc(p.id) + '">Confirm live checked</button></div>'
       : '';
     var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
@@ -2700,9 +2721,27 @@ function pageClientScriptPartB2CardsList(): string {
       '</div>';
   }
 
+  function renderDeployUnknownBlocks(blocks) {
+    return blocks.map(function (b) {
+      return '<div role="alert" class="proposal-warnings">Approvals blocked for tabs: ' +
+        esc(b.flowIds.join(', ')) + ' — proposal ' + esc(b.proposalId) + ', attempt ' + esc(b.attemptId || '') +
+        '. An earlier deploy may still land. <button class="confirm-live-checked-btn" data-id="' + esc(b.proposalId) + '">Confirm live checked</button></div>';
+    }).join('');
+  }
+
   function renderProposalsList() {
     var list = $('proposals-list');
     if (!list) return;
+    var blockBanner = document.getElementById('deploy-unknown-blocks');
+    if (!blockBanner && list.parentNode) {
+      blockBanner = document.createElement('div');
+      blockBanner.id = 'deploy-unknown-blocks';
+      list.parentNode.insertBefore(blockBanner, list);
+    }
+    if (blockBanner) {
+      blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
+      bindProposalActions(blockBanner);
+    }
     var filters = $('proposals-filters');
     var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
     var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
@@ -2795,6 +2834,7 @@ function pageClientScriptPartB2Focus(): string {
       decidedLoaded = decidedList.length;
       decidedTotal = Number(decidedData && decidedData.total) || decidedList.length;
       decidedHasMore = !!(decidedData && decidedData.hasMore);
+      deployUnknownBlocks = (pendingData && pendingData.deployUnknownBlocks) || [];
       cachedProposals = ((pendingData && pendingData.proposals) || []).concat(decidedList);
       cachedProposals.forEach(function (p) {
         var id = proposalFlowId(p);
@@ -3404,13 +3444,14 @@ function pageClientScriptPartC(): string {
     var pBefore = cachedProposals.filter(function (x) { return x.id === id; })[0];
     var toastTitle = proposalToastTitle(pBefore);
     try {
-      await api('/proposals/' + encodeURIComponent(id) + '/reject', {
+      var rejected = await api('/proposals/' + encodeURIComponent(id) + '/reject', {
         method: 'POST',
         body: JSON.stringify({ reason: reason })
       });
       delete proposalDiffCache[id];
       if (!silent) {
         var okMsg = dismissed ? 'Proposal dismissed.' : 'Proposal rejected.';
+        if (rejected.rejectedWhileDeployUnknown) okMsg += ' Warning: an earlier deploy may still land.';
         showFlash(flash, okMsg + (toastTitle ? ' — ' + toastTitle : ''), true);
         showToast(okMsg, true, {
           title: toastTitle,

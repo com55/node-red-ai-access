@@ -132,7 +132,6 @@ function deadlineMs(configured: number | undefined, fallback: number): number {
 // Shared by every service/entry point: adapter revision checks are not atomic
 // with deployment, so only one approval may read, merge and deploy at a time.
 let approveQueue = Promise.resolve();
-const unknownDeploys = new WeakMap<FlowAdapter, Set<string>>();
 
 export interface ApproveOptions {
   overrideDeployOutcomeUnknown?: boolean;
@@ -153,14 +152,31 @@ export class ProposalService {
     private readonly serviceOptions: ProposalServiceOptions = {}
   ) {}
 
-  private guardUnknown(override = false): void {
-    if (
-      !override &&
-      (unknownDeploys.get(rawFlowAdapter(this.adapter))?.size ||
-        this.proposals.list().some(p => p.deployPending?.queueReleased))
-    ) {
-      throw new ProposalDeployOutcomeUnknownError();
-    }
+  unknownDeployBlocks(flowId?: string): Proposal[] {
+    return this.proposals
+      .list()
+      .filter(
+        p =>
+          isOpenProposalStatus(p.status) &&
+          p.deployPending?.queueReleased &&
+          (flowId === undefined || p.payload.flowId === flowId)
+      );
+  }
+
+  confirmLiveChecked(id: string, actor: ProposalDecisionBy): Proposal {
+    const proposal = this.proposals.get(id);
+    const attemptId = proposal.deployPending?.attemptId;
+    this.audit.append('proposal.live_checked', actor, {
+      ...auditProposalMeta(proposal),
+      attemptId,
+    });
+    return this.proposals.recordDeployPending(id, undefined);
+  }
+
+  private guardUnknown(flowId: string, override = false): Proposal[] {
+    const blocks = this.unknownDeployBlocks(flowId);
+    if (!override && blocks.length) throw new ProposalDeployOutcomeUnknownError();
+    return blocks;
   }
 
   async approve(
@@ -168,8 +184,8 @@ export class ProposalService {
     decidedBy: ProposalDecisionBy,
     options: ApproveOptions = {}
   ): Promise<Proposal> {
-    this.guardUnknown(options.overrideDeployOutcomeUnknown);
     const initial = this.proposals.get(id);
+    this.guardUnknown(initial.payload.flowId, options.overrideDeployOutcomeUnknown);
     const waitingForOutcome = initial.deployPending !== undefined;
     if (!isOpenProposalStatus(initial.status)) {
       throw new ProposalNotPendingError(id, initial.status);
@@ -202,7 +218,20 @@ export class ProposalService {
           const current = this.proposals.get(id);
           if (!isOpenProposalStatus(current.status) && current.status !== 'approved')
             throw new ProposalNotPendingError(id, current.status);
-          this.guardUnknown(options.overrideDeployOutcomeUnknown);
+          const skipped = this.guardUnknown(
+            current.payload.flowId,
+            options.overrideDeployOutcomeUnknown
+          );
+          if (options.overrideDeployOutcomeUnknown && skipped.length) {
+            this.audit.append('proposal.deploy_unknown_override', decidedBy, {
+              ...auditProposalMeta(current),
+              skippedAttempts: skipped.map(p => ({
+                proposalId: p.id,
+                attemptId: p.deployPending?.attemptId,
+                flowId: p.payload.flowId,
+              })),
+            });
+          }
           if (waitingForOutcome && current.status === 'approved') return current;
           const proposal = this.proposals.beginApprove(id);
           ownsLock = true;
@@ -308,7 +337,6 @@ export class ProposalService {
       let decisionsAtCap = new Map<string, string>();
       const clearUnknown = () => {
         const latest = this.proposals.get(id);
-        unknownDeploys.get(raw)?.delete(attemptId);
         if (latest.deployPending?.attemptId === attemptId)
           this.proposals.recordDeployPending(id, undefined);
       };
@@ -333,9 +361,6 @@ export class ProposalService {
             onTimeout(error);
           },
           () => {
-            const unknown = unknownDeploys.get(raw) ?? new Set<string>();
-            unknown.add(attemptId);
-            unknownDeploys.set(raw, unknown);
             decisionsAtCap = new Map(this.proposals.list().map(p => [p.id, JSON.stringify(p)]));
             this.proposals.recordDeployPending(id, {
               mergedHash,
@@ -346,26 +371,44 @@ export class ProposalService {
             });
             onTimeout(new ProposalDeployTimeoutError());
           },
-          applied => {
-            unknownDeploys.get(raw)?.delete(attemptId);
+          async applied => {
+            const landedLive = await raw.getFlows().catch(() => undefined);
+            const latest = this.proposals.get(id);
+            const alreadyLive =
+              latest.status === 'approved' &&
+              landedLive?.rev === applied.rev &&
+              latest.resultRev !== undefined &&
+              (latest.rebase?.mergedHash === mergedHash ||
+                hashFlowTab(latest.payload.flow) === mergedHash) &&
+              hashFlowTab(nestedLiveTab(landedLive.flows, current.payload.flowId, merged) ?? {}) ===
+                mergedHash;
             const affected = this.proposals
               .list()
               .filter(
                 p =>
                   p.payload.flowId === current.payload.flowId &&
-                  (p.status === 'approved' || p.status === 'rejected') &&
+                  !isOpenProposalStatus(p.status) &&
                   decisionsAtCap.get(p.id) !== JSON.stringify(p)
               );
-            if (affected.length) {
+            if (affected.length && !alreadyLive) {
               const message = `Late deployment of ${id} landed after intervening decisions. Check live flows; those decisions may have been overwritten.`;
               for (const p of affected) this.proposals.flagDeployment(p.id, message);
               this.proposals.flagDeployment(id, message);
               this.audit.append('proposal.late_deploy_overwrite', decidedBy, {
                 ...meta,
+                attemptId,
                 affectedProposalIds: affected.map(p => p.id),
                 reason: message,
               });
               console.warn(message);
+            }
+            if (alreadyLive) {
+              this.proposals.markApproved(id, latest.decidedBy ?? decidedBy, applied.rev);
+              this.audit.append('proposal.late_deploy_already_applied', decidedBy, {
+                ...meta,
+                attemptId,
+                resultRev: applied.rev,
+              });
             }
             if (!ownsOutcome()) {
               clearUnknown();
@@ -432,7 +475,7 @@ export class ProposalService {
     deploy: () => Promise<T>,
     onTimeout: () => void,
     onHardCap: () => void,
-    onLateSuccess: (result: T) => void,
+    onLateSuccess: (result: T) => void | Promise<void>,
     onLateFailure: () => void
   ): Promise<T> {
     const timer = setTimeout(onTimeout, deadlineMs(this.serviceOptions.deployTimeoutMs, 60_000));
@@ -460,7 +503,7 @@ export class ProposalService {
       void operation
         .then(
           result => {
-            if (hardCapped) onLateSuccess(result);
+            if (hardCapped) return onLateSuccess(result);
           },
           () => {
             if (hardCapped) onLateFailure();
@@ -477,20 +520,18 @@ export class ProposalService {
   }
 
   reject(id: string, decidedBy: ProposalDecisionBy, reason: string): Proposal {
-    this.guardUnknown();
     const proposal = this.proposals.get(id);
+    const unknown = this.unknownDeployBlocks(proposal.payload.flowId);
     if (!isOpenProposalStatus(proposal.status)) {
       throw new ProposalNotPendingError(id, proposal.status);
     }
     const meta = auditProposalMeta(proposal);
-    const rejected = this.proposals.markRejected(
-      id,
-      decidedBy,
-      reason.trim() || 'Rejected by admin'
-    );
+    let rejected = this.proposals.markRejected(id, decidedBy, reason.trim() || 'Rejected by admin');
+    if (unknown.length) rejected = this.proposals.flagRejectedWhileDeployUnknown(id);
     this.audit.append('proposal.rejected', decidedBy, {
       ...meta,
       reason: rejected.reason,
+      rejectedWhileDeployUnknown: rejected.rejectedWhileDeployUnknown,
     });
     return rejected;
   }

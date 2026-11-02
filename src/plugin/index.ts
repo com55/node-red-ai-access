@@ -66,6 +66,7 @@ import { liveFlowLabelsFromFlows, setRequestFlowLabels } from './proposal-presen
 import { configureProposalTtl, createDebouncedSync, syncOpenProposals } from './proposal-sync.js';
 import {
   approveProposalHandler,
+  confirmProposalLiveCheckedHandler,
   createProposalHandler,
   getProposalDiffHandler,
   getProposalHandler,
@@ -575,6 +576,12 @@ export function registerRoutes(
     ...linkGuards,
     requireJsonContentType('rest'),
     asyncRoute(approveProposalHandler(services.proposalService, httpAdminRoot))
+  );
+  RED.httpAdmin.post(
+    '/mcp/api/v1/proposals/:id/confirm-live-checked',
+    ...linkGuards,
+    requireJsonContentType('rest'),
+    asyncRoute(confirmProposalLiveCheckedHandler(services.proposalService, httpAdminRoot))
   );
   RED.httpAdmin.post(
     '/mcp/api/v1/proposals/:id/reject',

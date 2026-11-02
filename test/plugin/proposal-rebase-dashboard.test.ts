@@ -31,7 +31,7 @@ function dashboard() {
       '  boot();',
       `
     globalThis.dashboard = {
-      proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
+      renderDeployUnknownBlocks: typeof renderDeployUnknownBlocks === 'function' ? renderDeployUnknownBlocks : undefined, proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
       renderConflictPanel, updateProposalConflict, updatePendingBadges, showFlash, authGateStatus, bindProposalActions, renderPendingActions, renderRebaseChip, countPendingBuckets, renderProposalCard,
       setElement: function (id, el) { elements.set(id, el); },
       setProposals: function (value) { cachedProposals = value; proposalDiffCache = {}; },
@@ -53,6 +53,29 @@ function dashboard() {
 }
 
 describe('dashboard auto-rebase review', () => {
+  it('shows block identity, affected tabs and the confirmation action', () => {
+    const ui = dashboard();
+    const html = ui.renderDeployUnknownBlocks([
+      { proposalId: 'proposal-1', attemptId: 'attempt-2', flowIds: ['tab-3'] },
+    ]);
+    for (const text of [
+      'proposal-1',
+      'attempt-2',
+      'tab-3',
+      'Confirm live checked',
+      'confirm-live-checked-btn',
+    ])
+      expect(html).toContain(text);
+    expect(
+      ui.renderProposalCard({
+        id: 'p',
+        status: 'rejected',
+        rejectedWhileDeployUnknown: true,
+        payload: { flowId: 'tab', flow: {} },
+      })
+    ).toContain('An earlier deploy may still land');
+  });
+
   it('requires confirmation before overriding an unknown deployment', async () => {
     const ui = dashboard();
     const confirm = vi.fn();

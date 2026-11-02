@@ -64,7 +64,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'deploy_outcome_unknown',
     409,
     'A past-cap deployment can still change live flows',
-    'Wait for settlement or explicitly override approval after reviewing the risk; rejection is blocked until settlement',
+    'Same-tab approvals require settlement, confirm live checked, or an audited override; rejection is allowed with a warning',
     ADMIN
   ),
   e(

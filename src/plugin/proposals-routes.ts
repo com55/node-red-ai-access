@@ -236,6 +236,14 @@ export function listProposalsHandler(
     });
     res.json({
       proposals,
+      deployUnknownBlocks: store
+        .list()
+        .filter(p => isOpenProposalStatus(p.status) && p.deployPending?.queueReleased)
+        .map(p => ({
+          proposalId: p.id,
+          attemptId: p.deployPending?.attemptId,
+          flowIds: [p.payload.flowId],
+        })),
       ...listPageFields({
         total: all.length,
         limit: listFilter.limit ?? null,
@@ -377,6 +385,20 @@ export function approveProposalHandler(service: ProposalService, httpAdminRoot?:
       }
       sendCaughtRouteError(res, error);
       return;
+    }
+  };
+}
+
+export function confirmProposalLiveCheckedHandler(
+  service: ProposalService,
+  httpAdminRoot?: string
+) {
+  return (req: AuthenticatedRequest, res: Response): void => {
+    try {
+      const proposal = service.confirmLiveChecked(String(req.params.id), adminActor(req));
+      res.json(presentProposal(proposal, presentOptionsFor(req, httpAdminRoot)));
+    } catch (error) {
+      sendCaughtRouteError(res, error);
     }
   };
 }

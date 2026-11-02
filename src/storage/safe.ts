@@ -18,6 +18,7 @@ const FLOW_TAB_KEYS = ['id', 'type', 'label', 'disabled', 'info', 'env'] as cons
 /** Audit detail keys we persist (strings unless listed in {@link AUDIT_DETAIL_NUMBER_KEYS}). */
 const AUDIT_DETAIL_KEYS = [
   'proposalId',
+  'attemptId',
   'withdrawalAuthority',
   'originalOwnerId',
   'flowId',
@@ -140,6 +141,24 @@ export function sanitizeFlowTab(value: unknown): Record<string, unknown> {
 /** Copy only known audit detail fields with fixed key names. */
 export function sanitizeAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  if (Array.isArray(details.skippedAttempts)) {
+    out.skippedAttempts = details.skippedAttempts.map(entry => {
+      const value = entry as Record<string, unknown>;
+      return {
+        proposalId: sanitizeString(value.proposalId, 200),
+        attemptId: sanitizeString(value.attemptId, 200),
+        flowId: sanitizeString(value.flowId, 200),
+      };
+    });
+  }
+  if (Array.isArray(details.affectedProposalIds)) {
+    out.affectedProposalIds = details.affectedProposalIds
+      .map(value => sanitizeString(value, 200))
+      .filter(value => value !== undefined);
+  }
+  if (typeof details.rejectedWhileDeployUnknown === 'boolean') {
+    out.rejectedWhileDeployUnknown = details.rejectedWhileDeployUnknown;
+  }
   for (const key of AUDIT_DETAIL_KEYS) {
     if (!(key in details)) {
       continue;

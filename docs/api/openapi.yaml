@@ -950,6 +950,21 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Proposal'
+                  deployUnknownBlocks:
+                    type: array
+                    description: Admin-only active process blocks, independent of status filters and pagination. Each replace_flow deployment touches one tab.
+                    items:
+                      type: object
+                      required: [proposalId, flowIds]
+                      properties:
+                        proposalId:
+                          type: string
+                        attemptId:
+                          type: string
+                        flowIds:
+                          type: array
+                          items:
+                            type: string
                   total:
                     type: integer
                     description: Count after filters, before limit/offset
@@ -1243,6 +1258,30 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+
+  /proposals/{id}/confirm-live-checked:
+    post:
+      tags: [Proposals]
+      summary: Confirm live flows checked and clear the unknown deployment block
+      description: Requires full admin permission (*). Records the actor and attempt in proposal.live_checked audit. Does not cancel a detached deploy; a later landing is still monitored.
+      operationId: confirmProposalLiveChecked
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        '200':
+          description: Block cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /proposals/{id}/reject:
     post:
@@ -2387,6 +2426,9 @@ components:
             choice:
               type: string
               enum: [live, proposed]
+        rejectedWhileDeployUnknown:
+          type: boolean
+          description: Rejected while a same-tab deploy could still land. Check live flows; late landing triggers an alert and audit entry.
         deploymentAlert:
           type: string
           description: Warning that a late deployment may have overwritten an intervening decision.
@@ -2395,13 +2437,18 @@ components:
           description: Timed-out deployment has an unknown outcome; approvals wait until settlement or the hard cap. Check live flows before approving again.
           required: [mergedHash, reason]
           properties:
+            attemptId:
+              type: string
+            bootId:
+              type: string
+              description: Process identity; flags from previous processes are ignored.
             mergedHash:
               type: string
             reason:
               type: string
             queueReleased:
               type: boolean
-              description: True when the deploy hard cap released the queue. Approvals and rejections are blocked until settlement; approval requires explicit override to proceed. Late settlement updates the proposal or flags intervening decisions.
+              description: True when the deploy hard cap released the queue. Same-tab approvals are blocked until settlement, closure, restart, or confirm-live-checked; approval may proceed with an audited override. Rejection is allowed with rejectedWhileDeployUnknown warning. Late settlement updates the proposal or flags intervening decisions.
         rebase:
           $ref: '#/components/schemas/ProposalRebase'
         id:
