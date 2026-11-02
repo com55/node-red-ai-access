@@ -79,6 +79,51 @@ describe('ProposalStore + ProposalService', () => {
     expect(store.list({ flowId: 'other-tab' })).toHaveLength(0);
   });
 
+  it('keeps acknowledgement on body replacement until each overridden field matches base', () => {
+    const created = createPending();
+    const baseFlow = {
+      id: 'tab-1',
+      env: [{ name: 'MODE', value: 'live' }],
+      nodes: [{ id: 'n1', type: 'inject', credentials: { token: 'live' }, name: 'live' }],
+      configs: [{ id: 'cfg', type: 'config', name: 'live' }],
+    };
+    const flow = {
+      ...baseFlow,
+      env: [{ name: 'MODE', value: 'AI' }],
+      nodes: [{ id: 'n1', type: 'inject', credentials: { token: 'AI' }, name: 'AI' }],
+      configs: [{ id: 'cfg', type: 'config', name: 'AI' }],
+    };
+    const overrides = [
+      { nodeId: 'tab-1', fields: ['env["MODE"].value'] },
+      { nodeId: 'n1', fields: ['credentials.token', 'name'] },
+      { nodeId: 'cfg', fields: [''] },
+    ];
+    store.updateBody(created.id, { baseFlow, flow, aiConflictOverrides: overrides });
+    expect(store.updateBody(created.id, { baseFlow, flow }).aiConflictOverrides).toEqual(overrides);
+
+    flow.nodes[0]!.credentials.token = 'live';
+    expect(store.updateBody(created.id, { baseFlow, flow }).aiConflictOverrides).toEqual([
+      overrides[0],
+      { nodeId: 'n1', fields: ['name'] },
+      overrides[2],
+    ]);
+    expect(
+      store.updateBody(created.id, { baseFlow, flow: baseFlow }).aiConflictOverrides
+    ).toBeUndefined();
+  });
+
+  it('allows explicit override restoration or clearing for conflict choices and undo', () => {
+    const created = createPending();
+    const update = { baseFlow: created.baseFlow!, flow: created.payload.flow };
+    store.updateBody(created.id, {
+      ...update,
+      aiConflictOverrides: [{ nodeId: 'tab-1', fields: ['label'] }],
+    });
+    expect(
+      store.updateBody(created.id, { ...update, aiConflictOverrides: [] }).aiConflictOverrides
+    ).toBeUndefined();
+  });
+
   it('approve calls the adapter and marks approved with audit', async () => {
     const created = createPending();
     const approved = await service.approve(created.id, { kind: 'admin', username: 'admin' });

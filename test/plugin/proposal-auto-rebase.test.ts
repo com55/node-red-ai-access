@@ -281,6 +281,26 @@ describe('auto-rebase service and HTTP API', () => {
     expect(head.flows.find(n => n.id === 'b')!.name).toBe('editor name');
   });
 
+  it('still requires owner acknowledgement after AI replaces the body with the same values', async () => {
+    const p = await submit();
+    edit('a', { func: 'editor code' });
+    await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ nodeId: 'a', choice: 'proposed' });
+    const existing = store.get(p.body.id);
+    const replaced = await request(app)
+      .post(`/mcp/api/v1/proposals/${p.body.id}/resolve`)
+      .set(auth())
+      .send({ expectedRev: head.rev, payload: existing.payload });
+    expect(replaced.status).toBe(200);
+    expect(replaced.body.aiConflictOverrides).toEqual([{ nodeId: 'a', fields: ['func'] }]);
+    const result = await approve(p.body.id);
+    expect(result.status).toBe(409);
+    expect(result.body.code).toBe('rebase_ack_required');
+    expect(updateFlow).not.toHaveBeenCalled();
+  });
+
   it('redacts AI override before/after values using the same view as conflict diffs', async () => {
     edit('tab', { env: [{ name: 'API_KEY', value: 'base-secret', type: 'str' }] });
     const p = await request(app)

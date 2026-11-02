@@ -5,9 +5,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { FlowTab } from '../runtime/types.js';
 
+import { conflictFieldValue } from './field-value.js';
 import type { AiAccessPaths } from './paths.js';
 import {
   assertSafeProposalId,
@@ -779,8 +781,28 @@ export class ProposalStore {
       if (update.warnings.length > 0) proposal.warnings = update.warnings;
       else delete proposal.warnings;
     }
-    if (update.aiConflictOverrides?.length)
-      proposal.aiConflictOverrides = update.aiConflictOverrides;
+    // Omission means a body edit, not acknowledgement. Only discard tracked
+    // fields once they match the new base. Explicit lists support choices/undo.
+    const target = (tab: Partial<FlowTab>, nodeId: string) =>
+      nodeId === proposal.payload.flowId
+        ? tab
+        : [...(tab.nodes ?? []), ...(tab.configs ?? [])].find(node => node.id === nodeId);
+    const overrides =
+      update.aiConflictOverrides ??
+      (proposal.aiConflictOverrides ?? [])
+        .map(override => ({
+          nodeId: override.nodeId,
+          fields: override.fields.filter(field => {
+            const base = target(update.baseFlow, override.nodeId);
+            const proposed = target(update.flow, override.nodeId);
+            return !isDeepStrictEqual(
+              field ? conflictFieldValue(base, field) : base,
+              field ? conflictFieldValue(proposed, field) : proposed
+            );
+          }),
+        }))
+        .filter(override => override.fields.length > 0);
+    if (overrides.length) proposal.aiConflictOverrides = overrides;
     else delete proposal.aiConflictOverrides;
     if (update.conflictChoice) proposal.conflictChoice = update.conflictChoice;
     else delete proposal.conflictChoice;
