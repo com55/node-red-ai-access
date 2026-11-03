@@ -3884,7 +3884,7 @@ export function pageClientEditorJumpScript(): string {
   var REVEAL_CHANNEL = 'node-red-ai-access';
   function editorHashHref(kind, id) {
     var base = editorRoot && editorRoot !== '/' ? String(editorRoot).replace(/\\/$/, '') + '/' : '/';
-    return base + '#' + (kind === 'flow' ? 'flow' : 'node') + '/' + encodeURIComponent(String(id));
+    return base + '#' + (['flow', 'tab', 'subflow'].indexOf(kind) >= 0 ? 'flow' : kind === 'group' ? 'group' : 'node') + '/' + encodeURIComponent(String(id));
   }
   function editorJumpLink(kind, id, text, extraClass) {
     if (!id) return esc(text);
@@ -3895,40 +3895,51 @@ export function pageClientEditorJumpScript(): string {
   }
   function revealInEditor(kind, id, href) {
     var opened = false;
-    function openFallback() {
+    var ch;
+    var timer;
+    var scope = editorHashHref('node', '').split('#')[0];
+    var key = REVEAL_CHANNEL + ':reveal:' + scope;
+    var reqId = String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
+    var message = { type: 'reveal', kind: kind, id: String(id), reqId: reqId, sentAt: Date.now(), scope: scope };
+    if (typeof showToast === 'function') {
+      showToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });
+    }
+    function cleanup() {
+      if (window.removeEventListener) window.removeEventListener('storage', onStorage);
+      if (ch) { try { ch.close(); } catch (e) { /* ignore */ } }
+    }
+    function ack(m) {
+      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || opened) return;
+      // Even a missing node is handled by the editor card, without opening a second editor.
+      opened = true;
+      clearTimeout(timer);
+      cleanup();
+    }
+    function onStorage(ev) {
+      if (ev.key !== key + ':ack' || !ev.newValue) return;
+      try { ack(JSON.parse(ev.newValue)); } catch (e) { /* ignore */ }
+    }
+    if (window.addEventListener) window.addEventListener('storage', onStorage);
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        ch = new BroadcastChannel(REVEAL_CHANNEL);
+        ch.onmessage = function (ev) { ack(ev && ev.data); };
+      }
+    } catch (e) { /* storage still works */ }
+    timer = setTimeout(function () {
+      cleanup();
       if (opened) return;
       opened = true;
       var w = window.open(href, EDITOR_WINDOW_NAME);
       if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
-    }
-    if (typeof BroadcastChannel === 'undefined') { openFallback(); return; }
-    var ch;
-    try { ch = new BroadcastChannel(REVEAL_CHANNEL); } catch (e) { openFallback(); return; }
-    var reqId = String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
-    var notFound = false;
-    var timer = setTimeout(function () {
-      try { ch.close(); } catch (e) { /* ignore */ }
-      if (notFound && !opened) {
-        opened = true;
-        if (typeof showToast === 'function') {
-          showToast('Not found in the open editor (not deployed yet, or deleted)', false);
-        }
-        return;
-      }
-      openFallback();
     }, 300);
-    ch.onmessage = function (ev) {
-      var m = ev && ev.data;
-      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || opened) return;
-      if (!m.ok) { notFound = true; return; } // another editor tab may still find it
-      opened = true;
-      clearTimeout(timer);
-      try { ch.close(); } catch (e) { /* ignore */ }
-      // Browsers do not let a page focus another tab; tell the user where it went.
-      if (typeof showToast === 'function') showToast('Shown in your open Node-RED editor tab', true);
-    };
-    ch.postMessage({ type: 'reveal', kind: kind, id: String(id), reqId: reqId });
+    // Persist before sending: an editor opened by the fallback can read the latest request.
+    try { localStorage.setItem(key, JSON.stringify(message)); } catch (e) { /* storage may be disabled */ }
+    if (ch && !opened) {
+      try { ch.postMessage(message); } catch (e) { /* fallback opens the editor */ }
+    }
   }
+
   document.addEventListener('click', function (ev) {
     var t = ev.target;
     var a = t && t.closest ? t.closest('a[data-reveal-id]') : null;

@@ -365,7 +365,7 @@ function settingsPartOAuth(): string {
       var label = "'" + esc(c.nodeName || c.nodeId || 'unnamed') + "'";
       var href = editorNodeHref(c);
       html = 'Route ' + path + ' is already used by http-in node ' +
-        (href ? '<a href="' + esc(href) + '" target="_blank" rel="noopener" title="Open node in the editor">' + label + '</a>' : label);
+        (href ? '<a data-reveal-kind="' + (c.nodeId ? 'node' : 'flow') + '" data-reveal-id="' + esc(c.nodeId || c.flowId) + '" href="' + esc(href) + '" target="node-red-editor" rel="noopener" title="Open node in the editor">' + label + '</a>' : label);
     } else if (c.source === 'httpStatic') {
       html = 'File ' + path + ' is served by httpStatic';
     } else if (c.source === 'middleware') {

@@ -350,7 +350,7 @@ function editorSidebarScriptPartA(): string {
         $('<code></code>').text(c.path).appendTo(li);
         $('<span></span>').text(' is already used by http-in node ').appendTo(li);
         var label = "'" + (c.nodeName || c.nodeId || 'unnamed') + "'";
-        if (c.nodeId && RED.view && RED.view.reveal) {
+        if (c.nodeId && RED.view && typeof RED.view.reveal === 'function') {
           $('<a href="#"></a>').text(label).attr('title', 'Show node in the editor').appendTo(li)
             .on('click', function (e) { e.preventDefault(); RED.view.reveal(c.nodeId); });
         } else {
@@ -478,6 +478,7 @@ function editorSidebarScriptPartB(): string {
     function buildContent() {
       var content = $('<div></div>', { id: CONTENT_ID, class: 'red-ui-sidebar-ai-access' });
 
+      $('<div id="ai-access-dashboard-request" style="display:none"></div>').appendTo(content);
       var header = $('<div class="red-ui-sidebar-header"></div>').appendTo(content);
       $('<span></span>').text('AI Access').appendTo(header);
       // Saved/error toast lives in the header so it never covers the intro text.
@@ -591,36 +592,101 @@ function editorSidebarScriptBody(): string {
  */
 export function editorRevealListenerScript(): string {
   return `(function () {
-  if (typeof RED === 'undefined' || typeof BroadcastChannel === 'undefined') return;
+  if (typeof RED === 'undefined') return;
   if (window.__com55AiAccessRevealListener) return;
   window.__com55AiAccessRevealListener = true;
   try { if (!window.name) window.name = 'node-red-editor'; } catch (e) {}
-  var ch = new BroadcastChannel('node-red-ai-access');
+  var scope = window.location ? window.location.pathname.replace(/\\/$/, '') + '/' : '/';
+  var key = 'node-red-ai-access:reveal:' + scope;
+  var ch;
+  var seen = Object.create(null);
+  var latestTime = 0;
+  var latestRequest;
   var REQ_ID_RE = /^[0-9]{10,16}-[0-9]{1,12}$/;
-  var lastFocus = 0;
-  ch.onmessage = function (ev) {
-    var m = ev && ev.data;
-    if (!m || m.type !== 'reveal' || typeof m.id !== 'string' || !m.id || m.id.length > 200) return;
-    if (typeof m.reqId !== 'string' || !REQ_ID_RE.test(m.reqId)) return;
-    if (m.kind !== 'flow' && m.kind !== 'node') return;
-    var ok = false;
+  function lookup(m) {
+    var nodes = RED.nodes || {};
+    function get(api, id) { try { return typeof nodes[api] === 'function' ? nodes[api](id) : null; } catch (e) { return null; } }
+    return get('workspace', m.id) || get('subflow', m.id) || get('node', m.id) || get('group', m.id);
+  }
+  function reveal(m) {
+    var item = lookup(m);
+    if (!item) return false;
     try {
-      if (m.kind === 'flow') {
-        if ((RED.nodes.workspace && RED.nodes.workspace(m.id)) || (RED.nodes.subflow && RED.nodes.subflow(m.id))) {
-          RED.workspaces.show(m.id);
-          ok = true;
-        }
-      } else if (RED.nodes.node(m.id) || (RED.nodes.group && RED.nodes.group(m.id))) {
+      if ((m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow') && RED.workspaces && typeof RED.workspaces.show === 'function') {
+        RED.workspaces.show(m.id);
+      } else if (RED.view && typeof RED.view.reveal === 'function') {
+        // Node-RED also handles config nodes here, via RED.sidebar.config.show.
         RED.view.reveal(m.id);
-        ok = true;
-      }
-    } catch (e) { ok = false; }
-    ch.postMessage({ type: 'reveal-ack', reqId: m.reqId, ok: ok });
-    if (ok && Date.now() - lastFocus > 2000) {
-      lastFocus = Date.now();
-      try { window.focus(); } catch (e) {}
+      } else if (item._def && item._def.category === 'config' && RED.sidebar && RED.sidebar.config && typeof RED.sidebar.config.show === 'function') {
+        RED.sidebar.config.show(m.id);
+      } else return false;
+      return true;
+    } catch (e) { return false; }
+  }
+  function showCard(m) {
+    if (typeof $ === 'undefined') return;
+    var box = $('#ai-access-dashboard-request').empty().show();
+    box.attr('style', 'margin:10px;padding:12px;border:1px solid var(--red-ui-form-input-border-color, #bbb);border-radius:4px;background:var(--red-ui-secondary-background, #fff);color:var(--red-ui-primary-text-color, #333)');
+    $('<strong></strong>').text('Opened from dashboard').appendTo(box);
+    var item = lookup(m);
+    var details = $('<p></p>').appendTo(box);
+    var flow = item && item.z ? lookup({ id: item.z }) : null;
+    details.text(item ? (item.type || m.kind) + ' — ' + (item.name || item.label || m.id) : 'This node or flow was not found. It may have been deleted.');
+    if (item) $('<p></p>').text(flow ? 'Flow: ' + (flow.label || flow.name || flow.id || item.z) :
+      (m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow' ? 'Flow: ' + (item.label || item.name || m.id) : 'Flow: global configuration / no flow tab')).appendTo(box);
+    function dismiss() { box.empty().hide(); }
+    $('<button type="button" class="red-ui-button"></button>').text('Go to node').appendTo(box).on('click', function () {
+      if (reveal(m)) dismiss();
+      else details.text('This node or flow could not be opened. It may have been deleted or is unavailable in this editor.');
+    });
+    $('<button type="button" class="red-ui-button" aria-label="Dismiss opened from dashboard"></button>').text('✕').appendTo(box).on('click', dismiss);
+  }
+  function valid(m) {
+    if (!m || m.type !== 'reveal' || typeof m.id !== 'string' || !m.id || m.id.length > 200) return false;
+    if (typeof m.reqId !== 'string' || !REQ_ID_RE.test(m.reqId)) return false;
+    if (['flow', 'tab', 'subflow', 'node', 'group', 'config'].indexOf(m.kind) < 0) return false;
+    return m.scope === scope && typeof m.sentAt === 'number' && isFinite(m.sentAt) &&
+      Date.now() - m.sentAt <= 30000 && m.sentAt <= Date.now() + 5000;
+  }
+  function receive(m, fromStartup) {
+    if (!valid(m) || seen[m.reqId] || m.sentAt < latestTime) return;
+    Object.keys(seen).forEach(function (id) { if (Date.now() - seen[id] > 30000) delete seen[id]; });
+    seen[m.reqId] = Date.now();
+    latestTime = m.sentAt;
+    latestRequest = m.reqId;
+    // Preserve live reveal behavior. On startup Node-RED handles the URL hash itself.
+    var ok = fromStartup ? !!lookup(m) : reveal(m);
+    showCard(m);
+    try { if (RED.sidebar && typeof RED.sidebar.show === 'function') RED.sidebar.show('ai-access'); } catch (e) { /* sidebar may be unavailable */ }
+    var ack = { type: 'reveal-ack', reqId: m.reqId, ok: ok };
+    if (ch) { try { ch.postMessage(ack); } catch (e) {} }
+    try { localStorage.setItem(key + ':ack', JSON.stringify(ack)); } catch (e) {}
+  }
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      ch = new BroadcastChannel('node-red-ai-access');
+      ch.onmessage = function (ev) { receive(ev && ev.data, false); };
     }
-  };
+  } catch (e) { /* storage delivery remains available */ }
+  if (window.addEventListener) window.addEventListener('storage', function (ev) {
+    if (ev.key !== key || !ev.newValue) return;
+    try { receive(JSON.parse(ev.newValue), false); } catch (e) {}
+  });
+  try {
+    var pending = JSON.parse(localStorage.getItem(key) || 'null');
+    if (valid(pending)) {
+      // Flows may still be loading when the sidebar asset runs. Only replay the card;
+      // the editor's initial hash processing owns the initial reveal.
+      var attempts = 0;
+      var replay = function () {
+        if (latestRequest || !valid(pending)) return;
+        if (lookup(pending) || attempts++ >= 40) receive(pending, true);
+        else window.setTimeout(replay, 250);
+      };
+      replay();
+    }
+  } catch (e) { /* storage can be disabled */ }
+
 })();`;
 }
 
@@ -638,8 +704,8 @@ export function renderEditorSidebarJs(): string {
     `    document.head.appendChild(style);`,
     `  }`,
     `})();`,
-    editorRevealListenerScript(),
     editorSidebarScriptBody(),
+    editorRevealListenerScript(),
   ].join('\n');
 }
 

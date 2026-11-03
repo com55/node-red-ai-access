@@ -1233,6 +1233,7 @@ section.panel#section-links .row.token-create-row { flex-direction: row; flex-wr
 .token-create-row > label, .token-create-row > button { flex: 0 0 auto; max-width: 100%; }
 .token-create-row input, .token-create-row select { max-width: 100%; min-width: 0; }
 #link-label { width: 16rem; }
+#link-ttl-custom-amount { width: 7ch; box-sizing: border-box; }
 @media (max-width: 600px) {
   section.panel#section-links .row.token-create-row { flex-direction: column; align-items: flex-start; }
   .token-create-row .ttl-custom-row { align-self: flex-start; max-width: 100%; flex-wrap: wrap; }
