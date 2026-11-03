@@ -496,6 +496,27 @@ describe('dashboard settings client', () => {
     expect(dom.get('oauth-route-warning').hidden).toBe(true);
   });
 
+  it('renders OAuth dates with year and time in browser local time', async () => {
+    const added = Date.UTC(2026, 10, 3, 1, 28);
+    const used = added + 3_600_000;
+    const { dom, out } = loadSettingsClient({
+      '/oauth/clients': {
+        clients: [{ client_id: 'x', client_id_issued_at: added / 1000, lastUsedAt: used }],
+      },
+    });
+    await out.loadOAuthClients!();
+    const format = new Intl.DateTimeFormat(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    expect(dom.get('oauth-clients').innerHTML).toContain('Added: ' + format.format(added));
+    expect(dom.get('oauth-clients').innerHTML).toContain('Last used: ' + format.format(used));
+  });
+
   it('escapes OAuth client names/ids and disables revoke without * permission', async () => {
     const { dom, out } = loadSettingsClient({
       '/oauth/clients': {
@@ -508,6 +529,7 @@ describe('dashboard settings client', () => {
     expect(html).not.toMatch(/<img|<script/);
     expect(html).toContain('&lt;img src=x&gt;');
     expect(html).toContain(' disabled>Revoke');
+    expect(html).toContain('Added: - · Last used: Never used');
   });
 
   it('applies settings, locks settings.js fields, and PUTs a payload without locked keys', async () => {

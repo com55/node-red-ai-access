@@ -119,8 +119,11 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
       this.db.clients
         .filter(c =>
           c.approved
-            ? (c.lastUsedAt ?? (c.client_id_issued_at ?? 0) * 1000) > now - 30 * 86400_000
-            : (c.client_id_issued_at ?? 0) * 1000 > now - UNCONSENTED_CLIENT_TTL_MS
+            ? (c.lastUsedAt ??
+                (c.client_id_issued_at === undefined ? now : c.client_id_issued_at * 1000)) >
+              now - 30 * 86400_000
+            : (c.client_id_issued_at === undefined ? now : c.client_id_issued_at * 1000) >
+              now - UNCONSENTED_CLIENT_TTL_MS
         )
         .map(c => c.client_id)
     );
@@ -170,7 +173,6 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
       client_id: secret(),
       client_id_issued_at: Math.floor(Date.now() / 1000),
       token_endpoint_auth_method: 'none' as const,
-      lastUsedAt: Date.now(),
     };
     this.db.clients.push(client);
     this.save();
@@ -199,13 +201,13 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     this.save();
   }
   private touchTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Coalesces lastUsedAt-only changes into one write per few seconds. */
+  /** Coalesces lastUsedAt-only changes into one write per five minutes; token changes still persist immediately. */
   touch(): void {
     if (this.touchTimer) return;
     this.touchTimer = setTimeout(() => {
       this.touchTimer = undefined;
       this.save();
-    }, 5_000);
+    }, 5 * 60_000);
     this.touchTimer.unref?.();
   }
   revokeClient(id: string): boolean {

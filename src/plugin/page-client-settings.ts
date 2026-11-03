@@ -412,6 +412,16 @@ function settingsPartOAuth(): string {
     }
   }
 
+  function oauthClientTime(timestamp, fallback) {
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return fallback;
+    var date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return fallback;
+    return new Intl.DateTimeFormat(undefined, {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).format(date);
+  }
+
   async function loadOAuthClients() {
     var list = $('oauth-clients');
     var gen = ++oauthClientsGen;
@@ -426,7 +436,9 @@ function settingsPartOAuth(): string {
       var canRevoke = settingsCanEdit();
       list.innerHTML = clients.map(function (c, i) {
         return '<div class="client-row"><div><strong>' + esc(c.client_name || 'Unnamed client') + '</strong>' +
-          '<div class="client-meta"><code>' + esc(c.client_id) + '</code></div></div>' +
+          '<div class="client-meta"><code>' + esc(c.client_id) + '</code></div>' +
+          '<div class="client-meta">Added: ' + esc(oauthClientTime(typeof c.client_id_issued_at === 'number' ? c.client_id_issued_at * 1000 : null, '-')) +
+          ' · Last used: ' + esc(oauthClientTime(c.lastUsedAt, 'Never used')) + '</div></div>' +
           '<button type="button" class="action danger" data-oauth-revoke="' + i + '"' + (canRevoke ? '' : ' disabled') +
           '>Revoke</button></div>';
       }).join('');

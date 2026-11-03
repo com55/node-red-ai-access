@@ -328,6 +328,7 @@ export function registerRoutes(
           client_id: c.client_id,
           client_name: c.client_name,
           redirect_uris: c.redirect_uris,
+          client_id_issued_at: c.client_id_issued_at,
           lastUsedAt: c.lastUsedAt,
         })),
       })
