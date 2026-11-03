@@ -655,13 +655,14 @@ export function editorRevealListenerScript(): string {
     seen[m.reqId] = Date.now();
     latestTime = m.sentAt;
     latestRequest = m.reqId;
-    // Preserve live reveal behavior. On startup Node-RED handles the URL hash itself.
-    var ok = fromStartup ? !!lookup(m) : reveal(m);
-    showCard(m);
-    try { if (RED.sidebar && typeof RED.sidebar.show === 'function') RED.sidebar.show('ai-access'); } catch (e) { /* sidebar may be unavailable */ }
-    var ack = { type: 'reveal-ack', reqId: m.reqId, ok: ok };
+    // Acknowledge liveness before any editor API or card work can block or fail.
+    var ack = { type: 'reveal-ack', reqId: m.reqId, alive: true };
     if (ch) { try { ch.postMessage(ack); } catch (e) {} }
     try { localStorage.setItem(key + ':ack', JSON.stringify(ack)); } catch (e) {}
+    // Preserve live reveal behavior. On startup Node-RED handles the URL hash itself.
+    if (!fromStartup) reveal(m);
+    showCard(m);
+    try { if (RED.sidebar && typeof RED.sidebar.show === 'function') RED.sidebar.show('ai-access'); } catch (e) { /* sidebar may be unavailable */ }
   }
   try {
     if (typeof BroadcastChannel !== 'undefined') {
@@ -675,7 +676,8 @@ export function editorRevealListenerScript(): string {
   });
   try {
     var pending = JSON.parse(localStorage.getItem(key) || 'null');
-    if (valid(pending)) {
+    var startupReqId = new URLSearchParams(window.location && window.location.search || '').get('aiAccessReveal');
+    if (valid(pending) && pending.reqId === startupReqId) {
       // Flows may still be loading when the sidebar asset runs. Only replay the card;
       // the editor's initial hash processing owns the initial reveal.
       var attempts = 0;

@@ -3877,7 +3877,7 @@ export function pageClientEditorJumpScript(): string {
   /*
    * Jump links to the editor (#flow/<id>, #node/<id>). A click first asks an
    * already-open editor tab (BroadcastChannel 'node-red-ai-access', answered by
-   * the editor sidebar script) to reveal the item; without an ack within 300 ms
+   * the editor sidebar script) to reveal the item; without an ack within 1000 ms
    * it opens the editor in a named window so later clicks reuse that tab.
    */
   var EDITOR_WINDOW_NAME = 'node-red-editor';
@@ -3895,24 +3895,31 @@ export function pageClientEditorJumpScript(): string {
   }
   function revealInEditor(kind, id, href) {
     var opened = false;
+    var acknowledged = false;
     var ch;
     var timer;
     var scope = editorHashHref('node', '').split('#')[0];
     var key = REVEAL_CHANNEL + ':reveal:' + scope;
-    var reqId = String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
+    var reqId = String(Date.now()) + '-' + String(Math.floor(Math.random() * 1e9));
     var message = { type: 'reveal', kind: kind, id: String(id), reqId: reqId, sentAt: Date.now(), scope: scope };
-    if (typeof showToast === 'function') {
-      showToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });
-    }
     function cleanup() {
       if (window.removeEventListener) window.removeEventListener('storage', onStorage);
       if (ch) { try { ch.close(); } catch (e) { /* ignore */ } }
     }
     function ack(m) {
-      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || opened) return;
+      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || acknowledged) return;
       // Even a missing node is handled by the editor card, without opening a second editor.
+      acknowledged = true;
+      var usedFallback = opened;
       opened = true;
       clearTimeout(timer);
+      try {
+        var pending = JSON.parse(localStorage.getItem(key) || 'null');
+        if (pending && pending.reqId === reqId) localStorage.removeItem(key);
+      } catch (e) { /* storage may be disabled */ }
+      if (!usedFallback && typeof showToast === 'function') {
+        showToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });
+      }
       cleanup();
     }
     function onStorage(ev) {
@@ -3927,12 +3934,17 @@ export function pageClientEditorJumpScript(): string {
       }
     } catch (e) { /* storage still works */ }
     timer = setTimeout(function () {
-      cleanup();
       if (opened) return;
+      timer = setTimeout(cleanup, 30000);
       opened = true;
-      var w = window.open(href, EDITOR_WINDOW_NAME);
+      var hashAt = href.indexOf('#');
+      var base = hashAt < 0 ? href : href.slice(0, hashAt);
+      var hash = hashAt < 0 ? '' : href.slice(hashAt);
+      var fallbackHref = base + (base.indexOf('?') < 0 ? '?' : '&') + 'aiAccessReveal=' + encodeURIComponent(reqId) + hash;
+      var w = window.open(fallbackHref, EDITOR_WINDOW_NAME);
+      if (typeof showToast === 'function') showToast('Opened Node-RED editor in a new tab', true, { durationMs: 4000 });
       if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
-    }, 300);
+    }, 1000);
     // Persist before sending: an editor opened by the fallback can read the latest request.
     try { localStorage.setItem(key, JSON.stringify(message)); } catch (e) { /* storage may be disabled */ }
     if (ch && !opened) {

@@ -280,7 +280,11 @@ function jumpHarness(options: { storageOnly?: boolean } = {}) {
       addEventListener: storageEvents.addEventListener,
       removeEventListener() {},
     },
-    localStorage: { setItem: (key: string, value: string) => stored.set(key, value) },
+    localStorage: {
+      setItem: (key: string, value: string) => stored.set(key, value),
+      getItem: (key: string) => stored.get(key),
+      removeItem: (key: string) => stored.delete(key),
+    },
     ...(options.storageOnly ? {} : { BroadcastChannel: FakeChannel }),
     setTimeout,
     clearTimeout,
@@ -413,24 +417,54 @@ describe('dashboard → editor jump links', () => {
     expect(message).toMatchObject({ type: 'reveal', kind: 'node', id: 'n1', scope: '/' });
     expect(message.reqId).toMatch(/^[0-9]{10,16}-[0-9]{1,12}$/);
     expect(message.sentAt).toBeGreaterThan(Date.now() - 1000);
-    expect(h.toasts).toEqual([
-      '✓ Sent to Node-RED editor — switch to the editor tab to see this node',
-    ]);
-    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000 } }]);
+    expect(h.toasts).toEqual([]);
+    await new Promise(r => setTimeout(r, 600));
     h.storageEvents.emit('storage', {
       key: key + ':ack',
       newValue: JSON.stringify({ type: 'reveal-ack', reqId: message.reqId, ok: true }),
     });
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 500));
+    expect(h.stored.has(key)).toBe(false);
+    expect(h.toasts).toEqual([
+      '✓ Sent to Node-RED editor — switch to the editor tab to see this node',
+    ]);
+    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000 } }]);
     expect(h.opened).toEqual([]);
+  });
+
+  it('generates a valid request id even when random uses exponent notation', () => {
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(1e-7);
+    try {
+      const h = jumpHarness({ storageOnly: true });
+      h.click('node', 'n1');
+      const m = JSON.parse(h.stored.get('node-red-ai-access:reveal:/')!);
+      expect(m.reqId).toMatch(/^[0-9]{10,16}-[0-9]{1,12}$/);
+      h.storageEvents.emit('storage', {
+        key: 'node-red-ai-access:reveal:/:ack',
+        newValue: JSON.stringify({ type: 'reveal-ack', reqId: m.reqId }),
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('falls back to window.open(url, "node-red-editor") without an editor', async () => {
     FakeChannel.all = [];
     const h = jumpHarness();
     h.click('node', 'n1');
-    await new Promise(r => setTimeout(r, 350));
-    expect(h.opened).toEqual([{ url: '/#node/n1', name: 'node-red-editor' }]);
+    expect(h.toasts).toEqual([]);
+    const message = JSON.parse(h.stored.get('node-red-ai-access:reveal:/')!);
+    await new Promise(r => setTimeout(r, 1100));
+    expect(h.opened).toEqual([
+      { url: '/?aiAccessReveal=' + message.reqId + '#node/n1', name: 'node-red-editor' },
+    ]);
+    expect(h.toasts).toEqual(['Opened Node-RED editor in a new tab']);
+    h.storageEvents.emit('storage', {
+      key: 'node-red-ai-access:reveal:/:ack',
+      newValue: JSON.stringify({ type: 'reveal-ack', reqId: message.reqId, alive: true }),
+    });
+    expect(h.stored.has('node-red-ai-access:reveal:/')).toBe(false);
+    expect(h.toasts).toEqual(['Opened Node-RED editor in a new tab']);
   });
 
   it('editor that does not know the id: toast, no new tab', async () => {
@@ -635,7 +669,7 @@ describe('editor reveal listener input validation', () => {
     });
     await flush();
     expect(ed.revealed).toEqual(['node:n1']);
-    expect(acks).toEqual([{ type: 'reveal-ack', reqId: '1730000000000-1234', ok: true }]);
+    expect(acks).toEqual([{ type: 'reveal-ack', reqId: '1730000000000-1234', alive: true }]);
   });
 
   it('does not try to focus another browser tab', async () => {

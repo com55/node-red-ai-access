@@ -431,7 +431,8 @@ describe('ai-access-sidebar.js served tab', () => {
     const { $, load } = runSidebar(fetcher);
     runInNewContext(editorRevealListenerScript(), {
       $,
-      window: { location: { pathname: '/' } },
+      URLSearchParams,
+      window: { location: { pathname: '/', search: '?aiAccessReveal=1730000000000-1' } },
       localStorage: {
         getItem: () =>
           JSON.stringify({
@@ -648,7 +649,14 @@ describe('ai-access-sidebar.js served tab', () => {
 });
 
 describe('dashboard request card', () => {
-  function harness(options: { startup?: boolean; channel?: boolean; minimalApis?: boolean } = {}) {
+  function harness(
+    options: {
+      startup?: boolean;
+      startupReqId?: string;
+      channel?: boolean;
+      minimalApis?: boolean;
+    } = {}
+  ) {
     const $ = createFakeJQuery();
     $('<div id="ai-access-dashboard-request"></div>');
     const storage = new Map<string, string>();
@@ -682,9 +690,13 @@ describe('dashboard request card', () => {
     runInNewContext(editorRevealListenerScript(), {
       $,
       Date,
+      URLSearchParams,
       setTimeout,
       window: {
-        location: { pathname: '/' },
+        location: {
+          pathname: '/',
+          search: options.startupReqId ? '?aiAccessReveal=' + options.startupReqId : '',
+        },
         setTimeout,
         addEventListener: (event: string, fn: (ev: unknown) => void) => {
           callbacks[event] = fn;
@@ -775,8 +787,30 @@ describe('dashboard request card', () => {
     expect(h.box().props.visible).toBe(false);
   });
 
+  it('ignores stored requests on manual open or a mismatched fallback request', () => {
+    expect(harness({ startup: true }).text()).toBe('');
+    expect(harness({ startup: true, startupReqId: '1730000000000-2' }).text()).toBe('');
+  });
+
+  it('acknowledges before revealing or showing the sidebar', () => {
+    const h = harness({ channel: true });
+    h.send();
+    const post = h.channel() as unknown as { postMessage: ReturnType<typeof vi.fn> };
+    expect(post.postMessage).toHaveBeenCalledWith({
+      type: 'reveal-ack',
+      reqId: '1730000000000-1',
+      alive: true,
+    });
+    expect(post.postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      h.reveal.mock.invocationCallOrder[0]!
+    );
+    expect(post.postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      h.show.mock.invocationCallOrder[0]!
+    );
+  });
+
   it('replays a fresh stored request as a card without repeating the startup hash reveal', () => {
-    const h = harness({ startup: true });
+    const h = harness({ startup: true, startupReqId: '1730000000000-1' });
     expect(h.text()).toContain('Opened from dashboard');
     expect(h.reveal).not.toHaveBeenCalled();
     h.click('Go to node');
