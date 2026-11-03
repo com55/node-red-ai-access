@@ -61,8 +61,9 @@ describe('settings navigation', () => {
     const script = pageClientScript();
     expect(script).toContain('<div class="row token-create-row">');
     expect(script).toMatch(
-      /<\/div><div class="row token-create-actions">'\s*\+\s*'<button type="submit" class="action">Create access token<\/button><\/div>/
+      /<div class="row token-create-row">(?:(?!<\/div><div class="row)[\s\S])*<label>Label \(optional\)<input[^>]*\/><\/label>'\s*\+\s*'<button type="submit" class="action">Create access token<\/button><\/div>/
     );
+    expect(script).not.toContain('token-create-actions');
     expect(script).not.toContain('style="align-items:flex-end"');
     expect(html).toMatch(/\.row \{[^}]*justify-content: flex-start;/);
     expect(html).toMatch(/\.filter-row \{[^}]*justify-content: flex-start;/);
@@ -93,7 +94,9 @@ describe('settings navigation', () => {
       .trim();
     expect(specificity(settingsSelector)).toEqual([1, 2, 1]);
     expect(specificity(tokenSelector)).toEqual([1, 3, 1]);
-    expect(html).toContain('flex: 0 0 auto; max-width: 100%');
+    expect(html).toContain(
+      '.token-create-row > label, .token-create-row > button { flex: 0 0 auto; max-width: 100%; }'
+    );
     expect(html).toContain('#link-label { width: 16rem; }');
     expect(html).toContain('.logs-toolbar .debug-toggle { margin-left: 0; }');
   });
