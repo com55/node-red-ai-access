@@ -423,6 +423,51 @@ describe('ai-access-sidebar.js served tab', () => {
     return { $, load: () => load(), opened };
   }
 
+  it('keeps a single dashboard request card directly below the dashboard action after Refresh', async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ settings: {}, details: [] }),
+    }));
+    const { $, load } = runSidebar(fetcher);
+    runInNewContext(editorRevealListenerScript(), {
+      $,
+      window: { location: { pathname: '/' } },
+      localStorage: {
+        getItem: () =>
+          JSON.stringify({
+            type: 'reveal',
+            id: 'n1',
+            kind: 'node',
+            reqId: '1730000000000-1',
+            sentAt: Date.now(),
+            scope: '/',
+          }),
+        setItem: vi.fn(),
+      },
+      RED: { nodes: { node: () => ({ id: 'n1', type: 'inject' }) } },
+    });
+    const card = $('#ai-access-dashboard-request').elements[0]!;
+    const action = $('#ai-access-open-mcp').elements[0]!.parent!;
+    const body = action.parent!;
+    const assertPosition = () => {
+      expect(card.parent).toBe(body);
+      expect(body.className).toBe('red-ui-sidebar-ai-access-body');
+      expect(body.children[body.children.indexOf(action) + 1]).toBe(card);
+      const cards = (el: typeof card): number =>
+        Number(el.id === 'ai-access-dashboard-request') +
+        el.children.reduce((total, child) => total + cards(child), 0);
+      expect(cards($('#red-ui-sidebar-ai-access').elements[0]!)).toBe(1);
+      expect(card.props.visible).toBe(true);
+      expect(card.children[0]!.textContent).toBe('Opened from dashboard');
+    };
+    assertPosition();
+    load();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    $('#ai-access-refresh').elements[0]!.handlers.click![0]!();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
+    assertPosition();
+  });
+
   it.each([true, false])(
     'renders toggle locks and read-only controls (canEdit=%s)',
     async canEdit => {

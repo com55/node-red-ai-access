@@ -478,7 +478,6 @@ function editorSidebarScriptPartB(): string {
     function buildContent() {
       var content = $('<div></div>', { id: CONTENT_ID, class: 'red-ui-sidebar-ai-access' });
 
-      $('<div id="ai-access-dashboard-request" style="display:none"></div>').appendTo(content);
       var header = $('<div class="red-ui-sidebar-header"></div>').appendTo(content);
       $('<span></span>').text('AI Access').appendTo(header);
       // Saved/error toast lives in the header so it never covers the intro text.
@@ -554,6 +553,8 @@ function editorSidebarScriptPartB(): string {
         .on('click', function () {
           window.open(dashboardUrl(), '_blank');
         });
+
+      $('<div id="ai-access-dashboard-request" style="display:none"></div>').appendTo(body);
 
       return content;
     }
