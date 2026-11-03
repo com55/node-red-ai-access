@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.10] - 2026-11-03
+
+- Arrange the Create access token form with Channel, Expires after and Label
+  in one left-aligned, content-sized row on wide screens, with the Create
+  button on its own row. Use a single column below about 600px (#115).
+- Scroll to the top when switching dashboard sections (#115).
+- Show date added and last used for Registered OAuth clients in browser local
+  time, with "Never used" for unused clients. Stop counting registration as
+  use and coalesce `lastUsedAt` writes to every five minutes (#115).
+- Flush and dispose the OAuth store on cleanup, close and exit so a stale
+  store cannot overwrite OAuth data after re-registration (#115).
+- Backfill missing `client_id_issued_at` on load so legacy clients get pruned
+  normally (#115).
+
 ## [0.2.0-beta.9] - 2026-11-02
 
 - Redesign the dashboard with a GitHub-Settings-style grouped left sidebar and
