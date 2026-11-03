@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   EDITOR_SIDEBAR_ASSET_VERSION,
+  editorRevealListenerScript,
   renderEditorSidebarJs,
   renderEditorSidebarLoaderHtml,
 } from '../../src/plugin/editor-sidebar.js';
@@ -422,6 +423,52 @@ describe('ai-access-sidebar.js served tab', () => {
     return { $, load: () => load(), opened };
   }
 
+  it('keeps a single dashboard request card directly below the dashboard action after Refresh', async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ settings: {}, details: [] }),
+    }));
+    const { $, load } = runSidebar(fetcher);
+    runInNewContext(editorRevealListenerScript(), {
+      $,
+      URLSearchParams,
+      window: { location: { pathname: '/', search: '?aiAccessReveal=1730000000000-1' } },
+      localStorage: {
+        getItem: () =>
+          JSON.stringify({
+            type: 'reveal',
+            id: 'n1',
+            kind: 'node',
+            reqId: '1730000000000-1',
+            sentAt: Date.now(),
+            scope: '/',
+          }),
+        setItem: vi.fn(),
+      },
+      RED: { nodes: { node: () => ({ id: 'n1', type: 'inject' }) } },
+    });
+    const card = $('#ai-access-dashboard-request').elements[0]!;
+    const action = $('#ai-access-open-mcp').elements[0]!.parent!;
+    const body = action.parent!;
+    const assertPosition = () => {
+      expect(card.parent).toBe(body);
+      expect(body.className).toBe('red-ui-sidebar-ai-access-body');
+      expect(body.children[body.children.indexOf(action) + 1]).toBe(card);
+      const cards = (el: typeof card): number =>
+        Number(el.id === 'ai-access-dashboard-request') +
+        el.children.reduce((total, child) => total + cards(child), 0);
+      expect(cards($('#red-ui-sidebar-ai-access').elements[0]!)).toBe(1);
+      expect(card.props.visible).toBe(true);
+      expect(card.children[0]!.textContent).toBe('Opened from dashboard');
+    };
+    assertPosition();
+    load();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    $('#ai-access-refresh').elements[0]!.handlers.click![0]!();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
+    assertPosition();
+  });
+
   it.each([true, false])(
     'renders toggle locks and read-only controls (canEdit=%s)',
     async canEdit => {
@@ -598,5 +645,186 @@ describe('ai-access-sidebar.js served tab', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('dashboard request card', () => {
+  function harness(
+    options: {
+      startup?: boolean;
+      startupReqId?: string;
+      channel?: boolean;
+      minimalApis?: boolean;
+    } = {}
+  ) {
+    const $ = createFakeJQuery();
+    $('<div id="ai-access-dashboard-request"></div>');
+    const storage = new Map<string, string>();
+    const callbacks: Record<string, (ev: unknown) => void> = {};
+    const reveal = vi.fn();
+    const show = vi.fn();
+    const workspaces = vi.fn();
+    const nodes: Record<string, Record<string, unknown>> = {
+      n1: { id: 'n1', type: 'inject', name: '<First>', z: 'f1' },
+      n2: { id: 'n2', type: 'debug', name: 'Second', z: 'f1' },
+      f1: { id: 'f1', type: 'tab', label: 'My flow' },
+      c1: { id: 'c1', type: 'config', name: 'Config', _def: { category: 'config' } },
+    };
+    const message = (id = 'n1', kind = 'node', reqId = '1730000000000-1') => ({
+      type: 'reveal',
+      id,
+      kind,
+      reqId,
+      sentAt: Date.now(),
+      scope: '/',
+    });
+    if (options.startup) storage.set('node-red-ai-access:reveal:/', JSON.stringify(message()));
+    const channel: { current: { onmessage?: (ev: unknown) => void } } = { current: {} };
+    class Channel {
+      onmessage?: (ev: unknown) => void;
+      constructor() {
+        channel.current = this;
+      }
+      postMessage = vi.fn();
+    }
+    runInNewContext(editorRevealListenerScript(), {
+      $,
+      Date,
+      URLSearchParams,
+      setTimeout,
+      window: {
+        location: {
+          pathname: '/',
+          search: options.startupReqId ? '?aiAccessReveal=' + options.startupReqId : '',
+        },
+        setTimeout,
+        addEventListener: (event: string, fn: (ev: unknown) => void) => {
+          callbacks[event] = fn;
+        },
+      },
+      ...(options.channel ? { BroadcastChannel: Channel } : {}),
+      localStorage: {
+        getItem: (key: string) => storage.get(key),
+        setItem: (key: string, value: string) => storage.set(key, value),
+      },
+      RED: {
+        nodes: {
+          node: (id: string) => (nodes[id]?.type !== 'tab' ? nodes[id] : null),
+          workspace: (id: string) => (nodes[id]?.type === 'tab' ? nodes[id] : null),
+        },
+        ...(options.minimalApis
+          ? {}
+          : { view: { reveal }, workspaces: { show: workspaces }, sidebar: { show } }),
+      },
+    });
+    const send = (m = message()) =>
+      callbacks.storage!({ key: 'node-red-ai-access:reveal:/', newValue: JSON.stringify(m) });
+    const box = () => $('#ai-access-dashboard-request').elements[0]!;
+    const text = () =>
+      box()
+        .children.map(child => child.textContent)
+        .join(' ');
+    const click = (label: string) =>
+      box().children.find(child => child.textContent === label)!.handlers.click![0]!();
+    return {
+      $,
+      storage,
+      reveal,
+      show,
+      workspaces,
+      nodes,
+      message,
+      send,
+      box,
+      text,
+      click,
+      channel: () => channel.current,
+    };
+  }
+
+  it('activates the sidebar, replaces the card, and reveals only once per request across both transports', () => {
+    const h = harness({ channel: true });
+    const m = h.message();
+    h.channel().onmessage!({ data: m });
+    h.send(m);
+    expect(h.reveal).toHaveBeenCalledTimes(1);
+    expect(h.show).toHaveBeenCalledWith('ai-access');
+    expect(h.text()).toContain('Opened from dashboard inject — <First> Flow: My flow');
+    h.send(h.message('n2', 'node', '1730000000000-2'));
+    expect(h.text()).toContain('Second');
+    expect(h.text()).not.toContain('<First>');
+    h.click('Go to node');
+    expect(h.reveal).toHaveBeenLastCalledWith('n2');
+    expect(h.box().props.visible).toBe(false);
+    h.send(h.message('n1', 'node', '1730000000000-3'));
+    h.click('✕');
+    expect(h.box().children).toHaveLength(0);
+  });
+
+  it('handles deleted nodes, flow tabs and config nodes with guarded editor APIs', () => {
+    const h = harness();
+    h.send();
+    delete h.nodes.n1;
+    h.click('Go to node');
+    expect(h.text()).toContain('may have been deleted');
+    expect(h.box().props.visible).toBe(true);
+    h.send(h.message('ghost', 'node', '1730000000000-2'));
+    expect(h.text()).toContain('not found');
+    h.send(h.message('f1', 'flow', '1730000000000-3'));
+    expect(h.workspaces).toHaveBeenCalledWith('f1');
+    h.send(h.message('c1', 'config', '1730000000000-4'));
+    expect(h.reveal).toHaveBeenCalledWith('c1');
+    expect(h.text()).toContain('global configuration');
+  });
+
+  it('keeps the card usable when optional editor navigation and sidebar APIs are absent', () => {
+    const h = harness({ minimalApis: true });
+    expect(() => h.send()).not.toThrow();
+    expect(h.text()).toContain('Opened from dashboard');
+    h.click('Go to node');
+    expect(h.text()).toContain('could not be opened');
+    h.click('✕');
+    expect(h.box().props.visible).toBe(false);
+  });
+
+  it('ignores stored requests on manual open or a mismatched fallback request', () => {
+    expect(harness({ startup: true }).text()).toBe('');
+    expect(harness({ startup: true, startupReqId: '1730000000000-2' }).text()).toBe('');
+  });
+
+  it('acknowledges before revealing or showing the sidebar', () => {
+    const h = harness({ channel: true });
+    h.send();
+    const post = h.channel() as unknown as { postMessage: ReturnType<typeof vi.fn> };
+    expect(post.postMessage).toHaveBeenCalledWith({
+      type: 'reveal-ack',
+      reqId: '1730000000000-1',
+      alive: true,
+    });
+    expect(post.postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      h.reveal.mock.invocationCallOrder[0]!
+    );
+    expect(post.postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      h.show.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('replays a fresh stored request as a card without repeating the startup hash reveal', () => {
+    const h = harness({ startup: true, startupReqId: '1730000000000-1' });
+    expect(h.text()).toContain('Opened from dashboard');
+    expect(h.reveal).not.toHaveBeenCalled();
+    h.click('Go to node');
+    expect(h.reveal).toHaveBeenCalledWith('n1');
+  });
+
+  it('ignores stale, out-of-order, future and other-editor messages', () => {
+    const h = harness();
+    h.send({ ...h.message(), sentAt: Date.now() - 31000 });
+    h.send({ ...h.message(), sentAt: Date.now() + 6000 });
+    h.send({ ...h.message(), scope: '/other/' });
+    expect(h.show).not.toHaveBeenCalled();
+    h.send();
+    h.send({ ...h.message('n2', 'node', '1730000000000-2'), sentAt: Date.now() - 1000 });
+    expect(h.reveal).toHaveBeenCalledTimes(1);
   });
 });

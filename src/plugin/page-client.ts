@@ -1037,7 +1037,6 @@ function pageClientScriptPartATabs(): string {
       '<option value="days">days</option>' +
       '</select></label></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
-      '</div><div class="row token-create-actions">' +
       '<button type="submit" class="action">Create access token</button></div>' +
       '<p id="link-ttl-reset-note" class="ttl-reset-note" hidden></p>' +
       '<p id="link-ttl-warn" class="ttl-long-warn" hidden role="alert">' +
@@ -3878,14 +3877,14 @@ export function pageClientEditorJumpScript(): string {
   /*
    * Jump links to the editor (#flow/<id>, #node/<id>). A click first asks an
    * already-open editor tab (BroadcastChannel 'node-red-ai-access', answered by
-   * the editor sidebar script) to reveal the item; without an ack within 300 ms
+   * the editor sidebar script) to reveal the item; without an ack within 1000 ms
    * it opens the editor in a named window so later clicks reuse that tab.
    */
   var EDITOR_WINDOW_NAME = 'node-red-editor';
   var REVEAL_CHANNEL = 'node-red-ai-access';
   function editorHashHref(kind, id) {
     var base = editorRoot && editorRoot !== '/' ? String(editorRoot).replace(/\\/$/, '') + '/' : '/';
-    return base + '#' + (kind === 'flow' ? 'flow' : 'node') + '/' + encodeURIComponent(String(id));
+    return base + '#' + (['flow', 'tab', 'subflow'].indexOf(kind) >= 0 ? 'flow' : kind === 'group' ? 'group' : 'node') + '/' + encodeURIComponent(String(id));
   }
   function editorJumpLink(kind, id, text, extraClass) {
     if (!id) return esc(text);
@@ -3896,40 +3895,63 @@ export function pageClientEditorJumpScript(): string {
   }
   function revealInEditor(kind, id, href) {
     var opened = false;
-    function openFallback() {
-      if (opened) return;
-      opened = true;
-      var w = window.open(href, EDITOR_WINDOW_NAME);
-      if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
-    }
-    if (typeof BroadcastChannel === 'undefined') { openFallback(); return; }
+    var acknowledged = false;
     var ch;
-    try { ch = new BroadcastChannel(REVEAL_CHANNEL); } catch (e) { openFallback(); return; }
-    var reqId = String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
-    var notFound = false;
-    var timer = setTimeout(function () {
-      try { ch.close(); } catch (e) { /* ignore */ }
-      if (notFound && !opened) {
-        opened = true;
-        if (typeof showToast === 'function') {
-          showToast('Not found in the open editor (not deployed yet, or deleted)', false);
-        }
-        return;
-      }
-      openFallback();
-    }, 300);
-    ch.onmessage = function (ev) {
-      var m = ev && ev.data;
-      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || opened) return;
-      if (!m.ok) { notFound = true; return; } // another editor tab may still find it
+    var timer;
+    var scope = editorHashHref('node', '').split('#')[0];
+    var key = REVEAL_CHANNEL + ':reveal:' + scope;
+    var reqId = String(Date.now()) + '-' + String(Math.floor(Math.random() * 1e9));
+    var message = { type: 'reveal', kind: kind, id: String(id), reqId: reqId, sentAt: Date.now(), scope: scope };
+    function cleanup() {
+      if (window.removeEventListener) window.removeEventListener('storage', onStorage);
+      if (ch) { try { ch.close(); } catch (e) { /* ignore */ } }
+    }
+    function ack(m) {
+      if (!m || m.type !== 'reveal-ack' || m.reqId !== reqId || acknowledged) return;
+      // Even a missing node is handled by the editor card, without opening a second editor.
+      acknowledged = true;
+      var usedFallback = opened;
       opened = true;
       clearTimeout(timer);
-      try { ch.close(); } catch (e) { /* ignore */ }
-      // Browsers do not let a page focus another tab; tell the user where it went.
-      if (typeof showToast === 'function') showToast('Shown in your open Node-RED editor tab', true);
-    };
-    ch.postMessage({ type: 'reveal', kind: kind, id: String(id), reqId: reqId });
+      try {
+        var pending = JSON.parse(localStorage.getItem(key) || 'null');
+        if (pending && pending.reqId === reqId) localStorage.removeItem(key);
+      } catch (e) { /* storage may be disabled */ }
+      if (!usedFallback && typeof showToast === 'function') {
+        showToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });
+      }
+      cleanup();
+    }
+    function onStorage(ev) {
+      if (ev.key !== key + ':ack' || !ev.newValue) return;
+      try { ack(JSON.parse(ev.newValue)); } catch (e) { /* ignore */ }
+    }
+    if (window.addEventListener) window.addEventListener('storage', onStorage);
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        ch = new BroadcastChannel(REVEAL_CHANNEL);
+        ch.onmessage = function (ev) { ack(ev && ev.data); };
+      }
+    } catch (e) { /* storage still works */ }
+    timer = setTimeout(function () {
+      if (opened) return;
+      timer = setTimeout(cleanup, 30000);
+      opened = true;
+      var hashAt = href.indexOf('#');
+      var base = hashAt < 0 ? href : href.slice(0, hashAt);
+      var hash = hashAt < 0 ? '' : href.slice(hashAt);
+      var fallbackHref = base + (base.indexOf('?') < 0 ? '?' : '&') + 'aiAccessReveal=' + encodeURIComponent(reqId) + hash;
+      var w = window.open(fallbackHref, EDITOR_WINDOW_NAME);
+      if (typeof showToast === 'function') showToast('Opened Node-RED editor in a new tab', true, { durationMs: 4000 });
+      if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
+    }, 1000);
+    // Persist before sending: an editor opened by the fallback can read the latest request.
+    try { localStorage.setItem(key, JSON.stringify(message)); } catch (e) { /* storage may be disabled */ }
+    if (ch && !opened) {
+      try { ch.postMessage(message); } catch (e) { /* fallback opens the editor */ }
+    }
   }
+
   document.addEventListener('click', function (ev) {
     var t = ev.target;
     var a = t && t.closest ? t.closest('a[data-reveal-id]') : null;

@@ -266,14 +266,26 @@ class FakeChannel {
   }
 }
 
-function jumpHarness() {
+function jumpHarness(options: { storageOnly?: boolean } = {}) {
   const doc = emitter();
   const opened: { url: string; name: string }[] = [];
   const toasts: string[] = [];
+  const toastOptions: unknown[] = [];
+  const stored = new Map<string, string>();
+  const storageEvents = emitter();
   const ctx = {
     document: doc,
-    window: { open: (url: string, name: string) => (opened.push({ url, name }), { focus() {} }) },
-    BroadcastChannel: FakeChannel,
+    window: {
+      open: (url: string, name: string) => (opened.push({ url, name }), { focus() {} }),
+      addEventListener: storageEvents.addEventListener,
+      removeEventListener() {},
+    },
+    localStorage: {
+      setItem: (key: string, value: string) => stored.set(key, value),
+      getItem: (key: string) => stored.get(key),
+      removeItem: (key: string) => stored.delete(key),
+    },
+    ...(options.storageOnly ? {} : { BroadcastChannel: FakeChannel }),
     setTimeout,
     clearTimeout,
     Date,
@@ -283,7 +295,10 @@ function jumpHarness() {
     editorRoot: '/',
     esc: (x: string) =>
       String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
-    showToast: (m: string) => toasts.push(m),
+    showToast: (m: string, ok: boolean, opts: unknown) => {
+      toasts.push(m);
+      toastOptions.push({ ok, opts });
+    },
     out: {} as Record<string, (...a: unknown[]) => string>,
   };
   runInNewContext(
@@ -304,7 +319,7 @@ function jumpHarness() {
     });
     return prevented;
   };
-  return { ctx, opened, toasts, click };
+  return { ctx, opened, toasts, toastOptions, stored, storageEvents, click };
 }
 
 function editorHarness(known: Record<string, 'node' | 'flow'>) {
@@ -336,6 +351,49 @@ describe('dashboard → editor jump links', () => {
     expect(html).toContain('target="node-red-editor"');
     expect(html).toContain('rel="noopener"');
     expect(html).toContain('&lt;x>');
+    expect(h.ctx.out.link!('subflow', 's1', 'Subflow')).toContain('/#flow/s1');
+    expect(h.ctx.out.link!('tab', 'f1', 'Flow')).toContain('/#flow/f1');
+    expect(h.ctx.out.link!('group', 'g1', 'Group')).toContain('/#group/g1');
+  });
+
+  it('renders the dashboard toast as a status and removes it after four seconds', () => {
+    class Element {
+      children: Element[] = [];
+      parentNode: Element | null = null;
+      attributes: Record<string, string> = {};
+      setAttribute(key: string, value: string) {
+        this.attributes[key] = value;
+      }
+      appendChild(child: Element) {
+        this.children.push(child);
+        child.parentNode = this;
+      }
+      removeChild(child: Element) {
+        this.children.splice(this.children.indexOf(child), 1);
+      }
+    }
+    const host = new Element();
+    let dismiss: (() => void) | undefined;
+    let duration = 0;
+    const script = pageClientScript();
+    const start = script.indexOf('  function showToast(');
+    const end = script.indexOf('\n  }', start) + 4;
+    runInNewContext(
+      script.slice(start, end) +
+        "\nshowToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });",
+      {
+        $: () => host,
+        document: { createElement: () => new Element() },
+        setTimeout: (callback: () => void, ms: number) => {
+          dismiss = callback;
+          duration = ms;
+        },
+      }
+    );
+    expect(host.children[0]?.attributes.role).toBe('status');
+    expect(duration).toBe(4000);
+    dismiss!();
+    expect(host.children).toHaveLength(0);
   });
 
   it('reuses an open editor tab via BroadcastChannel (no window.open)', async () => {
@@ -348,15 +406,65 @@ describe('dashboard → editor jump links', () => {
     await new Promise(r => setTimeout(r, 350));
     expect(ed.revealed).toEqual(['node:n1', 'flow:f1']);
     expect(h.opened).toEqual([]);
-    expect(h.toasts[0]).toMatch(/open Node-RED editor/);
+    expect(h.toasts[0]).toMatch(/switch to the editor tab/);
+  });
+
+  it('sends via storage without BroadcastChannel and accepts the storage acknowledgement', async () => {
+    const h = jumpHarness({ storageOnly: true });
+    h.click('node', 'n1');
+    const key = 'node-red-ai-access:reveal:/';
+    const message = JSON.parse(h.stored.get(key)!);
+    expect(message).toMatchObject({ type: 'reveal', kind: 'node', id: 'n1', scope: '/' });
+    expect(message.reqId).toMatch(/^[0-9]{10,16}-[0-9]{1,12}$/);
+    expect(message.sentAt).toBeGreaterThan(Date.now() - 1000);
+    expect(h.toasts).toEqual([]);
+    await new Promise(r => setTimeout(r, 600));
+    h.storageEvents.emit('storage', {
+      key: key + ':ack',
+      newValue: JSON.stringify({ type: 'reveal-ack', reqId: message.reqId, ok: true }),
+    });
+    await new Promise(r => setTimeout(r, 500));
+    expect(h.stored.has(key)).toBe(false);
+    expect(h.toasts).toEqual([
+      '✓ Sent to Node-RED editor — switch to the editor tab to see this node',
+    ]);
+    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000 } }]);
+    expect(h.opened).toEqual([]);
+  });
+
+  it('generates a valid request id even when random uses exponent notation', () => {
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(1e-7);
+    try {
+      const h = jumpHarness({ storageOnly: true });
+      h.click('node', 'n1');
+      const m = JSON.parse(h.stored.get('node-red-ai-access:reveal:/')!);
+      expect(m.reqId).toMatch(/^[0-9]{10,16}-[0-9]{1,12}$/);
+      h.storageEvents.emit('storage', {
+        key: 'node-red-ai-access:reveal:/:ack',
+        newValue: JSON.stringify({ type: 'reveal-ack', reqId: m.reqId }),
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('falls back to window.open(url, "node-red-editor") without an editor', async () => {
     FakeChannel.all = [];
     const h = jumpHarness();
     h.click('node', 'n1');
-    await new Promise(r => setTimeout(r, 350));
-    expect(h.opened).toEqual([{ url: '/#node/n1', name: 'node-red-editor' }]);
+    expect(h.toasts).toEqual([]);
+    const message = JSON.parse(h.stored.get('node-red-ai-access:reveal:/')!);
+    await new Promise(r => setTimeout(r, 1100));
+    expect(h.opened).toEqual([
+      { url: '/?aiAccessReveal=' + message.reqId + '#node/n1', name: 'node-red-editor' },
+    ]);
+    expect(h.toasts).toEqual(['Opened Node-RED editor in a new tab']);
+    h.storageEvents.emit('storage', {
+      key: 'node-red-ai-access:reveal:/:ack',
+      newValue: JSON.stringify({ type: 'reveal-ack', reqId: message.reqId, alive: true }),
+    });
+    expect(h.stored.has('node-red-ai-access:reveal:/')).toBe(false);
+    expect(h.toasts).toEqual(['Opened Node-RED editor in a new tab']);
   });
 
   it('editor that does not know the id: toast, no new tab', async () => {
@@ -366,7 +474,7 @@ describe('dashboard → editor jump links', () => {
     h.click('node', 'ghost');
     await new Promise(r => setTimeout(r, 350));
     expect(h.opened).toEqual([]);
-    expect(h.toasts[0]).toMatch(/Not found/);
+    expect(h.toasts[0]).toMatch(/switch to the editor tab/);
   });
 });
 
@@ -521,32 +629,67 @@ describe('editor reveal listener input validation', () => {
     const probe = new FakeChannel('node-red-ai-access');
     probe.onmessage = ev => acks.push(ev.data);
     const send = (m: unknown) => probe.postMessage(m);
-    send({ type: 'reveal', kind: 'node', id: 42, reqId: '1730000000000-1234' });
-    send({ type: 'reveal', kind: 'node', id: 'x'.repeat(201), reqId: '1730000000000-1234' });
+    send({
+      type: 'reveal',
+      kind: 'node',
+      id: 42,
+      reqId: '1730000000000-1234',
+      sentAt: Date.now(),
+      scope: '/',
+    });
+    send({
+      type: 'reveal',
+      kind: 'node',
+      id: 'x'.repeat(201),
+      reqId: '1730000000000-1234',
+      sentAt: Date.now(),
+      scope: '/',
+    });
     send({ type: 'reveal', kind: 'node', id: 'n1', reqId: 7 });
     send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '<script>' });
     send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '1-2' });
-    send({ type: 'reveal', kind: 'weird', id: 'n1', reqId: '1730000000000-1234' });
+    send({
+      type: 'reveal',
+      kind: 'weird',
+      id: 'n1',
+      reqId: '1730000000000-1234',
+      sentAt: Date.now(),
+      scope: '/',
+    });
     await flush();
     expect(ed.revealed).toEqual([]);
     expect(acks).toEqual([]);
-    send({ type: 'reveal', kind: 'node', id: 'n1', reqId: '1730000000000-1234' });
+    send({
+      type: 'reveal',
+      kind: 'node',
+      id: 'n1',
+      reqId: '1730000000000-1234',
+      sentAt: Date.now(),
+      scope: '/',
+    });
     await flush();
     expect(ed.revealed).toEqual(['node:n1']);
-    expect(acks).toEqual([{ type: 'reveal-ack', reqId: '1730000000000-1234', ok: true }]);
+    expect(acks).toEqual([{ type: 'reveal-ack', reqId: '1730000000000-1234', alive: true }]);
   });
 
-  it('rate-limits window.focus()', async () => {
+  it('does not try to focus another browser tab', async () => {
     FakeChannel.all = [];
     const ed = editorHarness({ n1: 'node' });
     let focused = 0;
     ed.win.focus = () => focused++;
     const probe = new FakeChannel('node-red-ai-access');
     for (let i = 0; i < 5; i++)
-      probe.postMessage({ type: 'reveal', kind: 'node', id: 'n1', reqId: `1730000000000-${i}` });
+      probe.postMessage({
+        type: 'reveal',
+        kind: 'node',
+        id: 'n1',
+        reqId: `1730000000000-${i}`,
+        sentAt: Date.now(),
+        scope: '/',
+      });
     await flush();
     expect(ed.revealed).toHaveLength(5);
-    expect(focused).toBe(1);
+    expect(focused).toBe(0);
   });
 });
 

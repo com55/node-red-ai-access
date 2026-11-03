@@ -252,6 +252,10 @@ describe('token expiry UX', () => {
     const html = page.text;
     // Global rule so `.ttl-custom-row { display: flex }` does not beat the hidden attribute.
     expect(html).toMatch(/\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/);
+    expect(html).toMatch(/#link-ttl-custom-amount \{[^}]*width: 7ch;[^}]*box-sizing: border-box;/);
+    expect(html).toMatch(
+      /@media \(max-width: 600px\) \{[^}]*token-create-row \{ flex-direction: column;/
+    );
     // Row starts hidden and the toggle runs on preset change, channel change, and initial render.
     expect(html).toMatch(/id="link-ttl-custom-row" class="ttl-custom-row" hidden/);
     expect(html).toMatch(/customRow\.hidden = !\(sel && sel\.value === 'custom'\)/);
