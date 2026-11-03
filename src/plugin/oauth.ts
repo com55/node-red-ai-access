@@ -104,14 +104,27 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
       this.db = emptyDb();
     }
     mkdirSync(paths.root, { recursive: true, mode: 0o700 });
+    const now = Math.floor(Date.now() / 1000);
+    let backfilled = false;
+    for (const client of this.db.clients) {
+      if (client.client_id_issued_at === undefined) {
+        client.client_id_issued_at = now;
+        backfilled = true;
+      }
+    }
     this.prune();
+    if (backfilled) this.save();
   }
+  private disposed = false;
+  private dirty = false;
   private save(): void {
+    if (this.disposed) return;
     writeTrustedAtomic(
       join(this.path, '..'),
       this.path,
       encodeTrustedJson(this.db, 8_000_000, { kind: 'oauth', pretty: true })
     );
+    this.dirty = false;
   }
   prune(now = Date.now()): void {
     const before = this.db.clients.length + this.db.codes.length + this.db.tokens.length;
@@ -119,11 +132,8 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
       this.db.clients
         .filter(c =>
           c.approved
-            ? (c.lastUsedAt ??
-                (c.client_id_issued_at === undefined ? now : c.client_id_issued_at * 1000)) >
-              now - 30 * 86400_000
-            : (c.client_id_issued_at === undefined ? now : c.client_id_issued_at * 1000) >
-              now - UNCONSENTED_CLIENT_TTL_MS
+            ? (c.lastUsedAt ?? c.client_id_issued_at! * 1000) > now - 30 * 86400_000
+            : c.client_id_issued_at! * 1000 > now - UNCONSENTED_CLIENT_TTL_MS
         )
         .map(c => c.client_id)
     );
@@ -200,9 +210,27 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     }
     this.save();
   }
+  /** Flush pending lastUsedAt changes before handing the file to another store. */
+  flush(): void {
+    if (this.touchTimer) {
+      clearTimeout(this.touchTimer);
+      this.touchTimer = undefined;
+    }
+    if (this.dirty) this.save();
+  }
+  /** Permanently relinquish ownership, even if the final write fails. */
+  dispose(): void {
+    try {
+      this.flush();
+    } finally {
+      this.disposed = true;
+    }
+  }
   private touchTimer: ReturnType<typeof setTimeout> | undefined;
   /** Coalesces lastUsedAt-only changes into one write per five minutes; token changes still persist immediately. */
   touch(): void {
+    if (this.disposed) return;
+    this.dirty = true;
     if (this.touchTimer) return;
     this.touchTimer = setTimeout(() => {
       this.touchTimer = undefined;

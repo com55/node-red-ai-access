@@ -202,7 +202,24 @@ export function registerRoutes(
     if (event?.config?.rev && Array.isArray(event.config.flows))
       recordLiveSnapshot(rawFlowAdapter(services.flowAdapter), event.config);
   };
+  const shutdown = () => {
+    try {
+      oauthStore.dispose();
+    } catch (error) {
+      RED.log?.warn?.(`Could not flush OAuth store: ${String(error)}`);
+    }
+  };
+  const terminate = () => {
+    cleanup();
+    // Preserve Node's default SIGTERM behavior when no other handler owns it.
+    if (process.listenerCount('SIGTERM') === 0) process.kill(process.pid, 'SIGTERM');
+  };
   const cleanup = () => {
+    shutdown();
+    process.removeListener('exit', shutdown);
+    process.removeListener('SIGTERM', terminate);
+    RED.events?.removeListener?.('close', cleanup);
+    RED.server?.removeListener('close', cleanup);
     proposalSync.cancel();
     RED.events?.removeListener?.('flows:stopping', observeRuntimeDeploy);
     RED.events?.removeListener?.('flows:started', observeRuntimeDeploy);
@@ -221,6 +238,10 @@ export function registerRoutes(
     resolveAiAccessPaths(RED.settings.userDir),
     () => services.settingsStore.getEffective().oauth.dcrMaxClients
   );
+  RED.events?.on('close', cleanup);
+  RED.server?.on('close', cleanup);
+  process.on('exit', shutdown);
+  process.on('SIGTERM', terminate);
   const publicBase = () => services.settingsStore.getEffective().publicBaseUrl;
   const mcpUrl = () => `${publicBase().replace(/\/$/, '')}/mcp`;
   const oauthProvider = new LocalOAuthProvider(
