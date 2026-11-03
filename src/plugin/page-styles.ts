@@ -283,6 +283,7 @@ button.action.copied {
 }
 .row {
   display: flex;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 0.55rem;
   align-items: end;
@@ -827,6 +828,7 @@ function pageStylesPartG(): string {
 }
 .filter-row {
   display: flex;
+  justify-content: flex-start;
   flex-wrap: nowrap;
   overflow-x: auto;
   gap: 0.4rem;
@@ -1226,6 +1228,15 @@ function pageStylesDashboard(): string {
 /* Setting groups and form fields follow the same vertical reading order. */
 .settings-subpart { padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
 section.panel:not(#section-proposals) .row { flex-direction: column; align-items: flex-start; }
+/* Outrank the settings row above (including the ID specificity inside :not()). */
+section.panel#section-links .row.token-create-row { flex-direction: row; flex-wrap: wrap; gap: 0.55rem; justify-content: flex-start; align-items: flex-end; }
+.token-create-row > label { flex: 0 0 auto; max-width: 100%; }
+.token-create-row input, .token-create-row select { max-width: 100%; min-width: 0; }
+#link-label { width: 16rem; }
+@media (max-width: 600px) {
+  section.panel#section-links .row.token-create-row { flex-direction: column; align-items: flex-start; }
+  .token-create-row .ttl-custom-row { align-self: flex-start; max-width: 100%; flex-wrap: wrap; }
+}
 .logs-toolbar { padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
 .logs-toolbar .debug-toggle { margin-left: 0; }
 section.panel { scroll-margin-top: 1rem; }

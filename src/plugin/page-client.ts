@@ -761,6 +761,10 @@ function pageClientScriptPartAAudit(): string {
 function pageClientScriptPartATabs(): string {
   return `
   // Hash helpers — keep in sync with page-hash.ts
+  // Sections own their scroll position, including browser history traversal.
+  if (typeof history !== 'undefined' && 'scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+  }
   var TAB_IDS = ['status', 'settings', 'links', 'oauth', 'proposals'];
   function hashForTab(tab) {
     if (tab === 'logs') return 'audit';
@@ -823,7 +827,7 @@ function pageClientScriptPartATabs(): string {
       sec.classList.toggle('active', sec.id === 'section-' + target);
       if (options.focusHeading && sec.id === 'section-' + target) {
         var heading = sec.querySelector('h2');
-        if (heading) heading.focus();
+        if (heading) heading.focus({ preventScroll: true });
       }
     });
     if (target !== 'proposals') {
@@ -837,6 +841,11 @@ function pageClientScriptPartATabs(): string {
       }
     }
     selectedLocationHash = String(location.hash || '');
+    window.scrollTo(0, 0);
+    // Run after history traversal's scroll restoration and fragment scrolling.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () { window.scrollTo(0, 0); });
+    }
   }
 
   function loadTabData(target) {
@@ -1006,7 +1015,7 @@ function pageClientScriptPartATabs(): string {
     }
     host.innerHTML =
       '<form id="create-link-form">' +
-      '<div class="row" style="align-items:flex-end">' +
+      '<div class="row token-create-row">' +
       '<label>Channel<select id="link-kind" aria-label="Token channel">' +
       '<option value="get_link" selected>GET link (chat paste)</option>' +
       '<option value="rest">REST Bearer</option>' +
@@ -1028,6 +1037,7 @@ function pageClientScriptPartATabs(): string {
       '<option value="days">days</option>' +
       '</select></label></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
+      '</div><div class="row token-create-actions">' +
       '<button type="submit" class="action">Create access token</button></div>' +
       '<p id="link-ttl-reset-note" class="ttl-reset-note" hidden></p>' +
       '<p id="link-ttl-warn" class="ttl-long-warn" hidden role="alert">' +

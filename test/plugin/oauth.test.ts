@@ -657,6 +657,11 @@ describe('MCP OAuth backend', () => {
   it('requires an admin session for consent and client administration', async () => {
     const { admin } = appFor(userDir, { session: true });
     const id = (await register(admin)).body.client_id as string;
+    const listed = (
+      await request(admin).get('/mcp/api/v1/oauth/clients').set('x-test-user', 'alice')
+    ).body.clients[0];
+    expect(listed.client_id_issued_at).toEqual(expect.any(Number));
+    expect(listed.lastUsedAt).toBeUndefined();
     const params = consentParams(id);
     const page = await request(admin).get('/mcp/oauth/authorize').query(params);
     expect(page.status).toBe(200);

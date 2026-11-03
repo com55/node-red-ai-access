@@ -184,6 +184,10 @@ export interface NodeRedPluginAPI {
       }) => void
     ): void;
   };
+  server?: {
+    on(event: 'close', listener: () => void): unknown;
+    removeListener(event: 'close', listener: () => void): unknown;
+  };
   events?: {
     on(event: string, listener: () => void): void;
     removeListener?(event: string, listener: () => void): void;
