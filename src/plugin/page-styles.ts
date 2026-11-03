@@ -1230,7 +1230,7 @@ function pageStylesDashboard(): string {
 section.panel:not(#section-proposals) .row { flex-direction: column; align-items: flex-start; }
 /* Outrank the settings row above (including the ID specificity inside :not()). */
 section.panel#section-links .row.token-create-row { flex-direction: row; flex-wrap: wrap; gap: 0.55rem; justify-content: flex-start; align-items: flex-end; }
-.token-create-row > label, .token-create-row > button { flex: 0 0 auto; max-width: 100%; }
+.token-create-row > label { flex: 0 0 auto; max-width: 100%; }
 .token-create-row input, .token-create-row select { max-width: 100%; min-width: 0; }
 #link-label { width: 16rem; }
 @media (max-width: 600px) {

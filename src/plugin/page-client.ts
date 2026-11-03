@@ -1037,6 +1037,7 @@ function pageClientScriptPartATabs(): string {
       '<option value="days">days</option>' +
       '</select></label></div>' +
       '<label>Label (optional)<input id="link-label" type="text" maxlength="120" placeholder="e.g. Claude session" /></label>' +
+      '</div><div class="row token-create-actions">' +
       '<button type="submit" class="action">Create access token</button></div>' +
       '<p id="link-ttl-reset-note" class="ttl-reset-note" hidden></p>' +
       '<p id="link-ttl-warn" class="ttl-long-warn" hidden role="alert">' +

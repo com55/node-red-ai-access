@@ -60,6 +60,9 @@ describe('settings navigation', () => {
     });
     const script = pageClientScript();
     expect(script).toContain('<div class="row token-create-row">');
+    expect(script).toMatch(
+      /<\/div><div class="row token-create-actions">'\s*\+\s*'<button type="submit" class="action">Create access token<\/button><\/div>/
+    );
     expect(script).not.toContain('style="align-items:flex-end"');
     expect(html).toMatch(/\.row \{[^}]*justify-content: flex-start;/);
     expect(html).toMatch(/\.filter-row \{[^}]*justify-content: flex-start;/);
