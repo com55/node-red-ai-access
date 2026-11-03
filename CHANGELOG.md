@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.11] - 2026-11-03
+
+- Put the Create access token button back at the end of the fields row on wide
+  screens and narrow the Amount input for Custom expiry (#117).
+- Confirm dashboard-to-editor jumps with a dashboard toast and an "Opened from
+  dashboard" card in the editor AI Access sidebar below the Open AI Access
+  dashboard button, with Go to node and dismiss actions (#117).
+- Deliver editor jumps across tabs through `BroadcastChannel` with a
+  `localStorage` fallback. Acknowledge requests immediately in the editor and
+  wait up to one second before opening a new editor tab, without reloading an
+  existing editor. Clear the stored request on acknowledgement and replay it
+  only in the fallback-opened editor. Use toast text specific to each delivery
+  path (#117).
+
 ## [0.2.0-beta.10] - 2026-11-03
 
 - Arrange the Create access token form with Channel, Expires after and Label in
