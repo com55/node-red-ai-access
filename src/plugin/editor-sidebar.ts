@@ -640,7 +640,7 @@ export function editorRevealListenerScript(): string {
     if (item) $('<p></p>').text(flow ? 'Flow: ' + (flow.label || flow.name || flow.id || item.z) :
       (m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow' ? 'Flow: ' + (item.label || item.name || m.id) : 'Flow: global configuration / no flow tab')).appendTo(box);
     function dismiss() { box.empty().hide(); }
-    $('<button type="button" class="red-ui-button"></button>').text('Go to node').appendTo(box).on('click', function () {
+    $('<button type="button" class="red-ui-button"></button>').text(m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow' ? 'Go to flow' : 'Go to node').appendTo(box).on('click', function () {
       if (!reveal(m)) details.text('This node or flow could not be opened. It may have been deleted or is unavailable in this editor.');
     });
     $('<button type="button" class="red-ui-button" aria-label="Dismiss opened from dashboard"></button>').text('✕').appendTo(box).on('click', dismiss);

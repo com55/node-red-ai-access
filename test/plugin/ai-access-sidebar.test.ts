@@ -773,6 +773,22 @@ describe('dashboard request card', () => {
     expect(h.box().children).toHaveLength(0);
   });
 
+  it.each([
+    ['flow', 'Go to flow'],
+    ['tab', 'Go to flow'],
+    ['subflow', 'Go to flow'],
+    ['node', 'Go to node'],
+    ['group', 'Go to node'],
+    ['config', 'Go to node'],
+  ])('labels the action for a %s target as %s', (kind, label) => {
+    const h = harness();
+    h.send(h.message('n1', kind));
+    const buttons = h.box().children.filter(child => child.tag === 'button');
+    expect(buttons.map(button => button.textContent)).toEqual([label, '✕']);
+    h.click(label);
+    expect(h.box().props.visible).toBe(true);
+  });
+
   it.each(['flow', 'tab', 'subflow'])(
     'notifies for an already-active %s on arrival and button click',
     kind => {
@@ -781,7 +797,7 @@ describe('dashboard request card', () => {
       expect(h.notify).toHaveBeenCalledTimes(1);
       expect(h.notify.mock.calls[0]![0].text()).toBe('Already on flow "My flow"');
       expect(h.box().props.visible).toBe(true);
-      h.click('Go to node');
+      h.click('Go to flow');
       expect(h.notify).toHaveBeenCalledTimes(2);
       expect(h.box().props.visible).toBe(true);
     }
@@ -792,7 +808,7 @@ describe('dashboard request card', () => {
     const label = '<img src=x onerror=alert(1)>';
     h.nodes.f1!.label = label;
     h.send(h.message('f1', 'flow'));
-    h.click('Go to node');
+    h.click('Go to flow');
     expect(h.notify).toHaveBeenCalledTimes(2);
     for (const [notification] of h.notify.mock.calls) {
       expect(typeof notification).not.toBe('string');
@@ -811,7 +827,7 @@ describe('dashboard request card', () => {
   it('does not notify when switching flows or revealing nodes', () => {
     const h = harness({ activeFlow: 'other' });
     h.send(h.message('f1', 'flow'));
-    h.click('Go to node');
+    h.click('Go to flow');
     expect(h.workspaces).toHaveBeenCalledWith('f1');
     expect(h.notify).not.toHaveBeenCalled();
     const node = harness({ activeFlow: 'f1' });
@@ -825,7 +841,7 @@ describe('dashboard request card', () => {
   it('switches flows when optional active and notification APIs are missing', () => {
     const h = harness({ missingFlowApis: true });
     h.send(h.message('f1', 'flow'));
-    h.click('Go to node');
+    h.click('Go to flow');
     expect(h.workspaces).toHaveBeenCalledTimes(2);
     expect(h.box().props.visible).toBe(true);
   });

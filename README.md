@@ -42,7 +42,7 @@ Configuration).
    typical for Docker; otherwise use `~/.node-red`):
 
    ```bash
-   cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.12/com55-node-red-ai-access-0.2.0-beta.12.tgz
+   cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.13/com55-node-red-ai-access-0.2.0-beta.13.tgz
    ```
 
 2. Restart Node-RED.

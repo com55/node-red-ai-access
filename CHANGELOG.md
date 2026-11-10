@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.13] - 2026-11-10
+
+- Label the "Opened from dashboard" card action Go to flow for flow, tab and
+  subflow targets. Keep Go to node for node, group and config targets.
+
 ## [0.2.0-beta.12] - 2026-11-10
 
 - Rename the dashboard navigation item and section to MCP OAuth.
