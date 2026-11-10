@@ -32,7 +32,7 @@ const publicUrlQueues = new WeakMap<
   {
     tail: Promise<unknown>;
     generation: number;
-    pendingUrl?: string;
+    pendingUrl?: string | undefined;
   }
 >();
 
