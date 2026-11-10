@@ -288,6 +288,7 @@ export function settingsJsPartial(
 }
 
 export class SettingsStore {
+  private disposed = false;
   private publicUrlCheck: PublicUrlCheck | null = null;
   private readonly filePath: string;
   private disk: PersistedAiAccessSettings;
@@ -330,7 +331,12 @@ export class SettingsStore {
     return this.publicUrlCheck ? { ...this.publicUrlCheck } : null;
   }
 
+  dispose(): void {
+    this.disposed = true;
+  }
+
   recordPublicUrlCheck(check: PublicUrlCheck | null): void {
+    if (this.disposed) return;
     this.persist(this.disk, check);
     this.publicUrlCheck = check ? { ...check } : null;
   }
@@ -348,6 +354,7 @@ export class SettingsStore {
    * disk override and fall back to settings.js / default).
    */
   update(partial: PersistedAiAccessSettings): EffectiveAiAccessSettingsWithMeta {
+    if (this.disposed) return this.cached;
     const next = sanitizePartial(partial);
     for (const key of Object.keys(this.settingsJs) as (keyof PersistedAiAccessSettings)[]) {
       delete next[key];
@@ -391,6 +398,7 @@ export class SettingsStore {
   }
 
   private persist(next: PersistedAiAccessSettings, check = this.publicUrlCheck): void {
+    if (this.disposed) return;
     const payload: TrustedStoragePayload = encodeTrustedJson(
       { ...next, publicUrlCheck: check },
       MAX_SETTINGS_JSON_BYTES,

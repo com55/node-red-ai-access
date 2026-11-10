@@ -86,6 +86,7 @@ import { aiRedactingAdapter, rawFlowAdapter } from './secret-redaction.js';
 import { createPluginServices, type CreatePluginServicesOptions } from './services.js';
 import {
   checkPublicUrlHandler,
+  disposePublicUrlChecks,
   getSettingsHandler,
   putSettingsHandler,
 } from './settings-routes.js';
@@ -203,6 +204,7 @@ export function registerRoutes(
       recordLiveSnapshot(rawFlowAdapter(services.flowAdapter), event.config);
   };
   const shutdown = () => {
+    disposePublicUrlChecks(services.settingsStore);
     try {
       oauthStore.dispose();
     } catch (error) {

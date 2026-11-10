@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Fixed
 
+- Support Home and End keys in the Access tokens base URL segmented control,
+  skipping disabled options (#129).
+
+- Stop dashboard Public URL polling when leaving Settings and offer Refresh when
+  the background check outlasts polling (#129).
+
+- Cancel Public URL probes during plugin cleanup and ignore late settings writes
+  after disposal, including when the plugin is re-registered (#129).
+
 - Return immediately after saving a Public URL while serialized background
   checks keep only the latest matching result. Refresh dashboard check results
   and OAuth warnings when checks finish, and match persistent warning text in

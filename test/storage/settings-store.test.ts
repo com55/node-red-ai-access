@@ -35,6 +35,27 @@ describe('mergeAiAccessSettings', () => {
 describe('SettingsStore', () => {
   let userDir: string;
 
+  it('ignores late records and updates after disposal', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new SettingsStore(paths);
+    store.patch({ publicBaseUrl: 'https://example.com' });
+    const file = join(paths.root, 'config.json');
+    const before = readFileSync(file, 'utf8');
+    store.dispose();
+    store.dispose();
+    store.recordPublicUrlCheck({
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+      ok: false,
+      checkedAt: new Date().toISOString(),
+    });
+    store.patch({ publicBaseUrl: 'https://late.example' });
+    expect(store.getPublicUrlCheck()).toBeNull();
+    expect(store.getEffective().publicBaseUrl).toBe('https://example.com');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
   beforeEach(() => {
     userDir = mkdtempSync(join(tmpdir(), 'ai-access-settings-'));
   });

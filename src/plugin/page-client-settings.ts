@@ -265,13 +265,26 @@ function settingsPartSave(): string {
   }
 
   var publicUrlPollGeneration = 0;
+  var publicUrlPollWake = null;
+  function cancelPublicUrlPoll() {
+    publicUrlPollGeneration++;
+    if (publicUrlPollWake) publicUrlPollWake();
+  }
+  function publicUrlPollActive(generation) {
+    var tab = document.querySelector('nav.tabs button[aria-current="page"]');
+    return generation === publicUrlPollGeneration && tab && tab.getAttribute('data-tab') === 'settings';
+  }
   async function pollPublicUrlCheck(url, generation) {
     for (var i = 0; i < 40; i++) {
-      await new Promise(function (resolve) { setTimeout(resolve, 250); });
-      if (generation !== publicUrlPollGeneration) return;
+      if (!publicUrlPollActive(generation)) return;
+      await new Promise(function (resolve) {
+        var timer = setTimeout(function () { publicUrlPollWake = null; resolve(); }, 250);
+        publicUrlPollWake = function () { clearTimeout(timer); publicUrlPollWake = null; resolve(); };
+      });
+      if (!publicUrlPollActive(generation)) return;
       try {
         var data = await api('/settings');
-        if (generation !== publicUrlPollGeneration || !settingsData || settingsData.settings.publicBaseUrl !== url) return;
+        if (!publicUrlPollActive(generation) || !settingsData || settingsData.settings.publicBaseUrl !== url) return;
         if (data.settings.publicBaseUrl !== url) return;
         var check = data.publicUrlCheck;
         if (check && check.publicBaseUrl === url && !check.pending) {
@@ -282,10 +295,19 @@ function settingsPartSave(): string {
         }
       } catch (e) { /* Retry transient failures until timeout. */ }
     }
+    if (publicUrlPollActive(generation)) {
+      setCheckResult('pending', 'Check still running — ');
+      var refresh = document.createElement('button');
+      refresh.type = 'button';
+      refresh.textContent = 'Refresh';
+      refresh.addEventListener('click', loadSettings);
+      $('set-check-result').appendChild(refresh);
+    }
   }
 
   async function persistSettings(payload) {
-    var pollGeneration = ++publicUrlPollGeneration;
+    cancelPublicUrlPoll();
+    var pollGeneration = publicUrlPollGeneration;
     settingsSaving = true;
     try {
       var data = await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });

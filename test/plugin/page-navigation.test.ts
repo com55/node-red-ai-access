@@ -153,6 +153,7 @@ describe('settings navigation', () => {
     const scrollIntoView = vi.fn();
     const animationFrames: (() => void)[] = [];
     const context = {
+      cancelPublicUrlPoll: vi.fn(),
       location,
       history: {
         replaceState(_a: unknown, _b: string, url: string) {
@@ -238,6 +239,7 @@ describe('settings navigation', () => {
       animationFrames.splice(0).forEach(callback => callback());
     };
     const context = {
+      cancelPublicUrlPoll: vi.fn(),
       location,
       history: {
         scrollRestoration: 'auto',

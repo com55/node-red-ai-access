@@ -296,6 +296,7 @@ function loadSettingsClient(
       out.loadOAuthClients = loadOAuthClients;
       out.saveSettingsNow = saveSettingsNow;
       out.persistSettings = persistSettings;
+      out.cancelPublicUrlPoll = cancelPublicUrlPoll;
       out.addSecretPattern = addSecretPattern;
       out.resetSecretPatterns = resetSecretPatterns;
     })();`,
@@ -786,6 +787,70 @@ describe('OAuth Public URL state', () => {
     expect(calls.some(call => call.path === '/settings/check-public-url')).toBe(false);
   });
 
+  it('cancels polling on a dashboard tab change, even after returning to Settings', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = {
+        settings: { publicBaseUrl: 'https://example.com' },
+        publicUrlCheck: { publicBaseUrl: 'https://example.com', pending: true },
+      };
+      const { out, calls } = loadSettingsClient({ '/settings': pending });
+      await out.persistSettings!({});
+      const script = pageClientScript();
+      const start = script.indexOf('  function selectTab(target, options)');
+      const end = script.indexOf('  function loadTabData', start);
+      const selectTab = runInNewContext(script.slice(start, end) + ';selectTab;', {
+        cancelPublicUrlPoll: out.cancelPublicUrlPoll,
+        document: { querySelectorAll: () => [] },
+        clearProposalHighlight: () => {
+          // No proposal highlight in this test.
+        },
+        location: { hash: '' },
+        window: {
+          scrollTo: () => {
+            // No scrolling in this test.
+          },
+        },
+      });
+      selectTab('links', { skipHash: true });
+      selectTab('settings', { skipHash: true });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers Refresh after 40 pending polls and fetches the current result on click', async () => {
+    vi.useFakeTimers();
+    try {
+      const responses = {
+        '/settings': {
+          settings: { publicBaseUrl: 'https://example.com' },
+          publicUrlCheck: { publicBaseUrl: 'https://example.com', pending: true, ok: false },
+        },
+      };
+      const { dom, out, calls } = loadSettingsClient(responses);
+      await out.persistSettings!({});
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(40);
+      const result = dom.get('set-check-result');
+      expect(result.textContent).toBe('Check still running — ');
+      const refresh = result.children[0]!;
+      expect(refresh.tagName).toBe('button');
+      expect(refresh.textContent).toBe('Refresh');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(40);
+      responses['/settings'].publicUrlCheck.pending = false;
+      refresh.listeners.click![0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.textContent).toContain('✗ Failed:');
+      expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(41);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('opens Settings through tab routing and focuses and scrolls to its Public URL field', () => {
     const { dom, selectTab } = loadSettingsClient({});
     const focus = vi.fn();
@@ -885,13 +950,19 @@ describe('OAuth Public URL state', () => {
     publicButton.click = () => (publicButton.onclick as () => void)();
     page.focus = vi.fn();
     publicButton.focus = vi.fn();
-    const arrow = (button: FakeEl, key: string) => {
+    const pressKey = (button: FakeEl, key: string) => {
       const preventDefault = vi.fn();
       (button.onkeydown as (event: unknown) => void)({ key, preventDefault });
       expect(preventDefault).toHaveBeenCalled();
     };
-    arrow(page, 'ArrowRight');
-    expect(page.focus).toHaveBeenCalled();
+    for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+      vi.mocked(page.focus).mockClear();
+      pressKey(page, key);
+      expect(page.focus).toHaveBeenCalledOnce();
+      expect(publicButton.focus).not.toHaveBeenCalled();
+      expect(page.attrs['aria-checked']).toBe('true');
+      expect(page.tabIndex).toBe(0);
+    }
     expect(storage.get('ai-access.token-url-base')).toBe('page');
     expect(
       result.linkCopyMaterial('get_link', 'abc', 'https://server.example/mcp/a/abc').primary
@@ -914,11 +985,31 @@ describe('OAuth Public URL state', () => {
       'https://public.example/mcp/a/abc'
     );
     for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
-      arrow(publicButton, key);
+      pressKey(publicButton, key);
       expect(storage.get('ai-access.token-url-base')).toBe('page');
-      arrow(page, key);
+      pressKey(page, key);
       expect(storage.get('ai-access.token-url-base')).toBe('public');
     }
+    for (const button of [page, publicButton]) {
+      for (const [key, target, other, choice] of [
+        ['Home', page, publicButton, 'page'],
+        ['End', publicButton, page, 'public'],
+      ] as const) {
+        vi.mocked(target.focus).mockClear();
+        vi.mocked(other.focus).mockClear();
+        pressKey(button, key);
+        expect(target.focus).toHaveBeenCalledOnce();
+        expect(other.focus).not.toHaveBeenCalled();
+        expect(target.attrs['aria-checked']).toBe('true');
+        expect(target.tabIndex).toBe(0);
+        expect(other.attrs['aria-checked']).toBe('false');
+        expect(other.tabIndex).toBe(-1);
+        expect(storage.get('ai-access.token-url-base')).toBe(choice);
+      }
+    }
+    const preventDefault = vi.fn();
+    (page.onkeydown as (event: unknown) => void)({ key: 'Tab', preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
     result.updateTokenUrlBase();
     expect(publicButton.attrs['aria-checked']).toBe('true');
     context.settingsData.settings.publicBaseUrl = '';

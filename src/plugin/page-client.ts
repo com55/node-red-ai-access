@@ -820,6 +820,7 @@ function pageClientScriptPartATabs(): string {
   function selectTab(target, options) {
     options = options || {};
     if (!target) return;
+    if (target !== 'settings') cancelPublicUrlPoll();
     document.querySelectorAll('nav.tabs button').forEach(function (b) {
       b.setAttribute('aria-current', b.getAttribute('data-tab') === target ? 'page' : 'false');
     });
@@ -1265,9 +1266,13 @@ function pageClientScriptPartB(): string {
         updateTokenUrlBase();
       };
       button.onkeydown = function (event) {
-        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key) === -1) return;
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].indexOf(event.key) === -1) return;
         event.preventDefault();
-        var next = available && button === page ? publicButton : page;
+        var enabled = [page, publicButton].filter(function (option) { return !option.disabled; });
+        if (!enabled.length) return;
+        var next = event.key === 'Home' ? enabled[0]
+          : event.key === 'End' ? enabled[enabled.length - 1]
+          : enabled[(enabled.indexOf(button) + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + enabled.length) % enabled.length];
         next.click();
         next.focus();
       };

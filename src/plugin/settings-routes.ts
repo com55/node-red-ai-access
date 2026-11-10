@@ -32,6 +32,8 @@ const publicUrlQueues = new WeakMap<
   {
     tail: Promise<unknown>;
     generation: number;
+    disposed: boolean;
+    controller?: AbortController | undefined;
     pendingUrl?: string | undefined;
   }
 >();
@@ -39,10 +41,20 @@ const publicUrlQueues = new WeakMap<
 function publicUrlQueue(store: SettingsStore) {
   let queue = publicUrlQueues.get(store);
   if (!queue) {
-    queue = { tail: Promise.resolve(), generation: 0 };
+    queue = { tail: Promise.resolve(), generation: 0, disposed: false };
     publicUrlQueues.set(store, queue);
   }
   return queue;
+}
+
+/** Cancel queued and active probes before the plugin releases its store. */
+export function disposePublicUrlChecks(store: SettingsStore): void {
+  const queue = publicUrlQueue(store);
+  queue.disposed = true;
+  queue.generation++;
+  queue.pendingUrl = undefined;
+  store.dispose();
+  queue.controller?.abort();
 }
 
 function enqueuePublicUrlCheck(
@@ -52,17 +64,30 @@ function enqueuePublicUrlCheck(
   automatic = false
 ) {
   const queue = publicUrlQueue(store);
+  if (queue.disposed) return Promise.resolve(undefined);
   const generation = automatic ? ++queue.generation : queue.generation;
   if (automatic) queue.pendingUrl = String(value);
   const task = queue.tail
     .then(async () => {
-      if (automatic && generation !== queue.generation) return;
-      return runPublicUrlCheck(RED, store, value, () => generation === queue.generation);
+      if (queue.disposed || (automatic && generation !== queue.generation)) return;
+      const controller = new AbortController();
+      queue.controller = controller;
+      try {
+        return await runPublicUrlCheck(
+          RED,
+          store,
+          value,
+          () => !queue.disposed && generation === queue.generation,
+          controller
+        );
+      } finally {
+        queue.controller = undefined;
+      }
     })
     .finally(() => {
       if (automatic && generation === queue.generation) queue.pendingUrl = undefined;
     });
-  // A persistence failure must not reject an unobserved background task or block the queue.
+  // Keep the queue unblocked after a persistence failure; callers handle task errors.
   queue.tail = task.catch(() => undefined);
   return task;
 }
@@ -315,7 +340,9 @@ export function putSettingsHandler(
         queue.pendingUrl = undefined;
         store.recordPublicUrlCheck(null);
       } else if (effective.publicBaseUrl !== previousUrl) {
-        void enqueuePublicUrlCheck(RED, store, effective.publicBaseUrl, true);
+        void enqueuePublicUrlCheck(RED, store, effective.publicBaseUrl, true).catch(
+          () => undefined
+        );
       }
       const response = settingsResponse(RED, store, req);
       const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
@@ -348,7 +375,8 @@ async function runPublicUrlCheck(
   RED: NodeRedPluginAPI,
   store: SettingsStore,
   value: unknown,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  controller: AbortController
 ) {
   let publicBaseUrl = '';
   const finish = (
@@ -373,7 +401,6 @@ async function runPublicUrlCheck(
     }
     return { httpStatus, body: { ...result, publicUrlCheck: check } };
   };
-  const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   let url: string | undefined;
   try {

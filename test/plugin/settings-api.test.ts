@@ -20,6 +20,7 @@ import { areAiFeaturesEnabled, bindSettingsStore } from '../../src/plugin/settin
 import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 import { resolveAiAccessPaths } from '../../src/storage/paths.js';
+import { SettingsStore } from '../../src/storage/settings-store.js';
 
 async function completedSettings(app: Express) {
   let result = await request(app).get('/mcp/api/v1/settings');
@@ -72,6 +73,7 @@ function createApp(options: {
   app.use(express.json());
 
   const RED: NodeRedPluginAPI = {
+    events: new EventEmitter(),
     settings: {
       userDir: options.userDir,
       httpAdminRoot: '/',
@@ -534,6 +536,48 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(result.body.trustProxy).toBe('loopback');
   });
 
+  it('cancels pending probes on close and starts a fresh queue after registration', async () => {
+    let complete = () => {
+      // Replaced when the probe request starts.
+    };
+    let signal: AbortSignal | undefined;
+    const probe = vi.spyOn(https, 'request').mockImplementation(((_url, options, callback) => {
+      signal = options.signal;
+      const req = new EventEmitter();
+      Object.assign(req, {
+        end: () => {
+          complete = () => callback({ statusCode: 503, destroy: vi.fn() });
+        },
+      });
+      return req;
+    }) as typeof https.request);
+    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+    await request(app).put('/mcp/api/v1/settings').send({ publicBaseUrl: 'https://example.com' });
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    const file = join(userDir, '.ai-access', 'config.json');
+    const before = readFileSync(file, 'utf8');
+    RED.events?.emit('close');
+    expect(signal?.aborted).toBe(true);
+    complete();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    const closed = await request(app).get('/mcp/api/v1/settings');
+    expect(closed.body.publicUrlCheck?.pending).not.toBe(true);
+
+    probe.mockRestore();
+    const freshProbe = mockProbe(200);
+    RED.httpAdmin = express();
+    RED.httpAdmin.use(express.json());
+    registerRoutes(RED);
+    await request(RED.httpAdmin)
+      .put('/mcp/api/v1/settings')
+      .send({ publicBaseUrl: 'https://fresh.example' });
+    const fresh = await completedSettings(RED.httpAdmin);
+    expect(freshProbe).toHaveBeenCalledTimes(1);
+    expect(fresh.body.publicUrlCheck).toMatchObject({ ok: true, status: 200 });
+    RED.events?.emit('close');
+  });
+
   it('automatically checks changed URLs, persists failures, and ignores client metadata', async () => {
     const probe = mockProbe(503);
     const { app } = createApp({ userDir, authenticate: asUser('*') });
@@ -573,6 +617,45 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const restored = await request(restarted).get('/mcp/api/v1/settings');
     expect(restored.body.publicUrlCheck).toEqual(saved.body.publicUrlCheck);
     expect(restored.body.oauthPublicUrlWarning).toBe(saved.body.oauthPublicUrlWarning);
+  });
+
+  it('handles automatic check persistence failures without unhandled rejections and keeps the queue usable', async () => {
+    const probe = mockProbe();
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const record = vi
+      .spyOn(SettingsStore.prototype, 'recordPublicUrlCheck')
+      .mockImplementation(() => {
+        throw new Error('Could not persist check');
+      });
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const saved = await request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ publicBaseUrl: 'https://example.com' });
+      expect(saved.status).toBe(200);
+      await completedSettings(app);
+      // Allow Node to emit any unhandled rejection after the background task settles.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(record).toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+
+      record.mockRestore();
+      const checked = await request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .send({ publicBaseUrl: 'https://example.com' });
+      expect(checked.status).toBe(200);
+      expect(checked.body.publicUrlCheck).toMatchObject({
+        publicBaseUrl: 'https://example.com',
+        ok: true,
+        status: 200,
+      });
+      expect(probe).toHaveBeenCalledTimes(2);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 
   it.each([''])('clearing Public URL %j skips the probe and persists a null check', async value => {
