@@ -281,6 +281,10 @@ function jumpHarness(options: { storageOnly?: boolean } = {}) {
       removeEventListener() {},
     },
     localStorage: {
+      get length() {
+        return stored.size;
+      },
+      key: (index: number) => [...stored.keys()][index] ?? null,
       setItem: (key: string, value: string) => stored.set(key, value),
       getItem: (key: string) => stored.get(key),
       removeItem: (key: string) => stored.delete(key),
@@ -322,7 +326,10 @@ function jumpHarness(options: { storageOnly?: boolean } = {}) {
   return { ctx, opened, toasts, toastOptions, stored, storageEvents, click };
 }
 
-function editorHarness(known: Record<string, 'node' | 'flow'>) {
+function editorHarness(
+  known: Record<string, 'node' | 'flow'>,
+  storage = new Map<string, string>()
+) {
   const revealed: string[] = [];
   const RED = {
     nodes: {
@@ -334,13 +341,18 @@ function editorHarness(known: Record<string, 'node' | 'flow'>) {
     view: { reveal: (id: string) => revealed.push(`node:${id}`) },
     workspaces: { show: (id: string) => revealed.push(`flow:${id}`) },
   };
-  const win: Record<string, unknown> = { name: '', focus() {} };
-  const storage = new Map<string, string>();
+  const win: Record<string, unknown> = {
+    name: '',
+    focus() {},
+    setTimeout,
+    location: { pathname: '/' },
+  };
   runInNewContext(editorRevealListenerScript(), {
     document: { hasFocus: () => true },
     localStorage: {
       getItem: (key: string) => storage.get(key),
       setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
     },
     RED,
     BroadcastChannel: FakeChannel,
@@ -350,6 +362,49 @@ function editorHarness(known: Record<string, 'node' | 'flow'>) {
 }
 
 describe('dashboard → editor jump links', () => {
+  it('recovers from a closed focus owner without opening a live editor window', async () => {
+    vi.useFakeTimers();
+    try {
+      FakeChannel.all = [];
+      const h = jumpHarness();
+      const ed = editorHarness({ n1: 'node' }, h.stored);
+      h.stored.set(
+        'node-red-ai-access:reveal:/:focus',
+        JSON.stringify({ tabId: 'closed', at: Date.now() })
+      );
+      h.click('node', 'n1');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ed.revealed).toEqual(['node:n1']);
+      expect(h.opened).toEqual([]);
+      expect(h.toasts[0]).toContain('Sent to Node-RED editor');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([true, false])(
+    'guards the fallback according to live editor presence (%s)',
+    async live => {
+      vi.useFakeTimers();
+      try {
+        FakeChannel.all = [];
+        const h = jumpHarness({ storageOnly: true });
+        h.stored.set(
+          'node-red-ai-access:reveal:/:presence:other',
+          String(Date.now() - (live ? 0 : 120001))
+        );
+        h.click('node', 'n1');
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(h.opened).toHaveLength(live ? 0 : 1);
+        expect(h.toasts[0]).toContain(
+          live ? 'Switch to the Node-RED editor tab' : 'Opened Node-RED editor in a new tab'
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it('renders #flow/ and #node/ links with escaping and a named target', () => {
     const h = jumpHarness();
     const html = h.ctx.out.link!('node', 'a"b', '<x>');

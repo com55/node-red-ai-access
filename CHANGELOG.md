@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Recover dashboard editor jumps when the last-focused editor tab has closed or
+  stopped responding. Track editor presence, clear owned focus and presence on
+  pagehide, and avoid reloading a live editor when acknowledgement times out.
+  Remove transient reveal claims after handling each request.
+- Isolate dashboard reveals to the last-focused editor tab (#128).
+- Skip scrolling to the top when opening proposal deep-links (#128).
+- Flush the first OAuth client `lastUsedAt` update immediately so Last used
+  survives a restart (#128).
+- Restore the landed-after-withdraw badge style and expose `landedAfterWithdraw`
+  in proposal list and detail API responses (#128).
+- Keep dashboard h2 focus-visible styling subtle (#128).
+- Recognize stable versions with `+build` metadata correctly when detecting
+  prereleases in `release.yml` (#128).
+- Include a generic install URL and install command in prerelease notes (#128).
+
 ## [0.2.0-beta.13] - 2026-11-10
 
 - Label the "Opened from dashboard" card action Go to flow for flow, tab and

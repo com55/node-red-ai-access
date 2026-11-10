@@ -602,7 +602,32 @@ export function editorRevealListenerScript(): string {
   var ch;
   var tabId = Date.now() + '-' + Math.random().toString(36).slice(2);
   var focusKey = key + ':focus';
+  var presenceKey = key + ':presence:' + tabId;
+  var presenceTimer;
+  function recordPresence() {
+    try { localStorage.setItem(presenceKey, String(Date.now())); } catch (e) {}
+  }
+  function startPresence() {
+    recordPresence();
+    if (!presenceTimer && typeof window.setInterval === 'function') presenceTimer = window.setInterval(recordPresence, 5000);
+  }
+  function leave() {
+    if (typeof window.clearInterval === 'function') window.clearInterval(presenceTimer);
+    presenceTimer = null;
+    try {
+      localStorage.removeItem(presenceKey);
+      var focus = JSON.parse(localStorage.getItem(focusKey) || 'null');
+      if (focus && focus.tabId === tabId) localStorage.removeItem(focusKey);
+    } catch (e) {}
+  }
+  startPresence();
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', leave);
+    window.addEventListener('unload', leave);
+    window.addEventListener('pageshow', startPresence);
+  }
   function recordFocus() {
+    recordPresence();
     try { localStorage.setItem(focusKey, JSON.stringify({ tabId: tabId, at: Date.now() })); } catch (e) {}
   }
   if (typeof window.addEventListener === 'function') window.addEventListener('focus', recordFocus);
@@ -613,31 +638,38 @@ export function editorRevealListenerScript(): string {
     try { if (typeof document.hasFocus === 'function' && document.hasFocus()) recordFocus(); } catch (e) {}
   }
   function claim(m, work) {
+    var claimKey = key + ':claim:' + m.reqId;
+    function elect(focused) {
+      try {
+        // Completed requests stay deduplicated after their transient claim is removed.
+        var ack = JSON.parse(localStorage.getItem(key + ':ack') || 'null');
+        if (ack && ack.reqId === m.reqId) return;
+        var owner = JSON.parse(localStorage.getItem(claimKey) || 'null');
+        if (owner && Date.now() - owner.at <= 35000) return;
+        localStorage.setItem(claimKey, JSON.stringify({ tabId: tabId, at: Date.now() }));
+        function finish() {
+          try {
+            var winner = JSON.parse(localStorage.getItem(claimKey) || 'null');
+            if (!winner || winner.tabId !== tabId) return;
+            try { work(); } finally { localStorage.removeItem(claimKey); }
+          } catch (e) {}
+        }
+        if (!focused && typeof window.setTimeout === 'function') window.setTimeout(finish, 50);
+        else finish();
+      } catch (e) {
+        // Without shared storage, only an editor that currently has focus may act.
+        try { if (typeof document !== 'undefined' && typeof document.hasFocus === 'function' && document.hasFocus()) work(); } catch (ignored) {}
+      }
+    }
     try {
       var focus = JSON.parse(localStorage.getItem(focusKey) || 'null');
       if (!focus || typeof focus.tabId !== 'string' || typeof focus.at !== 'number' || !isFinite(focus.at)) focus = null;
-      if (focus && focus.tabId !== tabId) return;
-      var claimKey = key + ':claim:' + m.reqId;
-      var owner = JSON.parse(localStorage.getItem(claimKey) || 'null');
-      if (owner && Date.now() - owner.at <= 35000) return;
-      localStorage.setItem(claimKey, JSON.stringify({ tabId: tabId, at: Date.now() }));
-      if (focus) { work(); return; }
-      // With no focus history, allow competing storage writes to settle before
-      // checking ownership. Retain the claim through the request's validity window.
-      if (typeof window.setTimeout === 'function') {
-        window.setTimeout(function () {
-          try {
-            var winner = JSON.parse(localStorage.getItem(claimKey) || 'null');
-            if (winner && winner.tabId === tabId) work();
-          } catch (e) {}
-        }, 50);
-        return;
-      }
-      work();
-    } catch (e) {
-      // Without shared storage, only an editor that currently has focus may act.
-      try { if (typeof document !== 'undefined' && typeof document.hasFocus === 'function' && document.hasFocus()) work(); } catch (ignored) {}
-    }
+      // Give the last-focused editor a head start, but never let a closed or
+      // unresponsive owner prevent surviving editors from acknowledging.
+      if (focus && focus.tabId !== tabId && typeof window.setTimeout === 'function') {
+        window.setTimeout(function () { elect(false); }, 100);
+      } else elect(!!focus);
+    } catch (e) { elect(false); }
   }
   var seen = Object.create(null);
   var latestTime = 0;

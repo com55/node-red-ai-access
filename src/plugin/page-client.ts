@@ -3880,7 +3880,7 @@ export function pageClientEditorJumpScript(): string {
    * Jump links to the editor (#flow/<id>, #node/<id>). A click first asks an
    * already-open editor tab (BroadcastChannel 'node-red-ai-access', answered by
    * the editor sidebar script) to reveal the item; without an ack within 1000 ms
-   * it opens the editor in a named window so later clicks reuse that tab.
+   * it opens a named window only when no live editor presence remains.
    */
   var EDITOR_WINDOW_NAME = 'node-red-editor';
   var REVEAL_CHANNEL = 'node-red-ai-access';
@@ -3939,6 +3939,23 @@ export function pageClientEditorJumpScript(): string {
       if (opened) return;
       timer = setTimeout(cleanup, 30000);
       opened = true;
+      // Heartbeats expire after crashes. Storage failures are inconclusive: avoid
+      // navigating a named window that could contain undeployed editor changes.
+      var liveEditor = false;
+      try {
+        var prefix = key + ':presence:';
+        for (var i = 0; i < localStorage.length; i++) {
+          var presenceKey = localStorage.key(i);
+          if (!presenceKey || presenceKey.indexOf(prefix) !== 0) continue;
+          var at = Number(localStorage.getItem(presenceKey));
+          if (isFinite(at) && at > 0 && Date.now() - at <= 120000) liveEditor = true;
+          else { localStorage.removeItem(presenceKey); i--; }
+        }
+      } catch (e) { liveEditor = true; }
+      if (liveEditor) {
+        if (typeof showToast === 'function') showToast('Switch to the Node-RED editor tab to open this item', true, { durationMs: 4000 });
+        return;
+      }
       var hashAt = href.indexOf('#');
       var base = hashAt < 0 ? href : href.slice(0, hashAt);
       var hash = hashAt < 0 ? '' : href.slice(hashAt);

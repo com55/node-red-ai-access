@@ -429,21 +429,25 @@ describe('ai-access-sidebar.js served tab', () => {
       text: async () => JSON.stringify({ settings: {}, details: [] }),
     }));
     const { $, load } = runSidebar(fetcher);
+    const storage = new Map<string, string>();
     runInNewContext(editorRevealListenerScript(), {
       $,
       URLSearchParams,
       window: { location: { pathname: '/', search: '?aiAccessReveal=1730000000000-1' } },
       localStorage: {
-        getItem: () =>
-          JSON.stringify({
-            type: 'reveal',
-            id: 'n1',
-            kind: 'node',
-            reqId: '1730000000000-1',
-            sentAt: Date.now(),
-            scope: '/',
-          }),
-        setItem: vi.fn(),
+        getItem: (key: string) =>
+          key === 'node-red-ai-access:reveal:/'
+            ? JSON.stringify({
+                type: 'reveal',
+                id: 'n1',
+                kind: 'node',
+                reqId: '1730000000000-1',
+                sentAt: Date.now(),
+                scope: '/',
+              })
+            : storage.get(key),
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
       },
       RED: { nodes: { node: () => ({ id: 'n1', type: 'inject' }) } },
     });
@@ -659,6 +663,7 @@ describe('dashboard request card', () => {
       missingFlowApis?: boolean;
       storage?: Map<string, string>;
       focused?: boolean;
+      heartbeat?: boolean;
     } = {}
   ) {
     const $ = createFakeJQuery();
@@ -712,6 +717,7 @@ describe('dashboard request card', () => {
           search: options.startupReqId ? '?aiAccessReveal=' + options.startupReqId : '',
         },
         setTimeout,
+        ...(options.heartbeat ? { setInterval, clearInterval } : {}),
         addEventListener: (event: string, fn: (ev: unknown) => void) => {
           callbacks[event] = fn;
         },
@@ -720,6 +726,7 @@ describe('dashboard request card', () => {
       localStorage: {
         getItem: (key: string) => storage.get(key),
         setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
       },
       RED: {
         nodes: {
@@ -762,6 +769,8 @@ describe('dashboard request card', () => {
       text,
       click,
       channel: () => channel.current,
+      pagehide: () => callbacks.pagehide!({}),
+      pageshow: () => callbacks.pageshow!({}),
       focus: () => callbacks.focus!({}),
       visible: () => callbacks.visibilitychange!({}),
     };
@@ -798,6 +807,86 @@ describe('dashboard request card', () => {
       expect(second.show).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('keeps presence fresh until pagehide stops the heartbeat', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ heartbeat: true });
+      const key = [...h.storage.keys()].find(key => key.includes(':presence:'))!;
+      const initial = Number(h.storage.get(key));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(Number(h.storage.get(key))).toBe(initial + 5000);
+      h.pagehide();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.storage.has(key)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a live last-focused owner win even after the survivor wait expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new Map<string, string>();
+      const first = harness({ storage, channel: true });
+      const second = harness({ storage, channel: true });
+      const message = first.message();
+      first.send(message);
+      second.send(message);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(first.reveal).not.toHaveBeenCalled();
+      expect(second.reveal).toHaveBeenCalledExactlyOnceWith('n1');
+      expect(second.channel().postMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears only its owned focus and presence on pagehide, and restores presence on pageshow', () => {
+    const storage = new Map<string, string>();
+    const first = harness({ storage });
+    const second = harness({ storage });
+    const focusKey = 'node-red-ai-access:reveal:/:focus';
+    const ownedFocus = storage.get(focusKey);
+    first.pagehide();
+    expect(storage.get(focusKey)).toBe(ownedFocus);
+    expect([...storage.keys()].filter(key => key.includes(':presence:'))).toHaveLength(1);
+    second.pagehide();
+    expect(storage.has(focusKey)).toBe(false);
+    expect([...storage.keys()].filter(key => key.includes(':presence:'))).toHaveLength(0);
+    second.pageshow();
+    expect([...storage.keys()].filter(key => key.includes(':presence:'))).toHaveLength(1);
+  });
+
+  it('recovers a stale focus owner, acknowledges once and removes the transient claim', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new Map<string, string>();
+      const first = harness({ storage, focused: false, channel: true });
+      const second = harness({ storage, focused: false, channel: true });
+      storage.set(
+        'node-red-ai-access:reveal:/:focus',
+        JSON.stringify({ tabId: 'closed', at: Date.now() })
+      );
+      const message = first.message();
+      first.send(message);
+      second.send(message);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(first.reveal).toHaveBeenCalledExactlyOnceWith('n1');
+      expect(first.channel().postMessage).toHaveBeenCalledExactlyOnceWith({
+        type: 'reveal-ack',
+        reqId: message.reqId,
+        alive: true,
+      });
+      expect(second.reveal).not.toHaveBeenCalled();
+      expect(storage.has('node-red-ai-access:reveal:/:claim:' + message.reqId)).toBe(false);
+      second.send(message);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(second.reveal).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('claims a request in one tab when focus history is missing', async () => {
     vi.useFakeTimers();
