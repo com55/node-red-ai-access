@@ -824,6 +824,59 @@ describe('dashboard request card', () => {
     }
   });
 
+  it('refreshes presence on receipt before a delayed claim completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ focused: false });
+      const key = [...h.storage.keys()].find(key => key.includes(':presence:'))!;
+      await vi.advanceTimersByTimeAsync(4000);
+      h.send();
+      expect(Number(h.storage.get(key))).toBe(Date.now());
+      expect(h.reveal).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(50);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reveal or show a second card when a late owner finishes between a survivor claim read and write', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new Map<string, string>();
+      const survivor = harness({ storage, focused: false, channel: true });
+      const owner = harness({ storage, channel: true });
+      const message = survivor.message();
+      const claimKey = 'node-red-ai-access:reveal:/:claim:' + message.reqId;
+      const get = storage.get.bind(storage);
+      let delivered = false;
+      vi.spyOn(storage, 'get').mockImplementation(key => {
+        const value = get(key);
+        if (key === claimKey && !delivered) {
+          delivered = true;
+          // Both tabs read an empty claim before the late owner completes.
+          owner.send(message);
+        }
+        return value;
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      survivor.send(message);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(delivered).toBe(true);
+      expect(owner.reveal).toHaveBeenCalledExactlyOnceWith('n1');
+      expect(storage.has(claimKey)).toBe(true);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(survivor.reveal).not.toHaveBeenCalled();
+      expect(survivor.show).not.toHaveBeenCalled();
+      expect(survivor.text()).toBe('');
+      expect(survivor.channel().postMessage).not.toHaveBeenCalled();
+      expect(owner.show).toHaveBeenCalledExactlyOnceWith('ai-access');
+      expect(owner.text()).toContain('Opened from dashboard');
+      expect(owner.channel().postMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('lets a live last-focused owner win even after the survivor wait expires', async () => {
     vi.useFakeTimers();
     try {
@@ -856,6 +909,9 @@ describe('dashboard request card', () => {
     expect([...storage.keys()].filter(key => key.includes(':presence:'))).toHaveLength(0);
     second.pageshow();
     expect([...storage.keys()].filter(key => key.includes(':presence:'))).toHaveLength(1);
+    const restoredFocus = JSON.parse(storage.get(focusKey)!);
+    expect(restoredFocus.tabId).toBe(JSON.parse(ownedFocus!).tabId);
+    expect(restoredFocus.at).toBeGreaterThanOrEqual(JSON.parse(ownedFocus!).at);
   });
 
   it('recovers a stale focus owner, acknowledges once and removes the transient claim', async () => {

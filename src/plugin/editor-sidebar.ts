@@ -624,7 +624,13 @@ export function editorRevealListenerScript(): string {
   if (typeof window.addEventListener === 'function') {
     window.addEventListener('pagehide', leave);
     window.addEventListener('unload', leave);
-    window.addEventListener('pageshow', startPresence);
+    window.addEventListener('pageshow', function () {
+      startPresence();
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible' &&
+          typeof document.hasFocus === 'function' && document.hasFocus()) recordFocus();
+      } catch (e) {}
+    });
   }
   function recordFocus() {
     recordPresence();
@@ -649,6 +655,8 @@ export function editorRevealListenerScript(): string {
         localStorage.setItem(claimKey, JSON.stringify({ tabId: tabId, at: Date.now() }));
         function finish() {
           try {
+            var ack = JSON.parse(localStorage.getItem(key + ':ack') || 'null');
+            if (ack && ack.reqId === m.reqId) return;
             var winner = JSON.parse(localStorage.getItem(claimKey) || 'null');
             if (!winner || winner.tabId !== tabId) return;
             try { work(); } finally { localStorage.removeItem(claimKey); }
@@ -725,6 +733,7 @@ export function editorRevealListenerScript(): string {
   }
   function receive(m, fromStartup) {
     if (!valid(m) || seen[m.reqId] || m.sentAt < latestTime) return;
+    recordPresence();
     claim(m, function () {
       if (!valid(m) || seen[m.reqId] || m.sentAt < latestTime) return;
       Object.keys(seen).forEach(function (id) { if (Date.now() - seen[id] > 30000) delete seen[id]; });

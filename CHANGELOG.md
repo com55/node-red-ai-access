@@ -13,7 +13,9 @@ and this project adheres to
 - Recover dashboard editor jumps when the last-focused editor tab has closed or
   stopped responding. Track editor presence, clear owned focus and presence on
   pagehide, and avoid reloading a live editor when acknowledgement times out.
-  Remove transient reveal claims after handling each request.
+  Remove transient reveal claims after handling each request. Prevent duplicate
+  cards when a late owner races a surviving tab, and refresh presence on
+  receipt.
 - Isolate dashboard reveals to the last-focused editor tab (#128).
 - Skip scrolling to the top when opening proposal deep-links (#128).
 - Flush the first OAuth client `lastUsedAt` update immediately so Last used
