@@ -35,6 +35,27 @@ describe('mergeAiAccessSettings', () => {
 describe('SettingsStore', () => {
   let userDir: string;
 
+  it('ignores late records and updates after disposal', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new SettingsStore(paths);
+    store.patch({ publicBaseUrl: 'https://example.com' });
+    const file = join(paths.root, 'config.json');
+    const before = readFileSync(file, 'utf8');
+    store.dispose();
+    store.dispose();
+    store.recordPublicUrlCheck({
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+      ok: false,
+      checkedAt: new Date().toISOString(),
+    });
+    store.patch({ publicBaseUrl: 'https://late.example' });
+    expect(store.getPublicUrlCheck()).toBeNull();
+    expect(store.getEffective().publicBaseUrl).toBe('https://example.com');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
   beforeEach(() => {
     userDir = mkdtempSync(join(tmpdir(), 'ai-access-settings-'));
   });
@@ -50,6 +71,26 @@ describe('SettingsStore', () => {
     expect(() => store.patch({ defaultLinkTtlSeconds: ttl })).toThrow('minimum of 1');
     expect(() => store.patch({ proposalTtlDays: ttl })).toThrow('between 1 and 365');
     expect(store.getDisk()).toEqual({});
+  });
+
+  it('persists internal URL checks across restarts and settings writes without accepting settings overrides', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new SettingsStore(paths);
+    const check = {
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+      ok: false,
+      checkedAt: new Date().toISOString(),
+    };
+    store.recordPublicUrlCheck(check);
+    store.patch({ enabled: false, publicUrlCheck: { ...check, ok: true } } as Parameters<
+      SettingsStore['patch']
+    >[0]);
+    const reloaded = new SettingsStore(paths);
+    expect(reloaded.getPublicUrlCheck()).toEqual(check);
+    expect(reloaded.getDisk()).not.toHaveProperty('publicUrlCheck');
+    expect(reloaded.getEffective().sources).not.toHaveProperty('publicUrlCheck');
   });
 
   it('defaults the maximum registered OAuth clients to 5', () => {
@@ -81,7 +122,7 @@ describe('SettingsStore', () => {
 
     const onDisk = JSON.parse(readFileSync(paths.settings, 'utf8')) as Record<string, unknown>;
     expect(paths.settings).toBe(join(paths.root, 'config.json'));
-    expect(onDisk).toEqual({ enabled: false });
+    expect(onDisk).toEqual({ enabled: false, publicUrlCheck: null });
 
     const reloaded = new SettingsStore(paths, {
       defaultLinkTtlSeconds: 7200,

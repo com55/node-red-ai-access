@@ -131,7 +131,9 @@ nav.tabs button {
 }
 nav.tabs button svg { flex: 0 0 16px; }
 nav.tabs button:hover { background: var(--soft); }
-nav.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Suppress pointer-focus defaults; retain a consistent keyboard indicator. */
+.settings-layout :is(button, summary, [role="button"]):focus { outline: none; }
+.settings-layout :is(button, summary, [role="button"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 nav.tabs button[aria-current="page"] { background: var(--accent-soft); font-weight: 600; }
 nav.tabs button[aria-current="page"]::before {
   content: "";
@@ -144,7 +146,7 @@ nav.tabs button[aria-current="page"]::before {
   background: var(--accent);
 }
 .settings-layout > section.panel { grid-column: 2; grid-row: 1; min-width: 0; }
-section.panel > h2 {
+section.panel h2 {
   padding-bottom: 0.65rem;
   border-bottom: 1px solid var(--line);
   font-size: 1.65rem;
@@ -188,12 +190,23 @@ section.panel {
   padding: 1.15rem 1.25rem 1.35rem;
 }
 section.panel.active { display: block; }
-section.panel > h2 {
+section.panel h2 {
   margin: 0 0 0.75rem;
   font-size: 1.65rem;
 }
-section.panel > h2:focus { outline: none; }
-section.panel > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section.panel h2:focus { outline: none; }
+section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+section.panel .panel-header h2 { margin: 0; }
+.segmented-control { display: inline-flex; margin-left: auto; }
+.segmented-control button { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.65rem; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+.segmented-control button + button { border-left: 0; }
+.segmented-control button:first-child { border-radius: 7px 0 0 7px; }
+.segmented-control button:last-child { border-radius: 0 7px 7px 0; }
+.segmented-control button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.segmented-control button:disabled { opacity: 0.5; cursor: not-allowed; }
+.segmented-control button:focus-visible { position: relative; outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .warning {
   background: var(--warn-bg);
   border: 1px solid var(--warn-border);
@@ -869,11 +882,7 @@ button.id-copy:focus .id-short {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-button.id-copy:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
+button.id-copy:focus-visible { border-radius: 3px; }
 .filter-chip {
   border: 1px solid var(--line);
   background: var(--card);
@@ -1268,6 +1277,36 @@ section.panel { scroll-margin-top: 1rem; }
 .hint { display: block; color: var(--muted); font-size: 0.88rem; font-weight: 400; margin: 0.25rem 0 0; line-height: 1.4; }
 .warn-text { color: #8a5a00; }
 .toggle-row { display: flex; align-items: flex-start; gap: 0.5rem; justify-content: space-between; }
+
+#oauth-enabled {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-block;
+  position: relative;
+  width: 2.4rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--line);
+  cursor: pointer;
+  vertical-align: middle;
+}
+#oauth-enabled::before {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--card);
+}
+#oauth-enabled:checked { background: var(--accent); border-color: var(--accent); }
+#oauth-enabled:checked::before { left: calc(100% - 1.05rem); }
+#oauth-enabled:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#oauth-enabled:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .switch-label { display: flex; gap: 0.6rem; align-items: flex-start; cursor: pointer; }
 .switch-label input { margin-top: 0.25rem; width: 1.05rem; height: 1.05rem; flex: 0 0 auto; }
 .lock-badge {

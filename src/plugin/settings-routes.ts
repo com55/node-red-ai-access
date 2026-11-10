@@ -26,6 +26,72 @@ import {
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
+// One queue per settings store, shared by automatic and manual checks.
+const publicUrlQueues = new WeakMap<
+  SettingsStore,
+  {
+    tail: Promise<unknown>;
+    generation: number;
+    disposed: boolean;
+    controller?: AbortController | undefined;
+    pendingUrl?: string | undefined;
+  }
+>();
+
+function publicUrlQueue(store: SettingsStore) {
+  let queue = publicUrlQueues.get(store);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), generation: 0, disposed: false };
+    publicUrlQueues.set(store, queue);
+  }
+  return queue;
+}
+
+/** Cancel queued and active probes before the plugin releases its store. */
+export function disposePublicUrlChecks(store: SettingsStore): void {
+  const queue = publicUrlQueue(store);
+  queue.disposed = true;
+  queue.generation++;
+  queue.pendingUrl = undefined;
+  store.dispose();
+  queue.controller?.abort();
+}
+
+function enqueuePublicUrlCheck(
+  RED: NodeRedPluginAPI,
+  store: SettingsStore,
+  value: unknown,
+  automatic = false
+) {
+  const queue = publicUrlQueue(store);
+  if (queue.disposed) return Promise.resolve(undefined);
+  const generation = automatic ? ++queue.generation : queue.generation;
+  if (automatic) queue.pendingUrl = String(value);
+  const task = queue.tail
+    .then(async () => {
+      if (queue.disposed || (automatic && generation !== queue.generation)) return;
+      const controller = new AbortController();
+      queue.controller = controller;
+      try {
+        return await runPublicUrlCheck(
+          RED,
+          store,
+          value,
+          () => !queue.disposed && generation === queue.generation,
+          controller
+        );
+      } finally {
+        queue.controller = undefined;
+      }
+    })
+    .finally(() => {
+      if (automatic && generation === queue.generation) queue.pendingUrl = undefined;
+    });
+  // Keep the queue unblocked after a persistence failure; callers handle task errors.
+  queue.tail = task.catch(() => undefined);
+  return task;
+}
+
 function mcpPageUrl(RED: NodeRedPluginAPI): string {
   return dashboardPath(RED.settings.httpAdminRoot);
 }
@@ -54,6 +120,8 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
   const { sources, ...settings } = store.getEffective();
   const { permission } = describeAccess(RED, req);
   const adminAuthEnabled = isAdminAuthEnabled(RED.settings);
+  const pending =
+    publicUrlQueues.get(store)?.pendingUrl === settings.publicBaseUrl && !!settings.publicBaseUrl;
   return {
     ok: true,
     adminAuthEnabled,
@@ -63,7 +131,17 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     apiBase: mcpApiBase(RED.settings.httpAdminRoot),
     // Add future settings to the shared effective type; sources also drives locks.
     settings,
-    oauthPublicUrlWarning: oauthPublicUrlWarning(settings.publicBaseUrl),
+    publicUrlCheck: pending
+      ? { publicBaseUrl: settings.publicBaseUrl, pending: true as const }
+      : store.getPublicUrlCheck(),
+    oauthPublicUrlWarning:
+      settings.oauth.enabled &&
+      (!settings.publicBaseUrl ||
+        (!pending &&
+          store.getPublicUrlCheck()?.publicBaseUrl === settings.publicBaseUrl &&
+          store.getPublicUrlCheck()?.ok === false))
+        ? 'OAuth discovery may fail. Set a reachable Public URL and check it.'
+        : oauthPublicUrlWarning(settings.publicBaseUrl),
     sources,
     disk: store.getDisk(),
     trustProxy: normalizeTrustProxy(req.app.get('trust proxy')),
@@ -249,12 +327,23 @@ export function putSettingsHandler(
     }
 
     try {
+      const previousUrl = store.getEffective().publicBaseUrl;
       const effective = store.patch(patch, reset);
       bindPublicBaseUrl(effective.publicBaseUrl);
       linkStore.configureDefaults({
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,
         maxActiveLinks: effective.maxActiveLinks,
       });
+      if (!effective.publicBaseUrl) {
+        const queue = publicUrlQueue(store);
+        queue.generation++;
+        queue.pendingUrl = undefined;
+        store.recordPublicUrlCheck(null);
+      } else if (effective.publicBaseUrl !== previousUrl) {
+        void enqueuePublicUrlCheck(RED, store, effective.publicBaseUrl, true).catch(
+          () => undefined
+        );
+      }
       const response = settingsResponse(RED, store, req);
       const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
       const literal = publicUrl
@@ -282,70 +371,105 @@ export function putSettingsHandler(
 }
 
 /** Star-only outbound probe; never follow redirects or fetch a caller-supplied path. */
-export function checkPublicUrlHandler(RED: NodeRedPluginAPI) {
-  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    let url: string | undefined;
-    try {
-      let target;
-      try {
-        const settings = RED.settings as { uiPort?: number };
-        const server = (
-          RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
-        ).server;
-        const address = server?.address();
-        const value = (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl;
-        const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
-        const loopback =
-          host
-            .toLowerCase()
-            .replace(/^\[|\]$/g, '')
-            .replace(/\.$/, '') === 'localhost' ||
-          classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
-        if (loopback && typeof address === 'string') {
-          throw new Error(
-            'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
-          );
-        }
-        const port =
-          address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
-        target = await preparePublicUrlCheck(
-          (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl,
-          port,
-          controller.signal
-        );
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
-        return;
-      }
-      url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
-      const status = await requestPublicUrlCheck(
-        target,
-        mcpApiBase(RED.settings.httpAdminRoot),
-        controller.signal
-      );
-      const result = { status, ok: status >= 200 && status < 300 };
-      res.json({
-        ok: result.ok,
-        status: result.status,
-        url,
-        message: result.ok
-          ? 'Discovery endpoint is reachable'
-          : `Discovery endpoint returned HTTP ${result.status}`,
-      });
-    } catch {
-      res.json({
-        ok: false,
-        status: null,
-        url,
-        error: controller.signal.aborted
-          ? 'Public URL check timed out after 5 seconds'
-          : 'Could not reach the discovery endpoint',
-      });
-    } finally {
-      clearTimeout(timer);
+async function runPublicUrlCheck(
+  RED: NodeRedPluginAPI,
+  store: SettingsStore,
+  value: unknown,
+  isCurrent: () => boolean,
+  controller: AbortController
+) {
+  let publicBaseUrl = '';
+  const finish = (
+    result: {
+      ok: boolean;
+      status: number | null;
+      url?: string | undefined;
+      message?: string;
+      error?: string;
+      code?: string;
+    },
+    httpStatus = 200
+  ) => {
+    const check = {
+      publicBaseUrl,
+      status: result.status,
+      ok: result.ok,
+      checkedAt: new Date().toISOString(),
+    };
+    if (isCurrent() && publicBaseUrl && publicBaseUrl === store.getEffective().publicBaseUrl) {
+      store.recordPublicUrlCheck(check);
     }
+    return { httpStatus, body: { ...result, publicUrlCheck: check } };
+  };
+  const timer = setTimeout(() => controller.abort(), 5000);
+  let url: string | undefined;
+  try {
+    let target;
+    try {
+      publicBaseUrl = validateSettingsPublicBaseUrl(value);
+      const settings = RED.settings as { uiPort?: number };
+      const server = (
+        RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
+      ).server;
+      const address = server?.address();
+      const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
+      const loopback =
+        host
+          .toLowerCase()
+          .replace(/^\[|\]$/g, '')
+          .replace(/\.$/, '') === 'localhost' ||
+        classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
+      if (loopback && typeof address === 'string') {
+        throw new Error(
+          'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
+        );
+      }
+      const port =
+        address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
+      target = await preparePublicUrlCheck(value, port, controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      return finish(
+        { ok: false, status: null, error: (error as Error).message, code: 'invalid_body' },
+        400
+      );
+    }
+    url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
+    const status = await requestPublicUrlCheck(
+      target,
+      mcpApiBase(RED.settings.httpAdminRoot),
+      controller.signal
+    );
+    const result = { status, ok: status >= 200 && status < 300 };
+    return finish({
+      ok: result.ok,
+      status: result.status,
+      url,
+      message: result.ok
+        ? 'Discovery endpoint is reachable'
+        : `Discovery endpoint returned HTTP ${result.status}`,
+    });
+  } catch {
+    return finish({
+      ok: false,
+      status: null,
+      url,
+      error: controller.signal.aborted
+        ? 'Public URL check timed out after 5 seconds'
+        : 'Could not reach the discovery endpoint',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function checkPublicUrlHandler(RED: NodeRedPluginAPI, store: SettingsStore) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const result = await enqueuePublicUrlCheck(
+      RED,
+      store,
+      (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl
+    );
+    if (result) res.status(result.httpStatus).json(result.body);
   };
 }

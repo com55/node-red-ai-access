@@ -820,6 +820,7 @@ function pageClientScriptPartATabs(): string {
   function selectTab(target, options) {
     options = options || {};
     if (!target) return;
+    if (target !== 'settings') cancelPublicUrlPoll();
     document.querySelectorAll('nav.tabs button').forEach(function (b) {
       b.setAttribute('aria-current', b.getAttribute('data-tab') === target ? 'page' : 'false');
     });
@@ -853,7 +854,7 @@ function pageClientScriptPartATabs(): string {
   function loadTabData(target) {
     if (target === 'settings') loadSettings();
     if (target === 'oauth') loadOAuthTab();
-    if (target === 'links') loadLinks();
+    if (target === 'links') { loadLinks(); loadSettings(); }
     if (target === 'proposals') loadProposals();
     if (target === 'logs') {
       // Load proposals so older audit rows can resolve titles / flow labels.
@@ -1234,8 +1235,54 @@ function pageClientScriptPartB(): string {
     };
   }
 
+  var TOKEN_URL_BASE_KEY = 'ai-access.token-url-base';
+  function tokenUrlBaseChoice() {
+    try { return localStorage.getItem(TOKEN_URL_BASE_KEY) === 'public' ? 'public' : 'page'; }
+    catch (e) { return 'page'; }
+  }
+  function tokenPublicBase() {
+    return settingsData && settingsData.settings && settingsData.settings.publicBaseUrl || '';
+  }
+  function updateTokenUrlBase() {
+    if (!$('token-url-base')) return;
+    var available = !!tokenPublicBase();
+    var page = $('token-url-base-page');
+    var publicButton = $('token-url-base-public');
+    publicButton.disabled = !available;
+    publicButton.setAttribute('aria-disabled', String(!available));
+    publicButton.title = available ? '' : 'Set a Public URL in Settings to use it here.';
+    var choice = available ? tokenUrlBaseChoice() : 'page';
+    if (!available) {
+      try { localStorage.setItem(TOKEN_URL_BASE_KEY, 'page'); } catch (e) { /* storage unavailable */ }
+    }
+    [page, publicButton].forEach(function (button, index) {
+      var value = index === 0 ? 'page' : 'public';
+      button.setAttribute('aria-checked', String(choice === value));
+      button.tabIndex = choice === value ? 0 : -1;
+      button.onclick = function () {
+        if (button.disabled) return;
+        try { localStorage.setItem(TOKEN_URL_BASE_KEY, value); }
+        catch (e) { /* storage unavailable */ }
+        updateTokenUrlBase();
+      };
+      button.onkeydown = function (event) {
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].indexOf(event.key) === -1) return;
+        event.preventDefault();
+        var enabled = [page, publicButton].filter(function (option) { return !option.disabled; });
+        if (!enabled.length) return;
+        var next = event.key === 'Home' ? enabled[0]
+          : event.key === 'End' ? enabled[enabled.length - 1]
+          : enabled[(enabled.indexOf(button) + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + enabled.length) % enabled.length];
+        next.click();
+        next.focus();
+      };
+    });
+    renderTokenUsage();
+  }
+
   function linkCopyMaterial(kind, token, url) {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
+    if (tokenUrlBaseChoice() === 'public' && tokenPublicBase()) origin = tokenPublicBase().replace(/\\/$/, '');
     var base = origin + apiBase;
     var rpc = origin + mcpRpc;
     var k = normalizeLinkKind(kind);
@@ -1281,9 +1328,9 @@ function pageClientScriptPartB(): string {
         mcpSnippets: snippets
       };
     }
-    var getLink = url || (tok
+    var getLink = tok
       ? (origin + (apiBase.replace(/\\/mcp\\/api\\/v1\\/?$/, '/mcp/a/') + tok))
-      : '');
+      : (url ? origin + new URL(url, location.origin).pathname : '');
     return {
       kind: 'get_link',
       label: 'GET link (chat paste)',
@@ -3776,6 +3823,7 @@ function pageClientScriptPartDBoot(): string {
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId(), focusHeading: !!location.hash });
       if (initialTab === 'settings') loadSettings();
+      if (initialTab === 'links') loadSettings();
       if (initialTab === 'oauth') loadOAuthTab();
       if (aiOn) {
         if (canManage) loadLinks();

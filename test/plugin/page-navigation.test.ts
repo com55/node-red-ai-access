@@ -49,14 +49,32 @@ describe('settings navigation', () => {
       expect(nav).toContain(`role="group" aria-labelledby="nav-group-${label}"`);
     }
     expect(html.match(/<h2 tabindex="-1">/g)).toHaveLength(6);
-    expect(html).toContain('section.panel > h2:focus { outline: none; }');
+    expect(html).toContain('section.panel h2:focus { outline: none; }');
     expect(html).toContain(
-      'section.panel > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+      'section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
     );
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)');
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)');
     expect(nav).toContain('id="proposals-pending-badge"');
     expect(html).toContain('@media (max-width: 768px)');
+  });
+
+  it('uses thin accent rings only for visible focus on dashboard controls', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    expect(html).toContain(
+      '.settings-layout :is(button, summary, [role="button"]):focus { outline: none; }'
+    );
+    expect(html).toContain(
+      '.settings-layout :is(button, summary, [role="button"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+    );
+    // The ID-copy button must not override the shared pointer-focus reset.
+    expect(html).not.toMatch(/button\.id-copy:focus\s*\{[^}]*outline:/);
+    expect(html).toContain('section.panel h2:focus { outline: none; }');
+    expect(html).not.toMatch(/section\.panel > h2:focus\s*\{[^}]*outline:\s*(?!none)[0-9]/);
   });
 
   it('keeps form rows and filters left-aligned with responsive token fields', () => {
@@ -135,6 +153,7 @@ describe('settings navigation', () => {
     const scrollIntoView = vi.fn();
     const animationFrames: (() => void)[] = [];
     const context = {
+      cancelPublicUrlPoll: vi.fn(),
       location,
       history: {
         replaceState(_a: unknown, _b: string, url: string) {
@@ -220,6 +239,7 @@ describe('settings navigation', () => {
       animationFrames.splice(0).forEach(callback => callback());
     };
     const context = {
+      cancelPublicUrlPoll: vi.fn(),
       location,
       history: {
         scrollRestoration: 'auto',

@@ -52,7 +52,8 @@ function settingsPartForm(): string {
 
   function mcpServerUrl() {
     var s = (settingsData && settingsData.settings) || {};
-    var base = s.publicBaseUrl ? String(s.publicBaseUrl).replace(/\\/$/, '') : location.origin;
+    var base = s.publicBaseUrl ? String(s.publicBaseUrl).replace(/\\/$/, '') : '';
+    if (!base) return '';
     return base + mcpRpc.replace(/\\/rpc$/, '');
   }
 
@@ -93,6 +94,7 @@ function settingsPartForm(): string {
     var o = s.oauth || {};
     var oauthLocked = fieldLocked('oauth');
     $('oauth-enabled').checked = !!o.enabled;
+    syncOAuthSwitch();
     setDurationInputs('oauth-access-ttl', o.accessTokenTtlSec || 3600, OAUTH_ACCESS_UNITS);
     setDurationInputs('oauth-refresh-ttl', o.refreshIdleTtlSec || 2592000, OAUTH_REFRESH_UNITS);
     $('oauth-refresh-max').value = String(Math.round((typeof o.refreshMaxLifetimeSec === 'number' ? o.refreshMaxLifetimeSec : 7776000) / 86400));
@@ -100,7 +102,19 @@ function settingsPartForm(): string {
     ['oauth-enabled', 'oauth-access-ttl', 'oauth-access-ttl-unit', 'oauth-refresh-ttl', 'oauth-refresh-ttl-unit',
       'oauth-refresh-max', 'oauth-dcr-cap'].forEach(function (id) { $(id).disabled = ro || oauthLocked; });
     $('lock-oauth').hidden = !oauthLocked;
-    $('oauth-server-url').textContent = mcpServerUrl();
+    var serverUrl = mcpServerUrl();
+    $('oauth-server-url').textContent = serverUrl || 'Set a Public URL to get the MCP server URL';
+    $('oauth-copy-url').disabled = !serverUrl;
+    var check = data.publicUrlCheck;
+    if (check && check.publicBaseUrl === s.publicBaseUrl) renderPublicUrlCheck(check);
+    else setCheckResult('', '');
+    var failed = check && check.publicBaseUrl === s.publicBaseUrl && check.ok === false;
+    var warning = !!o.enabled && (!s.publicBaseUrl || failed);
+    $('oauth-public-url-warning').textContent = !s.publicBaseUrl
+      ? 'Set a Public URL so OAuth clients can discover this server.'
+      : 'The latest Public URL check failed. OAuth clients may not discover this server. Check the Public URL in Settings.';
+    $('oauth-public-url-warning').hidden = !warning;
+    if (typeof updateTokenUrlBase === 'function') updateTokenUrlBase();
   }
 
   function oauthEnableWarning(value) {
@@ -250,11 +264,57 @@ function settingsPartSave(): string {
     else showFlash($(target), msg, false);
   }
 
+  var publicUrlPollGeneration = 0;
+  var publicUrlPollWake = null;
+  function cancelPublicUrlPoll() {
+    publicUrlPollGeneration++;
+    if (publicUrlPollWake) publicUrlPollWake();
+  }
+  function publicUrlPollActive(generation) {
+    var tab = document.querySelector('nav.tabs button[aria-current="page"]');
+    return generation === publicUrlPollGeneration && tab && tab.getAttribute('data-tab') === 'settings';
+  }
+  async function pollPublicUrlCheck(url, generation) {
+    for (var i = 0; i < 40; i++) {
+      if (!publicUrlPollActive(generation)) return;
+      await new Promise(function (resolve) {
+        var timer = setTimeout(function () { publicUrlPollWake = null; resolve(); }, 250);
+        publicUrlPollWake = function () { clearTimeout(timer); publicUrlPollWake = null; resolve(); };
+      });
+      if (!publicUrlPollActive(generation)) return;
+      try {
+        var data = await api('/settings');
+        if (!publicUrlPollActive(generation) || !settingsData || settingsData.settings.publicBaseUrl !== url) return;
+        if (data.settings.publicBaseUrl !== url) return;
+        var check = data.publicUrlCheck;
+        if (check && check.publicBaseUrl === url && !check.pending) {
+          settingsData.publicUrlCheck = check;
+          renderPublicUrlCheck(check);
+          $('oauth-public-url-warning').hidden = !(settingsData.settings.oauth || {}).enabled || check.ok !== false;
+          return;
+        }
+      } catch (e) { /* Retry transient failures until timeout. */ }
+    }
+    if (publicUrlPollActive(generation)) {
+      setCheckResult('pending', 'Check still running — ');
+      var refresh = document.createElement('button');
+      refresh.type = 'button';
+      refresh.textContent = 'Refresh';
+      refresh.addEventListener('click', loadSettings);
+      $('set-check-result').appendChild(refresh);
+    }
+  }
+
   async function persistSettings(payload) {
+    cancelPublicUrlPoll();
+    var pollGeneration = publicUrlPollGeneration;
     settingsSaving = true;
     try {
       var data = await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });
       applySettings(data);
+      if (data.publicUrlCheck && data.publicUrlCheck.pending) {
+        void pollPublicUrlCheck(data.settings.publicBaseUrl, pollGeneration);
+      }
       var warn = data.warnings && data.warnings.length ? data.warnings.join(' ') : '';
       $('set-public-url-warning').textContent = warn;
       $('set-public-url-warning').hidden = !warn;
@@ -293,11 +353,12 @@ function settingsPartSave(): string {
       var warning = oauthEnableWarning(url);
       if (warning) {
         $('oauth-enabled').checked = false;
+        syncOAuthSwitch();
         openConfirmDialog({
           title: 'Enable MCP OAuth?',
           message: warning + ' Enable OAuth anyway?',
           confirmLabel: 'Enable anyway',
-          onConfirm: function () { $('oauth-enabled').checked = true; persistSettings(payload); }
+          onConfirm: function () { $('oauth-enabled').checked = true; syncOAuthSwitch(); persistSettings(payload); }
         });
         return;
       }
@@ -331,15 +392,23 @@ function settingsPartSave(): string {
     el.setAttribute('role', state === 'fail' ? 'alert' : 'status');
   }
 
+  function renderPublicUrlCheck(r) {
+    if (r.pending) { setCheckResult('pending', 'Checking…'); return; }
+    setCheckResult(r.ok ? 'ok' : 'fail', (r.ok ? '✓ Reachable: ' : '✗ Failed: ') +
+      (r.message || r.error || (r.ok ? 'Public URL is reachable.' : 'Public URL check failed.')) +
+      (r.status ? ' (HTTP ' + r.status + ')' : ''));
+  }
+
   async function checkPublicUrl() {
     setCheckResult('pending', 'Checking…');
     try {
       var r = await api('/settings/check-public-url', {
         method: 'POST', body: JSON.stringify({ publicBaseUrl: $('set-public-url').value })
       });
-      setCheckResult(r.ok ? 'ok' : 'fail', (r.ok ? '✓ Reachable: ' : '✗ Failed: ') + (r.message || r.error || '') +
-        (r.status ? ' (HTTP ' + r.status + ')' : ''));
+      await loadSettings();
+      renderPublicUrlCheck(r);
     } catch (e) {
+      await loadSettings();
       setCheckResult('fail', '✗ ' + (e.message || String(e)));
     }
   }
@@ -479,7 +548,17 @@ function settingsPartWire(): string {
     loadOAuthClients();
   }
 
+  function syncOAuthSwitch() {
+    $('oauth-enabled').setAttribute('aria-checked', String($('oauth-enabled').checked));
+  }
+
   (function wireSettings() {
+    $('oauth-enabled').addEventListener('change', syncOAuthSwitch);
+    $('oauth-enabled').addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      if (!$('oauth-enabled').disabled && !ev.repeat) $('oauth-enabled').click();
+    });
     var sec = $('section-settings');
     var oauthSec = $('section-oauth');
     [sec, oauthSec].forEach(function (host) {
@@ -500,8 +579,19 @@ function settingsPartWire(): string {
     });
     $('set-secret-reset').addEventListener('click', resetSecretPatterns);
     $('oauth-refresh').addEventListener('click', function () { loadOAuthStatus(); loadOAuthClients(); });
+    $('oauth-public-url-settings').addEventListener('click', function () {
+      selectTab('settings');
+      var focusPublicUrl = function () {
+        $('set-public-url').focus();
+        $('set-public-url').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(focusPublicUrl);
+      else focusPublicUrl();
+    });
     $('oauth-copy-url').addEventListener('click', function () {
-      copyTextToClipboard($('oauth-server-url').textContent || '');
+      var url = mcpServerUrl();
+      if (!url) return;
+      copyTextToClipboard(url);
       showToast('Server URL copied.', true);
     });
   })();

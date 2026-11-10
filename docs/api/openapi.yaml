@@ -437,7 +437,12 @@ paths:
     post:
       tags: [Status]
       summary: Check the configured public URL
-      description: Probes the MCP endpoint at the supplied HTTPS origin without following redirects.
+      description: >-
+        Probes the MCP endpoint at the supplied HTTPS origin without following redirects.
+        Persists the latest result, including failures, as internal publicUrlCheck metadata.
+        PUT /settings also runs this check when publicBaseUrl changes. Stored results
+        apply only when their exact publicBaseUrl matches the current setting.
+        Clients cannot overwrite this metadata through PUT /settings.
       operationId: checkPublicUrl
       security:
         - AdminSession: []
@@ -463,6 +468,7 @@ paths:
                   ok: { type: boolean }
                   status: { type: [integer, 'null'] }
                   url: { type: string }
+                  publicUrlCheck: { $ref: '#/components/schemas/PublicUrlCheck' }
                   error: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -1945,6 +1951,22 @@ components:
             format: uri
       additionalProperties: false
 
+    PublicUrlCheck:
+      type: object
+      description: Internal persisted check metadata, not an editable or settings.js-lockable setting.
+      required: [publicBaseUrl, status, ok, checkedAt]
+      properties:
+        publicBaseUrl:
+          type: string
+          description: Exact Public URL value checked. Ignore the result for other URL values.
+        status:
+          type: [integer, 'null']
+          description: HTTP status, or null for network, timeout, or validation failures.
+        ok:
+          type: boolean
+        checkedAt:
+          type: string
+          format: date-time
     AiAccessSettingsResponse:
       type: object
       required:
@@ -1971,6 +1993,17 @@ components:
           type: string
         apiBase:
           type: string
+        publicUrlCheck:
+          oneOf:
+            - $ref: '#/components/schemas/PublicUrlCheck'
+            - type: object
+              required: [publicBaseUrl, pending]
+              properties:
+                publicBaseUrl: { type: string }
+                pending: { type: boolean, const: true }
+            - type: 'null'
+          description: >-
+            Latest persisted check, null before any check or when cleared, or {publicBaseUrl, pending: true} while an automatic check is queued or running. PUT persists and returns without waiting for the probe. Poll GET until a non-pending check matches the current Public URL. Checks run serially; superseded automatic checks are skipped and superseded results are ignored.
         settings:
           type: object
           required:

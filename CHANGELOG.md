@@ -10,6 +10,28 @@ and this project adheres to
 
 ### Fixed
 
+- Support Home and End keys in the Access tokens base URL segmented control,
+  skipping disabled options (#129).
+
+- Stop dashboard Public URL polling when leaving Settings and offer Refresh when
+  the background check outlasts polling (#129).
+
+- Cancel Public URL probes during plugin cleanup and ignore late settings writes
+  after disposal, including when the plugin is re-registered (#129).
+
+- Return immediately after saving a Public URL while serialized background
+  checks keep only the latest matching result. Refresh dashboard check results
+  and OAuth warnings when checks finish, and match persistent warning text in
+  the editor sidebar (#129).
+
+- Skip the Public URL probe when clearing the URL and clear persisted check
+  metadata so stale failures are removed (#129).
+- Persist Public URL probe results only for the current validated settings
+  origin, preserving saved failures and OAuth warnings when other URLs are
+  checked (#129).
+
+- Use thin theme-accent focus rings only for keyboard focus on dashboard
+  navigation, details summaries, and buttons.
 - Recover dashboard editor jumps when the last-focused editor tab has closed or
   stopped responding. Track editor presence, clear owned focus and presence on
   pagehide, and avoid reloading a live editor when acknowledgement times out.
@@ -26,6 +48,22 @@ and this project adheres to
 - Recognize stable versions with `+build` metadata correctly when detecting
   prereleases in `release.yml` (#128).
 - Include a generic install URL and install command in prerelease notes (#128).
+
+### Added
+
+- Require a configured Public URL for the MCP OAuth server URL, add a shortcut
+  to its Settings field, and show OAuth discovery warnings for missing URLs or
+  matching persisted failed checks in the dashboard and editor sidebar.
+- Automatically check changed Public URLs using the existing guarded probe and
+  persist check metadata separately from editable settings.
+- Add an Access tokens header segmented control for link and setup base URLs,
+  defaulting to this page's URL. Store the preference only in browser
+  localStorage and disable Public URL selection until configured.
+
+### Changed
+
+- Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
+  switches.
 
 ## [0.2.0-beta.13] - 2026-11-10
 
