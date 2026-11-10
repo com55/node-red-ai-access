@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Node-RED AI Access Plugin API
-  version: 0.2.0-beta.12
+  version: 0.2.0-beta.13
   summary: Temporary, owner-approved Node-RED access for AI clients
   description: |
     REST surface exposed by the `@com55/node-red-ai-access` Node-RED plugin
