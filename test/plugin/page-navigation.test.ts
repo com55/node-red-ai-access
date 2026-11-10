@@ -162,7 +162,7 @@ describe('settings navigation', () => {
     runInNewContext(tabs + focus, context);
     runInNewContext(
       path === 'hash'
-        ? "selectTab(initialTabFromHash(location.hash), { skipHash: true });"
+        ? 'selectTab(initialTabFromHash(location.hash), { skipHash: true });'
         : "selectTab('proposals', { proposalId: 'deep' });",
       context
     );
