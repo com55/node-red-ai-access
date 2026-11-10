@@ -778,13 +778,35 @@ describe('dashboard request card', () => {
     kind => {
       const h = harness({ activeFlow: 'f1' });
       h.send(h.message('f1', kind));
-      expect(h.notify).toHaveBeenCalledExactlyOnceWith('Already on flow "My flow"');
+      expect(h.notify).toHaveBeenCalledTimes(1);
+      expect(h.notify.mock.calls[0]![0].text()).toBe('Already on flow "My flow"');
       expect(h.box().props.visible).toBe(true);
       h.click('Go to node');
       expect(h.notify).toHaveBeenCalledTimes(2);
       expect(h.box().props.visible).toBe(true);
     }
   );
+
+  it('renders an already-active flow label as text in the notification', () => {
+    const h = harness({ activeFlow: 'f1' });
+    const label = '<img src=x onerror=alert(1)>';
+    h.nodes.f1!.label = label;
+    h.send(h.message('f1', 'flow'));
+    h.click('Go to node');
+    expect(h.notify).toHaveBeenCalledTimes(2);
+    for (const [notification] of h.notify.mock.calls) {
+      expect(typeof notification).not.toBe('string');
+      expect(notification.text()).toBe('Already on flow "' + label + '"');
+      expect(notification.elements).toHaveLength(1);
+      expect(notification.elements[0]).toMatchObject({
+        tag: 'p',
+        textContent: 'Already on flow "' + label + '"',
+        htmlContent: '',
+        children: [],
+      });
+    }
+    expect(h.notify).not.toHaveBeenCalledWith(expect.stringContaining(label));
+  });
 
   it('does not notify when switching flows or revealing nodes', () => {
     const h = harness({ activeFlow: 'other' });

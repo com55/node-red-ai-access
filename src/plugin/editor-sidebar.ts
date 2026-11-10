@@ -616,8 +616,8 @@ export function editorRevealListenerScript(): string {
       if ((m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow') && RED.workspaces && typeof RED.workspaces.show === 'function') {
         var alreadyActive = typeof RED.workspaces.active === 'function' && RED.workspaces.active() === m.id;
         RED.workspaces.show(m.id);
-        if (alreadyActive && typeof RED.notify === 'function') {
-          RED.notify('Already on flow "' + (item.label || item.name || m.id) + '"');
+        if (alreadyActive && typeof $ !== 'undefined' && typeof RED.notify === 'function') {
+          RED.notify($('<p></p>').text('Already on flow "' + (item.label || item.name || m.id) + '"'));
         }
       } else if (RED.view && typeof RED.view.reveal === 'function') {
         // Node-RED also handles config nodes here, via RED.sidebar.config.show.
