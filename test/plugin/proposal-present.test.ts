@@ -367,6 +367,17 @@ describe('presentProposal', () => {
 });
 
 describe('presentProposalForApi', () => {
+  it('exposes landedAfterWithdraw only when true', () => {
+    const proposal = baseProposal({ status: 'withdrawn', landedAfterWithdraw: true });
+    expect(presentProposalForApi(proposal).landedAfterWithdraw).toBe(true);
+    expect(proposal.landedAfterWithdraw).toBe(true);
+
+    expect(presentProposalForApi(baseProposal())).not.toHaveProperty('landedAfterWithdraw');
+    expect(presentProposalForApi(baseProposal({ landedAfterWithdraw: false }))).not.toHaveProperty(
+      'landedAfterWithdraw'
+    );
+  });
+
   it('parses include query and omits bodies by default', () => {
     expect([...parseIncludeQuery('payload,baseFlow')].sort()).toEqual(['baseFlow', 'payload']);
     expect(parseIncludeQuery(undefined).size).toBe(0);
