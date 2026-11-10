@@ -335,7 +335,13 @@ function editorHarness(known: Record<string, 'node' | 'flow'>) {
     workspaces: { show: (id: string) => revealed.push(`flow:${id}`) },
   };
   const win: Record<string, unknown> = { name: '', focus() {} };
+  const storage = new Map<string, string>();
   runInNewContext(editorRevealListenerScript(), {
+    document: { hasFocus: () => true },
+    localStorage: {
+      getItem: (key: string) => storage.get(key),
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
     RED,
     BroadcastChannel: FakeChannel,
     window: win,

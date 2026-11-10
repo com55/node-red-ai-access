@@ -56,7 +56,9 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           # Prereleases ship only as GitHub release tarballs.
           # Stable versions also publish to npm.
-          case "$version" in
+          # Only a hyphen before build metadata (+) marks a prerelease.
+          version_without_build="${version%%+*}"
+          case "$version_without_build" in
             *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;;
             *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;;
           esac
@@ -129,6 +131,9 @@ jobs:
           release_args=()
           if [ "$PRERELEASE" = "true" ]; then
             release_args=(--prerelease --latest=false)
+            tarball_name="$(basename "$tarball")"
+            printf '\n## Install\n\n```sh\ncd /data && npm i https://github.com/%s/releases/download/%s/%s\n```\n\nInstall in your Node-RED user directory (`/data` for Docker or `~/.node-red` locally), then restart Node-RED.\n' \
+              "$GITHUB_REPOSITORY" "$TAG" "$tarball_name" >> release-notes.md
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md "${release_args[@]}"

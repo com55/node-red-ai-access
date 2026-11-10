@@ -841,6 +841,8 @@ function pageClientScriptPartATabs(): string {
       }
     }
     selectedLocationHash = String(location.hash || '');
+    // The deep-link focus owns scrolling until it consumes the proposal hash.
+    if (target === 'proposals' && readProposalHashIdFrom(location.hash)) return;
     window.scrollTo(0, 0);
     // Run after history traversal's scroll restoration and fragment scrolling.
     if (window.requestAnimationFrame) {
@@ -2673,7 +2675,7 @@ function pageClientScriptPartB2CardsList(): string {
   return `
   function renderLandedAfterWithdraw(p) {
     return p.status === 'withdrawn' && p.landedAfterWithdraw
-      ? '<span class="status-pill withdrawn">Landed after withdraw</span> ' : '';
+      ? '<span class="status-pill landed-after-withdraw">Landed after withdraw</span> ' : '';
   }
   function renderCompactProposal(p) {
     var title = titleForProposalCard(p);

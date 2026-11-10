@@ -6,13 +6,19 @@ production build and tests. It creates or updates the GitHub release for that
 tag, with the CHANGELOG section as notes and the `npm pack` tarball attached.
 Stable versions (`PRERELEASE=false`) also publish to npm. From 0.2.0-beta.12
 onward, pre-releases (`PRERELEASE=true`) ship only as GitHub pre-release assets
-and never publish to npm.
+and never publish to npm. Only a `-` before any `+` build metadata marks a
+prerelease, so `0.2.0+build` is stable while `0.2.0-beta.13+build` is a
+prerelease.
 
 Install stable releases with `npm install @com55/node-red-ai-access` in the
-Node-RED user directory. For betas, install the GitHub Release tarball instead:
+Node-RED user directory. For pre-releases, pick the one you want from
+[GitHub Releases](https://github.com/com55/node-red-ai-access/releases) and use
+the exact install command in its release notes. The workflow appends this
+command using that tag and its attached tarball. In this template, replace
+`X.Y.Z` with the full version, including its pre-release suffix:
 
 ```sh
-cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.13/com55-node-red-ai-access-0.2.0-beta.13.tgz
+cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/vX.Y.Z/com55-node-red-ai-access-X.Y.Z.tgz
 ```
 
 `/data` is the typical Docker userDir; use `~/.node-red` for a typical local

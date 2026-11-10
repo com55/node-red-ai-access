@@ -657,11 +657,13 @@ describe('dashboard request card', () => {
       minimalApis?: boolean;
       activeFlow?: string;
       missingFlowApis?: boolean;
+      storage?: Map<string, string>;
+      focused?: boolean;
     } = {}
   ) {
     const $ = createFakeJQuery();
     $('<div id="ai-access-dashboard-request"></div>');
-    const storage = new Map<string, string>();
+    const storage = options.storage ?? new Map<string, string>();
     const callbacks: Record<string, (ev: unknown) => void> = {};
     const reveal = vi.fn();
     const show = vi.fn();
@@ -682,7 +684,9 @@ describe('dashboard request card', () => {
       scope: '/',
     });
     if (options.startup) storage.set('node-red-ai-access:reveal:/', JSON.stringify(message()));
-    const channel: { current: { onmessage?: (ev: unknown) => void } } = { current: {} };
+    const channel: {
+      current: { onmessage?: (ev: unknown) => void; postMessage?: ReturnType<typeof vi.fn> };
+    } = { current: {} };
     class Channel {
       onmessage?: (ev: unknown) => void;
       constructor() {
@@ -694,6 +698,13 @@ describe('dashboard request card', () => {
       $,
       Date,
       URLSearchParams,
+      document: {
+        hasFocus: () => options.focused !== false,
+        visibilityState: 'visible',
+        addEventListener: (event: string, fn: (ev: unknown) => void) => {
+          callbacks[event] = fn;
+        },
+      },
       setTimeout,
       window: {
         location: {
@@ -751,8 +762,69 @@ describe('dashboard request card', () => {
       text,
       click,
       channel: () => channel.current,
+      focus: () => callbacks.focus!({}),
+      visible: () => callbacks.visibilitychange!({}),
     };
   }
+
+  it.each([false, true])(
+    'only the last-focused tab handles both transports (reverse=%s)',
+    reverse => {
+      const storage = new Map<string, string>();
+      const first = harness({ storage, channel: true });
+      const second = harness({ storage, channel: true });
+      first.focus();
+      second.focus();
+      const message = first.message();
+      for (const tab of reverse ? [second, first] : [first, second]) {
+        tab.channel().onmessage!({ data: message });
+        tab.send(message);
+      }
+      expect(first.show).not.toHaveBeenCalled();
+      expect(first.reveal).not.toHaveBeenCalled();
+      expect(first.text()).toBe('');
+      expect(first.channel().postMessage).not.toHaveBeenCalled();
+      expect(second.show).toHaveBeenCalledExactlyOnceWith('ai-access');
+      expect(second.reveal).toHaveBeenCalledExactlyOnceWith('n1');
+      expect(second.text()).toContain('Opened from dashboard');
+
+      first.visible();
+      const next = first.message('n2', 'node', '1730000000000-2');
+      second.send(next);
+      first.send(next);
+      expect(first.show).toHaveBeenCalledExactlyOnceWith('ai-access');
+      expect(first.reveal).toHaveBeenCalledExactlyOnceWith('n2');
+      expect(first.text()).toContain('Second');
+      expect(second.show).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('claims a request in one tab when focus history is missing', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new Map<string, string>();
+      const first = harness({ storage, focused: false, channel: true });
+      const second = harness({ storage, focused: false, channel: true });
+      const message = first.message();
+      for (const tab of [first, second]) {
+        tab.channel().onmessage!({ data: message });
+        tab.send(message);
+      }
+      await vi.advanceTimersByTimeAsync(50);
+      expect(first.show).toHaveBeenCalledExactlyOnceWith('ai-access');
+      expect(first.reveal).toHaveBeenCalledExactlyOnceWith('n1');
+      expect(first.text()).toContain('Opened from dashboard');
+      expect(second.show).not.toHaveBeenCalled();
+      expect(second.reveal).not.toHaveBeenCalled();
+      expect(second.text()).toBe('');
+      expect(second.channel().postMessage).not.toHaveBeenCalled();
+      second.focus();
+      second.send(message);
+      expect(second.show).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('activates the sidebar, replaces the card, and reveals only once per request across both transports', () => {
     const h = harness({ channel: true });
@@ -788,6 +860,26 @@ describe('dashboard request card', () => {
     h.click(label);
     expect(h.box().props.visible).toBe(true);
   });
+
+  it.each(['flow', 'tab', 'subflow'])(
+    'switches the card action from Go to flow to Go to node after a %s request',
+    kind => {
+      const h = harness();
+      const card = h.box();
+      const buttonLabels = () =>
+        card.children.filter(child => child.tag === 'button').map(button => button.textContent);
+
+      h.send(h.message('f1', kind));
+      expect(buttonLabels()).toEqual(['Go to flow', '✕']);
+
+      h.send(h.message('n2', 'node', '1730000000000-2'));
+      expect(h.box()).toBe(card);
+      expect(buttonLabels()).toEqual(['Go to node', '✕']);
+      expect(h.text()).toContain('Second');
+      h.click('Go to node');
+      expect(h.reveal).toHaveBeenLastCalledWith('n2');
+    }
+  );
 
   it.each(['flow', 'tab', 'subflow'])(
     'notifies for an already-active %s on arrival and button click',

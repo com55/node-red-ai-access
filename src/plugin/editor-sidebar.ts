@@ -600,6 +600,45 @@ export function editorRevealListenerScript(): string {
   var scope = window.location ? window.location.pathname.replace(/\\/$/, '') + '/' : '/';
   var key = 'node-red-ai-access:reveal:' + scope;
   var ch;
+  var tabId = Date.now() + '-' + Math.random().toString(36).slice(2);
+  var focusKey = key + ':focus';
+  function recordFocus() {
+    try { localStorage.setItem(focusKey, JSON.stringify({ tabId: tabId, at: Date.now() })); } catch (e) {}
+  }
+  if (typeof window.addEventListener === 'function') window.addEventListener('focus', recordFocus);
+  if (typeof document !== 'undefined') {
+    if (typeof document.addEventListener === 'function') document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') recordFocus();
+    });
+    try { if (typeof document.hasFocus === 'function' && document.hasFocus()) recordFocus(); } catch (e) {}
+  }
+  function claim(m, work) {
+    try {
+      var focus = JSON.parse(localStorage.getItem(focusKey) || 'null');
+      if (!focus || typeof focus.tabId !== 'string' || typeof focus.at !== 'number' || !isFinite(focus.at)) focus = null;
+      if (focus && focus.tabId !== tabId) return;
+      var claimKey = key + ':claim:' + m.reqId;
+      var owner = JSON.parse(localStorage.getItem(claimKey) || 'null');
+      if (owner && Date.now() - owner.at <= 35000) return;
+      localStorage.setItem(claimKey, JSON.stringify({ tabId: tabId, at: Date.now() }));
+      if (focus) { work(); return; }
+      // With no focus history, allow competing storage writes to settle before
+      // checking ownership. Retain the claim through the request's validity window.
+      if (typeof window.setTimeout === 'function') {
+        window.setTimeout(function () {
+          try {
+            var winner = JSON.parse(localStorage.getItem(claimKey) || 'null');
+            if (winner && winner.tabId === tabId) work();
+          } catch (e) {}
+        }, 50);
+        return;
+      }
+      work();
+    } catch (e) {
+      // Without shared storage, only an editor that currently has focus may act.
+      try { if (typeof document !== 'undefined' && typeof document.hasFocus === 'function' && document.hasFocus()) work(); } catch (ignored) {}
+    }
+  }
   var seen = Object.create(null);
   var latestTime = 0;
   var latestRequest;
@@ -654,18 +693,21 @@ export function editorRevealListenerScript(): string {
   }
   function receive(m, fromStartup) {
     if (!valid(m) || seen[m.reqId] || m.sentAt < latestTime) return;
-    Object.keys(seen).forEach(function (id) { if (Date.now() - seen[id] > 30000) delete seen[id]; });
-    seen[m.reqId] = Date.now();
-    latestTime = m.sentAt;
-    latestRequest = m.reqId;
-    // Acknowledge liveness before any editor API or card work can block or fail.
-    var ack = { type: 'reveal-ack', reqId: m.reqId, alive: true };
-    if (ch) { try { ch.postMessage(ack); } catch (e) {} }
-    try { localStorage.setItem(key + ':ack', JSON.stringify(ack)); } catch (e) {}
-    // Preserve live reveal behavior. On startup Node-RED handles the URL hash itself.
-    if (!fromStartup) reveal(m);
-    showCard(m);
-    try { if (RED.sidebar && typeof RED.sidebar.show === 'function') RED.sidebar.show('ai-access'); } catch (e) { /* sidebar may be unavailable */ }
+    claim(m, function () {
+      if (!valid(m) || seen[m.reqId] || m.sentAt < latestTime) return;
+      Object.keys(seen).forEach(function (id) { if (Date.now() - seen[id] > 30000) delete seen[id]; });
+      seen[m.reqId] = Date.now();
+      latestTime = m.sentAt;
+      latestRequest = m.reqId;
+      // Acknowledge liveness before any editor API or card work can block or fail.
+      var ack = { type: 'reveal-ack', reqId: m.reqId, alive: true };
+      if (ch) { try { ch.postMessage(ack); } catch (e) {} }
+      try { localStorage.setItem(key + ':ack', JSON.stringify(ack)); } catch (e) {}
+      // Preserve live reveal behavior. On startup Node-RED handles the URL hash itself.
+      if (!fromStartup) reveal(m);
+      showCard(m);
+      try { if (RED.sidebar && typeof RED.sidebar.show === 'function') RED.sidebar.show('ai-access'); } catch (e) { /* sidebar may be unavailable */ }
+    });
   }
   try {
     if (typeof BroadcastChannel !== 'undefined') {

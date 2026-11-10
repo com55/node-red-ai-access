@@ -147,8 +147,8 @@ describe('dashboard auto-rebase review', () => {
       landedAfterWithdraw: true,
       payload: { flowId: 'tab', flow: {} },
     });
-    expect(html).toContain('Landed after withdraw');
-    expect(html).toContain('status-pill');
+    expect(html).toContain('<span class="status-pill landed-after-withdraw">Landed after withdraw</span>');
+    expect(html).toContain('<span class="status-pill withdrawn">withdrawn</span>');
   });
 
   it('renders persisted late deployment alerts', () => {
