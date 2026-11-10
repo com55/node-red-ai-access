@@ -36,6 +36,15 @@ Configuration).
    npm install @com55/node-red-ai-access
    ```
 
+   Stable releases use npm as shown above. From 0.2.0-beta.12 onward,
+   pre-releases are available only as GitHub Release assets, not on npm. To
+   install this beta, use its tarball URL in your user directory (`/data` is
+   typical for Docker; otherwise use `~/.node-red`):
+
+   ```bash
+   cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.12/com55-node-red-ai-access-0.2.0-beta.12.tgz
+   ```
+
 2. Restart Node-RED.
 3. Log in to the editor, then open **`/ai-access`** on the admin root (for
    example `http://localhost:1880/ai-access`, or `{httpAdminRoot}/ai-access`
@@ -54,11 +63,11 @@ grant. The token is shared with the editor, stored under the editor's
 actions stay behind permission checks.
 
 The dashboard has tabs for **Overview** (status and diagnostics), **Settings**,
-**Access tokens**, **OAuth**, **Proposals** and **Audit log**. You can create
-access tokens, review proposals (with a readable node/property diff against the
-live flow), approve or reject changes, and read a human-readable audit log.
-Users with `read` (including guest, if configured) get a read-only view; only
-users with `*` can create/revoke links and approve/reject proposals.
+**Access tokens**, **MCP OAuth**, **Proposals** and **Audit log**. You can
+create access tokens, review proposals (with a readable node/property diff
+against the live flow), approve or reject changes, and read a human-readable
+audit log. Users with `read` (including guest, if configured) get a read-only
+view; only users with `*` can create/revoke links and approve/reject proposals.
 
 ## Configuration
 
@@ -237,8 +246,8 @@ the dashboard **Settings** tab (add, remove, reset to defaults) or lock it with
 Effective values are resolved **without restart** in this order (highest wins):
 
 1. **`settings.js`** — keys present in the `aiAccess` block are locked
-2. **Disk** — `<userDir>/.ai-access/config.json` (dashboard **Settings** /
-   **OAuth** tabs, editor sidebar toggles, or `PUT /mcp/api/v1/settings`)
+2. **Disk** — `<userDir>/.ai-access/config.json` (dashboard **Settings** / **MCP
+   OAuth** tabs, editor sidebar toggles, or `PUT /mcp/api/v1/settings`)
 3. **Built-in defaults** — as documented above
 
 This is a breaking precedence change in 0.2.0: settings.js now wins over disk.
@@ -257,14 +266,15 @@ and an **Open AI Access dashboard** button.
 Everything else is on the dashboard. The **Settings** tab lets `*` admins change
 default deploy type, access-token TTL, maximum active tokens, Public URL (with a
 reachability **Check**), CORS origins, secret redaction patterns, and the three
-rate limits, and shows Express's effective `trust proxy` setting. The **OAuth**
-tab configures token lifetimes and the client limit, lists registered clients
-with revoke buttons, and reports route collisions (linking `http in` nodes to
-the editor) and the `httpNodeRoot: false` metadata fallback. `read` users see
-the same values read-only; writes need `*`, exactly as before. Changes apply
-immediately; changing limits starts fresh rate-limit buckets. Enabling OAuth
-with no Public URL or an HTTP non-loopback URL shows a warning confirmation; it
-does not block the change. Fields set in `settings.js` are locked.
+rate limits, and shows Express's effective `trust proxy` setting. The **MCP
+OAuth** tab configures token lifetimes and the client limit, lists registered
+clients with revoke buttons, and reports route collisions (linking `http in`
+nodes to the editor) and the `httpNodeRoot: false` metadata fallback. `read`
+users see the same values read-only; writes need `*`, exactly as before. Changes
+apply immediately; changing limits starts fresh rate-limit buckets. Enabling
+OAuth with no Public URL or an HTTP non-loopback URL shows a warning
+confirmation; it does not block the change. Fields set in `settings.js` are
+locked.
 
 ### MCP OAuth
 
@@ -276,9 +286,9 @@ at `/.well-known/oauth-authorization-server` and protected resource metadata at
 `/.well-known/oauth-protected-resource/mcp` and
 `/.well-known/oauth-protected-resource`. The issuer is `publicBaseUrl` and the
 resource indicator is `{publicBaseUrl}/mcp`. When `httpNodeRoot` is false,
-metadata is available under the admin `/mcp` path instead; the dashboard OAuth
-tab displays this fallback. Route collisions disable the affected OAuth
-endpoints and appear in the sidebar and on the OAuth tab.
+metadata is available under the admin `/mcp` path instead; the dashboard MCP
+OAuth tab displays this fallback. Route collisions disable the affected OAuth
+endpoints and appear in the sidebar and on the MCP OAuth tab.
 
 Clients use authorization code with PKCE S256 and can request `read` or
 `propose`. Consent uses the Node-RED editor login. Access tokens last one hour
@@ -342,32 +352,32 @@ OpenAPI: **`GET /mcp/api/v1/openapi.yaml`** or
 **`GET /mcp/api/v1/openapi.json`** (also in
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml)).
 
-| Path                                     | Purpose                                                   |
-| ---------------------------------------- | --------------------------------------------------------- |
-| `GET /ai-access`                         | Admin dashboard (overview, settings, tokens, OAuth, …)    |
-| `GET /mcp` (browser)                     | `302` redirect to `/ai-access`                            |
-| `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)                   |
-| `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts              |
-| `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)           |
-| `POST /mcp`                              | Same MCP endpoint (OAuth resource URL for ChatGPT/Claude) |
-| `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint)          |
-| `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                          |
-| `GET /mcp/api/v1/openapi.json`           | OpenAPI 3.1 specification (JSON)                          |
-| `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)                 |
-| `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)               |
-| `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)              |
-| `GET /mcp/api/v1/links`                  | List active access links (`*` only)                       |
-| `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)                 |
-| `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                             |
-| `GET /mcp/api/v1/flows`                  | List flows + rev (admin `read` or access link)            |
-| `GET /mcp/api/v1/flows/:id`              | Get one flow + rev (admin `read` or access link)          |
-| `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)                 |
-| `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)                    |
-| `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)                      |
-| `GET /mcp/api/v1/proposals/:id/diff`     | Diff proposal vs current flow (admin `read`/own)          |
-| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)           |
-| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)                  |
-| `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)                      |
+| Path                                     | Purpose                                                    |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `GET /ai-access`                         | Admin dashboard (overview, settings, tokens, MCP OAuth, …) |
+| `GET /mcp` (browser)                     | `302` redirect to `/ai-access`                             |
+| `GET /mcp/a/<token>`                     | Self-contained GET link (markdown docs)                    |
+| `GET /mcp/a/<token>/…`                   | Token-scoped GET status/flows/propose/drafts               |
+| `POST /mcp/rpc`                          | MCP Streamable HTTP (access-link Bearer; tools)            |
+| `POST /mcp`                              | Same MCP endpoint (OAuth resource URL for ChatGPT/Claude)  |
+| `GET /mcp/api/v1`                        | Discovery index (no auth; endpoints + auth hint)           |
+| `GET /mcp/api/v1/openapi.yaml`           | OpenAPI 3.1 specification (YAML)                           |
+| `GET /mcp/api/v1/openapi.json`           | OpenAPI 3.1 specification (JSON)                           |
+| `GET /mcp/api/v1/status`                 | Plugin status JSON (admin or access link)                  |
+| `GET /mcp/api/v1/settings`               | Effective AI Access settings (admin `read`)                |
+| `PUT /mcp/api/v1/settings`               | Update settings (`*`; persists to disk, hot)               |
+| `GET /mcp/api/v1/links`                  | List active access links (`*` only)                        |
+| `POST /mcp/api/v1/links`                 | Create access link (`*` only; token once)                  |
+| `DELETE /mcp/api/v1/links/:id`           | Revoke access link (`*` only)                              |
+| `GET /mcp/api/v1/flows`                  | List flows + rev (admin `read` or access link)             |
+| `GET /mcp/api/v1/flows/:id`              | Get one flow + rev (admin `read` or access link)           |
+| `POST /mcp/api/v1/proposals`             | Create proposal (access-link Bearer only)                  |
+| `GET /mcp/api/v1/proposals`              | List proposals (admin: all; link: own)                     |
+| `GET /mcp/api/v1/proposals/:id`          | Get proposal (admin: any; link: own)                       |
+| `GET /mcp/api/v1/proposals/:id/diff`     | Diff proposal vs current flow (admin `read`/own)           |
+| `POST /mcp/api/v1/proposals/:id/approve` | Approve + deploy (`*`; optional deploymentType)            |
+| `POST /mcp/api/v1/proposals/:id/reject`  | Reject with reason (`*`; no flow mutate)                   |
+| `GET /mcp/api/v1/logs`                   | Append-only audit log (admin `read`)                       |
 
 ### MCP JSON-RPC (`POST /mcp/rpc`)
 

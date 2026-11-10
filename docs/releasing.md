@@ -2,9 +2,21 @@
 
 Releases are published by the `Release` workflow
 (`.github/workflows/release.yml`). Pushing a `v*` tag runs quality checks, the
-production build and tests. It then publishes the package to npm and creates or
-updates the GitHub release for that tag, with the CHANGELOG section as notes and
-the `npm pack` tarball attached.
+production build and tests. It creates or updates the GitHub release for that
+tag, with the CHANGELOG section as notes and the `npm pack` tarball attached.
+Stable versions (`PRERELEASE=false`) also publish to npm. From 0.2.0-beta.12
+onward, pre-releases (`PRERELEASE=true`) ship only as GitHub pre-release assets
+and never publish to npm.
+
+Install stable releases with `npm install @com55/node-red-ai-access` in the
+Node-RED user directory. For betas, install the GitHub Release tarball instead:
+
+```sh
+cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.12/com55-node-red-ai-access-0.2.0-beta.12.tgz
+```
+
+`/data` is the typical Docker userDir; use `~/.node-red` for a typical local
+installation. Restart Node-RED after installing.
 
 ## Cut a release
 
@@ -27,8 +39,9 @@ the `npm pack` tarball attached.
    ```
 
 The workflow fails early if the tag does not equal `v` + the `package.json`
-version. If that version is already on npm, the publish step is skipped and only
-the GitHub release is updated. Re-running the workflow is safe.
+version. For stable releases, if that version is already on npm, the publish
+step is skipped and only the GitHub release is updated. Re-running the workflow
+is safe.
 
 ### Re-run for an existing tag
 
@@ -38,7 +51,7 @@ publish a version that was tagged before this workflow existed.
 
 ## npm authentication
 
-The publish step supports two modes:
+The stable-only npm publish step supports two modes:
 
 - **Trusted publishing (OIDC, preferred).** No secret is needed. The job has
   `permissions: id-token: write` and uses Node 24 with the latest npm (trusted

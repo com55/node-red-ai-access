@@ -43,7 +43,7 @@ describe('built dist/plugin.cjs UI contracts', () => {
     expect(bundle).toMatch(/How to connect with OAuth/);
     // Navigation items are generated from grouped section definitions.
     expect(bundle).toMatch(/renderMcpPageNav/);
-    expect(bundle).toMatch(/["']oauth["'],\s*["']OAuth["']/);
+    expect(bundle).toMatch(/["']oauth["'],\s*["']MCP OAuth["']/);
     expect(bundle).toMatch(/Enable OAuth anyway/);
   });
 });

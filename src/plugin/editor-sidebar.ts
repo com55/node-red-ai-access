@@ -614,7 +614,11 @@ export function editorRevealListenerScript(): string {
     if (!item) return false;
     try {
       if ((m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow') && RED.workspaces && typeof RED.workspaces.show === 'function') {
+        var alreadyActive = typeof RED.workspaces.active === 'function' && RED.workspaces.active() === m.id;
         RED.workspaces.show(m.id);
+        if (alreadyActive && typeof RED.notify === 'function') {
+          RED.notify('Already on flow "' + (item.label || item.name || m.id) + '"');
+        }
       } else if (RED.view && typeof RED.view.reveal === 'function') {
         // Node-RED also handles config nodes here, via RED.sidebar.config.show.
         RED.view.reveal(m.id);
@@ -637,8 +641,7 @@ export function editorRevealListenerScript(): string {
       (m.kind === 'flow' || m.kind === 'tab' || m.kind === 'subflow' ? 'Flow: ' + (item.label || item.name || m.id) : 'Flow: global configuration / no flow tab')).appendTo(box);
     function dismiss() { box.empty().hide(); }
     $('<button type="button" class="red-ui-button"></button>').text('Go to node').appendTo(box).on('click', function () {
-      if (reveal(m)) dismiss();
-      else details.text('This node or flow could not be opened. It may have been deleted or is unavailable in this editor.');
+      if (!reveal(m)) details.text('This node or flow could not be opened. It may have been deleted or is unavailable in this editor.');
     });
     $('<button type="button" class="red-ui-button" aria-label="Dismiss opened from dashboard"></button>').text('✕').appendTo(box).on('click', dismiss);
   }

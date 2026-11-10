@@ -655,6 +655,8 @@ describe('dashboard request card', () => {
       startupReqId?: string;
       channel?: boolean;
       minimalApis?: boolean;
+      activeFlow?: string;
+      missingFlowApis?: boolean;
     } = {}
   ) {
     const $ = createFakeJQuery();
@@ -664,6 +666,7 @@ describe('dashboard request card', () => {
     const reveal = vi.fn();
     const show = vi.fn();
     const workspaces = vi.fn();
+    const notify = vi.fn();
     const nodes: Record<string, Record<string, unknown>> = {
       n1: { id: 'n1', type: 'inject', name: '<First>', z: 'f1' },
       n2: { id: 'n2', type: 'debug', name: 'Second', z: 'f1' },
@@ -714,7 +717,15 @@ describe('dashboard request card', () => {
         },
         ...(options.minimalApis
           ? {}
-          : { view: { reveal }, workspaces: { show: workspaces }, sidebar: { show } }),
+          : {
+              view: { reveal },
+              workspaces: {
+                show: workspaces,
+                ...(options.missingFlowApis ? {} : { active: () => options.activeFlow }),
+              },
+              ...(options.missingFlowApis ? {} : { notify }),
+              sidebar: { show },
+            }),
       },
     });
     const send = (m = message()) =>
@@ -732,6 +743,7 @@ describe('dashboard request card', () => {
       reveal,
       show,
       workspaces,
+      notify,
       nodes,
       message,
       send,
@@ -755,10 +767,45 @@ describe('dashboard request card', () => {
     expect(h.text()).not.toContain('<First>');
     h.click('Go to node');
     expect(h.reveal).toHaveBeenLastCalledWith('n2');
-    expect(h.box().props.visible).toBe(false);
+    expect(h.box().props.visible).toBe(true);
     h.send(h.message('n1', 'node', '1730000000000-3'));
     h.click('✕');
     expect(h.box().children).toHaveLength(0);
+  });
+
+  it.each(['flow', 'tab', 'subflow'])(
+    'notifies for an already-active %s on arrival and button click',
+    kind => {
+      const h = harness({ activeFlow: 'f1' });
+      h.send(h.message('f1', kind));
+      expect(h.notify).toHaveBeenCalledExactlyOnceWith('Already on flow "My flow"');
+      expect(h.box().props.visible).toBe(true);
+      h.click('Go to node');
+      expect(h.notify).toHaveBeenCalledTimes(2);
+      expect(h.box().props.visible).toBe(true);
+    }
+  );
+
+  it('does not notify when switching flows or revealing nodes', () => {
+    const h = harness({ activeFlow: 'other' });
+    h.send(h.message('f1', 'flow'));
+    h.click('Go to node');
+    expect(h.workspaces).toHaveBeenCalledWith('f1');
+    expect(h.notify).not.toHaveBeenCalled();
+    const node = harness({ activeFlow: 'f1' });
+    node.send();
+    node.click('Go to node');
+    expect(node.reveal).toHaveBeenCalledWith('n1');
+    expect(node.notify).not.toHaveBeenCalled();
+    expect(node.box().props.visible).toBe(true);
+  });
+
+  it('switches flows when optional active and notification APIs are missing', () => {
+    const h = harness({ missingFlowApis: true });
+    h.send(h.message('f1', 'flow'));
+    h.click('Go to node');
+    expect(h.workspaces).toHaveBeenCalledTimes(2);
+    expect(h.box().props.visible).toBe(true);
   });
 
   it('handles deleted nodes, flow tabs and config nodes with guarded editor APIs', () => {

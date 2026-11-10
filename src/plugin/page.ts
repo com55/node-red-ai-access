@@ -86,7 +86,7 @@ function renderMcpPageNav(): string {
         ],
         [
           'oauth',
-          'OAuth',
+          'MCP OAuth',
           'M8 0 1 3v5c0 4 7 8 7 8s7-4 7-8V3L8 0Zm0 1.6 5.5 2.4v4c0 2.5-3.8 5.3-5.5 6.3C6.3 13.3 2.5 10.5 2.5 8V4Z',
         ],
       ],
@@ -349,7 +349,7 @@ function renderMcpPageSettingsSection(): string {
 
 function renderMcpPageOAuthSection(): string {
   return `
-    <section class="panel" id="section-oauth" aria-label="OAuth" hidden>
+    <section class="panel" id="section-oauth" aria-label="MCP OAuth" hidden>
       <h2 tabindex="-1">MCP OAuth</h2>
       <p class="muted">MCP clients (ChatGPT, Claude, …) can request read or propose access through OAuth.</p>
       <div id="oauth-flash" class="flash" hidden></div>
