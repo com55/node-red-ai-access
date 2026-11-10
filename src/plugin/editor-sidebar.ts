@@ -359,7 +359,7 @@ function editorSidebarScriptPartA(): string {
       var check = data.publicUrlCheck;
       var publicUrlFailed = check && check.publicBaseUrl === s.publicBaseUrl && check.ok === false;
       $('#ai-access-oauth-public-url-warning')
-        .text(!s.publicBaseUrl ? 'Set a Public URL on the AI Access dashboard for OAuth discovery.' : 'The latest Public URL check failed. Check the Public URL on the AI Access dashboard.')
+        .text(!s.publicBaseUrl ? 'Set a Public URL so OAuth clients can discover this server.' : 'The latest Public URL check failed. OAuth clients may not discover this server. Check the Public URL in Settings.')
         .toggle(!!oauth.enabled && (!s.publicBaseUrl || publicUrlFailed));
       $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled)
         .attr('aria-checked', String(!!oauth.enabled))

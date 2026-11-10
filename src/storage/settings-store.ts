@@ -330,9 +330,9 @@ export class SettingsStore {
     return this.publicUrlCheck ? { ...this.publicUrlCheck } : null;
   }
 
-  recordPublicUrlCheck(check: PublicUrlCheck): void {
+  recordPublicUrlCheck(check: PublicUrlCheck | null): void {
     this.persist(this.disk, check);
-    this.publicUrlCheck = { ...check };
+    this.publicUrlCheck = check ? { ...check } : null;
   }
 
   getEffective(): EffectiveAiAccessSettingsWithMeta {
@@ -392,7 +392,7 @@ export class SettingsStore {
 
   private persist(next: PersistedAiAccessSettings, check = this.publicUrlCheck): void {
     const payload: TrustedStoragePayload = encodeTrustedJson(
-      { ...next, ...(check ? { publicUrlCheck: check } : {}) },
+      { ...next, publicUrlCheck: check },
       MAX_SETTINGS_JSON_BYTES,
       {
         kind: 'settings',

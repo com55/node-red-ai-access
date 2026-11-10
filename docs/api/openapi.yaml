@@ -1996,8 +1996,14 @@ components:
         publicUrlCheck:
           oneOf:
             - $ref: '#/components/schemas/PublicUrlCheck'
+            - type: object
+              required: [publicBaseUrl, pending]
+              properties:
+                publicBaseUrl: { type: string }
+                pending: { type: boolean, const: true }
             - type: 'null'
-          description: Latest persisted check, or null before any check; only applies to the matching current Public URL.
+          description: >-
+            Latest persisted check, null before any check or when cleared, or {publicBaseUrl, pending: true} while an automatic check is queued or running. PUT persists and returns without waiting for the probe. Poll GET until a non-pending check matches the current Public URL. Checks run serially; superseded automatic checks are skipped and superseded results are ignored.
         settings:
           type: object
           required:

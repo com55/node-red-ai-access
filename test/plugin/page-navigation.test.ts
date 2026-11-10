@@ -49,9 +49,9 @@ describe('settings navigation', () => {
       expect(nav).toContain(`role="group" aria-labelledby="nav-group-${label}"`);
     }
     expect(html.match(/<h2 tabindex="-1">/g)).toHaveLength(6);
-    expect(html).toContain('section.panel > h2:focus { outline: none; }');
+    expect(html).toContain('section.panel h2:focus { outline: none; }');
     expect(html).toContain(
-      'section.panel > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+      'section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
     );
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)');
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)');
@@ -73,7 +73,7 @@ describe('settings navigation', () => {
     );
     // The ID-copy button must not override the shared pointer-focus reset.
     expect(html).not.toMatch(/button\.id-copy:focus\s*\{[^}]*outline:/);
-    expect(html).toContain('section.panel > h2:focus { outline: none; }');
+    expect(html).toContain('section.panel h2:focus { outline: none; }');
     expect(html).not.toMatch(/section\.panel > h2:focus\s*\{[^}]*outline:\s*(?!none)[0-9]/);
   });
 

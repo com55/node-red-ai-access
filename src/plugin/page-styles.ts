@@ -146,7 +146,7 @@ nav.tabs button[aria-current="page"]::before {
   background: var(--accent);
 }
 .settings-layout > section.panel { grid-column: 2; grid-row: 1; min-width: 0; }
-section.panel > h2 {
+section.panel h2 {
   padding-bottom: 0.65rem;
   border-bottom: 1px solid var(--line);
   font-size: 1.65rem;
@@ -190,12 +190,23 @@ section.panel {
   padding: 1.15rem 1.25rem 1.35rem;
 }
 section.panel.active { display: block; }
-section.panel > h2 {
+section.panel h2 {
   margin: 0 0 0.75rem;
   font-size: 1.65rem;
 }
-section.panel > h2:focus { outline: none; }
-section.panel > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section.panel h2:focus { outline: none; }
+section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+section.panel .panel-header h2 { margin: 0; }
+.segmented-control { display: inline-flex; margin-left: auto; }
+.segmented-control button { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.65rem; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+.segmented-control button + button { border-left: 0; }
+.segmented-control button:first-child { border-radius: 7px 0 0 7px; }
+.segmented-control button:last-child { border-radius: 0 7px 7px 0; }
+.segmented-control button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.segmented-control button:disabled { opacity: 0.5; cursor: not-allowed; }
+.segmented-control button:focus-visible { position: relative; outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .warning {
   background: var(--warn-bg);
   border: 1px solid var(--warn-border);

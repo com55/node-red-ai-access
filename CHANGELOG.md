@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Fixed
 
+- Return immediately after saving a Public URL while serialized background
+  checks keep only the latest matching result. Refresh dashboard check results
+  and OAuth warnings when checks finish, and match persistent warning text in
+  the editor sidebar (#129).
+
+- Skip the Public URL probe when clearing the URL and clear persisted check
+  metadata so stale failures are removed (#129).
+- Persist Public URL probe results only for the current validated settings
+  origin, preserving saved failures and OAuth warnings when other URLs are
+  checked (#129).
+
 - Use thin theme-accent focus rings only for keyboard focus on dashboard
   navigation, details summaries, and buttons.
 - Recover dashboard editor jumps when the last-focused editor tab has closed or
@@ -36,9 +47,9 @@ and this project adheres to
   matching persisted failed checks in the dashboard and editor sidebar.
 - Automatically check changed Public URLs using the existing guarded probe and
   persist check metadata separately from editable settings.
-- Add an Access tokens base URL choice for links and setup snippets, defaulting
-  to this page's URL. Store the preference only in browser localStorage and
-  disable Public URL selection until configured.
+- Add an Access tokens header segmented control for link and setup base URLs,
+  defaulting to this page's URL. Store the preference only in browser
+  localStorage and disable Public URL selection until configured.
 
 ### Changed
 

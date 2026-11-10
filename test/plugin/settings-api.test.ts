@@ -21,6 +21,15 @@ import type { NodeRedPluginAPI } from '../../src/plugin/types.js';
 import type { FlowAdapter } from '../../src/runtime/types.js';
 import { resolveAiAccessPaths } from '../../src/storage/paths.js';
 
+async function completedSettings(app: Express) {
+  let result = await request(app).get('/mcp/api/v1/settings');
+  await vi.waitFor(async () => {
+    result = await request(app).get('/mcp/api/v1/settings');
+    expect(result.body.publicUrlCheck?.pending).not.toBe(true);
+  });
+  return result;
+}
+
 const originalLookup = dns.lookup;
 
 function mockDns(addresses = [{ address: '93.184.216.34', family: 4 }]) {
@@ -531,6 +540,11 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     const saved = await request(app)
       .put('/mcp/api/v1/settings')
       .send({ publicBaseUrl: 'https://example.com', oauth: { enabled: true } });
+    expect(saved.body.publicUrlCheck).toEqual({
+      publicBaseUrl: 'https://example.com',
+      pending: true,
+    });
+    saved.body = (await completedSettings(app)).body;
     expect(probe).toHaveBeenCalledTimes(1);
     expect(saved.body.publicUrlCheck).toMatchObject({
       publicBaseUrl: 'https://example.com',
@@ -543,17 +557,164 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
       .send({ publicBaseUrl: 'https://example.com', publicUrlCheck: { ok: true } });
     expect(probe).toHaveBeenCalledTimes(1);
     expect(unchanged.body.publicUrlCheck).toEqual(saved.body.publicUrlCheck);
-    await request(app)
+    const manual = await request(app)
       .post('/mcp/api/v1/settings/check-public-url')
       .send({ publicBaseUrl: 'https://other.example' });
+    expect(manual.body.publicUrlCheck).toMatchObject({
+      publicBaseUrl: 'https://other.example',
+      status: 503,
+      ok: false,
+    });
     const latest = await request(app).get('/mcp/api/v1/settings');
-    expect(latest.body.publicUrlCheck.publicBaseUrl).toBe('https://other.example');
-    expect(latest.body.oauthPublicUrlWarning).toBeNull();
+    expect(latest.body.publicUrlCheck).toEqual(saved.body.publicUrlCheck);
+    expect(latest.body.oauthPublicUrlWarning).toBeTruthy();
+    expect(latest.body.oauthPublicUrlWarning).toBe(saved.body.oauthPublicUrlWarning);
     const restarted = createApp({ userDir, authenticate: asUser('*') }).app;
-    expect((await request(restarted).get('/mcp/api/v1/settings')).body.publicUrlCheck).toEqual(
-      latest.body.publicUrlCheck
+    const restored = await request(restarted).get('/mcp/api/v1/settings');
+    expect(restored.body.publicUrlCheck).toEqual(saved.body.publicUrlCheck);
+    expect(restored.body.oauthPublicUrlWarning).toBe(saved.body.oauthPublicUrlWarning);
+  });
+
+  it.each([''])('clearing Public URL %j skips the probe and persists a null check', async value => {
+    const probe = mockProbe(503);
+    const { app, RED } = createApp({ userDir, authenticate: asUser('*') });
+    const saved = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ publicBaseUrl: 'https://example.com', oauth: { enabled: true } });
+    saved.body = (await completedSettings(app)).body;
+    expect(saved.body.publicUrlCheck.ok).toBe(false);
+    probe.mockClear();
+    vi.mocked(dns.lookup).mockClear();
+    const address = vi.fn(() => ({ port: 1880 }));
+    Object.assign(RED, { server: { address } });
+
+    const cleared = await request(app).put('/mcp/api/v1/settings').send({ publicBaseUrl: value });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.settings.publicBaseUrl).toBe('');
+    expect(cleared.body.publicUrlCheck).toBeNull();
+    expect(cleared.body.oauthPublicUrlWarning).toBeTruthy();
+    expect(address).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    expect(hostnameAllLookups()).toHaveLength(0);
+    expect(
+      JSON.parse(readFileSync(join(userDir, '.ai-access', 'config.json'), 'utf8'))
+    ).toMatchObject({
+      publicBaseUrl: '',
+      publicUrlCheck: null,
+    });
+    expect((await request(app).get('/mcp/api/v1/settings')).body.publicUrlCheck).toBeNull();
+    const restarted = createApp({ userDir, authenticate: asUser('*') }).app;
+    expect((await request(restarted).get('/mcp/api/v1/settings')).body.publicUrlCheck).toBeNull();
+  });
+
+  it('persists manual checks only for the canonical effective URL', async () => {
+    mockProbe(503);
+    const { app } = createApp({
+      userDir,
+      authenticate: asUser('*'),
+      aiAccess: { publicBaseUrl: 'https://example.com' },
+    });
+    const checked = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: '  HTTPS://EXAMPLE.COM:443/  ' });
+    expect(checked.body.publicUrlCheck).toMatchObject({
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+    });
+    expect((await request(app).get('/mcp/api/v1/settings')).body.publicUrlCheck).toEqual(
+      checked.body.publicUrlCheck
     );
   });
+
+  it('returns an unsaved URL check without storing it', async () => {
+    mockProbe();
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const checked = await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'https://other.example/' });
+    expect(checked.body.publicUrlCheck).toMatchObject({
+      publicBaseUrl: 'https://other.example',
+      ok: true,
+    });
+    expect((await request(app).get('/mcp/api/v1/settings')).body.publicUrlCheck).toBeNull();
+    expect(existsSync(join(userDir, '.ai-access', 'config.json'))).toBe(false);
+  });
+
+  it.each(['not a URL', 'https://example.com/path', '', null])(
+    'does not persist invalid manual input %j',
+    async publicBaseUrl => {
+      mockProbe(503);
+      const { app } = createApp({ userDir, authenticate: asUser('*') });
+      const saved = await request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ publicBaseUrl: 'https://example.com' });
+      saved.body = (await completedSettings(app)).body;
+      const checked = await request(app)
+        .post('/mcp/api/v1/settings/check-public-url')
+        .send({ publicBaseUrl });
+      expect(checked.status).toBe(400);
+      expect(checked.body.publicUrlCheck.publicBaseUrl).toBe('');
+      const restarted = createApp({ userDir, authenticate: asUser('*') }).app;
+      expect((await request(restarted).get('/mcp/api/v1/settings')).body.publicUrlCheck).toEqual(
+        saved.body.publicUrlCheck
+      );
+    }
+  );
+
+  it.each(['https://latest.example', 'https://old.example'])(
+    'serializes and deduplicates probes, keeping only the latest result for %s',
+    async latestUrl => {
+      let finishOld!: () => void;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => {
+        started = resolve;
+      });
+      mockProbe(503).mockImplementationOnce(((_url, _options, callback) => {
+        const req = new EventEmitter();
+        Object.assign(req, {
+          end: () => {
+            finishOld = () => callback({ statusCode: 200, destroy: vi.fn() });
+            started();
+          },
+        });
+        return req;
+      }) as typeof https.request);
+      const { app } = createApp({ userDir, authenticate: asUser('*') });
+      const old = request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ publicBaseUrl: 'https://old.example' })
+        .then(result => result);
+      await ready;
+      const current = await request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ publicBaseUrl: 'https://current.example' });
+      expect((await old).body.publicUrlCheck).toEqual({
+        publicBaseUrl: 'https://old.example',
+        pending: true,
+      });
+      expect(current.body.publicUrlCheck).toEqual({
+        publicBaseUrl: 'https://current.example',
+        pending: true,
+      });
+      // The earlier request has returned while its probe is still blocked. New probes wait.
+      expect(https.request).toHaveBeenCalledTimes(1);
+      const skipped = await request(app)
+        .put('/mcp/api/v1/settings')
+        .send({ publicBaseUrl: latestUrl });
+      expect(skipped.body.publicUrlCheck.pending).toBe(true);
+      finishOld();
+      current.body = (await completedSettings(app)).body;
+      expect(https.request).toHaveBeenCalledTimes(2);
+      expect(current.body.publicUrlCheck).toMatchObject({
+        publicBaseUrl: latestUrl,
+        ok: false,
+        status: 503,
+      });
+      expect((await request(app).get('/mcp/api/v1/settings')).body.publicUrlCheck).toEqual(
+        current.body.publicUrlCheck
+      );
+    }
+  );
 
   it('restricts Check to star users and validates its URL before fetching', async () => {
     const fetcher = mockProbe();

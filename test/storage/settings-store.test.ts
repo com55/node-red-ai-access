@@ -101,7 +101,7 @@ describe('SettingsStore', () => {
 
     const onDisk = JSON.parse(readFileSync(paths.settings, 'utf8')) as Record<string, unknown>;
     expect(paths.settings).toBe(join(paths.root, 'config.json'));
-    expect(onDisk).toEqual({ enabled: false });
+    expect(onDisk).toEqual({ enabled: false, publicUrlCheck: null });
 
     const reloaded = new SettingsStore(paths, {
       defaultLinkTtlSeconds: 7200,

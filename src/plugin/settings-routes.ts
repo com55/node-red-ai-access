@@ -26,6 +26,47 @@ import {
 import { isAdminAuthEnabled } from './settings.js';
 import type { AuthenticatedRequest, NodeRedPluginAPI } from './types.js';
 
+// One queue per settings store, shared by automatic and manual checks.
+const publicUrlQueues = new WeakMap<
+  SettingsStore,
+  {
+    tail: Promise<unknown>;
+    generation: number;
+    pendingUrl?: string;
+  }
+>();
+
+function publicUrlQueue(store: SettingsStore) {
+  let queue = publicUrlQueues.get(store);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), generation: 0 };
+    publicUrlQueues.set(store, queue);
+  }
+  return queue;
+}
+
+function enqueuePublicUrlCheck(
+  RED: NodeRedPluginAPI,
+  store: SettingsStore,
+  value: unknown,
+  automatic = false
+) {
+  const queue = publicUrlQueue(store);
+  const generation = automatic ? ++queue.generation : queue.generation;
+  if (automatic) queue.pendingUrl = String(value);
+  const task = queue.tail
+    .then(async () => {
+      if (automatic && generation !== queue.generation) return;
+      return runPublicUrlCheck(RED, store, value, () => generation === queue.generation);
+    })
+    .finally(() => {
+      if (automatic && generation === queue.generation) queue.pendingUrl = undefined;
+    });
+  // A persistence failure must not reject an unobserved background task or block the queue.
+  queue.tail = task.catch(() => undefined);
+  return task;
+}
+
 function mcpPageUrl(RED: NodeRedPluginAPI): string {
   return dashboardPath(RED.settings.httpAdminRoot);
 }
@@ -54,6 +95,8 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
   const { sources, ...settings } = store.getEffective();
   const { permission } = describeAccess(RED, req);
   const adminAuthEnabled = isAdminAuthEnabled(RED.settings);
+  const pending =
+    publicUrlQueues.get(store)?.pendingUrl === settings.publicBaseUrl && !!settings.publicBaseUrl;
   return {
     ok: true,
     adminAuthEnabled,
@@ -63,11 +106,14 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     apiBase: mcpApiBase(RED.settings.httpAdminRoot),
     // Add future settings to the shared effective type; sources also drives locks.
     settings,
-    publicUrlCheck: store.getPublicUrlCheck(),
+    publicUrlCheck: pending
+      ? { publicBaseUrl: settings.publicBaseUrl, pending: true as const }
+      : store.getPublicUrlCheck(),
     oauthPublicUrlWarning:
       settings.oauth.enabled &&
       (!settings.publicBaseUrl ||
-        (store.getPublicUrlCheck()?.publicBaseUrl === settings.publicBaseUrl &&
+        (!pending &&
+          store.getPublicUrlCheck()?.publicBaseUrl === settings.publicBaseUrl &&
           store.getPublicUrlCheck()?.ok === false))
         ? 'OAuth discovery may fail. Set a reachable Public URL and check it.'
         : oauthPublicUrlWarning(settings.publicBaseUrl),
@@ -166,7 +212,7 @@ export function putSettingsHandler(
   store: SettingsStore,
   linkStore: AccessLinkStore
 ) {
-  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  return (req: AuthenticatedRequest, res: Response): void => {
     const raw: unknown = req.body;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       res
@@ -263,8 +309,13 @@ export function putSettingsHandler(
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,
         maxActiveLinks: effective.maxActiveLinks,
       });
-      if (effective.publicBaseUrl !== previousUrl) {
-        await runPublicUrlCheck(RED, store, effective.publicBaseUrl);
+      if (!effective.publicBaseUrl) {
+        const queue = publicUrlQueue(store);
+        queue.generation++;
+        queue.pendingUrl = undefined;
+        store.recordPublicUrlCheck(null);
+      } else if (effective.publicBaseUrl !== previousUrl) {
+        void enqueuePublicUrlCheck(RED, store, effective.publicBaseUrl, true);
       }
       const response = settingsResponse(RED, store, req);
       const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
@@ -293,8 +344,13 @@ export function putSettingsHandler(
 }
 
 /** Star-only outbound probe; never follow redirects or fetch a caller-supplied path. */
-async function runPublicUrlCheck(RED: NodeRedPluginAPI, store: SettingsStore, value: unknown) {
-  const publicBaseUrl = typeof value === 'string' ? value : '';
+async function runPublicUrlCheck(
+  RED: NodeRedPluginAPI,
+  store: SettingsStore,
+  value: unknown,
+  isCurrent: () => boolean
+) {
+  let publicBaseUrl = '';
   const finish = (
     result: {
       ok: boolean;
@@ -312,7 +368,9 @@ async function runPublicUrlCheck(RED: NodeRedPluginAPI, store: SettingsStore, va
       ok: result.ok,
       checkedAt: new Date().toISOString(),
     };
-    store.recordPublicUrlCheck(check);
+    if (isCurrent() && publicBaseUrl && publicBaseUrl === store.getEffective().publicBaseUrl) {
+      store.recordPublicUrlCheck(check);
+    }
     return { httpStatus, body: { ...result, publicUrlCheck: check } };
   };
   const controller = new AbortController();
@@ -321,6 +379,7 @@ async function runPublicUrlCheck(RED: NodeRedPluginAPI, store: SettingsStore, va
   try {
     let target;
     try {
+      publicBaseUrl = validateSettingsPublicBaseUrl(value);
       const settings = RED.settings as { uiPort?: number };
       const server = (
         RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
@@ -379,11 +438,11 @@ async function runPublicUrlCheck(RED: NodeRedPluginAPI, store: SettingsStore, va
 
 export function checkPublicUrlHandler(RED: NodeRedPluginAPI, store: SettingsStore) {
   return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const result = await runPublicUrlCheck(
+    const result = await enqueuePublicUrlCheck(
       RED,
       store,
       (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl
     );
-    res.status(result.httpStatus).json(result.body);
+    if (result) res.status(result.httpStatus).json(result.body);
   };
 }

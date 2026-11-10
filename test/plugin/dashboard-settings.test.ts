@@ -758,18 +758,31 @@ describe('OAuth Public URL state', () => {
     expect(result.className).toBe('check-result');
   });
 
-  it('shows the auto-check result returned when saving a changed Public URL', async () => {
-    const { dom, out, calls } = loadSettingsClient({
+  it('polls pending saves and updates the check result and OAuth warning', async () => {
+    const responses = {
       '/settings': {
-        settings: { publicBaseUrl: 'https://new.example' },
-        publicUrlCheck: { publicBaseUrl: 'https://new.example', ok: false, status: 502 },
+        settings: { publicBaseUrl: 'https://new.example', oauth: { enabled: true } },
+        publicUrlCheck: { publicBaseUrl: 'https://new.example', pending: true } as Record<
+          string,
+          unknown
+        >,
       },
-    });
+    };
+    const { dom, out, calls } = loadSettingsClient(responses);
     out.applySettings!({ settings: { publicBaseUrl: 'https://old.example' } });
     await out.persistSettings!({ publicBaseUrl: 'https://new.example' });
-    expect(dom.get('set-check-result').hidden).toBe(false);
-    expect(dom.get('set-check-result').textContent).toContain('✗ Failed:');
-    expect(dom.get('set-check-result').textContent).toContain('HTTP 502');
+    expect(dom.get('set-check-result').textContent).toBe('Checking…');
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
+    responses['/settings'].publicUrlCheck = {
+      publicBaseUrl: 'https://new.example',
+      ok: false,
+      status: 502,
+    };
+    await vi.waitFor(() => {
+      expect(dom.get('set-check-result').textContent).toContain('HTTP 502');
+      expect(dom.get('oauth-public-url-warning').hidden).toBe(false);
+    });
+    expect(calls.some(call => call.path === '/settings' && !call.options)).toBe(true);
     expect(calls.some(call => call.path === '/settings/check-public-url')).toBe(false);
   });
 
@@ -810,6 +823,25 @@ describe('OAuth Public URL state', () => {
     expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
   });
 
+  it('places the base URL radiogroup alongside the Access tokens heading', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    expect(html).toMatch(
+      /class="panel-header">\s*<h2 tabindex="-1">Access tokens<\/h2>\s*<div id="token-url-base" class="segmented-control" role="radiogroup" aria-label="Base URL for links and setup">/
+    );
+    expect(html).toContain(
+      'id="token-url-base-page" role="radio" aria-checked="true" tabindex="0"'
+    );
+    expect(html).toContain(
+      'id="token-url-base-public" role="radio" aria-checked="false" tabindex="-1" disabled aria-disabled="true" title="Set a Public URL in Settings to use it here."'
+    );
+    expect(html).not.toContain('<select id="token-url-base"');
+    expect(html).not.toContain('id="token-url-base-hint"');
+  });
+
   it('uses a browser preference for all token material and disables Public URL when empty', () => {
     const script = pageClientScript();
     const start = script.indexOf('  var TOKEN_URL_BASE_KEY');
@@ -839,16 +871,38 @@ describe('OAuth Public URL state', () => {
       context
     );
     result.updateTokenUrlBase();
-    expect(dom.get('token-url-base').value).toBe('page');
+    expect(dom.get('token-url-base-page').attrs['aria-checked']).toBe('true');
+    expect(dom.get('token-url-base-page').tabIndex).toBe(0);
     expect(dom.get('token-url-base-public').disabled).toBe(true);
+    expect(dom.get('token-url-base-public').title).toBe(
+      'Set a Public URL in Settings to use it here.'
+    );
+    (dom.get('token-url-base-public').onclick as () => void)();
+    expect(storage.get('ai-access.token-url-base')).toBe('page');
+    const page = dom.get('token-url-base-page');
+    const publicButton = dom.get('token-url-base-public');
+    page.click = () => (page.onclick as () => void)();
+    publicButton.click = () => (publicButton.onclick as () => void)();
+    page.focus = vi.fn();
+    publicButton.focus = vi.fn();
+    const arrow = (button: FakeEl, key: string) => {
+      const preventDefault = vi.fn();
+      (button.onkeydown as (event: unknown) => void)({ key, preventDefault });
+      expect(preventDefault).toHaveBeenCalled();
+    };
+    arrow(page, 'ArrowRight');
+    expect(page.focus).toHaveBeenCalled();
+    expect(storage.get('ai-access.token-url-base')).toBe('page');
     expect(
       result.linkCopyMaterial('get_link', 'abc', 'https://server.example/mcp/a/abc').primary
     ).toBe('http://page.example/mcp/a/abc');
     context.settingsData.settings.publicBaseUrl = 'https://public.example';
     result.updateTokenUrlBase();
     expect(dom.get('token-url-base-public').disabled).toBe(false);
-    dom.get('token-url-base').value = 'public';
-    (dom.get('token-url-base').onchange as () => void)();
+    (dom.get('token-url-base-public').onclick as () => void)();
+    expect(dom.get('token-url-base-public').attrs['aria-checked']).toBe('true');
+    expect(dom.get('token-url-base-public').tabIndex).toBe(0);
+    expect(dom.get('token-url-base-page').tabIndex).toBe(-1);
     expect(storage.get('ai-access.token-url-base')).toBe('public');
     expect(result.linkCopyMaterial('rest', 'abc', '').primary).toContain(
       'https://public.example/mcp/api/v1'
@@ -859,9 +913,18 @@ describe('OAuth Public URL state', () => {
     expect(result.linkCopyMaterial('get_link', 'abc', '').primary).toBe(
       'https://public.example/mcp/a/abc'
     );
+    for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+      arrow(publicButton, key);
+      expect(storage.get('ai-access.token-url-base')).toBe('page');
+      arrow(page, key);
+      expect(storage.get('ai-access.token-url-base')).toBe('public');
+    }
+    result.updateTokenUrlBase();
+    expect(publicButton.attrs['aria-checked']).toBe('true');
     context.settingsData.settings.publicBaseUrl = '';
     result.updateTokenUrlBase();
-    expect(dom.get('token-url-base').value).toBe('page');
+    expect(dom.get('token-url-base-page').attrs['aria-checked']).toBe('true');
+    expect(dom.get('token-url-base-page').tabIndex).toBe(0);
     expect(storage.get('ai-access.token-url-base')).toBe('page');
   });
 });

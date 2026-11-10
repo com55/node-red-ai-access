@@ -1243,21 +1243,35 @@ function pageClientScriptPartB(): string {
     return settingsData && settingsData.settings && settingsData.settings.publicBaseUrl || '';
   }
   function updateTokenUrlBase() {
-    var select = $('token-url-base');
-    if (!select) return;
+    if (!$('token-url-base')) return;
     var available = !!tokenPublicBase();
-    $('token-url-base-public').disabled = !available;
-    $('token-url-base-hint').hidden = available;
+    var page = $('token-url-base-page');
+    var publicButton = $('token-url-base-public');
+    publicButton.disabled = !available;
+    publicButton.setAttribute('aria-disabled', String(!available));
+    publicButton.title = available ? '' : 'Set a Public URL in Settings to use it here.';
     var choice = available ? tokenUrlBaseChoice() : 'page';
-    select.value = choice;
     if (!available) {
       try { localStorage.setItem(TOKEN_URL_BASE_KEY, 'page'); } catch (e) { /* storage unavailable */ }
     }
-    select.onchange = function () {
-      try { localStorage.setItem(TOKEN_URL_BASE_KEY, select.value === 'public' && tokenPublicBase() ? 'public' : 'page'); }
-      catch (e) { /* storage unavailable */ }
-      renderTokenUsage();
-    };
+    [page, publicButton].forEach(function (button, index) {
+      var value = index === 0 ? 'page' : 'public';
+      button.setAttribute('aria-checked', String(choice === value));
+      button.tabIndex = choice === value ? 0 : -1;
+      button.onclick = function () {
+        if (button.disabled) return;
+        try { localStorage.setItem(TOKEN_URL_BASE_KEY, value); }
+        catch (e) { /* storage unavailable */ }
+        updateTokenUrlBase();
+      };
+      button.onkeydown = function (event) {
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key) === -1) return;
+        event.preventDefault();
+        var next = available && button === page ? publicButton : page;
+        next.click();
+        next.focus();
+      };
+    });
     renderTokenUsage();
   }
 

@@ -192,17 +192,18 @@ function renderMcpPageStatusSection(): string {
 function renderMcpPageLinksSection(): string {
   return `
     <section class="panel" id="section-links" aria-label="Access tokens" hidden>
-      <h2 tabindex="-1">Access tokens</h2>
+      <div class="panel-header">
+        <h2 tabindex="-1">Access tokens</h2>
+        <div id="token-url-base" class="segmented-control" role="radiogroup" aria-label="Base URL for links and setup">
+          <button type="button" id="token-url-base-page" role="radio" aria-checked="true" tabindex="0">This page's URL</button>
+          <button type="button" id="token-url-base-public" role="radio" aria-checked="false" tabindex="-1" disabled aria-disabled="true" title="Set a Public URL in Settings to use it here.">Public URL</button>
+        </div>
+      </div>
       <p class="muted" id="links-intro">
         Create a token for the channel your AI uses: a GET link to paste in chat,
         a REST Bearer, or an MCP token. It can read flows and submit proposals —
         it cannot deploy anything until you approve.
       </p>
-      <div class="form-row">
-        <label for="token-url-base">Base URL for links and setup</label>
-        <select id="token-url-base"><option value="page">This page's URL</option><option value="public" id="token-url-base-public" disabled>Public URL</option></select>
-        <span class="hint" id="token-url-base-hint">Set a Public URL in Settings to use it here.</span>
-      </div>
       <div id="links-flash" class="flash" hidden></div>
       <div class="settings-subpart"><h3>Create access token</h3><div id="links-manage"></div></div>
       <h3>Access tokens</h3><div id="links-list"></div>

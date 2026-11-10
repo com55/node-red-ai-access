@@ -489,6 +489,7 @@ describe('Node-RED 4/5 in-process plugin integration', { timeout: 30_000 }, () =
     const settingsFile = join(userDir, '.ai-access', 'config.json');
     expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toEqual({
       defaultLinkTtlSeconds: 7200,
+      publicUrlCheck: null,
     });
 
     const status = await request(RED.httpAdmin).get('/mcp/api/v1/status').set(auth);

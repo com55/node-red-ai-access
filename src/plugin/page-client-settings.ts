@@ -264,11 +264,35 @@ function settingsPartSave(): string {
     else showFlash($(target), msg, false);
   }
 
+  var publicUrlPollGeneration = 0;
+  async function pollPublicUrlCheck(url, generation) {
+    for (var i = 0; i < 40; i++) {
+      await new Promise(function (resolve) { setTimeout(resolve, 250); });
+      if (generation !== publicUrlPollGeneration) return;
+      try {
+        var data = await api('/settings');
+        if (generation !== publicUrlPollGeneration || !settingsData || settingsData.settings.publicBaseUrl !== url) return;
+        if (data.settings.publicBaseUrl !== url) return;
+        var check = data.publicUrlCheck;
+        if (check && check.publicBaseUrl === url && !check.pending) {
+          settingsData.publicUrlCheck = check;
+          renderPublicUrlCheck(check);
+          $('oauth-public-url-warning').hidden = !(settingsData.settings.oauth || {}).enabled || check.ok !== false;
+          return;
+        }
+      } catch (e) { /* Retry transient failures until timeout. */ }
+    }
+  }
+
   async function persistSettings(payload) {
+    var pollGeneration = ++publicUrlPollGeneration;
     settingsSaving = true;
     try {
       var data = await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });
       applySettings(data);
+      if (data.publicUrlCheck && data.publicUrlCheck.pending) {
+        void pollPublicUrlCheck(data.settings.publicBaseUrl, pollGeneration);
+      }
       var warn = data.warnings && data.warnings.length ? data.warnings.join(' ') : '';
       $('set-public-url-warning').textContent = warn;
       $('set-public-url-warning').hidden = !warn;
@@ -347,6 +371,7 @@ function settingsPartSave(): string {
   }
 
   function renderPublicUrlCheck(r) {
+    if (r.pending) { setCheckResult('pending', 'Checking…'); return; }
     setCheckResult(r.ok ? 'ok' : 'fail', (r.ok ? '✓ Reachable: ' : '✗ Failed: ') +
       (r.message || r.error || (r.ok ? 'Public URL is reachable.' : 'Public URL check failed.')) +
       (r.status ? ' (HTTP ' + r.status + ')' : ''));
