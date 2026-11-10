@@ -36,6 +36,9 @@ describe('settings navigation', () => {
       expect(item[0]).not.toMatch(/<use|src=|https?:/);
       expect(html).toContain('id="section-' + item[1] + '"');
     }
+    expect(items.find(item => item[1] === 'oauth')![0]).toContain('MCP OAuth');
+    expect(html).toContain('id="section-oauth" aria-label="MCP OAuth"');
+    expect(html).toContain('<h2 tabindex="-1">MCP OAuth</h2>');
     expect(nav).not.toContain('aria-selected');
     expect(nav).not.toContain('<h2');
     for (const label of ['overview', 'proposals']) {

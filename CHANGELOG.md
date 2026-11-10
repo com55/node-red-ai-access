@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.12] - 2026-11-10
+
+- Rename the dashboard navigation item and section to MCP OAuth.
+- Keep the "Opened from dashboard" card until dismissed or replaced by a newer
+  request. Go to node no longer closes the card.
+- Show an editor notification when revealing a flow, tab or subflow that is
+  already active.
+- From this beta onward, pre-releases are not published to npm. They ship as
+  GitHub Release assets created with `npm pack`. Install this beta with:
+  `cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.12/com55-node-red-ai-access-0.2.0-beta.12.tgz`.
+
 ## [0.2.0-beta.11] - 2026-11-03
 
 - Put the Create access token button back at the end of the fields row on wide
