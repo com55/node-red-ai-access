@@ -49,6 +49,10 @@ describe('settings navigation', () => {
       expect(nav).toContain(`role="group" aria-labelledby="nav-group-${label}"`);
     }
     expect(html.match(/<h2 tabindex="-1">/g)).toHaveLength(6);
+    expect(html).toContain('section.panel > h2:focus { outline: none; }');
+    expect(html).toContain(
+      'section.panel > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+    );
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)');
     expect(html).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)');
     expect(nav).toContain('id="proposals-pending-badge"');
@@ -111,6 +115,70 @@ describe('settings navigation', () => {
       expect(initialTabFromHash('#section-' + id)).toBe(id);
     }
   );
+
+  it.each(['hash', 'proposalId'])('preserves smooth proposal focus via %s', path => {
+    const script = pageClientScript();
+    const tabs = script.slice(
+      script.indexOf('  // Hash helpers'),
+      script.indexOf('  var TTL_PRESET_15M')
+    );
+    const focus = script.slice(
+      script.indexOf('  function readProposalHashId()'),
+      script.indexOf('  function bindDiffModeToggle(')
+    );
+    const location = {
+      hash: path === 'hash' ? '#proposal=deep' : '#status',
+      pathname: '/ai-access',
+      search: '',
+    };
+    const scrollTo = vi.fn();
+    const scrollIntoView = vi.fn();
+    const animationFrames: (() => void)[] = [];
+    const context = {
+      location,
+      history: {
+        replaceState(_a: unknown, _b: string, url: string) {
+          location.hash = url.slice(url.indexOf('#'));
+        },
+      },
+      document: {
+        querySelectorAll: () => [],
+        getElementById: () => ({
+          hasAttribute: () => false,
+          querySelector: () => ({}),
+          classList: { add: vi.fn() },
+          scrollIntoView,
+        }),
+      },
+      window: {
+        scrollTo,
+        requestAnimationFrame(callback: () => void) {
+          animationFrames.push(callback);
+        },
+      },
+      proposalsSearchQuery: '',
+      cachedProposals: [],
+    };
+    runInNewContext(tabs + focus, context);
+    runInNewContext(
+      path === 'hash'
+        ? 'selectTab(initialTabFromHash(location.hash), { skipHash: true });'
+        : "selectTab('proposals', { proposalId: 'deep' });",
+      context
+    );
+    expect(runInNewContext('focusProposalFromHash()', context)).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ behavior: 'smooth', block: 'start' });
+    expect(location.hash).toBe('#proposals');
+    expect(animationFrames).toHaveLength(0);
+    animationFrames.splice(0).forEach(callback => callback());
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    // Returning to the ordinary proposals tab still resets scrolling twice.
+    runInNewContext("selectTab('proposals')", context);
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
+    animationFrames.splice(0).forEach(callback => callback());
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
 
   it('routes clicks, hashes and back/forward through the actual client script', () => {
     const ids = ['status', 'links', 'settings', 'oauth', 'proposals', 'logs'];
@@ -249,12 +317,18 @@ describe('settings navigation', () => {
     }
     for (const hash of ['#proposal=first', '#proposal=second']) {
       location.hash = hash;
+      scrollTo.mockClear();
+      scrollY = 700;
       const loads = context.loadProposals.mock.calls.length;
       context.readProposalHashId = () => hash.slice('#proposal='.length);
       listeners.popstate();
       listeners.hashchange();
       expect(context.loadProposals).toHaveBeenCalledTimes(loads + 1);
       expect(focusHeading).toHaveBeenLastCalledWith('proposals', { preventScroll: true });
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(animationFrames).toHaveLength(0);
+      flushAnimationFrames();
+      expect(scrollY).toBe(700);
     }
     focusHeading.mockClear();
     location.hash = '#oauth';

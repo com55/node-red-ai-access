@@ -170,6 +170,26 @@ describe('OAuth store persistence', () => {
       readFileSync(join(resolveAiAccessPaths(userDir).root, 'oauth.json'), 'utf8')
     );
     expect(saved.clients[0].lastUsedAt).toBe(store.data.clients[0]?.lastUsedAt);
+    // Legacy clients can have valid tokens without a recorded use timestamp.
+    delete store.data.clients[0]!.lastUsedAt;
+    store.persist();
+    writes.count = 0;
+    await provider.verifyAccessToken(tokens.access_token);
+    expect(writes.count).toBe(1);
+    const firstUsedAt = Date.now();
+    const reloaded = new OAuthStore(resolveAiAccessPaths(userDir), () => 20);
+    expect(reloaded.data.clients[0]?.lastUsedAt).toBe(firstUsedAt);
+    reloaded.dispose();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await provider.verifyAccessToken(tokens.access_token);
+    expect(writes.count).toBe(1);
+    expect(store.data.clients[0]?.lastUsedAt).toBe(Date.now());
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(writes.count).toBe(2);
+    expect(
+      JSON.parse(readFileSync(join(resolveAiAccessPaths(userDir).root, 'oauth.json'), 'utf8'))
+        .clients[0].lastUsedAt
+    ).toBe(store.data.clients[0]?.lastUsedAt);
     delete store.data.clients[0]!.client_id_issued_at;
     delete store.data.clients[0]!.lastUsedAt;
     store.persist();

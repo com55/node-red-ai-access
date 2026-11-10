@@ -3,6 +3,8 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pageClientScript } from '../../src/plugin/page-client.js';
+import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
+import type { Proposal } from '../../src/storage/proposals.js';
 
 // Run the shipped browser code with a minimal DOM and no boot-time requests.
 function dashboard() {
@@ -141,14 +143,31 @@ describe('dashboard auto-rebase review', () => {
   });
 
   it('badges a withdrawn proposal whose deployment landed later', () => {
-    const html = dashboard().renderProposalCard({
+    const proposal: Proposal = {
       id: 'p',
+      type: 'replace_flow',
       status: 'withdrawn',
+      expectedRev: 'rev-1',
+      createdBy: { kind: 'access-link', linkId: 'link-1' },
+      createdAt: '2026-10-16T01:35:00.000Z',
+      updatedAt: '2026-10-16T01:35:00.000Z',
       landedAfterWithdraw: true,
-      payload: { flowId: 'tab', flow: {} },
-    });
-    expect(html).toContain('Landed after withdraw');
-    expect(html).toContain('status-pill');
+      payload: { flowId: 'tab', flow: { id: 'tab', type: 'tab', nodes: [] } },
+    };
+    const ui = dashboard();
+    const html = ui.renderProposalCard(presentProposalForApi(proposal));
+    expect(html).toContain(
+      '<span class="status-pill landed-after-withdraw">Landed after withdraw</span>'
+    );
+    expect(html).toContain('<span class="status-pill withdrawn">withdrawn</span>');
+    for (const landedAfterWithdraw of [false, undefined]) {
+      const unflagged = { ...proposal };
+      delete unflagged.landedAfterWithdraw;
+      if (landedAfterWithdraw !== undefined) unflagged.landedAfterWithdraw = landedAfterWithdraw;
+      expect(ui.renderProposalCard(presentProposalForApi(unflagged))).not.toContain(
+        'status-pill landed-after-withdraw'
+      );
+    }
   });
 
   it('renders persisted late deployment alerts', () => {

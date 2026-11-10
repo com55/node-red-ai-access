@@ -38,11 +38,14 @@ Configuration).
 
    Stable releases use npm as shown above. From 0.2.0-beta.12 onward,
    pre-releases are available only as GitHub Release assets, not on npm. To
-   install this beta, use its tarball URL in your user directory (`/data` is
-   typical for Docker; otherwise use `~/.node-red`):
+   install a pre-release, pick the one you want from
+   [GitHub Releases](https://github.com/com55/node-red-ai-access/releases) and
+   use its exact install command from the release notes. For example, replace
+   `X.Y.Z` below with the full version, including its pre-release suffix
+   (`/data` is typical for Docker; otherwise use `~/.node-red`):
 
    ```bash
-   cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/v0.2.0-beta.13/com55-node-red-ai-access-0.2.0-beta.13.tgz
+   cd /data && npm i https://github.com/com55/node-red-ai-access/releases/download/vX.Y.Z/com55-node-red-ai-access-X.Y.Z.tgz
    ```
 
 2. Restart Node-RED.

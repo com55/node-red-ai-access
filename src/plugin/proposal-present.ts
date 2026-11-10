@@ -102,6 +102,7 @@ export interface PresentedProposalApi {
   deployPending?: Proposal['deployPending'];
   deploymentAlert?: string;
   rejectedWhileDeployUnknown?: boolean;
+  landedAfterWithdraw?: boolean;
   /** Soft validation notes (missing config, unwired, …) — not blocking. */
   warnings?: Proposal['warnings'];
   baseRevChanged?: boolean;
@@ -774,6 +775,7 @@ export function presentProposalForApi(
   }
   if (full.deploymentAlert) lean.deploymentAlert = full.deploymentAlert;
   if (full.rejectedWhileDeployUnknown) lean.rejectedWhileDeployUnknown = true;
+  if (full.landedAfterWithdraw === true) lean.landedAfterWithdraw = true;
   if (full.deployPending) lean.deployPending = full.deployPending;
   if (full.aiConflictOverrides) lean.aiConflictOverrides = full.aiConflictOverrides;
   if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;

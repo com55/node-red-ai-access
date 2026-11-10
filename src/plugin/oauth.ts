@@ -227,10 +227,14 @@ export class OAuthStore implements OAuthRegisteredClientsStore {
     }
   }
   private touchTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Coalesces lastUsedAt-only changes into one write per five minutes; token changes still persist immediately. */
-  touch(): void {
+  /** Persists first use immediately; later lastUsedAt changes coalesce over five minutes. */
+  touch(immediate = false): void {
     if (this.disposed) return;
     this.dirty = true;
+    if (immediate) {
+      this.flush();
+      return;
+    }
     if (this.touchTimer) return;
     this.touchTimer = setTimeout(() => {
       this.touchTimer = undefined;
@@ -626,8 +630,9 @@ export class LocalOAuthProvider implements OAuthServerProvider {
       throw new InvalidTokenError('Invalid access token');
     const client = this.clientsStore.data.clients.find(c => c.client_id === item.clientId);
     if (!client) throw new InvalidTokenError('Invalid client');
+    const firstUse = client.lastUsedAt === undefined;
     client.lastUsedAt = Date.now();
-    this.clientsStore.touch();
+    this.clientsStore.touch(firstUse);
     return {
       token,
       clientId: item.clientId,
