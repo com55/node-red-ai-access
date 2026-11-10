@@ -499,7 +499,7 @@ export function registerRoutes(
     requireAdminSession(RED, 'api'),
     requireStarPermission(RED),
     requireJsonContentType('rest'),
-    asyncRoute(checkPublicUrlHandler(RED))
+    asyncRoute(checkPublicUrlHandler(RED, services.settingsStore))
   );
 
   const linkGuards = [

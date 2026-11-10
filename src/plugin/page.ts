@@ -198,6 +198,11 @@ function renderMcpPageLinksSection(): string {
         a REST Bearer, or an MCP token. It can read flows and submit proposals —
         it cannot deploy anything until you approve.
       </p>
+      <div class="form-row">
+        <label for="token-url-base">Base URL for links and setup</label>
+        <select id="token-url-base"><option value="page">This page's URL</option><option value="public" id="token-url-base-public" disabled>Public URL</option></select>
+        <span class="hint" id="token-url-base-hint">Set a Public URL in Settings to use it here.</span>
+      </div>
       <div id="links-flash" class="flash" hidden></div>
       <div class="settings-subpart"><h3>Create access token</h3><div id="links-manage"></div></div>
       <h3>Access tokens</h3><div id="links-list"></div>
@@ -353,12 +358,13 @@ function renderMcpPageOAuthSection(): string {
       <h2 tabindex="-1">MCP OAuth</h2>
       <p class="muted">MCP clients (ChatGPT, Claude, …) can request read or propose access through OAuth.</p>
       <div id="oauth-flash" class="flash" hidden></div>
+      <div id="oauth-public-url-warning" class="flash error" role="alert" hidden></div>
       <div id="oauth-route-warning" class="warning" role="status" hidden></div>
       <div class="settings-grid">
         <div class="card settings-card">
           <h3>Status</h3>
           <div class="form-row toggle-row">
-            <label class="switch-label"><input type="checkbox" id="oauth-enabled" />
+            <label class="switch-label" for="oauth-enabled"><input type="checkbox" id="oauth-enabled" role="switch" aria-checked="false" />
               <span><strong>Enable MCP OAuth</strong>
               <span class="hint">Also available in the editor sidebar (AI Access tab).</span></span></label>
             ${lockBadge('oauth')}
@@ -366,7 +372,8 @@ function renderMcpPageOAuthSection(): string {
           <div class="form-row">
             <span class="label">Server URL for MCP clients</span>
             <div class="field-line"><code id="oauth-server-url" class="grow">—</code>
-              <button type="button" class="action secondary" id="oauth-copy-url">Copy</button></div>
+              <button type="button" class="action secondary" id="oauth-copy-url" disabled>Copy</button>
+              <button type="button" class="action secondary" id="oauth-public-url-settings">Set Public URL</button></div>
           </div>
           <details class="tech-details" open>
             <summary>How to connect with OAuth</summary>

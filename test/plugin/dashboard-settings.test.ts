@@ -261,6 +261,8 @@ function loadSettingsClient(
       return result ?? {};
     },
     location: { origin: 'http://nr.local:1880' },
+    window: { requestAnimationFrame: (fn: () => void) => fn() },
+    selectTab: vi.fn(),
     document: {
       querySelector: (selector: string) =>
         selector === 'nav.tabs button[aria-current="page"]'
@@ -299,7 +301,7 @@ function loadSettingsClient(
     })();`,
     ctx
   );
-  return { dom, calls, out: ctx.out, confirm, toasts };
+  return { dom, calls, out: ctx.out, confirm, toasts, selectTab: ctx.selectTab };
 }
 
 describe('light theme only', () => {
@@ -576,6 +578,32 @@ describe('dashboard settings client', () => {
     expect(body.oauth).not.toHaveProperty('refreshMaxLifetimeSec');
   });
 
+  it('exposes an associated OAuth switch and handles Enter while preserving native Space', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    expect(html).toContain('for="oauth-enabled"');
+    expect(html).toContain('id="oauth-enabled" role="switch" aria-checked="false"');
+    const { dom } = loadSettingsClient({});
+    const control = dom.get('oauth-enabled');
+    const click = vi.fn(() => {
+      control.checked = !control.checked;
+      control.listeners.change!.forEach(fn => fn({}));
+    });
+    Object.assign(control, { click });
+    const preventDefault = vi.fn();
+    control.listeners.keydown![0]!({ key: 'Enter', preventDefault });
+    expect(click).toHaveBeenCalledOnce();
+    expect(control.attrs['aria-checked']).toBe('true');
+    control.disabled = true;
+    control.listeners.keydown![0]!({ key: 'Enter', preventDefault });
+    expect(click).toHaveBeenCalledOnce();
+    control.listeners.keydown![0]!({ key: ' ', preventDefault });
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+  });
+
   it('read-only users cannot save', () => {
     const { out, calls } = loadSettingsClient({});
     out.applySettings!({ canEdit: false, adminAuthEnabled: true, settings: {}, sources: {} });
@@ -602,7 +630,11 @@ describe('dashboard settings client', () => {
     out.saveSettingsNow!();
     expect(confirm.opts).toBeDefined();
     expect(dom.get('oauth-enabled').checked).toBe(false);
+    expect(dom.get('oauth-enabled').attrs['aria-checked']).toBe('false');
     expect(calls.some(c => c.options?.method === 'PUT')).toBe(false);
+    confirm.opts!.onConfirm!();
+    expect(dom.get('oauth-enabled').attrs['aria-checked']).toBe('true');
+    expect(calls.some(c => c.options?.method === 'PUT')).toBe(true);
   });
 
   describe('secret name patterns', () => {
@@ -699,5 +731,137 @@ describe('dashboard settings client', () => {
       const put = calls.find(c => c.options?.method === 'PUT');
       expect(JSON.parse(put!.options!.body!)).not.toHaveProperty('secretNamePatterns');
     });
+  });
+});
+
+describe('OAuth Public URL state', () => {
+  it('shows matching persisted checks and clears missing or stale results', () => {
+    const { dom, out } = loadSettingsClient({});
+    const apply = (check?: unknown) =>
+      out.applySettings!({
+        settings: { publicBaseUrl: 'https://example.com' },
+        publicUrlCheck: check,
+      });
+    const result = dom.get('set-check-result');
+    for (const ok of [true, false]) {
+      apply({ publicBaseUrl: 'https://example.com', ok, status: ok ? 200 : 503 });
+      expect(result.hidden).toBe(false);
+      expect(result.className).toBe('check-result is-' + (ok ? 'ok' : 'fail'));
+      expect(result.textContent).toContain(ok ? '✓ Reachable:' : '✗ Failed:');
+      expect(result.textContent).toContain(ok ? 'HTTP 200' : 'HTTP 503');
+      apply({ publicBaseUrl: 'https://other.example', ok });
+      expect(result.hidden).toBe(true);
+      expect(result.textContent).toBe('');
+    }
+    apply();
+    expect(result.hidden).toBe(true);
+    expect(result.className).toBe('check-result');
+  });
+
+  it('shows the auto-check result returned when saving a changed Public URL', async () => {
+    const { dom, out, calls } = loadSettingsClient({
+      '/settings': {
+        settings: { publicBaseUrl: 'https://new.example' },
+        publicUrlCheck: { publicBaseUrl: 'https://new.example', ok: false, status: 502 },
+      },
+    });
+    out.applySettings!({ settings: { publicBaseUrl: 'https://old.example' } });
+    await out.persistSettings!({ publicBaseUrl: 'https://new.example' });
+    expect(dom.get('set-check-result').hidden).toBe(false);
+    expect(dom.get('set-check-result').textContent).toContain('✗ Failed:');
+    expect(dom.get('set-check-result').textContent).toContain('HTTP 502');
+    expect(calls.some(call => call.path === '/settings/check-public-url')).toBe(false);
+  });
+
+  it('opens Settings through tab routing and focuses and scrolls to its Public URL field', () => {
+    const { dom, selectTab } = loadSettingsClient({});
+    const focus = vi.fn();
+    const scroll = vi.fn();
+    dom.get('set-public-url').focus = focus;
+    dom.get('set-public-url').scrollIntoView = scroll;
+    dom.get('oauth-public-url-settings').listeners.click[0]();
+    expect(selectTab).toHaveBeenCalledWith('settings');
+    expect(focus).toHaveBeenCalledOnce();
+    expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+  });
+
+  it('requires a configured URL for copying and warns only for matching failures while enabled', () => {
+    const { dom, out } = loadSettingsClient({});
+    const apply = (url: string, enabled: boolean, check?: unknown) =>
+      out.applySettings({
+        settings: { publicBaseUrl: url, oauth: { enabled } },
+        publicUrlCheck: check,
+      });
+    apply('', true);
+    expect(dom.get('oauth-server-url').textContent).toBe(
+      'Set a Public URL to get the MCP server URL'
+    );
+    expect(dom.get('oauth-copy-url').disabled).toBe(true);
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(false);
+    apply('https://example.com', true);
+    expect(dom.get('oauth-server-url').textContent).toBe('https://example.com/mcp');
+    expect(dom.get('oauth-copy-url').disabled).toBe(false);
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
+    apply('https://example.com', true, { publicBaseUrl: 'https://other.example', ok: false });
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
+    apply('https://example.com', true, { publicBaseUrl: 'https://example.com', ok: false });
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(false);
+    apply('https://example.com', false, { publicBaseUrl: 'https://example.com', ok: false });
+    expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
+  });
+
+  it('uses a browser preference for all token material and disables Public URL when empty', () => {
+    const script = pageClientScript();
+    const start = script.indexOf('  var TOKEN_URL_BASE_KEY');
+    const end = script.indexOf('  // Kept for page.test', start);
+    const dom = fakeDom();
+    const storage = new Map<string, string>();
+    const context = {
+      localStorage: {
+        getItem: (key: string) => storage.get(key),
+        setItem: (key: string, value: string) => storage.set(key, value),
+      },
+      location: { origin: 'http://page.example' },
+      URL,
+      settingsData: { settings: { publicBaseUrl: '' } },
+      $: (id: string) => dom.get(id),
+      renderTokenUsage: () => {
+        // No-op: token usage rendering is outside the scope of this test.
+      },
+      apiBase: '/mcp/api/v1',
+      mcpRpc: '/mcp/rpc',
+      normalizeLinkKind: (kind: string) => kind,
+      restPromptForAi: (token: string, base: string) => base + ' ' + token,
+      mcpSetupSnippets: (_token: string, rpc: string) => ({ rpc }),
+    };
+    const result = runInNewContext(
+      script.slice(start, end) + ';({ updateTokenUrlBase, linkCopyMaterial });',
+      context
+    );
+    result.updateTokenUrlBase();
+    expect(dom.get('token-url-base').value).toBe('page');
+    expect(dom.get('token-url-base-public').disabled).toBe(true);
+    expect(
+      result.linkCopyMaterial('get_link', 'abc', 'https://server.example/mcp/a/abc').primary
+    ).toBe('http://page.example/mcp/a/abc');
+    context.settingsData.settings.publicBaseUrl = 'https://public.example';
+    result.updateTokenUrlBase();
+    expect(dom.get('token-url-base-public').disabled).toBe(false);
+    dom.get('token-url-base').value = 'public';
+    (dom.get('token-url-base').onchange as () => void)();
+    expect(storage.get('ai-access.token-url-base')).toBe('public');
+    expect(result.linkCopyMaterial('rest', 'abc', '').primary).toContain(
+      'https://public.example/mcp/api/v1'
+    );
+    expect(result.linkCopyMaterial('mcp', 'abc', '').mcpSnippets.rpc).toBe(
+      'https://public.example/mcp/rpc'
+    );
+    expect(result.linkCopyMaterial('get_link', 'abc', '').primary).toBe(
+      'https://public.example/mcp/a/abc'
+    );
+    context.settingsData.settings.publicBaseUrl = '';
+    result.updateTokenUrlBase();
+    expect(dom.get('token-url-base').value).toBe('page');
+    expect(storage.get('ai-access.token-url-base')).toBe('page');
   });
 });

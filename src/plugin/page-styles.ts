@@ -131,7 +131,9 @@ nav.tabs button {
 }
 nav.tabs button svg { flex: 0 0 16px; }
 nav.tabs button:hover { background: var(--soft); }
-nav.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Suppress pointer-focus defaults; retain a consistent keyboard indicator. */
+.settings-layout :is(button, summary, [role="button"]):focus { outline: none; }
+.settings-layout :is(button, summary, [role="button"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 nav.tabs button[aria-current="page"] { background: var(--accent-soft); font-weight: 600; }
 nav.tabs button[aria-current="page"]::before {
   content: "";
@@ -869,11 +871,7 @@ button.id-copy:focus .id-short {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-button.id-copy:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
+button.id-copy:focus-visible { border-radius: 3px; }
 .filter-chip {
   border: 1px solid var(--line);
   background: var(--card);
@@ -1268,6 +1266,36 @@ section.panel { scroll-margin-top: 1rem; }
 .hint { display: block; color: var(--muted); font-size: 0.88rem; font-weight: 400; margin: 0.25rem 0 0; line-height: 1.4; }
 .warn-text { color: #8a5a00; }
 .toggle-row { display: flex; align-items: flex-start; gap: 0.5rem; justify-content: space-between; }
+
+#oauth-enabled {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-block;
+  position: relative;
+  width: 2.4rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--line);
+  cursor: pointer;
+  vertical-align: middle;
+}
+#oauth-enabled::before {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--card);
+}
+#oauth-enabled:checked { background: var(--accent); border-color: var(--accent); }
+#oauth-enabled:checked::before { left: calc(100% - 1.05rem); }
+#oauth-enabled:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#oauth-enabled:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .switch-label { display: flex; gap: 0.6rem; align-items: flex-start; cursor: pointer; }
 .switch-label input { margin-top: 0.25rem; width: 1.05rem; height: 1.05rem; flex: 0 0 auto; }
 .lock-badge {

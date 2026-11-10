@@ -52,6 +52,26 @@ describe('SettingsStore', () => {
     expect(store.getDisk()).toEqual({});
   });
 
+  it('persists internal URL checks across restarts and settings writes without accepting settings overrides', () => {
+    const paths = resolveAiAccessPaths(userDir);
+    ensureAiAccessDirs(paths);
+    const store = new SettingsStore(paths);
+    const check = {
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+      ok: false,
+      checkedAt: new Date().toISOString(),
+    };
+    store.recordPublicUrlCheck(check);
+    store.patch({ enabled: false, publicUrlCheck: { ...check, ok: true } } as Parameters<
+      SettingsStore['patch']
+    >[0]);
+    const reloaded = new SettingsStore(paths);
+    expect(reloaded.getPublicUrlCheck()).toEqual(check);
+    expect(reloaded.getDisk()).not.toHaveProperty('publicUrlCheck');
+    expect(reloaded.getEffective().sources).not.toHaveProperty('publicUrlCheck');
+  });
+
   it('defaults the maximum registered OAuth clients to 5', () => {
     const paths = resolveAiAccessPaths(userDir);
     ensureAiAccessDirs(paths);

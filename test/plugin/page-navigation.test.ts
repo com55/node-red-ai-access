@@ -59,6 +59,24 @@ describe('settings navigation', () => {
     expect(html).toContain('@media (max-width: 768px)');
   });
 
+  it('uses thin accent rings only for visible focus on dashboard controls', () => {
+    const html = renderMcpPage({
+      apiBase: '/mcp/api/v1',
+      editorRoot: '/',
+      authTokenKey: 'auth-tokens',
+    });
+    expect(html).toContain(
+      '.settings-layout :is(button, summary, [role="button"]):focus { outline: none; }'
+    );
+    expect(html).toContain(
+      '.settings-layout :is(button, summary, [role="button"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+    );
+    // The ID-copy button must not override the shared pointer-focus reset.
+    expect(html).not.toMatch(/button\.id-copy:focus\s*\{[^}]*outline:/);
+    expect(html).toContain('section.panel > h2:focus { outline: none; }');
+    expect(html).not.toMatch(/section\.panel > h2:focus\s*\{[^}]*outline:\s*(?!none)[0-9]/);
+  });
+
   it('keeps form rows and filters left-aligned with responsive token fields', () => {
     const html = renderMcpPage({
       apiBase: '/mcp/api/v1',

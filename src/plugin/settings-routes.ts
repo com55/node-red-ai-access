@@ -63,7 +63,14 @@ function settingsResponse(RED: NodeRedPluginAPI, store: SettingsStore, req: Auth
     apiBase: mcpApiBase(RED.settings.httpAdminRoot),
     // Add future settings to the shared effective type; sources also drives locks.
     settings,
-    oauthPublicUrlWarning: oauthPublicUrlWarning(settings.publicBaseUrl),
+    publicUrlCheck: store.getPublicUrlCheck(),
+    oauthPublicUrlWarning:
+      settings.oauth.enabled &&
+      (!settings.publicBaseUrl ||
+        (store.getPublicUrlCheck()?.publicBaseUrl === settings.publicBaseUrl &&
+          store.getPublicUrlCheck()?.ok === false))
+        ? 'OAuth discovery may fail. Set a reachable Public URL and check it.'
+        : oauthPublicUrlWarning(settings.publicBaseUrl),
     sources,
     disk: store.getDisk(),
     trustProxy: normalizeTrustProxy(req.app.get('trust proxy')),
@@ -159,7 +166,7 @@ export function putSettingsHandler(
   store: SettingsStore,
   linkStore: AccessLinkStore
 ) {
-  return (req: AuthenticatedRequest, res: Response): void => {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const raw: unknown = req.body;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       res
@@ -249,12 +256,16 @@ export function putSettingsHandler(
     }
 
     try {
+      const previousUrl = store.getEffective().publicBaseUrl;
       const effective = store.patch(patch, reset);
       bindPublicBaseUrl(effective.publicBaseUrl);
       linkStore.configureDefaults({
         defaultTtlSeconds: effective.defaultLinkTtlSeconds,
         maxActiveLinks: effective.maxActiveLinks,
       });
+      if (effective.publicBaseUrl !== previousUrl) {
+        await runPublicUrlCheck(RED, store, effective.publicBaseUrl);
+      }
       const response = settingsResponse(RED, store, req);
       const publicUrl = effective.publicBaseUrl ? new URL(effective.publicBaseUrl) : undefined;
       const literal = publicUrl
@@ -282,70 +293,97 @@ export function putSettingsHandler(
 }
 
 /** Star-only outbound probe; never follow redirects or fetch a caller-supplied path. */
-export function checkPublicUrlHandler(RED: NodeRedPluginAPI) {
-  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    let url: string | undefined;
+async function runPublicUrlCheck(RED: NodeRedPluginAPI, store: SettingsStore, value: unknown) {
+  const publicBaseUrl = typeof value === 'string' ? value : '';
+  const finish = (
+    result: {
+      ok: boolean;
+      status: number | null;
+      url?: string | undefined;
+      message?: string;
+      error?: string;
+      code?: string;
+    },
+    httpStatus = 200
+  ) => {
+    const check = {
+      publicBaseUrl,
+      status: result.status,
+      ok: result.ok,
+      checkedAt: new Date().toISOString(),
+    };
+    store.recordPublicUrlCheck(check);
+    return { httpStatus, body: { ...result, publicUrlCheck: check } };
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  let url: string | undefined;
+  try {
+    let target;
     try {
-      let target;
-      try {
-        const settings = RED.settings as { uiPort?: number };
-        const server = (
-          RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
-        ).server;
-        const address = server?.address();
-        const value = (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl;
-        const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
-        const loopback =
-          host
-            .toLowerCase()
-            .replace(/^\[|\]$/g, '')
-            .replace(/\.$/, '') === 'localhost' ||
-          classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
-        if (loopback && typeof address === 'string') {
-          throw new Error(
-            'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
-          );
-        }
-        const port =
-          address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
-        target = await preparePublicUrlCheck(
-          (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl,
-          port,
-          controller.signal
+      const settings = RED.settings as { uiPort?: number };
+      const server = (
+        RED as NodeRedPluginAPI & { server?: { address(): string | { port: number } | null } }
+      ).server;
+      const address = server?.address();
+      const host = typeof value === 'string' ? new URL(value.trim()).hostname : '';
+      const loopback =
+        host
+          .toLowerCase()
+          .replace(/^\[|\]$/g, '')
+          .replace(/\.$/, '') === 'localhost' ||
+        classifyPublicUrlAddress(host.replace(/^\[|\]$/g, '')) === 'loopback';
+      if (loopback && typeof address === 'string') {
+        throw new Error(
+          'Public URL Check does not support loopback URLs when Node-RED listens on a Unix socket'
         );
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        res.status(400).json({ error: (error as Error).message, code: 'invalid_body' });
-        return;
       }
-      url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
-      const status = await requestPublicUrlCheck(
-        target,
-        mcpApiBase(RED.settings.httpAdminRoot),
-        controller.signal
+      const port =
+        address && typeof address === 'object' ? address.port : (settings.uiPort ?? 1880);
+      target = await preparePublicUrlCheck(value, port, controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      return finish(
+        { ok: false, status: null, error: (error as Error).message, code: 'invalid_body' },
+        400
       );
-      const result = { status, ok: status >= 200 && status < 300 };
-      res.json({
-        ok: result.ok,
-        status: result.status,
-        url,
-        message: result.ok
-          ? 'Discovery endpoint is reachable'
-          : `Discovery endpoint returned HTTP ${result.status}`,
-      });
-    } catch {
-      res.json({
-        ok: false,
-        status: null,
-        url,
-        error: controller.signal.aborted
-          ? 'Public URL check timed out after 5 seconds'
-          : 'Could not reach the discovery endpoint',
-      });
-    } finally {
-      clearTimeout(timer);
     }
+    url = target.origin + mcpApiBase(RED.settings.httpAdminRoot);
+    const status = await requestPublicUrlCheck(
+      target,
+      mcpApiBase(RED.settings.httpAdminRoot),
+      controller.signal
+    );
+    const result = { status, ok: status >= 200 && status < 300 };
+    return finish({
+      ok: result.ok,
+      status: result.status,
+      url,
+      message: result.ok
+        ? 'Discovery endpoint is reachable'
+        : `Discovery endpoint returned HTTP ${result.status}`,
+    });
+  } catch {
+    return finish({
+      ok: false,
+      status: null,
+      url,
+      error: controller.signal.aborted
+        ? 'Public URL check timed out after 5 seconds'
+        : 'Could not reach the discovery endpoint',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function checkPublicUrlHandler(RED: NodeRedPluginAPI, store: SettingsStore) {
+  return async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const result = await runPublicUrlCheck(
+      RED,
+      store,
+      (req.body as { publicBaseUrl?: unknown } | undefined)?.publicBaseUrl
+    );
+    res.status(result.httpStatus).json(result.body);
   };
 }

@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Fixed
 
+- Use thin theme-accent focus rings only for keyboard focus on dashboard
+  navigation, details summaries, and buttons.
 - Recover dashboard editor jumps when the last-focused editor tab has closed or
   stopped responding. Track editor presence, clear owned focus and presence on
   pagehide, and avoid reloading a live editor when acknowledgement times out.
@@ -26,6 +28,22 @@ and this project adheres to
 - Recognize stable versions with `+build` metadata correctly when detecting
   prereleases in `release.yml` (#128).
 - Include a generic install URL and install command in prerelease notes (#128).
+
+### Added
+
+- Require a configured Public URL for the MCP OAuth server URL, add a shortcut
+  to its Settings field, and show OAuth discovery warnings for missing URLs or
+  matching persisted failed checks in the dashboard and editor sidebar.
+- Automatically check changed Public URLs using the existing guarded probe and
+  persist check metadata separately from editable settings.
+- Add an Access tokens base URL choice for links and setup snippets, defaulting
+  to this page's URL. Store the preference only in browser localStorage and
+  disable Public URL selection until configured.
+
+### Changed
+
+- Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
+  switches.
 
 ## [0.2.0-beta.13] - 2026-11-10
 

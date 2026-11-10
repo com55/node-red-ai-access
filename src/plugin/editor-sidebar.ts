@@ -19,6 +19,36 @@ function editorSidebarStyles(): string {
   flex-direction: column;
   box-sizing: border-box;
 }
+
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-block;
+  position: relative;
+  width: 2.4rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--red-ui-form-input-border-color, #888);
+  border-radius: 1rem;
+  background: var(--red-ui-form-input-border-color, #888);
+  cursor: pointer;
+  vertical-align: middle;
+}
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled::before {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--red-ui-primary-background, #fff);
+}
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled:checked { background: var(--red-ui-text-color-link, #4682b4); border-color: var(--red-ui-text-color-link, #4682b4); }
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled:checked::before { left: calc(100% - 1.05rem); }
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled:focus-visible { outline: 2px solid var(--red-ui-form-input-border-selected-color, #4682b4); outline-offset: 3px; }
+#red-ui-sidebar-ai-access #ai-access-oauth-enabled:disabled { opacity: 0.5; cursor: not-allowed; }
+
 #red-ui-sidebar-ai-access .red-ui-sidebar-header {
   text-align: left;
   font-weight: 600;
@@ -326,7 +356,13 @@ function editorSidebarScriptPartA(): string {
       $('#ai-access-local-row').toggle(!ADMIN_AUTH);
 
       var oauth = s.oauth || {};
+      var check = data.publicUrlCheck;
+      var publicUrlFailed = check && check.publicBaseUrl === s.publicBaseUrl && check.ok === false;
+      $('#ai-access-oauth-public-url-warning')
+        .text(!s.publicBaseUrl ? 'Set a Public URL on the AI Access dashboard for OAuth discovery.' : 'The latest Public URL check failed. Check the Public URL on the AI Access dashboard.')
+        .toggle(!!oauth.enabled && (!s.publicBaseUrl || publicUrlFailed));
       $('#ai-access-oauth-enabled').prop('checked', !!oauth.enabled)
+        .attr('aria-checked', String(!!oauth.enabled))
         .prop('disabled', readonly || sources.oauth === 'settings.js');
       $('#ai-access-readonly-note').toggle(readonly);
       $('#ai-access-lock-enabled').toggle(sources.enabled === 'settings.js');
@@ -396,6 +432,7 @@ function editorSidebarScriptPartA(): string {
     }
 
     function oauthPublicUrlWarning(value) {
+      if (LAST && LAST.publicUrlCheck && LAST.publicUrlCheck.publicBaseUrl === value && LAST.publicUrlCheck.ok === false) return 'The latest Public URL check failed. OAuth clients may not discover this server.';
       if (!value) return 'No Public URL is configured. OAuth clients may not discover this server.';
       try {
         var url = new URL(value);
@@ -446,7 +483,7 @@ function editorSidebarScriptPartA(): string {
         if (warning) {
           openConfirmDialog(warning + '\\n\\nEnable OAuth anyway? (Set the Public URL on the AI Access dashboard.)').then(function (accepted) {
             if (accepted) persistSettings(payload);
-            else $('#ai-access-oauth-enabled').prop('checked', false);
+            else $('#ai-access-oauth-enabled').prop('checked', false).attr('aria-checked', 'false');
           });
           return;
         }
@@ -530,13 +567,14 @@ function editorSidebarScriptPartB(): string {
 
       // (2) Enable MCP OAuth.
       row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
-      $('<input id="ai-access-oauth-enabled" type="checkbox">').appendTo(row);
+      $('<input id="ai-access-oauth-enabled" type="checkbox" role="switch" aria-checked="false">').appendTo(row);
       $('<label for="ai-access-oauth-enabled"></label>')
         .html('<p>Enable MCP OAuth</p>MCP clients (ChatGPT, Claude, …) sign in at &lt;Public URL&gt;/mcp.')
         .appendTo(row);
       $('<span id="ai-access-oauth-lock" class="form-tips" style="display:none"></span>')
         .text('🔒 settings.js').appendTo(row);
 
+      $('<div id="ai-access-oauth-public-url-warning" class="form-tips ai-access-oauth-warning" role="alert" style="display:none"></div>').appendTo(body);
       // (3) OAuth route conflict warning — only rendered when conflicts exist.
       $('<div id="ai-access-oauth-route-warning" class="form-tips ai-access-oauth-warning" role="status" style="display:none"></div>').appendTo(body);
 
@@ -544,6 +582,15 @@ function editorSidebarScriptPartB(): string {
         'change',
         saveSettings
       );
+
+      $('#ai-access-oauth-enabled').on('change', function () {
+        $('#ai-access-oauth-enabled').attr('aria-checked', String($('#ai-access-oauth-enabled').is(':checked')));
+      }).on('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        var control = $('#ai-access-oauth-enabled');
+        if (!control.prop('disabled') && !ev.repeat) control[0].click();
+      });
 
       // (4) Open the dashboard.
       row = $('<div class="ai-access-actions"></div>').appendTo(body);

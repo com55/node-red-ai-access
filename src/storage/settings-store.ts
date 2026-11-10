@@ -31,6 +31,13 @@ import {
 /** Max size for config.json (pretty-printed). */
 export const MAX_SETTINGS_JSON_BYTES = 16_384;
 
+export interface PublicUrlCheck {
+  publicBaseUrl: string;
+  status: number | null;
+  ok: boolean;
+  checkedAt: string;
+}
+
 export interface PersistedAiAccessSettings {
   /** When false, AI features are off even if adminAuth is enabled. Default true. */
   enabled?: boolean;
@@ -281,6 +288,7 @@ export function settingsJsPartial(
 }
 
 export class SettingsStore {
+  private publicUrlCheck: PublicUrlCheck | null = null;
   private readonly filePath: string;
   private disk: PersistedAiAccessSettings;
   private settingsJs: PersistedAiAccessSettings;
@@ -298,6 +306,33 @@ export class SettingsStore {
       warn
     );
     this.cached = mergeAiAccessSettings(this.settingsJs, this.disk);
+    try {
+      const raw = JSON.parse(readFileSync(this.filePath, 'utf8')) as {
+        publicUrlCheck?: PublicUrlCheck;
+      };
+      const check = raw.publicUrlCheck;
+      if (
+        check &&
+        typeof check.publicBaseUrl === 'string' &&
+        typeof check.ok === 'boolean' &&
+        (check.status === null || Number.isInteger(check.status)) &&
+        typeof check.checkedAt === 'string' &&
+        Number.isFinite(Date.parse(check.checkedAt))
+      ) {
+        this.publicUrlCheck = { ...check };
+      }
+    } catch {
+      /* No valid internal metadata yet. */
+    }
+  }
+
+  getPublicUrlCheck(): PublicUrlCheck | null {
+    return this.publicUrlCheck ? { ...this.publicUrlCheck } : null;
+  }
+
+  recordPublicUrlCheck(check: PublicUrlCheck): void {
+    this.persist(this.disk, check);
+    this.publicUrlCheck = { ...check };
   }
 
   getEffective(): EffectiveAiAccessSettingsWithMeta {
@@ -355,11 +390,15 @@ export class SettingsStore {
     return this.update(next);
   }
 
-  private persist(next: PersistedAiAccessSettings): void {
-    const payload: TrustedStoragePayload = encodeTrustedJson(next, MAX_SETTINGS_JSON_BYTES, {
-      kind: 'settings',
-      pretty: true,
-    });
+  private persist(next: PersistedAiAccessSettings, check = this.publicUrlCheck): void {
+    const payload: TrustedStoragePayload = encodeTrustedJson(
+      { ...next, ...(check ? { publicUrlCheck: check } : {}) },
+      MAX_SETTINGS_JSON_BYTES,
+      {
+        kind: 'settings',
+        pretty: true,
+      }
+    );
     writeTrustedAtomic(this.paths.root, this.filePath, payload);
   }
 }

@@ -853,7 +853,7 @@ function pageClientScriptPartATabs(): string {
   function loadTabData(target) {
     if (target === 'settings') loadSettings();
     if (target === 'oauth') loadOAuthTab();
-    if (target === 'links') loadLinks();
+    if (target === 'links') { loadLinks(); loadSettings(); }
     if (target === 'proposals') loadProposals();
     if (target === 'logs') {
       // Load proposals so older audit rows can resolve titles / flow labels.
@@ -1234,8 +1234,36 @@ function pageClientScriptPartB(): string {
     };
   }
 
+  var TOKEN_URL_BASE_KEY = 'ai-access.token-url-base';
+  function tokenUrlBaseChoice() {
+    try { return localStorage.getItem(TOKEN_URL_BASE_KEY) === 'public' ? 'public' : 'page'; }
+    catch (e) { return 'page'; }
+  }
+  function tokenPublicBase() {
+    return settingsData && settingsData.settings && settingsData.settings.publicBaseUrl || '';
+  }
+  function updateTokenUrlBase() {
+    var select = $('token-url-base');
+    if (!select) return;
+    var available = !!tokenPublicBase();
+    $('token-url-base-public').disabled = !available;
+    $('token-url-base-hint').hidden = available;
+    var choice = available ? tokenUrlBaseChoice() : 'page';
+    select.value = choice;
+    if (!available) {
+      try { localStorage.setItem(TOKEN_URL_BASE_KEY, 'page'); } catch (e) { /* storage unavailable */ }
+    }
+    select.onchange = function () {
+      try { localStorage.setItem(TOKEN_URL_BASE_KEY, select.value === 'public' && tokenPublicBase() ? 'public' : 'page'); }
+      catch (e) { /* storage unavailable */ }
+      renderTokenUsage();
+    };
+    renderTokenUsage();
+  }
+
   function linkCopyMaterial(kind, token, url) {
     var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
+    if (tokenUrlBaseChoice() === 'public' && tokenPublicBase()) origin = tokenPublicBase().replace(/\\/$/, '');
     var base = origin + apiBase;
     var rpc = origin + mcpRpc;
     var k = normalizeLinkKind(kind);
@@ -1281,9 +1309,9 @@ function pageClientScriptPartB(): string {
         mcpSnippets: snippets
       };
     }
-    var getLink = url || (tok
+    var getLink = tok
       ? (origin + (apiBase.replace(/\\/mcp\\/api\\/v1\\/?$/, '/mcp/a/') + tok))
-      : '');
+      : (url ? origin + new URL(url, location.origin).pathname : '');
     return {
       kind: 'get_link',
       label: 'GET link (chat paste)',
@@ -3776,6 +3804,7 @@ function pageClientScriptPartDBoot(): string {
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId(), focusHeading: !!location.hash });
       if (initialTab === 'settings') loadSettings();
+      if (initialTab === 'links') loadSettings();
       if (initialTab === 'oauth') loadOAuthTab();
       if (aiOn) {
         if (canManage) loadLinks();

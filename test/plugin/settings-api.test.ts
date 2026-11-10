@@ -525,6 +525,36 @@ describe('GET/PUT /mcp/api/v1/settings', () => {
     expect(result.body.trustProxy).toBe('loopback');
   });
 
+  it('automatically checks changed URLs, persists failures, and ignores client metadata', async () => {
+    const probe = mockProbe(503);
+    const { app } = createApp({ userDir, authenticate: asUser('*') });
+    const saved = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ publicBaseUrl: 'https://example.com', oauth: { enabled: true } });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(saved.body.publicUrlCheck).toMatchObject({
+      publicBaseUrl: 'https://example.com',
+      status: 503,
+      ok: false,
+    });
+    expect(Number.isFinite(Date.parse(saved.body.publicUrlCheck.checkedAt))).toBe(true);
+    const unchanged = await request(app)
+      .put('/mcp/api/v1/settings')
+      .send({ publicBaseUrl: 'https://example.com', publicUrlCheck: { ok: true } });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(unchanged.body.publicUrlCheck).toEqual(saved.body.publicUrlCheck);
+    await request(app)
+      .post('/mcp/api/v1/settings/check-public-url')
+      .send({ publicBaseUrl: 'https://other.example' });
+    const latest = await request(app).get('/mcp/api/v1/settings');
+    expect(latest.body.publicUrlCheck.publicBaseUrl).toBe('https://other.example');
+    expect(latest.body.oauthPublicUrlWarning).toBeNull();
+    const restarted = createApp({ userDir, authenticate: asUser('*') }).app;
+    expect((await request(restarted).get('/mcp/api/v1/settings')).body.publicUrlCheck).toEqual(
+      latest.body.publicUrlCheck
+    );
+  });
+
   it('restricts Check to star users and validates its URL before fetching', async () => {
     const fetcher = mockProbe();
     const { app } = createApp({ userDir, authenticate: asUser('read') });
