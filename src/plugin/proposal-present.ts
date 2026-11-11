@@ -425,27 +425,6 @@ export function resolveFlowLabel(
   return '';
 }
 
-/** Append ` in {flow}` when the title does not already mention the flow name. */
-export function ensureTitleIncludesFlowName(title: string, flowLabel: string): string {
-  const label = flowLabel.trim();
-  const t = title.trim();
-  if (!label || !t) {
-    return t;
-  }
-  if (t.includes(label)) {
-    return t;
-  }
-  // A title capped at PROPOSAL_TITLE_MAX may end with a truncated ` in <label…>`.
-  const idx = t.lastIndexOf(' in ');
-  if (idx >= 0) {
-    const tail = t.slice(idx + 4);
-    if (tail.length > 0 && label.startsWith(tail)) {
-      return t;
-    }
-  }
-  return `${t} in ${label}`;
-}
-
 /**
  * Auto-generate a title from the actual node changes.
  * Examples: `Rename debug node "out" → "out (patched)"`, `Add inject node "tick2"`,
@@ -481,7 +460,7 @@ export function autoGenerateProposalTitle(
   }
 
   const one = describeOneChange(changes) ?? (label ? `Update ${label}` : 'Update flow');
-  return ensureTitleIncludesFlowName(one, label);
+  return one;
 }
 
 /** True for titles we should refresh from a live diff (legacy / auto / non-replace deletes). */
@@ -546,7 +525,7 @@ export function titleFromDiffSummary(
     return label ? `Update ${label}` : 'Update flow';
   }
   if (total === 1 && added === 1 && firstAddedType) {
-    return ensureTitleIncludesFlowName(`Add ${firstAddedType} node`, label);
+    return `Add ${firstAddedType} node`;
   }
   if (total === 1 && moved === 1) {
     return label ? `Move node in ${label}` : 'Move node';
@@ -666,12 +645,12 @@ export function resolveProposalTitle(
     collectNodes(proposal.payload.flow)
   );
   const raw = shouldRefreshDisplayTitle(stored, changes.removed.length) ? auto : (stored ?? auto);
-  return ensureTitleIncludesFlowName(raw, flowLabel);
+  return raw;
 }
 
 /**
  * The stored title. An already-presented object keeps its original
- * `storedTitle` (its `title` may carry the ` in <flow>` suffix).
+ * `storedTitle` when its display title was refreshed from the diff.
  */
 function storedTitleOf(proposal: Proposal & { storedTitle?: unknown }): string | undefined {
   if (typeof proposal.storedTitle === 'string' && proposal.storedTitle) {

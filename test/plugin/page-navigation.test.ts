@@ -2,6 +2,7 @@ import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { LOGO } from '../../src/plugin/oauth-consent-page.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
 import { initialTabFromHash, tabFromHash } from '../../src/plugin/page-hash.js';
 import { renderMcpPage } from '../../src/plugin/page.js';
@@ -19,6 +20,9 @@ describe('settings navigation', () => {
       header.indexOf('class="dashboard-brand"')
     );
     expect(header).toContain('AI Access</span>');
+    expect(header).toContain(LOGO);
+    expect(header).not.toContain('dashboard-brand-mark');
+    expect(header).not.toMatch(/>ai<\//);
     expect(header).toContain('aria-controls="mobile-menu" aria-expanded="false"');
     expect(header).toContain('id="proposals-pending-badge"');
     expect(header).toContain('aria-label="Settings" title="Settings"');
@@ -53,6 +57,29 @@ describe('settings navigation', () => {
     expect(html).toContain(
       'section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
     );
+  });
+
+  it('renders proposal list chrome with an intro, counted filters, search and a list card', () => {
+    const html = renderMcpPage({ apiBase: '/mcp/api/v1' });
+    const list = /<section class="panel" id="section-proposals"[\s\S]*?<\/section>/.exec(html)![0];
+    expect(list).toContain('<div class="list-eyebrow">AI ACCESS / PROPOSALS</div>');
+    expect(list).toContain('<h1 tabindex="-1">Proposals</h1>');
+    expect(list).toContain('class="list-intro"');
+    expect(list).toContain('Review proposed changes to your flows.');
+    expect(list).toContain('<p class="list-sort">Newest first</p>');
+    expect(list).not.toContain('Example data');
+    for (const filter of ['pending', 'conflict', 'resolved', 'all']) {
+      expect(list).toContain('data-filter="' + filter + '"');
+      expect(list).toContain('id="filter-' + filter + '-count"');
+    }
+    expect(list).toContain('data-filter="pending" aria-pressed="true"');
+    expect(list).toContain('id="proposals-search"');
+    expect(list).toContain('id="proposals-list" class="proposal-list"');
+    expect(html).toContain(
+      '#proposals-list { background: var(--card); border: 1px solid var(--line); border-radius: 9px;'
+    );
+    expect(html).toContain('.dashboard-brand .logo { width: 28px; height: 28px; flex: none; }');
+    expect(pageClientScript()).not.toContain('Review your AI assistant’s changes.');
   });
 
   it('measures the sticky header initially and when its size changes', () => {

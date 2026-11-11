@@ -219,7 +219,7 @@ describe('proposals / flows / logs HTTP API', () => {
       });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
-      title: 'Move debug node in Main',
+      title: 'Move debug node',
       changeSummary: 'Moves 1 node',
       changeCounts: { added: 0, removed: 0, modified: 0, moved: 1, conflict: 0 },
     });
@@ -347,8 +347,8 @@ describe('proposals / flows / logs HTTP API', () => {
         },
       });
     expect(withTitle.status).toBe(201);
-    expect(withTitle.body.title).toBe('Add inject sensor in Main');
-    expect(withTitle.body.displayName.startsWith('Add inject sensor in Main · ')).toBe(true);
+    expect(withTitle.body.title).toBe('Add inject sensor');
+    expect(withTitle.body.displayName.startsWith('Add inject sensor · ')).toBe(true);
     expect(withTitle.body.reviewPath).toBe(`/ai-access#/proposals/${withTitle.body.id}`);
     expect(withTitle.body.reviewUrl).toBe(
       `http://nr.example:1880/ai-access#/proposals/${withTitle.body.id}`

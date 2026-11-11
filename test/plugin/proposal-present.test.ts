@@ -12,7 +12,6 @@ import {
   buildProposalReviewPath,
   buildProposalReviewUrl,
   buildReplaceFlowTitle,
-  ensureTitleIncludesFlowName,
   formatProposalSubmittedAt,
   formatUtcOffset,
   parseIncludeQuery,
@@ -75,7 +74,7 @@ describe('formatUtcOffset / formatProposalSubmittedAt', () => {
 });
 
 describe('autoGenerateProposalTitle', () => {
-  it('describes a rename (includes flow name)', () => {
+  it('describes a rename without a forced flow suffix', () => {
     expect(
       autoGenerateProposalTitle(
         {
@@ -87,19 +86,19 @@ describe('autoGenerateProposalTitle', () => {
           nodes: [{ id: 'n1', type: 'debug', name: 'out (patched)', complete: 'payload' }],
         }
       )
-    ).toBe('Rename debug node "out" → "out (patched)" in Test Flow');
+    ).toBe('Rename debug node "out" → "out (patched)"');
   });
 
-  it('describes a single added inject (includes flow name)', () => {
+  it('describes a single added inject without a forced flow suffix', () => {
     expect(
       autoGenerateProposalTitle(
         { label: 'Test Flow', nodes: [] },
         { label: 'Test Flow', nodes: [{ id: 'n2', type: 'inject', name: 'tick2' }] }
       )
-    ).toBe('Add inject node "tick2" in Test Flow');
+    ).toBe('Add inject node "tick2"');
   });
 
-  it('describes a single edited template (includes flow name)', () => {
+  it('describes a single edited template without a forced flow suffix', () => {
     expect(
       autoGenerateProposalTitle(
         {
@@ -111,7 +110,7 @@ describe('autoGenerateProposalTitle', () => {
           nodes: [{ id: 't1', type: 'template', name: 'html20k', template: 'b' }],
         }
       )
-    ).toBe('Edit template "html20k" in Test Flow');
+    ).toBe('Edit template "html20k"');
   });
 
   it('summarizes many changes with the flow label', () => {
@@ -240,9 +239,7 @@ describe('buildReplaceFlowTitle / display-title refresh', () => {
         },
       },
     });
-    expect(resolveProposalTitle(updateLegacy)).toBe(
-      'Rename debug node "out" → "out (patched)" in Test Flow'
-    );
+    expect(resolveProposalTitle(updateLegacy)).toBe('Rename debug node "out" → "out (patched)"');
   });
 
   it('resolves flow name for oldest cards via liveFlowLabels', () => {
@@ -259,12 +256,10 @@ describe('buildReplaceFlowTitle / display-title refresh', () => {
       },
     });
     const labels = new Map([['tab1', 'Test Flow']]);
-    expect(resolveProposalTitle(orphan, { liveFlowLabels: labels })).toBe(
-      'Add comment node in Test Flow'
-    );
+    expect(resolveProposalTitle(orphan, { liveFlowLabels: labels })).toBe('Add comment node');
     const presented = presentProposal(orphan, { liveFlowLabels: labels });
     expect(presented.flowLabel).toBe('Test Flow');
-    expect(presented.title).toBe('Add comment node in Test Flow');
+    expect(presented.title).toBe('Add comment node');
   });
 });
 
@@ -348,9 +343,9 @@ describe('presentProposal', () => {
         },
       })
     );
-    expect(presented.title).toBe('Edit inject "tick" in Main');
+    expect(presented.title).toBe('Edit inject "tick"');
     expect(presented.flowLabel).toBe('Main');
-    expect(presented.displayName.startsWith('Edit inject "tick" in Main · ')).toBe(true);
+    expect(presented.displayName.startsWith('Edit inject "tick" · ')).toBe(true);
     expect(presented.reviewPath).toBeTruthy();
   });
 
@@ -427,30 +422,24 @@ describe('presentProposalForApi', () => {
   });
 });
 
-describe('ensureTitleIncludesFlowName with long labels', () => {
+describe('proposal titles with flow labels', () => {
   const label = 'Test Flow With A Very Long Name Used For Title Truncation Purposes Only Here';
 
-  it('does not append the flow suffix twice after the title was capped', () => {
+  it.each(['Rename tab', 'Move in place', 'Round1 conflict on Enrich'])(
+    'preserves the custom title %s without appending a flow name',
+    title => {
+      const proposal = baseProposal({ title, flowLabel: label });
+      expect(resolveProposalTitle(proposal)).toBe(title);
+      expect(presentProposalForApi(proposal).title).toBe(title);
+      expect(proposal.title).toBe(title);
+    }
+  );
+
+  it('preserves an existing title with a capped flow suffix', () => {
     const full = `Rename tab in ${label}`;
-    expect(full.length).toBeGreaterThan(80);
     const stored = sanitizeProposalTitle(full)!;
-    expect(stored.length).toBe(80);
-    expect(ensureTitleIncludesFlowName(stored, label)).toBe(stored);
-    expect(ensureTitleIncludesFlowName(stored, label).split(' in ')).toHaveLength(2);
-  });
-
-  it('still appends the suffix when the title does not mention the flow', () => {
-    expect(ensureTitleIncludesFlowName('Rename tab', label)).toBe(`Rename tab in ${label}`);
-    expect(ensureTitleIncludesFlowName('Move in place', 'Main')).toBe('Move in place in Main');
-  });
-
-  it('resolveProposalTitle shows the capped stored title once', () => {
-    const proposal = baseProposal({
-      title: `Rename tab in ${label}`,
-      flowLabel: label,
-    });
-    const title = resolveProposalTitle(proposal);
-    expect(title.match(/ in /g)).toHaveLength(1);
+    expect(stored).toHaveLength(80);
+    expect(resolveProposalTitle(baseProposal({ title: stored, flowLabel: label }))).toBe(stored);
   });
 });
 
@@ -470,18 +459,16 @@ describe('Moved proposal summaries and titles', () => {
   it('describes a single move in AI summaries, auto titles and refreshed display titles', () => {
     const p = baseProposal({ baseFlow: before, payload: { flowId: 'tab', flow: after } });
     expect(buildChangeSummary(p)).toBe('Moves 1 node');
-    expect(autoGenerateProposalTitle(before, after)).toBe('Move function node "Route" in Main');
+    expect(autoGenerateProposalTitle(before, after)).toBe('Move function node "Route"');
     expect(presentProposalForApi(p)).toMatchObject({
-      title: 'Move function node "Route" in Main',
+      title: 'Move function node "Route"',
       changeSummary: 'Moves 1 node',
       changeCounts: { modified: 0, moved: 1 },
     });
     expect(
       titleFromDiffSummary({ moved: 1 }, { storedTitle: 'Update Main', flowLabel: 'Main' })
     ).toBe('Move node in Main');
-    expect(resolveProposalTitle({ ...p, title: 'Update Main' })).toBe(
-      'Move function node "Route" in Main'
-    );
+    expect(resolveProposalTitle({ ...p, title: 'Update Main' })).toBe('Move function node "Route"');
   });
 
   it('includes moves in mixed totals and delete-leading titles', () => {
@@ -511,7 +498,7 @@ describe('Moved proposal summaries and titles', () => {
       const flow = { ...after, nodes: [{ ...after.nodes[0]!, ...patch }] };
       const p = baseProposal({ baseFlow: before, payload: { flowId: 'tab', flow } });
       expect(buildChangeSummary(p)).toBe('Edits 1 node');
-      expect(autoGenerateProposalTitle(before, flow)).toBe('Edit function "Route" in Main');
+      expect(autoGenerateProposalTitle(before, flow)).toBe('Edit function "Route"');
     }
   });
 });

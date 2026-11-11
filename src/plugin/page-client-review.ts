@@ -72,9 +72,7 @@ export function pageClientReviewScript(): string {
     var detail = $('proposal-detail-page'), list = $('proposals-list');
     if (detail) detail.hidden = !id;
     if (list) list.hidden = !!id;
-    ['proposals-filters', 'proposals-hint'].forEach(function (key) { var el = $(key); if (el) el.hidden = !!id; });
-    var section = $('section-proposals'), heading = section && section.querySelector('h2');
-    if (heading) heading.hidden = !!id;
+    ['proposals-filters', 'proposals-list-header'].forEach(function (key) { var el = $(key); if (el) el.hidden = !!id; });
   }
   function showProposalDetail(id, opts) {
     opts = opts || {};

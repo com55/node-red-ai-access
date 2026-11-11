@@ -61,7 +61,7 @@ function browserHelpers(
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
-      setViewport: function (width) { window.innerWidth = width; window.matchMedia = function () { return { matches: width >= 700 }; }; }, displayTitleForProposal, diffComparisonKey,
+      buildDisambiguatedTitles, syncProposalRoute, setViewport: function (width) { window.innerWidth = width; window.matchMedia = function () { return { matches: width >= 700 }; }; }, displayTitleForProposal, diffComparisonKey,
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
       settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
       renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
@@ -844,8 +844,16 @@ describe('proposal summaries and deploy controls', () => {
     expect(html).toContain('title="2 moved"');
     expect(html).not.toMatch(/[✎⚠✓•]/);
     expect(html).toContain('role="button" tabindex="0"');
-    expect(html).toContain('Created by agent');
-    expect(html).toContain('Main');
+    expect(html).toContain(
+      '<span class="row-chevron" aria-hidden="true">→</span></div><div class="proposal-row-meta">'
+    );
+    expect(html).not.toContain('›');
+    expect(html).toMatch(/<span class="proposal-by"[^>]*>Created by agent · [^<]+<\/span>/);
+    expect(html).not.toContain('<time');
+    expect(html).toContain('<span class="flow-name">Main</span>');
+    expect(html).toContain('<strong data-title-for="p">Test title</strong>');
+    expect(html).not.toContain('Test title in Main');
+    expect(ui.displayTitleForProposal(p, { summary: { modified: 1 } })).toBe('Test title');
     expect(html).toContain('Rebase: clean');
     expect(html).not.toMatch(/approve-btn|reject-btn|Approve|Reject|proposal-detail|<button/);
     expect(ui.renderCompactProposal({ ...p, status: 'approved' })).not.toContain('rebase-chip');
@@ -877,6 +885,38 @@ describe('proposal summaries and deploy controls', () => {
       expect(ui.getListState()).toEqual(['conflict', 'my title']);
     }
   );
+
+  it('disambiguates matching custom titles across flows without adding flow suffixes', () => {
+    const ui = browserHelpers();
+    const titles = ui.buildDisambiguatedTitles([
+      { id: 'a', title: 'Tighten parsing', flowLabel: 'Hello', createdAt: '2026-11-10T01:00:00Z' },
+      {
+        id: 'b',
+        title: 'Tighten parsing',
+        flowLabel: 'Event pipeline',
+        createdAt: '2026-11-10T01:00:00Z',
+      },
+    ]);
+    expect(titles.a).toMatch(/^Tighten parsing · \d{2}:\d{2} #1$/);
+    expect(titles.b).toMatch(/^Tighten parsing · \d{2}:\d{2} #2$/);
+  });
+
+  it('hides list chrome on detail routes and restores it on return', () => {
+    const elements = Object.fromEntries(
+      ['proposals-list-header', 'proposals-filters', 'proposals-list', 'proposal-detail-page'].map(
+        id => [id, { hidden: false, querySelectorAll: () => [] }]
+      )
+    );
+    const ui = browserHelpers(elements);
+    ui.syncProposalRoute('p');
+    for (const id of ['proposals-list-header', 'proposals-filters', 'proposals-list'])
+      expect(elements[id].hidden).toBe(true);
+    expect(elements['proposal-detail-page'].hidden).toBe(false);
+    ui.syncProposalRoute('');
+    for (const id of ['proposals-list-header', 'proposals-filters', 'proposals-list'])
+      expect(elements[id].hidden).toBe(false);
+    expect(elements['proposal-detail-page'].hidden).toBe(true);
+  });
 
   it.each(['nodes', 'flows', 'full'])(
     'defaults the split button from Settings (%s) and submits the selected type only on Approve',
@@ -959,6 +999,22 @@ describe('proposal search pagination and cross-filter hints', () => {
     const ui = browserHelpers({ 'proposals-list': list });
     return { ui, list };
   }
+
+  it.each([
+    ['pending', '', 'filter'],
+    ['conflict', '', 'filter'],
+    ['resolved', '', 'filter'],
+    ['all', 'missing', 'search'],
+  ])('centres the empty state for %s with query "%s"', (filter, query, subject) => {
+    const { ui, list } = searchUi();
+    ui.setSearch(filter, query, [], false);
+    ui.renderProposalsList();
+    expect(list.innerHTML).toContain('<h2 class="empty-title">All clear here</h2>');
+    expect(list.innerHTML).toContain('No proposals match this ' + subject + '.');
+    expect(pageStyles()).toContain(
+      '#proposals-list .empty-state { padding: 65px 20px; text-align: center;'
+    );
+  });
 
   it.each([1, 2])('marks %i loaded Resolved matches as partial until pagination ends', count => {
     const { ui, list } = searchUi();

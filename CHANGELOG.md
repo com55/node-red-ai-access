@@ -31,6 +31,9 @@ and this project adheres to
 
 ### Fixed
 
+- Match proposal list chrome and empty states to the approved design, preserve
+  custom titles, and use the OAuth consent logo in the dashboard header.
+
 - Bring selected Changed nodes into view and align each row's type and name.
 - Use registered Node-RED palette icons and editor text sizing on the Visual
   View canvas, preserving node centres in Editor positions mode.

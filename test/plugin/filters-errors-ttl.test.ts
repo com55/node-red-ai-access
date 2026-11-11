@@ -921,7 +921,7 @@ describe('submit responses carry the stored title and flowLabel', () => {
   });
 
   const expected = {
-    title: 'Tweak greeting in Main',
+    title: 'Tweak greeting',
     storedTitle: 'Tweak greeting',
     flowLabel: 'Main',
   };

@@ -117,7 +117,7 @@ function renderMcpPageNav(): string {
       ${iconOnly ? '' : `<span>${label}</span>`}${badge && id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}</button>`;
   return `<header class="dashboard-header" id="main-nav" hidden>
     <button type="button" id="menu-toggle" aria-label="Open dashboard menu" aria-controls="mobile-menu" aria-expanded="false">☰</button>
-    <a class="dashboard-brand" href="#overview"><span class="dashboard-brand-mark" aria-hidden="true">ai</span><span>AI Access</span></a>
+    <a class="dashboard-brand" href="#overview">${LOGO}<span>AI Access</span></a>
     <nav class="tabs desktop-nav" aria-label="Dashboard">${items
       .slice(0, 4)
       .map(item => button(item, false, true))
@@ -437,9 +437,14 @@ function renderMcpPageOAuthSection(): string {
 function renderMcpPageProposalsSection(): string {
   return `
     <section class="panel" id="section-proposals" aria-label="Proposals" hidden>
-      <h2 tabindex="-1">Proposals</h2>
-      <p id="proposals-hint" class="muted"></p>
-      <div class="filter-row" id="proposals-filters" hidden>
+      <div id="proposals-list-header">
+        <div class="list-eyebrow">AI ACCESS / PROPOSALS</div>
+        <div class="list-intro">
+          <div><h1 tabindex="-1">Proposals</h1><p id="proposals-hint">Review proposed changes to your flows.</p></div>
+          <p class="list-sort">Newest first</p>
+        </div>
+      </div>
+      <div class="filter-row" id="proposals-filters" aria-label="Filter proposals" hidden>
         <button type="button" class="filter-chip" data-filter="pending" aria-pressed="true">
           Pending <span id="filter-pending-count">0</span>
         </button>
@@ -453,7 +458,7 @@ function renderMcpPageProposalsSection(): string {
       </div>
       <div id="proposals-flash" class="flash" hidden></div>
       <div id="proposal-detail-page" hidden></div>
-      <div id="proposals-list"><p class="muted">Loading…</p></div>
+      <div id="proposals-list" class="proposal-list" aria-label="Proposals"><p class="muted">Loading…</p></div>
     </section>`;
 }
 

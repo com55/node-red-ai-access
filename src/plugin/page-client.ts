@@ -855,7 +855,7 @@ function pageClientScriptPartATabs(): string {
     document.querySelectorAll('section.panel').forEach(function (sec) {
       sec.classList.toggle('active', sec.id === 'section-' + target);
       if (options.focusHeading && sec.id === 'section-' + target) {
-        var heading = sec.querySelector('h2');
+        var heading = sec.querySelector('h1, h2');
         if (heading) heading.focus({ preventScroll: true });
       }
     });
@@ -1657,19 +1657,6 @@ function pageClientScriptPartB(): string {
     return '';
   }
 
-  function ensureTitleIncludesFlowName(title, flowLabel) {
-    var t = String(title || '').trim();
-    var label = String(flowLabel || '').trim();
-    if (!label || !t) return t;
-    if (t.indexOf(label) >= 0) return t;
-    var idx = t.lastIndexOf(' in ');
-    if (idx >= 0) {
-      var tail = t.slice(idx + 4);
-      if (tail.length > 0 && label.indexOf(tail) === 0) return t;
-    }
-    return t + ' in ' + label;
-  }
-
   function proposalTechSummary(p) {
     var flow = (p.payload && p.payload.flow) || {};
     var nodes = Array.isArray(flow.nodes) ? flow.nodes.length : 0;
@@ -1907,10 +1894,7 @@ function pageClientScriptPartB(): string {
     var stored = p.title || (p.displayName ? titleFromDisplayName(p.displayName) : '');
     var flowLabel = flowLabelOf(p);
     if (!diff || !diff.summary) {
-      return ensureTitleIncludesFlowName(
-        stored || (flowLabel ? 'Update ' + flowLabel : 'Proposal'),
-        flowLabel
-      );
+      return stored || (flowLabel ? 'Update ' + flowLabel : 'Proposal');
     }
     var sum = diff.summary;
     var removed = Number(sum.removed) || 0;
@@ -1918,7 +1902,7 @@ function pageClientScriptPartB(): string {
     var modified = Number(sum.modified) || 0;
     var moved = Number(sum.moved) || 0;
     if (!shouldRefreshDisplayTitle(stored, removed)) {
-      return ensureTitleIncludesFlowName(stored, flowLabel);
+      return stored;
     }
     var firstType = '';
     if (diff.added && diff.added[0] && typeof diff.added[0].type === 'string') {
@@ -1935,7 +1919,7 @@ function pageClientScriptPartB(): string {
     var total = added + modified + moved;
     if (total === 0) return flowLabel ? 'Update ' + flowLabel : 'Update flow';
     if (total === 1 && added === 1 && firstType) {
-      return ensureTitleIncludesFlowName('Add ' + firstType + ' node', flowLabel);
+      return 'Add ' + firstType + ' node';
     }
     if (total === 1 && moved === 1) {
       return flowLabel ? 'Move node in ' + flowLabel : 'Move node';
@@ -2682,9 +2666,9 @@ function pageClientScriptPartB2CardsList(): string {
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) + '" role="button" tabindex="0">' +
       '<div class="proposal-top"><span class="proposal-row-heading"><strong data-title-for="' + esc(p.id) + '">' + esc(titleForProposalCard(p)) + '</strong>' +
       (warning ? '<span class="proposal-inline-warning" title="Deploy pending" aria-label="Deploy pending">' + statusIcon('deploy-pending') + '</span>' : '') + '</span>' +
-      '<span class="status-pill ' + esc(p.status === 'conflict' ? 'pending' : p.status) + '">' + esc(p.status === 'conflict' ? 'pending' : p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '</div>' +
+      '<span class="status-pill ' + esc(p.status === 'conflict' ? 'pending' : p.status) + '">' + esc(p.status === 'conflict' ? 'pending' : p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '<span class="row-chevron" aria-hidden="true">→</span></div>' +
       '<div class="proposal-row-meta"><span class="flow-name">' + esc(flowLabelOf(p) || 'Flow') + '</span>' + renderChangeCounts(p.changeCounts) +
-      '<span class="proposal-by">Created by ' + esc((p.createdBy && (p.createdBy.label || p.createdBy.user || p.createdBy.clientId)) || 'AI agent') + '</span>' + timeCell(p.createdAt) + '<span class="row-chevron">›</span></div></div>';
+      '<span class="proposal-by" title="' + esc(fmt(p.createdAt)) + '">' + esc('Created by ' + ((p.createdBy && (p.createdBy.label || p.createdBy.user || p.createdBy.clientId)) || 'AI agent') + ' · ' + (p.createdAt ? fmtRelative(p.createdAt) : '—')) + '</span></div></div>';
   }
 
   function proposalMatchesSearch(p) {
@@ -2730,11 +2714,9 @@ function pageClientScriptPartB2CardsList(): string {
     });
   }
 
-  function renderEmptyProposalsState(title, muted, extraHtml) {
-    return '<div class="empty-state"><p class="empty-title">' + esc(title) + '</p>' +
-      '<p class="muted">' + esc(muted) + '</p>' +
-      (extraHtml || '') +
-      '</div>';
+  function renderEmptyProposalsState(searchActive) {
+    return '<div class="empty-state"><h2 class="empty-title">All clear here</h2>' +
+      '<p class="muted">No proposals match this ' + (searchActive ? 'search' : 'filter') + '.</p></div>';
   }
 
   function renderDeployUnknownBlocks(blocks) {
@@ -2788,8 +2770,7 @@ function pageClientScriptPartB2CardsList(): string {
     }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
     disambiguatedTitleCache = buildDisambiguatedTitles(matched);
     var html = matched.length ? matched.map(renderCompactProposal).join('') : renderEmptyProposalsState(
-      proposalsSearchQuery.trim() ? 'No matching proposals' : 'No ' + (proposalsFilter === 'all' ? '' : proposalsFilter + ' ') + 'proposals',
-      proposalsSearchQuery.trim() ? 'Try a different title or id, or clear the search.' : 'When proposals match this filter they will appear here.'
+      !!proposalsSearchQuery.trim()
     );
     if (!matched.length && proposalsFilter !== 'all') {
       ['pending', 'conflict', 'resolved'].forEach(function (filter) {
@@ -3611,10 +3592,6 @@ function pageClientScriptPartD(): string {
       warning.hidden = true;
       warning.innerHTML = '';
     }
-
-    $('proposals-hint').textContent = canApprove
-      ? 'Review your AI assistant’s changes. Approve & deploy applies them to Node-RED. Reject closes a proposal without changing the flow.'
-      : 'Review proposals here. A full Node-RED admin can approve or reject them.';
 
     renderLinksManage();
   }
