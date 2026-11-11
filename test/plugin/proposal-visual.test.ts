@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { pageClientVisualGeometryScript } from '../../src/plugin/page-client-visual.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
+import { pageStyles } from '../../src/plugin/page-styles.js';
 import {
   changedNodeKeys,
   flowChangeCounts,
@@ -1402,7 +1403,11 @@ describe('Moved classification and review', () => {
     const diff = { ...sections, rebase: { state: 'clean' }, vsCurrent: sections };
     const viewport = { innerHTML: '', setAttribute: vi.fn() };
     const rows = { innerHTML: '' };
-    const svg = { addEventListener: vi.fn() };
+    const svg = {
+      addEventListener: vi.fn(),
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: () => true,
+    };
     const showAll = {
       onclick: () =>
         diffHost.onclick!({
@@ -1457,8 +1462,134 @@ describe('Moved classification and review', () => {
           closest: (query: string) => (query === selector ? { getAttribute: () => attr } : null),
         },
       });
-    return { ui, p, diff, viewport, rows, diffHost, host, showAll, click, resize: () => resize() };
+    const view = () => {
+      const transform = viewport.setAttribute.mock.calls.at(-1)![1];
+      const [, x, y, k] = transform.match(/translate\(([^,]+),([^)]+)\) scale\(([^)]+)\)/)!;
+      return { x: Number(x), y: Number(y), k: Number(k) };
+    };
+    const screenPosition = () => {
+      const [, x, y] = /data-visual-node="move"[^>]*transform="translate\(([^,]+),([^)]+)\)"/.exec(
+        viewport.innerHTML
+      )!;
+      const n = ui.visualGraph(p, diff).byId.move;
+      const v = view();
+      return { x: (Number(x) + n.w / 2) * v.k + v.x, y: (Number(y) + n.h / 2) * v.k + v.y };
+    };
+    const pan = (x: number, y: number) => {
+      const listeners = new Map(svg.addEventListener.mock.calls.map(([event, fn]) => [event, fn]));
+      listeners.get('pointerdown')!({
+        pointerId: 1,
+        clientX: 0,
+        clientY: 0,
+        target: { closest: () => null },
+      });
+      listeners.get('pointermove')!({ pointerId: 1, clientX: x, clientY: y });
+      listeners.get('pointerup')!();
+    };
+    return {
+      ui,
+      p,
+      diff,
+      viewport,
+      rows,
+      diffHost,
+      host,
+      showAll,
+      click,
+      view,
+      screenPosition,
+      pan,
+      resize: () => resize(),
+    };
   }
+
+  it('centres a Changed-nodes row selection at the current zoom and opens its drawer', () => {
+    const { click, pan, view, screenPosition, rows, viewport, diffHost } = mount();
+    click('[data-visual-layout]', 'editor');
+    pan(900, -600);
+    const before = view();
+    click('[data-visual-node]', 'move');
+    expect(view()).not.toEqual(before);
+    expect(view().k).toBe(before.k);
+    expect(screenPosition().x).toBeCloseTo(300);
+    expect(screenPosition().y).toBeCloseTo(175);
+    expect(rows.innerHTML).toContain('moved selected');
+    expect(viewport.innerHTML).toContain('selection-glow');
+    expect(diffHost.innerHTML).toContain('MOVED NODE');
+  });
+
+  it('keeps a comfortably visible canvas selection in place and opens its drawer', () => {
+    const { click, view, diffHost, viewport } = mount({ func: 'return null;' });
+    const before = view();
+    click('[data-visual-node]', 'move');
+    expect(view()).toEqual(before);
+    expect(viewport.innerHTML).toContain('selection-glow');
+    expect(diffHost.innerHTML).toContain('MODIFIED NODE');
+  });
+
+  it.each(['Enter', ' '])('brings keyboard selections into view with %j', key => {
+    const { host, pan, view, screenPosition, diffHost } = mount();
+    pan(-900, 600);
+    const before = view();
+    const preventDefault = vi.fn();
+    host.onkeydown({
+      key,
+      preventDefault,
+      target: { closest: () => ({ hasAttribute: () => false, getAttribute: () => 'move' }) },
+    });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(view().k).toBe(before.k);
+    expect(screenPosition().x).toBeCloseTo(300);
+    expect(screenPosition().y).toBeCloseTo(175);
+    expect(diffHost.innerHTML).toContain('MOVED NODE');
+  });
+
+  it('holds the selected node still when switching layout modes', () => {
+    const { click, pan, screenPosition } = mount();
+    pan(900, -600);
+    click('[data-visual-node]', 'move');
+    const before = screenPosition();
+    for (const layout of ['editor', 'compact']) {
+      click('[data-visual-layout]', layout);
+      expect(screenPosition().x).toBeCloseTo(before.x);
+      expect(screenPosition().y).toBeCloseTo(before.y);
+    }
+  });
+
+  it('preserves pan when refreshing the selected drawer diff mode', () => {
+    const { click, pan, view, diffHost } = mount({ func: 'return null;' });
+    click('[data-visual-node]', 'move');
+    pan(900, -600);
+    const before = view();
+    diffHost.onclick({
+      target: {
+        closest: (selector: string) =>
+          selector === '[data-diff-mode], [data-conflict-diff-mode]'
+            ? { getAttribute: () => 'unified' }
+            : null,
+      },
+    });
+    expect(view()).toEqual(before);
+    expect(diffHost.innerHTML).toContain('class="unified"');
+  });
+
+  it('places row type, name and arrow together above the summary', () => {
+    const { rows } = mount({ func: 'return null;' }, true);
+    expect(rows.innerHTML).toMatch(
+      /<span class="visual-node-type">function<\/span><strong>[^<]+<\/strong><span class="visual-node-summary">/
+    );
+    expect(rows.innerHTML).toContain('Resolved · ');
+    expect(rows.innerHTML).toContain('editor-merged-marker');
+    const css = pageStyles();
+    const rule = (selector: string) => css.slice(css.indexOf(selector + ' {')).split('}')[0];
+    expect(rule('.visual-change-row')).toContain(
+      'grid-template-columns: 18px 58px minmax(0,1fr) auto'
+    );
+    expect(rule('.visual-node-type')).toMatch(/grid-column: 2; grid-row: 1;/);
+    expect(rule('.visual-change-row strong')).toMatch(/grid-column: 3; grid-row: 1;/);
+    expect(rule('.visual-node-arrow')).toMatch(/grid-column: 4; grid-row: 1;/);
+    expect(rule('.visual-node-summary')).toMatch(/grid-column: 2 \/ 5; grid-row: 2;/);
+  });
 
   it.each([
     { name: 'down-right', patch: { x: 300, y: 240 }, shown: true },

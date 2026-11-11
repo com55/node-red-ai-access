@@ -536,10 +536,20 @@ function pageClientVisualInteractionScript(): string {
         bindDetails(details);
       }
     }
-    function selectNode(id) {
+    function selectNode(id, bringIntoView) {
       var n = graph.byId[id];
       if (!n || !n.kind) return;
       state.selected = id; state.showAll = false; paint();
+      if (bringIntoView) {
+        var w = wrap.clientWidth || 600, h = wrap.clientHeight || 350, k = state.view.k;
+        var x = n.px * k + state.view.x, y = n.py * k + state.view.y;
+        // Leave nodes that are comfortably visible in place; centre clipped or distant nodes.
+        if (x - n.w * k / 2 < 48 || x + n.w * k / 2 > w - 48 || y - n.h * k / 2 < 48 || y + n.h * k / 2 > h - 48) {
+          state.view.x = w / 2 - n.px * k;
+          state.view.y = h / 2 - n.py * k;
+          transform();
+        }
+      }
       var details = detailHost();
       if (details) { details.innerHTML = renderVisualNodeDrawer(n, p, diff); bindDetails(details); }
     }
@@ -583,7 +593,7 @@ function pageClientVisualEventsScript(): string {
       var run = ev.target.closest('[data-visual-run]');
       if (run) { toggleRun(run.getAttribute('data-visual-run')); return; }
       var node = ev.target.closest('[data-visual-node]');
-      if (node) { selectNode(node.getAttribute('data-visual-node')); return; }
+      if (node) { selectNode(node.getAttribute('data-visual-node'), true); return; }
       var layout = ev.target.closest('[data-visual-layout]');
       if (layout) {
         var selectedNode = state.selected && visible.byId[state.selected];
@@ -602,7 +612,7 @@ function pageClientVisualEventsScript(): string {
       if (target && (ev.key === 'Enter' || ev.key === ' ')) {
         ev.preventDefault();
         if (target.hasAttribute('data-visual-run')) toggleRun(target.getAttribute('data-visual-run'));
-        else selectNode(target.getAttribute('data-visual-node'));
+        else selectNode(target.getAttribute('data-visual-node'), true);
       }
     };
     paint();
