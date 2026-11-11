@@ -66,7 +66,8 @@ export function pageClientVisualGeometryScript(): string {
     var ghostScale = Math.min(dx ? width / 2 / Math.abs(dx) : Infinity, dy ? height / 2 / Math.abs(dy) : Infinity);
     var scale = Math.min(dx ? (width / 2 + pad) / Math.abs(dx) : Infinity, dy ? (height / 2 + pad) / Math.abs(dy) : Infinity);
     var gap = distance - distance * ghostScale - distance * scale, tipLength = 12, halfHead = 6;
-    if (gap < 16) return null;
+    // The shaft starts at the ghost centre, so only the tip needs landing room.
+    if (distance * (1 - scale) < tipLength) return null;
     var ux = dx / distance, uy = dy / distance;
     var start = { x: old.x, y: old.y };
     var end = { x: next.x - dx * scale, y: next.y - dy * scale };

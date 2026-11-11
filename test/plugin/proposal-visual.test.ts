@@ -154,12 +154,8 @@ describe('Visual View geometry', () => {
     { x: 90, y: 20 },
     { x: 100, y: 30 },
     { x: 105, y: 35 },
-    { x: 116, y: 0 },
-    { x: 120, y: 0 },
-    { x: 115, y: 0 },
-    { x: 0, y: 40 },
-    { x: -115, y: 0 },
-  ])('hides overlapping, touching or tiny-gap moves: %j', next => {
+    { x: -105, y: 0 },
+  ])('hides overlapping or touching moves: %j', next => {
     expect(moveGeometry({ x: 0, y: 0 }, next, 100, 30)).toBeNull();
   });
 
@@ -173,12 +169,31 @@ describe('Visual View geometry', () => {
       return arrow.end.x;
     });
     expect(ends).toEqual([345, 344.125]);
-    expect(moveGeometry({ x: 0, y: 0 }, { x: 121, y: 0 }, 100, 30, pad(true))).toBeNull();
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 105.875, y: 0 }, 100, 30, pad(true))).toBeNull();
   });
 
-  it('shows an arrow at the minimum readable edge gap, independent of centre distance', () => {
-    expect(moveGeometry({ x: 0, y: 0 }, { x: 121, y: 0 }, 100, 30).gap).toBeCloseTo(16);
-    expect(moveGeometry({ x: 0, y: 0 }, { x: 0, y: 51 }, 100, 30).gap).toBeCloseTo(16);
+  it.each([5, 5.875])('shows the +120,+40 move on the expanded outline with pad %s', pad => {
+    const arrow = moveGeometry({ x: 0, y: 0 }, { x: 120, y: 40 }, 100, 30, pad);
+    expect(arrow).not.toBeNull();
+    expect(arrow.start).toEqual({ x: 0, y: 0 });
+    expect(arrow.end.x).toBeCloseTo(120 - (50 + pad));
+    expect(arrow.end.y).toBeCloseTo(40 - (50 + pad) / 3);
+    const wideArrow = moveGeometry({ x: 0, y: 0 }, { x: 120, y: 40 }, 160, 30, pad);
+    expect(wideArrow.end.x).toBeCloseTo(120 - 3 * (15 + pad));
+    expect(wideArrow.end.y).toBeCloseTo(40 - (15 + pad));
+    expect(wideArrow.gap).toBeLessThan(16);
+  });
+
+  it('shows small body-to-outline gaps when the centre-to-outline shaft fits the tip', () => {
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 106, y: 0 }, 100, 30).gap).toBeCloseTo(1);
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 0, y: 36 }, 100, 30).gap).toBeCloseTo(1);
+  });
+
+  it('requires enough centre-to-outline length for the 12px tip', () => {
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 17.9, y: 0 }, 2, 2)).toBeNull();
+    const arrow = moveGeometry({ x: 0, y: 0 }, { x: 18, y: 0 }, 2, 2);
+    expect(arrow.end).toEqual({ x: 12, y: 0 });
+    expect(arrow.shaftEnd).toEqual({ x: 0, y: 0 });
   });
 
   it.each([3, 4, 5, 6])(
@@ -1115,7 +1130,8 @@ describe('Moved classification and review', () => {
     { name: 'long horizontal', patch: { x: 600, y: 120 }, shown: true },
     { name: 'modest vertical', patch: { x: 100, y: 180 }, shown: true },
     { name: 'short overlapping', patch: { x: 120, y: 130 }, shown: false },
-    { name: 'tiny edge gap', patch: { x: 100, y: 165 }, shown: false },
+    { name: 'small edge gap', patch: { x: 100, y: 165 }, shown: true },
+    { name: 'real +120,+40 down-right', patch: { x: 220, y: 160 }, shown: true },
   ])('paints a $name move with the correct arrow visibility', ({ patch, shown }) => {
     const { viewport, host, click } = mount(patch);
     expect(viewport.innerHTML).not.toContain('class="move-arrow"');

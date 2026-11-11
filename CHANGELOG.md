@@ -25,7 +25,8 @@ and this project adheres to
 
 ### Fixed
 
-- Stop Visual View move arrows at the outer edge of the highlight outline.
+- Stop Visual View move arrows at the outer edge of the highlight outline,
+  keeping arrows visible when the outline landing has room for the tip.
 - Draw Visual View ports from instance counts and registered node definitions,
   including zero-input inject nodes and zero-output nodes in every view state.
   Start move arrows at the ghost centre and paint them over the ghost.
