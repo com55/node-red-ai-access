@@ -2018,33 +2018,83 @@ describe('Visual View node drawer', () => {
   it('puts both cells in one row for additions, removals and unequal wrapped replacements', () => {
     const ui = browserHelpers();
     const html = ui.renderPropertyChange(change, 'split');
-    expect(html).toContain('<div class="diffhead">Before</div>');
-    expect(html).toContain('<div class="diffhead">After · proposed</div>');
+    expect(html).toContain('<div class="diffhead">BEFORE</div>');
+    expect(html).toContain('<div class="diffhead">AFTER (PROPOSED)</div>');
+    expect(html.match(/class="shareddiff"/g)).toHaveLength(1);
     const rows = html.match(/<div class="diffrow">.*?<\/div><\/div>/g)!;
     expect(rows).toHaveLength(6);
     expect(rows[0]).toContain(
-      'class="diffcol line filler"></div><div class="diffcol line ins"><i>1</i>'
+      'class="diffcol line filler"><i></i><b> </b><span></span></div><div class="diffcol line ins"><i>1</i><b>+</b>'
     );
-    expect(rows[2]).toContain('class="diffcol line del"><i>2</i>');
-    expect(rows[2]).toContain('class="diffcol line ins"><i>3</i>');
+    expect(rows[1]).toContain('class="diffcol line equal"><i>1</i><b> </b>');
+    expect(rows[2]).toContain('class="diffcol line del"><i>2</i><b>-</b>');
+    expect(rows[2]).toContain('class="diffcol line ins"><i>3</i><b>+</b>');
     expect(rows[2]).toContain('a long wrapped value '.repeat(30));
     expect(rows[3]).toContain(
-      'class="diffcol line filler"></div><div class="diffcol line ins"><i>4</i>'
+      'class="diffcol line filler"><i></i><b> </b><span></span></div><div class="diffcol line ins"><i>4</i><b>+</b>'
     );
-    expect(rows[5]).toContain('class="diffcol line del"><i>4</i>');
-    expect(rows[5]).toContain('class="diffcol line filler"></div>');
+    expect(rows[5]).toContain('class="diffcol line del"><i>4</i><b>-</b>');
+    expect(rows[5]).toContain('class="diffcol line filler"><i></i><b> </b><span></span></div>');
+    for (const row of rows) {
+      expect(row.match(/<i>\d*<\/i><b>[-+ ]<\/b><span>/g)).toHaveLength(2);
+    }
     expect(html.match(/class="diffscroll"/g)).toHaveLength(1);
     expect(html).not.toContain('diff-pane');
   });
 
-  it('renders Unified with old/new line numbers, signs and mockup headers', () => {
+  it('renders Unified with old/new line numbers, signs and uppercase pane headers', () => {
     const ui = browserHelpers();
     const html = ui.renderPropertyChange(change, 'unified');
-    expect(html).toContain('<div class="diffhead">Before → After · proposed</div>');
+    expect(html).toContain('<div class="diffhead">BEFORE → AFTER (PROPOSED)</div>');
     expect(html).toContain('<div class="unifiedline ins"><i></i><i>1</i><b>+</b>');
     expect(html).toContain('<div class="unifiedline equal"><i>1</i><i>2</i><b> </b>');
-    expect(html).toContain('<div class="unifiedline del"><i>2</i><i></i><b>−</b>');
+    expect(html).toContain('<div class="unifiedline del"><i>2</i><i></i><b>-</b>');
     expect(html).toContain('<div class="unifiedline equal"><i>3</i><i>5</i><b> </b>');
+  });
+
+  it.each(['split', 'unified'])('isolates short/scalar properties from line panes in %s', mode => {
+    const ui = browserHelpers();
+    const before = { id: 'n', type: 'inject', name: 'Old', topic: 'a', repeat: 1, once: false };
+    const after = { ...before, name: 'New', topic: 'b', repeat: 2, once: true };
+    const changes = buildDiffSections({ nodes: [after] }, { nodes: [before] }).modified[0]!.changes;
+    expect(changes).toHaveLength(4);
+    for (const ch of changes) {
+      expect(ch.kind).toBe('scalar');
+      const html = ui.renderPropertyChange(ch, mode);
+      expect(html).not.toMatch(/shareddiff|unified|diffhead|diffscroll|fieldsummary|diffmodes/);
+      expect(html).toContain(
+        '<code class="diff-before" title="before">' +
+          JSON.stringify(ch.before).replace(/"/g, '&quot;') +
+          '</code>'
+      );
+      expect(html).toContain(
+        '<code class="diff-after" title="after">' +
+          JSON.stringify(ch.after).replace(/"/g, '&quot;') +
+          '</code>'
+      );
+      if (mode === 'split') {
+        expect(html).toContain('class="prop-change-scalar split"');
+        expect(html).toContain('<span class="side-label">Before</span>');
+        expect(html).toContain('<span class="side-label">After</span>');
+      } else expect(html).toContain('</code> → <code class="diff-after"');
+    }
+  });
+
+  it('uses one pane border, a continuous divider, sticky headers and plain fillers', () => {
+    const css = pageStyles();
+    expect(css).toMatch(/\.shareddiff, \.unified\s*\{[^}]*border: 1px solid var\(--line\)/);
+    expect(css).toMatch(/\.diffrow\s*\{[^}]*gap: 0;/);
+    expect(css).toMatch(/\.shareddiff \.diffrow > :last-child\s*\{[^}]*border-left: 1px solid/);
+    expect(css).toMatch(/\.diffheaders\s*\{[^}]*position: sticky; top: 0;/);
+    expect(css).toMatch(/\.shareddiff \.diffcol\s*\{[^}]*min-height: 24px;/);
+    expect(css).toContain('.shareddiff .filler { background: #f0f3f6; }');
+    expect(css).not.toContain('repeating-linear-gradient');
+    expect(css).toMatch(/\.line\.del, \.unifiedline\.del\s*\{[^}]*background: #fdeceb;/);
+    expect(css).toMatch(/\.line\.ins, \.unifiedline\.ins\s*\{[^}]*background: #e6f6ec;/);
+    expect(css).toMatch(
+      /\.shareddiff \.line\.chosen-line, \.unifiedline\.chosen-line\s*\{[^}]*font-weight: 700;/
+    );
+    expect(css).toMatch(/\.shareddiff\[data-chosen="proposed"\][^{]*\{[^}]*opacity: \.4;/);
   });
 
   it.each(['split', 'unified'])('keeps large-diff collapse and omitted context in %s', mode => {
@@ -2063,7 +2113,7 @@ describe('Visual View node drawer', () => {
     expect(html.split('(50 unchanged lines)')).toHaveLength(mode === 'split' ? 3 : 2);
     if (mode === 'split')
       expect(html).toContain(
-        '<div class="diffrow"><div class="diffcol line equal"><i>1</i><span>… (50 unchanged lines) …</span></div><div class="diffcol line equal"><i>1</i>'
+        '<div class="diffrow"><div class="diffcol line equal"><i>1</i><b> </b><span>… (50 unchanged lines) …</span></div><div class="diffcol line equal"><i>1</i>'
       );
   });
 
@@ -2101,8 +2151,8 @@ describe('Visual View node drawer', () => {
     );
     expect(html).toContain('CONFLICT / FUNC');
     expect(html).toContain('class="drawer-notice"');
-    expect(html).toContain('<div class="diffhead">Editor (live)</div>');
-    expect(html).toContain('<div class="diffhead">AI proposed</div>');
+    expect(html).toContain('<div class="diffhead">LIVE (IN EDITOR)</div>');
+    expect(html).toContain('<div class="diffhead">AI PROPOSED</div>');
     expect(html).toMatch(
       /class="chooserow">.*data-choice="live" aria-pressed="false">Keep live<.*data-choice="proposed" aria-pressed="false">Use AI proposed</
     );
@@ -2139,6 +2189,11 @@ describe('Visual View node drawer', () => {
     );
     const selected = choice === 'proposed' ? 'ins' : 'del';
     const rejected = choice === 'proposed' ? 'del' : 'ins';
+    expect(html).toContain(
+      mode === 'split'
+        ? '<div class="diffhead">LIVE (IN EDITOR)</div><div class="diffhead">AI PROPOSED</div>'
+        : '<div class="diffhead">LIVE (IN EDITOR) → AI PROPOSED</div>'
+    );
     expect(html).toContain(selected + ' chosen-line');
     expect(html).toContain('class="conflict-values" data-chosen="' + choice + '"');
     if (mode === 'split') expect(html).toContain('class="shareddiff" data-chosen="' + choice + '"');
@@ -2201,8 +2256,8 @@ describe('Visual View node drawer', () => {
     );
     expect(html).toContain('CONFLICT / FUNC');
     expect(html).toContain('data-chosen="proposed"');
-    expect(html).toContain('<div class="diffhead">AI proposed</div>');
-    expect(html).not.toContain('After · proposed');
+    expect(html).toContain('<div class="diffhead">AI PROPOSED</div>');
+    expect(html).not.toContain('AFTER (PROPOSED)');
   });
 
   it.each(['added', 'removed', 'moved'])('uses the same drawer chrome for %s nodes', kind => {

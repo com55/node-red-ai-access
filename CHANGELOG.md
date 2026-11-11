@@ -19,6 +19,8 @@ and this project adheres to
 
 ### Changed
 
+- Restore pane borders, uppercase headers, and line gutters for long-text Split
+  and Unified diffs while keeping aligned rows and short-property rendering.
 - Rename conflict choices to “Keep live” and “Use AI proposed”, with “✓ Keeping
   live” and “✓ Using AI proposed” for the chosen side.
 - Keep conflicting proposals pending with `rebase.state: conflict`. Pending

@@ -1970,7 +1970,7 @@ function pageClientScriptPartBDiff(): string {
   }
 
   function diffHeaders(conflict) {
-    return conflict ? ['Editor (live)', 'AI proposed'] : ['Before', 'After · proposed'];
+    return conflict ? ['LIVE (IN EDITOR)', 'AI PROPOSED'] : ['BEFORE', 'AFTER (PROPOSED)'];
   }
 
   function renderUnifiedTextDiff(ch, conflict, choice) {
@@ -1980,7 +1980,7 @@ function pageClientScriptPartBDiff(): string {
       if (line.op !== 'add') { beforeLn += 1; oldNo = beforeLn; }
       if (line.op !== 'remove') { afterLn += 1; newNo = afterLn; }
       if (line.op === 'add') { kind = 'ins'; sign = '+'; }
-      if (line.op === 'remove') { kind = 'del'; sign = '−'; }
+      if (line.op === 'remove') { kind = 'del'; sign = '-'; }
       var selectedClass = choice && kind !== 'equal' ? (kind === (choice === 'proposed' ? 'ins' : 'del') ? ' chosen-line' : ' rejected') : '';
       return '<div class="unifiedline ' + kind + selectedClass + '"><i>' + oldNo + '</i><i>' + newNo +
         '</i><b>' + sign + '</b><span>' + esc(line.text) + '</span></div>';
@@ -2026,7 +2026,8 @@ function pageClientScriptPartBDiff(): string {
     var beforeLn = 0, afterLn = 0;
     function cell(line, number) {
       var kind = !line ? 'filler' : line.op === 'add' ? 'ins' : line.op === 'remove' ? 'del' : 'equal';
-      return '<div class="diffcol line ' + kind + (choice && kind === (choice === 'proposed' ? 'ins' : 'del') ? ' chosen-line' : '') + '">' + (line ? '<i>' + number + '</i><span>' + esc(line.text) + '</span>' : '') + '</div>';
+      var sign = kind === 'ins' ? '+' : kind === 'del' ? '-' : ' ';
+      return '<div class="diffcol line ' + kind + (choice && kind === (choice === 'proposed' ? 'ins' : 'del') ? ' chosen-line' : '') + '"><i>' + (line ? number : '') + '</i><b>' + sign + '</b><span>' + (line ? esc(line.text) : '') + '</span></div>';
     }
     var rows = alignSplitDiffLines(ch.lines || []).map(function (row) {
       if (row.left) beforeLn += 1;
@@ -2035,9 +2036,9 @@ function pageClientScriptPartBDiff(): string {
       return '<div class="diffrow">' + cell(row.left, beforeLn) + cell(row.right, afterLn) + '</div>';
     }).join('');
     return '<div class="shareddiff"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + ' role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
-      '<div class="diffrow diffheaders">' + diffHeaders(conflict).map(function (heading) {
+      '<div class="diffscroll"><div class="diffrow diffheaders">' + diffHeaders(conflict).map(function (heading) {
         return '<div class="diffhead">' + heading + '</div>';
-      }).join('') + '</div><div class="diffscroll">' + rows + '</div></div>';
+      }).join('') + '</div>' + rows + '</div></div>';
   }
 
 `;
@@ -2178,6 +2179,7 @@ function pageClientScriptPartBDiffView(): string {
 
   function renderPropertyChange(ch, mode, conflict, choice) {
     var labelHtml = fieldLabelHtml(ch.key);
+    // Keep line-diff panes separate from the short/scalar property markup below.
     if (ch.kind === 'text') {
       var body = mode === 'split' ? renderSplitTextDiff(ch, conflict, choice) : renderUnifiedTextDiff(ch, conflict, choice);
       var added = (ch.lines || []).filter(function (line) { return line.op === 'add'; }).length;
