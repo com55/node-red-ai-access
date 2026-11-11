@@ -33,12 +33,13 @@ include them. API responses use `status: pending` and `rebase.state: conflict`;
 legacy stored `status: conflict` rows are normalized to that shape on read.
 
 Select an amber Conflict node to review the under-canvas drawer. Compare
-**Editor (live)** and **AI proposed** in Split or Unified, then choose **Use
-editor value** or **Use proposed value**. Choices apply immediately to the
-proposal and automatically recheck live changes. The chosen button turns green;
-changed lines on that side become bold and the other side fades. Select the
-other button to change your choice, including after reloading. Approval stays
-disabled until every conflict is resolved. Nothing deploys until approval.
+**Editor (live)** and **AI proposed** in Split or Unified, then choose **Keep
+live** or **Use AI proposed**. Choices apply immediately to the proposal and
+automatically recheck live changes. The chosen button turns green and reads **✓
+Keeping live** or **✓ Using AI proposed**. Changed lines on that side become
+bold and the other side fades. Select the other button to change your choice,
+including after reloading. Approval stays disabled until every conflict is
+resolved. Nothing deploys until approval.
 
 The canonical detail hash is `#/proposals/<id>`; legacy `#proposal=<id>` links
 still open the detail page. The list accepts `#proposals` and `#/proposals`.

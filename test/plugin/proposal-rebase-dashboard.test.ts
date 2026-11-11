@@ -371,8 +371,8 @@ describe('dashboard rebase controls', () => {
     );
     expect(html).not.toContain('node_changed_both');
     expect(html).not.toContain('<script>');
-    expect(html).toContain('Use editor value');
-    expect(html).not.toContain('Use proposed');
+    expect(html).toContain('Keep live');
+    expect(html).not.toContain('Use AI proposed');
     expect(html).not.toContain('recheck-btn');
   });
 
@@ -602,17 +602,26 @@ describe('proposal UX details', () => {
     ).not.toContain('AI chose its own value');
   });
 
-  it('shows the chosen state with both buttons available to change sides', () => {
+  it('updates the chosen labels when switching from live to proposed', () => {
     const ui = dashboard();
     ui.setCanApprove(true);
-    const html = ui.renderConflictPanel({
+    const proposal = {
       id: 'p',
       conflictChoice: { nodeId: 'n', choice: 'live' },
       rebase: { state: 'clean' },
-    });
+    };
+    let html = ui.renderConflictPanel(proposal);
     expect(html).toContain('Resolution selected.');
-    expect(html).toContain('✓ Using editor value');
-    expect(html).toContain('Use proposed value');
+    expect(html).toContain('data-choice="live" aria-pressed="true">✓ Keeping live</button>');
+    expect(html).toContain('data-choice="proposed" aria-pressed="false">Use AI proposed</button>');
+    expect(html).toContain('resolve-conflict-btn chosen');
+    expect(html).not.toContain('data-choice="undo"');
+    proposal.conflictChoice.choice = 'proposed';
+    html = ui.renderConflictPanel(proposal);
+    expect(html).toContain('data-choice="live" aria-pressed="false">Keep live</button>');
+    expect(html).toContain(
+      'data-choice="proposed" aria-pressed="true">✓ Using AI proposed</button>'
+    );
     expect(html).toContain('resolve-conflict-btn chosen');
     expect(html).not.toContain('data-choice="undo"');
   });
@@ -672,7 +681,7 @@ describe('proposal UX details', () => {
       const toast = vi.fn();
       ui.setToast(toast);
       const button = {
-        textContent: 'Use proposed value',
+        textContent: 'Use AI proposed',
         innerHTML: '',
         disabled: false,
         setAttribute: vi.fn(),

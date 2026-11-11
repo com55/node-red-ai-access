@@ -19,6 +19,8 @@ and this project adheres to
 
 ### Changed
 
+- Rename conflict choices to “Keep live” and “Use AI proposed”, with “✓ Keeping
+  live” and “✓ Using AI proposed” for the chosen side.
 - Keep conflicting proposals pending with `rebase.state: conflict`. Pending
   filters/counts include conflicts; Conflict is a pending subset. Normalize the
   deprecated stored `status: conflict` alias on read for API and MCP consumers.

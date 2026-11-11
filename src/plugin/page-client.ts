@@ -2370,9 +2370,10 @@ function pageClientScriptPartBDiffView2(): string {
           '<div class="drawer-notice">' + notice + (choice ? '<br><strong>Resolution selected.</strong>' : '') + '</div>' + renderConflictValues(c, values, choice) +
           '<div class="chooserow">' + (canApprove ? (c.choices || []).filter(function (side) { return side === 'live' || side === 'proposed'; }).map(function (side) {
             var active = side === choice;
+            var label = side === 'live' ? (active ? '✓ Keeping live' : 'Keep live') : (active ? '✓ Using AI proposed' : 'Use AI proposed');
             return '<div class="conflict-option"><button type="button" class="action secondary resolve-conflict-btn' + (active ? ' chosen' : '') + '" data-id="' + esc(p.id) +
               '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(side) + '" aria-pressed="' + active + '">' +
-              (active ? '✓ Using ' : 'Use ') + (side === 'live' ? 'editor value' : 'proposed value') + '</button></div>';
+              label + '</button></div>';
           }).join('') : '') + '</div>' + (inDrawer ? '' : '</div>');
       }).join('') + (inDrawer ? '' : '</div>');
   }

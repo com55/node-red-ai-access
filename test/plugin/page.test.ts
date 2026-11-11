@@ -232,8 +232,10 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Conflicts/);
     expect(res.text).toMatch(/renderConflictPanel|proposal-conflicts/);
     expect(res.text).toMatch(/Created by/);
-    expect(res.text).toMatch(/editor value/);
-    expect(res.text).not.toMatch(/Keep live|Use proposed values\?|Keep live values\?/);
+    expect(res.text).toContain('Keep live');
+    expect(res.text).toContain('Use AI proposed');
+    expect(res.text).toContain('✓ Keeping live');
+    expect(res.text).toContain('✓ Using AI proposed');
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/Changed in editor since submit/);
     expect(res.text).toMatch(/Will deploy \(vs live\)/);

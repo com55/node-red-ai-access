@@ -2104,10 +2104,10 @@ describe('Visual View node drawer', () => {
     expect(html).toContain('<div class="diffhead">Editor (live)</div>');
     expect(html).toContain('<div class="diffhead">AI proposed</div>');
     expect(html).toMatch(
-      /class="chooserow">.*data-choice="live".*Use editor value.*data-choice="proposed".*Use proposed value/
+      /class="chooserow">.*data-choice="live" aria-pressed="false">Keep live<.*data-choice="proposed" aria-pressed="false">Use AI proposed</
     );
     expect(html).not.toContain('recheck-btn');
-    expect(html).not.toMatch(/Keep live|Other field changes|class="hint"/);
+    expect(html).not.toMatch(/Other field changes|class="hint"/);
     expect(html).toContain(
       'This node was also edited in the editor. Field <code>func</code> changed on both sides.'
     );
@@ -2145,14 +2145,24 @@ describe('Visual View node drawer', () => {
     else expect(html).toContain(rejected + ' rejected');
     expect(html).toContain('resolve-conflict-btn chosen');
     expect(html).toContain(
-      'aria-pressed="true">✓ Using ' + (choice === 'live' ? 'editor' : 'proposed') + ' value'
+      'data-choice="' +
+        choice +
+        '" aria-pressed="true">' +
+        (choice === 'live' ? '✓ Keeping live' : '✓ Using AI proposed') +
+        '</button>'
     );
-    expect(html).toContain('Use ' + (choice === 'live' ? 'proposed' : 'editor') + ' value');
+    expect(html).toContain(
+      'data-choice="' +
+        (choice === 'live' ? 'proposed' : 'live') +
+        '" aria-pressed="false">' +
+        (choice === 'live' ? 'Use AI proposed' : 'Keep live') +
+        '</button>'
+    );
     expect(html).toContain('Resolution selected.');
     expect(html).toContain(
       'Fields <code>func</code>, <code>name&lt;unsafe&gt;</code> changed on both sides.'
     );
-    expect(html).not.toMatch(/recheck-btn|Keep live|Undo \/|preview only/);
+    expect(html).not.toMatch(/recheck-btn|Undo \/|preview only/);
   });
 
   it('blocks Approve until the last conflict is resolved on a pending proposal', () => {
