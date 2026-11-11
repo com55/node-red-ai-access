@@ -54,6 +54,22 @@ export function pageClientVisualGeometryScript(): string {
   function visualPointerMoved(start, point) {
     return Math.pow(point.x - start.x, 2) + Math.pow(point.y - start.y, 2) > 16;
   }
+  function visualMoveGeometry(old, next, width, height) {
+    var dx = next.x - old.x, dy = next.y - old.y;
+    // Touching or overlapping main bodies leave no room for a move arrow.
+    if (Math.abs(dx) <= width && Math.abs(dy) <= height) return null;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    var scale = Math.min(dx ? width / 2 / Math.abs(dx) : Infinity, dy ? height / 2 / Math.abs(dy) : Infinity);
+    var gap = distance * (1 - 2 * scale), tipLength = 12, halfHead = 6;
+    if (gap < 16) return null;
+    var ux = dx / distance, uy = dy / distance;
+    var start = { x: old.x + dx * scale, y: old.y + dy * scale };
+    var end = { x: next.x - dx * scale, y: next.y - dy * scale };
+    var shaftEnd = { x: end.x - ux * tipLength, y: end.y - uy * tipLength };
+    return { start: start, end: end, shaftEnd: shaftEnd, gap: gap,
+      headLeft: { x: shaftEnd.x - uy * halfHead, y: shaftEnd.y + ux * halfHead },
+      headRight: { x: shaftEnd.x + uy * halfHead, y: shaftEnd.y - ux * halfHead } };
+  }
 `;
 }
 
@@ -247,7 +263,7 @@ function pageClientVisualRenderScript(): string {
       '<section class="visual-workspace" aria-label="Visual View"><div class="visual-workhead"><strong>Flow preview <span>/ ' + esc(flowLabelOf(p)) + '</span></strong><span>Changed nodes + related nodes</span></div>' +
       '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs>' + ['conflict', 'modified', 'moved', 'added', 'removed'].map(function (kind) {
         return '<filter id="halo-' + kind + '" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="' + visualStatusColors[kind] + '" flood-opacity="1"/></filter>';
-      }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern><marker id="visual-move-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#909aa2"/></marker></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
+      }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
       '<span class="visual-pan-hint">Drag to pan · Ctrl / ⌘ + scroll to zoom</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
       '<aside class="visual-changed-list"><div class="visual-list-head"><strong>Changed nodes <span class="visual-list-count"></span></strong></div><div class="visual-node-list"></div><p>Related nodes are shown only on the canvas</p></aside></div></section>';
@@ -277,12 +293,16 @@ function pageClientVisualInteractionScript(): string {
     function paint() {
       visible = visualVisible(graph, state);
       var html = '';
-      if (state.layout === 'editor') graph.nodes.forEach(function (n) {
-        if (!n.moved) return;
-        var distance = Math.sqrt(Math.pow(n.x - n.old.x, 2) + Math.pow(n.y - n.old.y, 2));
-        if (distance > 120) html += '<path pointer-events="none" class="move-arrow" d="M' + n.old.x + ' ' + (n.old.y - n.h / 2 - 4) + 'L' + n.px + ' ' + (n.py + n.h / 2 + 8) + '" fill="none" stroke="#909aa2" stroke-width="1.5" stroke-dasharray="6,5" marker-end="url(#visual-move-tip)"/>';
-        html += visualNodeSvg(n, state, true);
-      });
+      if (state.layout === 'editor') {
+        graph.nodes.forEach(function (n) {
+          if (!n.moved) return;
+          var arrow = visualMoveGeometry(n.old, { x: n.px, y: n.py }, n.w, n.h);
+          if (!arrow) return;
+          html += '<g class="move-arrow" pointer-events="none"><path d="M' + arrow.start.x + ' ' + arrow.start.y + 'L' + arrow.shaftEnd.x + ' ' + arrow.shaftEnd.y + '" fill="none" stroke="#7a6fb0" stroke-width="2" stroke-dasharray="6,5"/>' +
+            '<path class="move-arrowhead" d="M' + arrow.end.x + ' ' + arrow.end.y + 'L' + arrow.headLeft.x + ' ' + arrow.headLeft.y + 'L' + arrow.headRight.x + ' ' + arrow.headRight.y + 'Z" fill="#7a6fb0"/></g>';
+        });
+        graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
+      }
       visible.edges.forEach(function (e) {
         var from = visible.byId[e.from], to = visible.byId[e.to], x = from.px + from.w / 2, y = from.py + (e.port - ((from.outputs || 1) - 1) / 2) * 13, end = to.px - to.w / 2;
         var curve = Math.max(45, Math.abs(end - x) * .55);

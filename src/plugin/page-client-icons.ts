@@ -1,13 +1,13 @@
 /** One shared inline SVG set for dashboard change and review status icons. */
 export function pageClientIconsScript(): string {
   return `
-  // Original paths in the Lucide style; the move arrow has four arrowheads.
+  // The move icon separates its four filled heads from a thin cross for 12px badges.
   var statusIconPaths = {
     added: '<path d="M12 5v14M5 12h14"/>',
     removed: '<path d="M5 12h14"/>',
     modified: '<path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 15z"/>',
     conflict: '<path d="M12 4v10"/><circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>',
-    moved: '<path d="M12 3v18M3 12h18M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
+    moved: '<path d="M12 6v12M6 12h12" stroke-width="2"/><g fill="currentColor" stroke="none"><path d="M12 1L8 6h8z"/><path d="M23 12L18 8v8z"/><path d="M12 23L8 18h8z"/><path d="M1 12L6 8v8z"/></g>',
     resolved: '<path d="m4 12 5 5L20 6"/>',
     'editor-merged': '<circle cx="12" cy="12" r="8" fill="currentColor" stroke="none"/>',
     'deploy-pending': '<path d="m3 20 9-17 9 17zM12 9v5"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>'

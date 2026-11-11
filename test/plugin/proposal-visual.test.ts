@@ -100,6 +100,58 @@ function viewState() {
 const centres = (visible: any) => visible.nodes.map((n: any) => [n.id, n.px, n.py]);
 
 describe('Visual View geometry', () => {
+  const moveGeometry = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveGeometry;');
+
+  it.each([
+    { next: { x: 200, y: 120 }, start: { x: 25, y: 15 }, end: { x: 175, y: 105 } },
+    { next: { x: 400, y: 0 }, start: { x: 50, y: 0 }, end: { x: 350, y: 0 } },
+    { next: { x: 0, y: 60 }, start: { x: 0, y: 15 }, end: { x: 0, y: 45 } },
+    { next: { x: -200, y: -120 }, start: { x: -25, y: -15 }, end: { x: -175, y: -105 } },
+    { next: { x: -400, y: 0 }, start: { x: -50, y: 0 }, end: { x: -350, y: 0 } },
+    { next: { x: 0, y: -60 }, start: { x: 0, y: -15 }, end: { x: 0, y: -45 } },
+  ])('clips a centre-line move to rectangle edges: $next', ({ next, start, end }) => {
+    const old = { x: 0, y: 0 };
+    const arrow = moveGeometry(old, next, 100, 30);
+    expect(arrow.start).toEqual(start);
+    expect(arrow.end).toEqual(end);
+    for (const [point, centre] of [
+      [arrow.start, old],
+      [arrow.end, next],
+    ]) {
+      const dx = Math.abs(point.x - centre.x),
+        dy = Math.abs(point.y - centre.y);
+      expect(dx).toBeLessThanOrEqual(50);
+      expect(dy).toBeLessThanOrEqual(15);
+      expect(dx === 50 || dy === 15).toBe(true);
+      expect((point.x - centre.x) * next.y - (point.y - centre.y) * next.x).toBeCloseTo(0);
+    }
+    expect(arrow.gap).toBeCloseTo(Math.hypot(end.x - start.x, end.y - start.y));
+    expect(Math.hypot(end.x - arrow.shaftEnd.x, end.y - arrow.shaftEnd.y)).toBeCloseTo(12);
+    expect(arrow.shaftEnd.x).toBeCloseTo(end.x - (next.x / Math.hypot(next.x, next.y)) * 12);
+    expect(arrow.shaftEnd.y).toBeCloseTo(end.y - (next.y / Math.hypot(next.x, next.y)) * 12);
+    expect((arrow.headLeft.x + arrow.headRight.x) / 2).toBeCloseTo(arrow.shaftEnd.x);
+    expect((arrow.headLeft.y + arrow.headRight.y) / 2).toBeCloseTo(arrow.shaftEnd.y);
+    expect(
+      Math.hypot(arrow.headLeft.x - arrow.headRight.x, arrow.headLeft.y - arrow.headRight.y)
+    ).toBeCloseTo(12);
+  });
+
+  it.each([
+    { x: 0, y: 0 },
+    { x: 90, y: 20 },
+    { x: 100, y: 30 },
+    { x: 115, y: 0 },
+    { x: 0, y: 45 },
+    { x: -115, y: 0 },
+  ])('hides overlapping, touching or tiny-gap moves: %j', next => {
+    expect(moveGeometry({ x: 0, y: 0 }, next, 100, 30)).toBeNull();
+  });
+
+  it('shows an arrow at the minimum readable edge gap, independent of centre distance', () => {
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 116, y: 0 }, 100, 30).gap).toBeCloseTo(16);
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 0, y: 46 }, 100, 30).gap).toBeCloseTo(16);
+  });
+
   it.each([3, 4, 5, 6])(
     'anchors an odd centre or even group midpoint for %i nodes with unequal widths',
     length => {
@@ -796,14 +848,23 @@ describe('Moved classification and review', () => {
       ]);
   });
 
-  function mount(patch: Record<string, unknown> = {}, resolved = false) {
+  function mount(patch: Record<string, unknown> = {}, resolved = false, additionalMove = false) {
+    const extra = additionalMove ? [{ ...original, id: 'second', y: 400 }] : [];
     const p = {
       id: 'p',
       title: 'Update flow',
       status: 'pending',
-      baseFlow: { nodes: [original] },
+      baseFlow: { nodes: [original, ...extra] },
       visualLiveFlow: { nodes: [{ ...original, func: 'editor change' }] },
-      payload: { flowId: 'tab', flow: { nodes: [{ ...original, x: 300, y: 240, ...patch }] } },
+      payload: {
+        flowId: 'tab',
+        flow: {
+          nodes: [
+            { ...original, x: 300, y: 240, ...patch },
+            ...extra.map(n => ({ ...n, x: 500, y: 500 })),
+          ],
+        },
+      },
       ...(resolved ? { conflictChoice: { nodeId: 'move', choice: 'proposed' } } : {}),
     };
     const sections = buildDiffSections(p.payload.flow, p.baseFlow);
@@ -843,6 +904,42 @@ describe('Moved classification and review', () => {
       });
     return { ui, p, diff, viewport, rows, diffHost, host, showAll, click };
   }
+
+  it.each([
+    { name: 'down-right', patch: { x: 300, y: 240 }, shown: true },
+    { name: 'long horizontal', patch: { x: 600, y: 120 }, shown: true },
+    { name: 'modest vertical', patch: { x: 100, y: 180 }, shown: true },
+    { name: 'short overlapping', patch: { x: 120, y: 130 }, shown: false },
+    { name: 'tiny edge gap', patch: { x: 100, y: 165 }, shown: false },
+  ])('paints a $name move with the correct arrow visibility', ({ patch, shown }) => {
+    const { viewport, host, click } = mount(patch);
+    expect(viewport.innerHTML).not.toContain('class="move-arrow"');
+    click('[data-visual-layout]', 'editor');
+    const html = viewport.innerHTML;
+    expect(html).toContain('move-ghost');
+    expect(html.includes('class="move-arrow"')).toBe(shown);
+    expect(html.includes('class="move-arrowhead"')).toBe(shown);
+    expect(host.innerHTML).not.toContain('visual-move-tip');
+    if (shown) {
+      expect(html).toMatch(
+        /class="move-arrow"[^>]*pointer-events="none"><path[^>]*stroke="#7a6fb0"[^>]*stroke-dasharray="6,5"/
+      );
+      expect(html).toMatch(/class="move-arrowhead" d="M[^L]+L[^L]+L[^Z]+Z" fill="#7a6fb0"/);
+      expect(html.indexOf('class="move-arrow"')).toBeLessThan(html.indexOf('move-ghost'));
+    }
+  });
+
+  it('paints every arrow before every ghost, then wires and live nodes', () => {
+    const { viewport, click } = mount({ wires: [['second']] }, false, true);
+    click('[data-visual-layout]', 'editor');
+    const html = viewport.innerHTML;
+    expect(html.match(/class="move-arrow"/g)).toHaveLength(2);
+    expect(html.match(/move-ghost/g)).toHaveLength(2);
+    expect(html.lastIndexOf('class="move-arrow"')).toBeLessThan(html.indexOf('move-ghost'));
+    const wire = html.indexOf('stroke-width="3"');
+    expect(html.lastIndexOf('move-ghost')).toBeLessThan(wire);
+    expect(wire).toBeLessThan(html.indexOf('class="visual-node changed"'));
+  });
 
   it('clicks a Moved node to show positions, and returns to the Moved section with Show all changes', () => {
     const { ui, p, diff, rows, diffHost, host, showAll, click } = mount();
@@ -937,7 +1034,18 @@ describe('shared status SVGs', () => {
     for (const kind of ['added', 'removed', 'modified', 'moved', 'conflict', 'editor-merged']) {
       expect(markup).toContain('data-icon="' + kind + '"');
     }
-    // Four continuous axes, each with its own arrowhead.
-    expect(ui.statusIcon('moved')).toContain('M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4');
+  });
+
+  it('gives the 12px Moved SVG a thin cross and four separate triangular arrowheads', () => {
+    const icon = browserHelpers().statusIcon('moved', { size: 12 });
+    expect(icon).toMatch(/^<svg[^>]*viewBox="0 0 24 24" width="12" height="12"/);
+    expect(icon).toContain('stroke-linecap="round" stroke-linejoin="round"');
+    expect(icon).toContain('<path d="M12 6v12M6 12h12" stroke-width="2"/>');
+    expect(icon).toContain('<g fill="currentColor" stroke="none">');
+    expect(icon.match(/<path d="M\d+ \d+L\d+ \d+[hv]\d+z"\/>/g)).toHaveLength(4);
+    for (const head of ['M12 1L8 6h8z', 'M23 12L18 8v8z', 'M12 23L8 18h8z', 'M1 12L6 8v8z']) {
+      expect(icon).toContain('d="' + head + '"');
+    }
+    expect(icon).not.toContain('<circle');
   });
 });

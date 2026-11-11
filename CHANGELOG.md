@@ -27,6 +27,10 @@ and this project adheres to
 
 ### Fixed
 
+- Clarify the Moved status icon at badge size and draw purple move arrows
+  between node edges, behind nodes, hiding arrows for overlapping bodies or tiny
+  gaps.
+
 - Bound Visual View rendering and review diffs, restore complete proposal
   search, and fix review controls, navigation, and narrow-screen behavior.
 
