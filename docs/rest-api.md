@@ -114,6 +114,14 @@ atomic array comparison and retain the existing ambiguity warning. Deletion
 versus modification, id collisions, dangling references, and unsafe redacted
 placeholders still block approval.
 
+Proposal counts distinguish Added, Removed, Modified, Moved, and Conflict.
+Position-only (`x`/`y`) changes count as Moved (`changeCounts.moved`); wire or
+property changes count as Modified, retaining position changes in their diff.
+Move-only proposals remain approvable. Visual View shows moves in purple with
+old-position ghosts in Editor positions mode and a coordinate diff on selection.
+Status icons share one inline SVG set across the canvas, legend, lists, and
+review markers.
+
 Proposal responses and diffs expose `baseRev` (an alias of `expectedRev`).
 `baseRevChanged` replaces `baseRevStale`: it only reports that the base revision
 differs from live for an open proposal. It is informational, including after a

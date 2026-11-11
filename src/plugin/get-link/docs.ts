@@ -239,7 +239,9 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
-   with a summary sentence; open proposals include \`rebase\` and \`liveChanges\`; \`vsCurrent\` shows the merged deployment when there are no conflicts.
+   with a summary sentence. Position-only changes are \`moved\` (before/after x/y),
+   separate from modified property or wire changes; \`changeCounts.moved\` and
+   \`changeSummary\` report moves separately. Open proposals include \`rebase\` and \`liveChanges\`; \`vsCurrent\` shows the merged deployment when there are no conflicts.
 9. Withdraw your own open (pending or conflict) proposal:
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
    not \`rejected\`). Only the link that created a proposal can withdraw it;

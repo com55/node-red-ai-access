@@ -54,7 +54,7 @@ Get any proposal by id (all tokens can read). Response includes mine:true|false 
 
 ## `get_proposal_diff`
 
-Diff any proposal against its stored baseFlow snapshot (what changed). Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.
+Diff any proposal against its stored baseFlow snapshot (what changed). Position-only changes appear in moved (before/after x/y), separately from modified property or wire changes. Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ List installed Node-RED palette node types (type, module, category, description,
 
 ## `list_proposals`
 
-List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return invalid_filter. Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
+List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return invalid_filter. Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary, changeCounts (added, removed, modified, moved, conflict; no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

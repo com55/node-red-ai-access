@@ -445,3 +445,65 @@ describe('ensureTitleIncludesFlowName with long labels', () => {
     expect(title.match(/ in /g)).toHaveLength(1);
   });
 });
+
+describe('Moved proposal summaries and titles', () => {
+  const node = {
+    id: 'n',
+    type: 'function',
+    name: 'Route',
+    x: 100,
+    y: 120,
+    func: 'return msg;',
+    wires: [[]],
+  };
+  const before = { label: 'Main', nodes: [node] };
+  const after = { label: 'Main', nodes: [{ ...node, x: 300, y: 240 }] };
+
+  it('describes a single move in AI summaries, auto titles and refreshed display titles', () => {
+    const p = baseProposal({ baseFlow: before, payload: { flowId: 'tab', flow: after } });
+    expect(buildChangeSummary(p)).toBe('Moves 1 node');
+    expect(autoGenerateProposalTitle(before, after)).toBe('Move function node "Route" in Main');
+    expect(presentProposalForApi(p)).toMatchObject({
+      title: 'Move function node "Route" in Main',
+      changeSummary: 'Moves 1 node',
+      changeCounts: { modified: 0, moved: 1 },
+    });
+    expect(
+      titleFromDiffSummary({ moved: 1 }, { storedTitle: 'Update Main', flowLabel: 'Main' })
+    ).toBe('Move node in Main');
+    expect(resolveProposalTitle({ ...p, title: 'Update Main' })).toBe(
+      'Move function node "Route" in Main'
+    );
+  });
+
+  it('includes moves in mixed totals and delete-leading titles', () => {
+    const withAdd = { ...after, nodes: [...after.nodes, { id: 'new', type: 'debug' }] };
+    const p = baseProposal({ baseFlow: before, payload: { flowId: 'tab', flow: withAdd } });
+    expect(buildChangeSummary(p)).toBe('Adds 1 node, moves 1 node');
+    expect(autoGenerateProposalTitle(before, withAdd)).toBe('2 changes in Main');
+    expect(titleFromDiffSummary({ added: 1, moved: 1 }, { flowLabel: 'Main' })).toBe(
+      '2 changes in Main'
+    );
+    expect(buildReplaceFlowTitle({ removed: 1, moved: 2 })).toBe(
+      'Replace flow: deletes 1 node, moves 2 nodes'
+    );
+    const twoMoves = { ...after, nodes: [...after.nodes, { ...node, id: 'second', y: 500 }] };
+    expect(
+      buildChangeSummary(
+        baseProposal({
+          baseFlow: { nodes: [node, { ...node, id: 'second' }] },
+          payload: { flowId: 'tab', flow: twoMoves },
+        })
+      )
+    ).toBe('Moves 2 nodes');
+  });
+
+  it('describes position plus property or wire changes as edits', () => {
+    for (const patch of [{ func: 'return null;' }, { wires: [['target']] }]) {
+      const flow = { ...after, nodes: [{ ...after.nodes[0]!, ...patch }] };
+      const p = baseProposal({ baseFlow: before, payload: { flowId: 'tab', flow } });
+      expect(buildChangeSummary(p)).toBe('Edits 1 node');
+      expect(autoGenerateProposalTitle(before, flow)).toBe('Edit function "Route" in Main');
+    }
+  });
+});

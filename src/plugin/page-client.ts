@@ -2,6 +2,7 @@
 
 import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
 import { editorSignInHelpers } from './editor-signin-script.js';
+import { pageClientIconsScript } from './page-client-icons.js';
 import { pageClientReviewScript } from './page-client-review.js';
 import { pageClientSettingsScript } from './page-client-settings.js';
 import { pageClientVisualScript } from './page-client-visual.js';
@@ -9,6 +10,7 @@ import { pageClientVisualScript } from './page-client-visual.js';
 function pageClientScriptPartA(): string {
   return `
 (function () {
+${pageClientIconsScript()}
   var root = document.getElementById('mcp-root');
   if (!root) return;
   var cfg = JSON.parse(root.getAttribute('data-config') || '{}');
@@ -255,7 +257,7 @@ ${editorSignInHelpers}
 
   /**
    * Toast with optional proposal name + deep-link.
-   * opts: { title?, href?, linkLabel?, durationMs? }
+   * opts: { title?, href?, linkLabel?, durationMs?, icon? }
    */
   function showToast(message, ok, opts) {
     var host = $('toast-host');
@@ -272,7 +274,8 @@ ${editorSignInHelpers}
     }
     var body = document.createElement('span');
     body.className = 'toast-body';
-    body.textContent = message || '';
+    if (opts.icon) body.innerHTML = statusIcon(opts.icon) + ' ' + esc(message || '');
+    else body.textContent = message || '';
     if (opts.href) {
       var link = document.createElement('a');
       link.className = 'toast-link';
@@ -1670,6 +1673,8 @@ function pageClientScriptPartB(): string {
       (sum.removed === 1 ? ' node' : ' nodes'));
     if (sum.modified) parts.push((parts.length ? 'changes ' : 'Changes ') + sum.modified +
       (sum.modified === 1 ? ' node' : ' nodes'));
+    if (sum.moved) parts.push((parts.length ? 'moves ' : 'Moves ') + sum.moved +
+      (sum.moved === 1 ? ' node' : ' nodes'));
     if ((sum.tabChanges || []).length) parts.push('Changes flow settings');
     if (!parts.length) parts.push('No changes');
     var sentence = parts.join(', ');
@@ -1763,9 +1768,11 @@ function pageClientScriptPartB(): string {
     var parts = [];
     var added = Number(s.added) || 0;
     var modified = Number(s.modified) || 0;
+    var moved = Number(s.moved) || 0;
     var removed = Number(s.removed) || 0;
     if (added) parts.push(added === 1 ? '1 add' : added + ' adds');
     if (modified) parts.push(modified === 1 ? '1 change' : modified + ' changes');
+    if (moved) parts.push(moved === 1 ? '1 move' : moved + ' moves');
     if (removed) parts.push(removed === 1 ? '1 delete' : removed + ' deletes');
     if (!parts.length) {
       var before = Number(s.beforeNodeCount) || 0;
@@ -1891,6 +1898,7 @@ function pageClientScriptPartB(): string {
     var removed = Number(sum.removed) || 0;
     var added = Number(sum.added) || 0;
     var modified = Number(sum.modified) || 0;
+    var moved = Number(sum.moved) || 0;
     if (!shouldRefreshDisplayTitle(stored, removed)) {
       return ensureTitleIncludesFlowName(stored, flowLabel);
     }
@@ -1903,12 +1911,16 @@ function pageClientScriptPartB(): string {
       if (added === 1 && firstType) parts.push('adds 1 ' + firstType);
       else if (added > 0) parts.push('adds ' + added + ' ' + pluralNodes(added));
       if (modified > 0) parts.push('edits ' + modified + ' ' + pluralNodes(modified));
+      if (moved > 0) parts.push('moves ' + moved + ' ' + pluralNodes(moved));
       return (flowLabel ? 'Replace ' + flowLabel : 'Replace flow') + ': ' + parts.join(', ');
     }
-    var total = added + modified;
+    var total = added + modified + moved;
     if (total === 0) return flowLabel ? 'Update ' + flowLabel : 'Update flow';
     if (total === 1 && added === 1 && firstType) {
       return ensureTitleIncludesFlowName('Add ' + firstType + ' node', flowLabel);
+    }
+    if (total === 1 && moved === 1) {
+      return flowLabel ? 'Move node in ' + flowLabel : 'Move node';
     }
     if (total === 1 && modified === 1) {
       return flowLabel ? 'Edit node in ' + flowLabel : 'Edit node';
@@ -2242,6 +2254,15 @@ function pageClientScriptPartBDiffView2(): string {
         sections.removed.map(function (n) { return renderPresenceNode(n, 'removed'); }).join('') +
         '</div>';
     }
+    if (sections.moved && sections.moved.length) {
+      parts += '<div class="diff-section"><h4>Moved nodes</h4>' +
+        sections.moved.map(function (n) {
+          function position(point) { return '(' + esc(point.x) + ', ' + esc(point.y) + ')'; }
+          return '<div class="moved-node"><strong>' + esc(n.name || n.type) + '</strong> ' +
+            '<span class="moved-position">' + position(n.before) + ' → ' + position(n.after) + '</span> ' +
+            editorJumpLink('node', n.id, 'Show in editor', 'editor-jump-small') + '</div>';
+        }).join('') + '</div>';
+    }
     if (sections.modified && sections.modified.length) {
       parts += '<div class="diff-section"><h4>Modified nodes</h4>' +
         sections.modified.map(function (m) {
@@ -2268,7 +2289,7 @@ function pageClientScriptPartBDiffView2(): string {
   function diffHasChanges(diff) {
     if (!diff || !diff.summary) return false;
     var sum = diff.summary;
-    return !!(sum.added || sum.removed || sum.modified || (sum.tabChanges || []).length);
+    return !!(sum.added || sum.removed || sum.modified || sum.moved || (sum.tabChanges || []).length);
   }
   function proposalHasNoNetChange(diff) {
     return !!(diff && diff.rebase && diff.rebase.state !== 'conflict' &&
@@ -2279,7 +2300,8 @@ function pageClientScriptPartBDiffView2(): string {
     return JSON.stringify([diff.summary && diff.summary.tabChanges, diff.tabProperties || [],
       (diff.added || []).map(function (n) { return [n.id, n.properties]; }),
       (diff.removed || []).map(function (n) { return [n.id, n.properties]; }),
-      (diff.modified || []).map(function (n) { return [n.id, n.changes]; })]);
+      (diff.modified || []).map(function (n) { return [n.id, n.changes]; }),
+      (diff.moved || []).map(function (n) { return [n.id, n.before, n.after]; })]);
   }
 
   function renderHumanDiff(diff, mode) {
@@ -2359,7 +2381,7 @@ function pageClientScriptPartBDiffView2(): string {
   function renderConflictPanel(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
     var selected = p.conflictChoice;
-    var chosen = selected ? '<div class="conflict-choice" role="status"><span class="resolved-marker">Resolved</span> · <strong>Chosen: ' +
+    var chosen = selected ? '<div class="conflict-choice" role="status"><span class="resolved-marker">' + statusIcon('resolved') + ' Resolved</span> · <strong>Chosen: ' +
       (selected.choice === 'live' ? 'Keep live' : 'Use proposed') + '</strong> · ' + esc(selected.nodeId) +
       (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
         '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
@@ -2693,17 +2715,16 @@ function pageClientScriptPartB2CardsList(): string {
       ? '<span class="status-pill landed-after-withdraw">Landed after withdraw</span> ' : '';
   }
   function renderChangeCounts(counts) {
-    var symbols = { added: '+', removed: '−', modified: '✎', conflict: '!' };
-    return '<span class="change-counts">' + Object.keys(symbols).map(function (kind) {
+    return '<span class="change-counts">' + ['added', 'removed', 'modified', 'moved', 'conflict'].map(function (kind) {
       var count = Number(counts && counts[kind]) || 0;
-      return count ? '<span class="' + kind + '" title="' + count + ' ' + kind + '">' + symbols[kind] + ' ' + count + '</span>' : '';
+      return count ? '<span class="' + kind + '" title="' + count + ' ' + kind + '">' + statusIcon(kind) + count + '</span>' : '';
     }).join('') + '</span>';
   }
   function renderCompactProposal(p) {
     var warning = p.deployPending || p.deploymentAlert || p.rejectedWhileDeployUnknown;
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) + '" role="button" tabindex="0">' +
       '<div class="proposal-top"><span class="proposal-row-heading"><strong data-title-for="' + esc(p.id) + '">' + esc(titleForProposalCard(p)) + '</strong>' +
-      (warning ? '<span class="proposal-inline-warning" title="Deploy pending" aria-label="Deploy pending">⚠</span>' : '') + '</span>' +
+      (warning ? '<span class="proposal-inline-warning" title="Deploy pending" aria-label="Deploy pending">' + statusIcon('deploy-pending') + '</span>' : '') + '</span>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '</div>' +
       '<div class="proposal-row-meta"><span class="flow-name">' + esc(flowLabelOf(p) || 'Flow') + '</span>' + renderChangeCounts(p.changeCounts) +
       '<span class="proposal-by">Created by ' + esc((p.createdBy && (p.createdBy.label || p.createdBy.user || p.createdBy.clientId)) || 'AI agent') + '</span>' + timeCell(p.createdAt) + '<span class="row-chevron">›</span></div></div>';
@@ -3858,7 +3879,7 @@ export function pageClientEditorJumpScript(): string {
         if (pending && pending.reqId === reqId) localStorage.removeItem(key);
       } catch (e) { /* storage may be disabled */ }
       if (!usedFallback && typeof showToast === 'function') {
-        showToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });
+        showToast('Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000, icon: 'resolved' });
       }
       cleanup();
     }
@@ -3891,7 +3912,7 @@ export function pageClientEditorJumpScript(): string {
         }
       } catch (e) { liveEditor = true; }
       if (liveEditor) {
-        if (typeof showToast === 'function') showToast('Switch to the Node-RED editor tab to open this item', true, { durationMs: 4000 });
+        if (typeof showToast === 'function') showToast('Switch to the Node-RED editor tab to open this item', true, { durationMs: 4000, icon: 'resolved' });
         return;
       }
       var hashAt = href.indexOf('#');
@@ -3899,7 +3920,7 @@ export function pageClientEditorJumpScript(): string {
       var hash = hashAt < 0 ? '' : href.slice(hashAt);
       var fallbackHref = base + (base.indexOf('?') < 0 ? '?' : '&') + 'aiAccessReveal=' + encodeURIComponent(reqId) + hash;
       var w = window.open(fallbackHref, EDITOR_WINDOW_NAME);
-      if (typeof showToast === 'function') showToast('Opened Node-RED editor in a new tab', true, { durationMs: 4000 });
+      if (typeof showToast === 'function') showToast('Opened Node-RED editor in a new tab', true, { durationMs: 4000, icon: 'resolved' });
       if (w) { try { w.focus(); } catch (e) { /* ignore */ } }
     }, 1000);
     // Persist before sending: an editor opened by the fallback can read the latest request.

@@ -62,8 +62,7 @@ function pageClientVisualGraphScript(): string {
   var visualStates = {};
   var visualTypeMetadata = {};
   var visualColors = { inject: '#a6bbcf', function: '#fdd0a2', template: '#f3b567', debug: '#87a980', change: '#E2D96E', switch: '#E2D96E', 'http in': '#e7e7ae', 'http response': '#e7e7ae', comment: '#fff' };
-  var visualStatusColors = { added: '#2a9d4a', removed: '#c65353', modified: '#2f6fed', conflict: '#dc9419' };
-  var visualBadges = { added: '+', removed: '−', modified: '✎', conflict: '!' };
+  var visualStatusColors = { added: '#2a9d4a', removed: '#c65353', modified: '#2f6fed', moved: '#7a6fb0', conflict: '#dc9419' };
   function visualCollect(flow) {
     var result = Object.create(null);
     ((flow && flow.nodes) || []).concat((flow && flow.configs) || []).forEach(function (n) { result[n.id] = n; });
@@ -71,7 +70,7 @@ function pageClientVisualGraphScript(): string {
   }
   function visualGraph(p, diff) {
     var before = visualCollect(p.baseFlow || p.visualLiveFlow), after = visualCollect(p.payload && p.payload.flow), live = visualCollect(p.visualLiveFlow), kinds = Object.create(null), entries = Object.create(null);
-    ['added', 'removed', 'modified'].forEach(function (kind) {
+    ['added', 'removed', 'modified', 'moved'].forEach(function (kind) {
       (diff[kind] || []).forEach(function (n) { kinds[n.id] = kind; entries[n.id] = n; });
     });
     ((diff.rebase && diff.rebase.conflicts) || []).forEach(function (c) { if (c.nodeId) kinds[c.nodeId] = 'conflict'; });
@@ -234,7 +233,7 @@ function pageClientVisualRenderScript(): string {
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
     if (n.hiddenOutputs) svg += '<text x="' + (width - 10) + '" y="' + (height - 4) + '" text-anchor="end" font-size="11" fill="#333">+' + esc(n.hiddenOutputs) + '</text>';
     if (!ghost && n.kind) svg += '<rect class="change-outline" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + (selected ? 3.75 : 2) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
-    if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/><text x="' + (width - 2) + '" y="-6" dominant-baseline="central" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">' + visualBadges[n.kind] + '</text>';
+    if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/>' + statusIcon(n.kind, { x: width - 8, y: -12, size: 12, color: '#fff' });
     return svg + '</g>';
   }
   function visualPill(id, label, x, y, collapse) {
@@ -242,11 +241,11 @@ function pageClientVisualRenderScript(): string {
   }
   function visualMarkup(p, diff) {
     var counts = Object.assign({}, diff.summary, { conflict: ((diff.rebase && diff.rebase.conflicts) || []).map(function (c) { return c.nodeId; }).filter(function (id, i, ids) { return ids.indexOf(id) === i; }).length });
-    return '<div class="visual-summary"><div class="visual-detail-counts">' + ['added', 'removed', 'modified', 'conflict'].filter(function (kind) { return counts[kind]; }).map(function (kind) { return '<span>' + counts[kind] + ' ' + kind + '</span>'; }).join('') + '</div>' + '<div class="visual-legend">' + ['added', 'removed', 'modified', 'conflict'].map(function (kind) {
-      return '<span><i style="background:' + visualStatusColors[kind] + '">' + visualBadges[kind] + '</i>' + kind + '</span>';
-    }).join('') + '<span><i class="context-dot"></i>Related nodes</span><span><i class="editor-merged-dot">•</i>Editor-merged</span></div></div>' +
+    return '<div class="visual-summary"><div class="visual-detail-counts">' + ['added', 'removed', 'modified', 'moved', 'conflict'].filter(function (kind) { return counts[kind]; }).map(function (kind) { return '<span>' + counts[kind] + ' ' + kind + '</span>'; }).join('') + '</div>' + '<div class="visual-legend">' + ['added', 'removed', 'modified', 'moved', 'conflict'].map(function (kind) {
+      return '<span><i style="background:' + visualStatusColors[kind] + '">' + statusIcon(kind) + '</i>' + kind + '</span>';
+    }).join('') + '<span><i class="context-dot"></i>Related nodes</span><span><i class="editor-merged-dot">' + statusIcon('editor-merged') + '</i>Editor-merged</span></div></div>' +
       '<section class="visual-workspace" aria-label="Visual View"><div class="visual-workhead"><strong>Flow preview <span>/ ' + esc(flowLabelOf(p)) + '</span></strong><span>Changed nodes + related nodes</span></div>' +
-      '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs>' + ['conflict', 'modified', 'added', 'removed'].map(function (kind) {
+      '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs>' + ['conflict', 'modified', 'moved', 'added', 'removed'].map(function (kind) {
         return '<filter id="halo-' + kind + '" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="' + visualStatusColors[kind] + '" flood-opacity="1"/></filter>';
       }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern><marker id="visual-move-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#909aa2"/></marker></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
@@ -301,7 +300,7 @@ function pageClientVisualInteractionScript(): string {
       host.querySelector('.visual-list-count').textContent = '(' + changed.length + ')';
       host.querySelector('.visual-node-list').innerHTML = changed.map(function (n) {
         var resolved = p.conflictChoice && p.conflictChoice.nodeId === n.id && n.kind !== 'conflict';
-        return '<button type="button" class="visual-change-row' + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + visualBadges[n.kind] + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">• </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' node') + '</span><span class="visual-node-arrow">↗</span></button>';
+        return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + statusIcon(n.kind) + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' node') + '</span><span class="visual-node-arrow">↗</span></button>';
       }).join('') || '<p class="muted">Only flow settings changed.</p>';
       transform();
     }
@@ -341,7 +340,7 @@ function pageClientVisualInteractionScript(): string {
       var diffHost = document.querySelector('[data-diff-for="' + p.id + '"]');
       if (!diffHost) return;
       var selectedDiff = Object.assign({}, diff);
-      ['added', 'removed', 'modified'].forEach(function (kind) { selectedDiff[kind] = (diff[kind] || []).filter(function (entry) { return entry.id === id; }); });
+      ['added', 'removed', 'modified', 'moved'].forEach(function (kind) { selectedDiff[kind] = (diff[kind] || []).filter(function (entry) { return entry.id === id; }); });
       selectedDiff.tabProperties = [];
       selectedDiff.summary = Object.assign({}, diff.summary, { tabChanges: [] });
       delete selectedDiff.liveChanges; delete selectedDiff.vsCurrent;

@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { pageClientVisualGeometryScript } from '../../src/plugin/page-client-visual.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
-import { flowChangeCounts, proposalChangeCounts } from '../../src/plugin/proposal-changes.js';
+import {
+  changedNodeKeys,
+  flowChangeCounts,
+  isMoveOnly,
+  proposalChangeCounts,
+} from '../../src/plugin/proposal-changes.js';
 import { buildDiffSections } from '../../src/plugin/proposal-diff.js';
 import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
 import type { Proposal } from '../../src/storage/proposals.js';
@@ -23,6 +28,7 @@ function browserHelpers(elements: Record<string, any> = {}, articles: any[] = []
               querySelector: () => null,
               getAttribute: () => null,
             }),
+      querySelector: (selector: string) => elements[selector] ?? null,
       querySelectorAll: (selector: string) => (selector === '.proposal-detail' ? articles : []),
       addEventListener: vi.fn(),
     },
@@ -35,6 +41,7 @@ function browserHelpers(elements: Record<string, any> = {}, articles: any[] = []
       `
     globalThis.ui = {
       visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal,
+      mountProposalVisual, statusIcon, renderHumanDiff, displayTitleForProposal, diffComparisonKey,
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
       settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
       renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
@@ -254,16 +261,17 @@ describe('selected node halos', () => {
   const colors = {
     conflict: '#dc9419',
     modified: '#2f6fed',
+    moved: '#7a6fb0',
     added: '#2a9d4a',
     removed: '#c65353',
   };
 
-  it('defines all four halo filters with the approved bounds, color and strength', () => {
+  it('defines all five halo filters with the approved bounds, color and strength', () => {
     const ui = browserHelpers(),
       { p, diff } = chain([4]);
     const html = ui.visualMarkup(p, diff);
     const defs = html.match(/<defs>([\s\S]*?)<\/defs>/)![1]!;
-    expect(defs.match(/<filter /g)).toHaveLength(4);
+    expect(defs.match(/<filter /g)).toHaveLength(5);
     for (const [kind, color] of Object.entries(colors)) {
       expect(defs).toContain(
         `<filter id="halo-${kind}" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="${color}" flood-opacity="1"/></filter>`
@@ -346,11 +354,12 @@ describe('proposal summaries and deploy controls', () => {
     } as Proposal;
     const counts = proposalChangeCounts(p),
       summary = buildDiffSections(after, before).summary;
-    expect(counts).toEqual({ added: 1, removed: 1, modified: 3, conflict: 1 });
+    expect(counts).toEqual({ added: 1, removed: 1, modified: 2, moved: 1, conflict: 1 });
     expect(counts).toMatchObject({
       added: summary.added,
       removed: summary.removed,
       modified: summary.modified,
+      moved: summary.moved,
     });
     expect(presentProposalForApi(p).changeCounts).toEqual(counts);
     expect(
@@ -358,6 +367,11 @@ describe('proposal summaries and deploy controls', () => {
         .conflict
     ).toBe(0);
     const ui = browserHelpers();
+    const detail = ui.visualMarkup(p, { ...buildDiffSections(after, before), rebase: p.rebase });
+    for (const [kind, count] of Object.entries(counts)) {
+      expect(detail).toContain('<span>' + count + ' ' + kind + '</span>');
+      expect(ui.renderChangeCounts(counts)).toContain('title="' + count + ' ' + kind + '"');
+    }
     expect(ui.renderCompactProposal(presentProposalForApi(p))).toContain(
       ui.renderChangeCounts(counts)
     );
@@ -378,11 +392,18 @@ describe('proposal summaries and deploy controls', () => {
       flowLabel: 'Main',
       deployPending: {},
       rebase: { state: 'clean' },
-      changeCounts: { added: 2, removed: 1, modified: 3, conflict: 1 },
+      changeCounts: { added: 2, removed: 1, modified: 3, moved: 2, conflict: 1 },
     };
     const html = ui.renderCompactProposal(p);
     expect(html).toMatch(/<strong[^>]*>[^<]*<\/strong><span class="proposal-inline-warning"/);
     expect(html).toContain('title="Deploy pending"');
+    expect(html).toContain('aria-label="Deploy pending"');
+    expect(html).toContain('data-icon="deploy-pending"');
+    for (const kind of ['added', 'removed', 'modified', 'moved', 'conflict']) {
+      expect(html).toContain('data-icon="' + kind + '"');
+    }
+    expect(html).toContain('title="2 moved"');
+    expect(html).not.toMatch(/[✎⚠✓•]/);
     expect(html).toContain('role="button" tabindex="0"');
     expect(html).toContain('Created by agent');
     expect(html).toContain('Main');
@@ -728,4 +749,195 @@ describe('review action safety', () => {
       expect(ui.pendingCount()).toBe(0);
     }
   );
+});
+
+describe('Moved classification and review', () => {
+  const original = {
+    id: 'move',
+    type: 'function',
+    x: 100,
+    y: 120,
+    func: 'return msg;',
+    wires: [[]],
+  };
+
+  it.each([
+    [{ x: 300 }, ['x'], 'moved'],
+    [{ y: 240 }, ['y'], 'moved'],
+    [{ x: 300, y: 240 }, ['x', 'y'], 'moved'],
+    [{ x: 300, func: 'return null;' }, ['func', 'x'], 'modified'],
+    [{ wires: [['target']] }, ['wires'], 'modified'],
+    [{ x: 300, wires: [['target']] }, ['wires', 'x'], 'modified'],
+    [{}, [], 'unchanged'],
+  ])('classifies %j after retaining all changed keys', (patch, keys, kind) => {
+    const node = { ...original, ...patch };
+    expect(changedNodeKeys(original, node)).toEqual(keys);
+    expect(isMoveOnly(keys)).toBe(kind === 'moved');
+    const before = { nodes: [original] },
+      after = { nodes: [node] };
+    const counts = flowChangeCounts(before, after);
+    expect(counts).toEqual({
+      added: 0,
+      removed: 0,
+      modified: Number(kind === 'modified'),
+      moved: Number(kind === 'moved'),
+    });
+    const diff = buildDiffSections(after, before);
+    expect(diff.summary).toMatchObject(counts);
+    if (kind === 'modified') expect(diff.modified[0]?.changes.map(ch => ch.key)).toEqual(keys);
+    if (kind === 'moved')
+      expect(diff.moved).toEqual([
+        {
+          id: 'move',
+          type: 'function',
+          before: { x: 100, y: 120 },
+          after: { x: node.x, y: node.y },
+        },
+      ]);
+  });
+
+  function mount(patch: Record<string, unknown> = {}, resolved = false) {
+    const p = {
+      id: 'p',
+      title: 'Update flow',
+      status: 'pending',
+      baseFlow: { nodes: [original] },
+      visualLiveFlow: { nodes: [{ ...original, func: 'editor change' }] },
+      payload: { flowId: 'tab', flow: { nodes: [{ ...original, x: 300, y: 240, ...patch }] } },
+      ...(resolved ? { conflictChoice: { nodeId: 'move', choice: 'proposed' } } : {}),
+    };
+    const sections = buildDiffSections(p.payload.flow, p.baseFlow);
+    const diff = { ...sections, rebase: { state: 'clean' }, vsCurrent: sections };
+    const viewport = { innerHTML: '', setAttribute: vi.fn() };
+    const rows = { innerHTML: '' };
+    const svg = { addEventListener: vi.fn() };
+    const showAll = { onclick: null as null | (() => void) };
+    const diffHost = {
+      innerHTML: '',
+      querySelector: (selector: string) => (selector === '.visual-node-diff' ? diffHost : showAll),
+      querySelectorAll: () => [],
+    };
+    const slots: Record<string, any> = {
+      '.visual-canvas': svg,
+      '.visual-viewport': viewport,
+      '.visual-canvas-wrap': { clientWidth: 600, clientHeight: 350 },
+      '.visual-zoom': {},
+      '.visual-list-count': {},
+      '.visual-node-list': rows,
+    };
+    const host = {
+      innerHTML: '',
+      querySelector: (selector: string) => slots[selector],
+      querySelectorAll: () => [],
+      onclick: null as any,
+    };
+    const ui = browserHelpers({ '[data-visual-for="p"]': host, '[data-diff-for="p"]': diffHost });
+    ui.setApi(() => Promise.resolve({}));
+    ui.mountProposalVisual(p, diff);
+    const click = (selector: string, attr: string) =>
+      host.onclick({
+        detail: 0,
+        target: {
+          closest: (query: string) => (query === selector ? { getAttribute: () => attr } : null),
+        },
+      });
+    return { ui, p, diff, viewport, rows, diffHost, host, showAll, click };
+  }
+
+  it('clicks a Moved node to show positions, and returns to the Moved section with Show all changes', () => {
+    const { ui, p, diff, rows, diffHost, host, showAll, click } = mount();
+    expect(host.innerHTML).toContain('data-icon="moved"');
+    expect(host.innerHTML).toContain('background:#7a6fb0');
+    expect(host.innerHTML).toContain('1 moved');
+    expect(rows.innerHTML).toContain('class="visual-change-row moved');
+    expect(rows.innerHTML).toContain('data-icon="moved"');
+    click('[data-visual-node]', 'move');
+    expect(diffHost.innerHTML).toContain('Show all changes');
+    expect(diffHost.innerHTML).toContain('(100, 120) → (300, 240)');
+    expect(diffHost.innerHTML).not.toMatch(/Modified nodes|prop-change|Nothing changes/);
+    showAll.onclick!();
+    expect(diffHost.innerHTML).toContain('<h4>Moved nodes</h4>');
+    expect(diffHost.innerHTML).not.toContain('visual-diff-heading');
+    ui.setPermission(true);
+    ui.setDiff(p, diff);
+    expect(ui.renderReviewActionRow(p, false)).not.toMatch(
+      /class="action approve-btn"[^>]*disabled/
+    );
+    expect(ui.displayTitleForProposal(p, diff)).toBe('Move node');
+    expect(ui.diffComparisonKey(diff)).not.toBe(ui.diffComparisonKey({ ...diff, moved: [] }));
+  });
+
+  it.each([false, true])(
+    'keeps the editor ghost and SVG badge for a move with a property edit: %s',
+    property => {
+      const { rows, viewport, diffHost, click, ui, p, diff } = mount(
+        property ? { func: 'return null;' } : {},
+        true
+      );
+      click('[data-visual-layout]', 'editor');
+      const kind = property ? 'modified' : 'moved';
+      expect(ui.visualGraph(p, diff).byId.move).toMatchObject({ kind, moved: true });
+      expect(viewport.innerHTML).toContain('move-ghost');
+      expect(viewport.innerHTML).toContain('stroke-dasharray="8,3" fill-opacity=".6"');
+      expect(viewport.innerHTML).toMatch(
+        new RegExp(
+          '<circle[^>]*fill="' +
+            (property ? '#2f6fed' : '#7a6fb0') +
+            '"/><svg[^>]*data-icon="' +
+            kind +
+            '"'
+        )
+      );
+      expect(viewport.innerHTML).toContain('color="#fff"');
+      expect(rows.innerHTML).toContain('data-icon="resolved"');
+      expect(rows.innerHTML).toContain('data-icon="editor-merged"');
+      expect(rows.innerHTML).toContain('title="Also changed in the editor"');
+      click('[data-visual-node]', 'move');
+      if (property) {
+        expect(diff.modified[0]?.changes.map(ch => ch.key)).toEqual(['func', 'x', 'y']);
+        expect(diffHost.innerHTML).toContain('Modified nodes');
+        expect(diffHost.innerHTML).toContain('prop-change');
+        expect(diffHost.innerHTML).not.toContain('Moved nodes');
+      } else expect(diffHost.innerHTML).not.toContain('prop-change');
+    }
+  );
+});
+
+describe('shared status SVGs', () => {
+  it('uses one currentColor set in compact chips, legend and canvas badges', () => {
+    const ui = browserHelpers(),
+      { p, diff } = chain([4]);
+    for (const kind of [
+      'added',
+      'removed',
+      'modified',
+      'moved',
+      'conflict',
+      'resolved',
+      'editor-merged',
+      'deploy-pending',
+    ]) {
+      const icon = ui.statusIcon(kind);
+      expect(icon).toContain('data-icon="' + kind + '"');
+      expect(icon).toContain('stroke="currentColor"');
+      expect(icon).toContain('aria-hidden="true"');
+      expect(icon).not.toMatch(/<text|[✎⚠✓•✥]/);
+    }
+    const chips = ui.renderChangeCounts({
+      added: 1,
+      removed: 2,
+      modified: 3,
+      moved: 4,
+      conflict: 5,
+    });
+    expect(chips.match(/<svg /g)).toHaveLength(5);
+    expect(chips).toContain('title="4 moved"');
+    expect(chips).toContain('</svg>4</span>');
+    const markup = ui.visualMarkup(p, diff);
+    for (const kind of ['added', 'removed', 'modified', 'moved', 'conflict', 'editor-merged']) {
+      expect(markup).toContain('data-icon="' + kind + '"');
+    }
+    // Four continuous axes, each with its own arrowhead.
+    expect(ui.statusIcon('moved')).toContain('M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4');
+  });
 });

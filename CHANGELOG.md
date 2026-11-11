@@ -10,12 +10,17 @@ and this project adheres to
 
 ### Added
 
+- Distinguish Moved nodes in proposal counts, summaries, titles, and position
+  diffs.
+
 - Review proposals in a dedicated Visual View with real flow nodes, related-node
   expansion, editor positions, change diffs, and a deploy-type approval menu.
 - Filter proposal summaries by Pending, Conflict, Resolved, or All, with shared
   numeric change counts and persistent detail links (`#/proposals/<id>`).
 
 ### Changed
+
+- Use shared inline SVG status icons across proposal lists and Visual View.
 
 - Replace dashboard sidebar navigation with a sticky header and mobile drawer.
   Existing proposal links (`#proposal=<id>`) continue to open the detail page.

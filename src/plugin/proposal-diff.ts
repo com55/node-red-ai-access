@@ -12,7 +12,7 @@ import { conflictFieldValue } from '../storage/field-value.js';
 import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
-import { changedNodeKeys } from './proposal-changes.js';
+import { changedNodeKeys, isMoveOnly } from './proposal-changes.js';
 import { nodeTypeText } from './proposal-present.js';
 import { nestedLiveTab, type RebaseResult } from './proposal-rebase.js';
 import { rebaseProposal } from './proposal-sync.js';
@@ -105,10 +105,20 @@ export interface PresenceNodeDiff {
   properties: PresenceProperty[];
 }
 
+/** Position-only change, kept separate from the property diff. */
+export interface MovedNodeDiff {
+  id: string;
+  type: string;
+  name?: string;
+  before: { x: unknown; y: unknown };
+  after: { x: unknown; y: unknown };
+}
+
 export interface DiffSectionSummary {
   added: number;
   removed: number;
   modified: number;
+  moved: number;
   tabChanges: string[];
   /** Node count in the before snapshot (for delete-ratio warnings). */
   beforeNodeCount: number;
@@ -122,6 +132,7 @@ export interface DiffSections {
   added: PresenceNodeDiff[];
   removed: PresenceNodeDiff[];
   modified: ModifiedNodeDiff[];
+  moved: MovedNodeDiff[];
   /** Soft validation notes (e.g. optional unset config refs). */
   warnings?: { code: string; error: string; [key: string]: unknown }[];
 }
@@ -378,9 +389,9 @@ function toPresenceNode(
   return entry;
 }
 
-function compareNodes(before: FlowNode, after: FlowNode): PropertyChange[] {
+function compareNodes(before: FlowNode, after: FlowNode, keys: string[]): PropertyChange[] {
   const changes: PropertyChange[] = [];
-  for (const key of changedNodeKeys(before, after)) {
+  for (const key of keys) {
     const left = before[key];
     const right = after[key];
     if (valuesEqual(left, right)) {
@@ -461,6 +472,7 @@ export function buildDiffSections(
   const added: PresenceNodeDiff[] = [];
   const removed: PresenceNodeDiff[] = [];
   const modified: ModifiedNodeDiff[] = [];
+  const moved: MovedNodeDiff[] = [];
 
   // Preserve flow/wiring order (nodes array order) — do not sort added by id.
   for (const node of afterFlow.nodes ?? []) {
@@ -488,7 +500,19 @@ export function buildDiffSections(
     if (!before) {
       continue;
     }
-    const changes = compareNodes(before, after);
+    const keys = changedNodeKeys(before, after);
+    if (isMoveOnly(keys)) {
+      const name = nodeName(after) ?? nodeName(before);
+      moved.push({
+        id,
+        type: after.type || before.type,
+        ...(name !== undefined ? { name } : {}),
+        before: { x: before.x ?? null, y: before.y ?? null },
+        after: { x: after.x ?? null, y: after.y ?? null },
+      });
+      continue;
+    }
+    const changes = compareNodes(before, after, keys);
     if (changes.length > 0) {
       const entry: ModifiedNodeDiff = {
         id,
@@ -506,12 +530,14 @@ export function buildDiffSections(
 
   // Modified can stay id-sorted for stable UI; added/removed keep patch order.
   modified.sort((a, b) => a.id.localeCompare(b.id));
+  moved.sort((a, b) => a.id.localeCompare(b.id));
 
   return {
     summary: {
       added: added.length,
       removed: removed.length,
       modified: modified.length,
+      moved: moved.length,
       tabChanges: compareTabMeta(beforeFlow, afterFlow),
       beforeNodeCount: beforeNodes.size,
       afterNodeCount: afterNodes.size,
@@ -525,6 +551,7 @@ export function buildDiffSections(
     added,
     removed,
     modified,
+    moved,
   };
 }
 

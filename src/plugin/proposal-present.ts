@@ -9,7 +9,7 @@ import type { Proposal } from '../storage/proposals.js';
 
 import { absolutizePath } from './access-path.js';
 import { normalizeHttpAdminRoot } from './auth.js';
-import { changedNodeKeys, proposalChangeCounts } from './proposal-changes.js';
+import { changedNodeKeys, isMoveOnly, proposalChangeCounts } from './proposal-changes.js';
 import { nestedLiveTab } from './proposal-rebase.js';
 
 /** Max length for a stored/submitted proposal title. */
@@ -99,7 +99,13 @@ export interface PresentedProposalApi {
   /** Short classify-counts summary, e.g. `Adds 1 node`. */
   changeSummary: string;
   /** Numeric node counts shared with the detail diff; conflict nodes are counted once. */
-  changeCounts: { added: number; removed: number; modified: number; conflict: number };
+  changeCounts: {
+    added: number;
+    removed: number;
+    modified: number;
+    moved: number;
+    conflict: number;
+  };
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
@@ -227,10 +233,6 @@ function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
   return map;
 }
 
-function nodeContentChanged(prev: FlowNode, next: FlowNode): boolean {
-  return changedNodeKeys(prev, next).length > 0;
-}
-
 /** True when the only meaningful change is the display name/label. */
 function isRenameOnly(prev: FlowNode, next: FlowNode): boolean {
   const beforeName = nodeLabel(prev);
@@ -256,10 +258,12 @@ function classifyFlowChanges(
   added: FlowNode[];
   removed: FlowNode[];
   modified: { before: FlowNode; after: FlowNode }[];
+  moved: { before: FlowNode; after: FlowNode }[];
 } {
   const added: FlowNode[] = [];
   const removed: FlowNode[] = [];
   const modified: { before: FlowNode; after: FlowNode }[] = [];
+  const moved: { before: FlowNode; after: FlowNode }[] = [];
   for (const [id, node] of after) {
     if (!before.has(id)) {
       added.push(node);
@@ -272,11 +276,13 @@ function classifyFlowChanges(
   }
   for (const [id, node] of after) {
     const prev = before.get(id);
-    if (prev && nodeContentChanged(prev, node)) {
-      modified.push({ before: prev, after: node });
+    if (prev) {
+      const keys = changedNodeKeys(prev, node);
+      if (isMoveOnly(keys)) moved.push({ before: prev, after: node });
+      else if (keys.length > 0) modified.push({ before: prev, after: node });
     }
   }
-  return { added, removed, modified };
+  return { added, removed, modified, moved };
 }
 
 function pluralNodes(n: number): string {
@@ -310,6 +316,7 @@ export function buildReplaceFlowTitle(options: {
   added?: FlowNode[];
   addedCount?: number;
   modified?: number;
+  moved?: number;
 }): string {
   const parts: string[] = [];
   if (options.removed > 0) {
@@ -327,6 +334,9 @@ export function buildReplaceFlowTitle(options: {
   if ((options.modified ?? 0) > 0) {
     parts.push(describeModifiedClause(options.modified ?? 0));
   }
+  if ((options.moved ?? 0) > 0) {
+    parts.push(`moves ${options.moved} ${pluralNodes(options.moved ?? 0)}`);
+  }
   const detail = parts.length ? parts.join(', ') : 'replaces nodes';
   const label = options.flowLabel?.trim();
   return label ? `Replace ${label}: ${detail}` : `Replace flow: ${detail}`;
@@ -336,9 +346,10 @@ function describeOneChange(changes: {
   added: FlowNode[];
   removed: FlowNode[];
   modified: { before: FlowNode; after: FlowNode }[];
+  moved: { before: FlowNode; after: FlowNode }[];
 }): string | undefined {
-  const { added, removed, modified } = changes;
-  const total = added.length + removed.length + modified.length;
+  const { added, removed, modified, moved } = changes;
+  const total = added.length + removed.length + modified.length + moved.length;
   if (total !== 1) {
     return undefined;
   }
@@ -353,6 +364,12 @@ function describeOneChange(changes: {
     const type = nodeTypeText(node.type);
     const name = nodeLabel(node);
     return name ? `Remove ${type} node ${quoteName(name)}` : `Remove ${type} node`;
+  }
+  if (moved[0]) {
+    const node = moved[0].after;
+    const type = nodeTypeText(node.type);
+    const name = nodeLabel(node);
+    return name ? `Move ${type} node ${quoteName(name)}` : `Move ${type} node`;
   }
   const pair = modified[0];
   if (!pair) return undefined;
@@ -437,7 +454,8 @@ export function autoGenerateProposalTitle(
   afterFlow: Partial<FlowTab>
 ): string {
   const changes = classifyFlowChanges(collectNodes(baseFlow ?? {}), collectNodes(afterFlow));
-  const total = changes.added.length + changes.removed.length + changes.modified.length;
+  const total =
+    changes.added.length + changes.removed.length + changes.modified.length + changes.moved.length;
   const label = flowLabelHint(afterFlow, baseFlow);
 
   if (total === 0) {
@@ -451,6 +469,7 @@ export function autoGenerateProposalTitle(
       removed: changes.removed.length,
       added: changes.added,
       modified: changes.modified.length,
+      moved: changes.moved.length,
     });
   }
 
@@ -485,6 +504,7 @@ export function titleFromDiffSummary(
     added?: number;
     removed?: number;
     modified?: number;
+    moved?: number;
   },
   options: {
     flowLabel?: string;
@@ -496,6 +516,7 @@ export function titleFromDiffSummary(
   const removed = Number(summary.removed) || 0;
   const added = Number(summary.added) || 0;
   const modified = Number(summary.modified) || 0;
+  const moved = Number(summary.moved) || 0;
   const stored = options.storedTitle?.trim() ?? '';
   const firstAddedType =
     typeof options.firstAddedType === 'string' && options.firstAddedType.trim()
@@ -514,14 +535,18 @@ export function titleFromDiffSummary(
       added: addedNodes,
       addedCount: added,
       modified,
+      moved,
     });
   }
-  const total = added + modified;
+  const total = added + modified + moved;
   if (total === 0) {
     return label ? `Update ${label}` : 'Update flow';
   }
   if (total === 1 && added === 1 && firstAddedType) {
     return ensureTitleIncludesFlowName(`Add ${firstAddedType} node`, label);
+  }
+  if (total === 1 && moved === 1) {
+    return label ? `Move node in ${label}` : 'Move node';
   }
   if (total === 1 && modified === 1) {
     return label ? `Edit node in ${label}` : 'Edit node';
@@ -706,6 +731,9 @@ export function buildChangeSummary(proposal: Proposal): string {
     parts.push(
       changes.modified.length === 1 ? 'Edits 1 node' : `Edits ${changes.modified.length} nodes`
     );
+  }
+  if (changes.moved.length > 0) {
+    parts.push(`Moves ${changes.moved.length} ${pluralNodes(changes.moved.length)}`);
   }
   if (parts.length === 0) {
     return 'No node changes';

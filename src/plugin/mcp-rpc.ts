@@ -660,7 +660,7 @@ function registerListProposalsTools(
         'mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with ' +
         'limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return ' +
         'invalid_filter. Returns lean { proposals, total, … } with title, ' +
-        'displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
+        'displayName, reviewUrl, changeSummary, changeCounts (added, removed, modified, moved, conflict; no payload/baseFlow unless include_payload=true). ' +
         'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
       inputSchema: listProposalsInputSchema,
     },
@@ -735,6 +735,7 @@ function registerProposalActionTools(
     {
       description:
         'Diff any proposal against its stored baseFlow snapshot (what changed). ' +
+        'Position-only changes appear in moved (before/after x/y), separately from modified property or wire changes. ' +
         'Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),

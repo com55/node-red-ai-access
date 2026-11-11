@@ -132,6 +132,7 @@ describe('proposals / flows / logs HTTP API', () => {
         { id: 'n1', type: 'inject', x: 100, y: 100, wires: [['n2']] },
         { id: 'n2', type: 'debug', x: 300, y: 100, wires: [] },
         { id: 'n4', type: 'function', x: 200, y: 200, func: 'return msg;', wires: [] },
+        { id: 'n5', type: 'debug', x: 200, y: 300, wires: [] },
       ],
     };
     const live = structuredClone(base);
@@ -167,6 +168,7 @@ describe('proposals / flows / logs HTTP API', () => {
               { ...base.nodes[0], x: 150, wires: [['n3']] },
               { id: 'n3', type: 'debug', x: 400, y: 100, wires: [] },
               { ...base.nodes[2], func: 'msg.payload = "proposed"; return msg;' },
+              { ...base.nodes[3], x: 400 },
             ],
           },
         },
@@ -178,12 +180,66 @@ describe('proposals / flows / logs HTTP API', () => {
     const item = list.body.proposals.find((p: { id: string }) => p.id === submitted.body.id);
     const detail = await request(app).get('/mcp/api/v1/proposals/' + submitted.body.id + '/diff');
     expect(detail.status).toBe(200);
-    expect(item.changeCounts).toEqual({ added: 1, removed: 1, modified: 2, conflict: 1 });
+    expect(item.changeCounts).toEqual({ added: 1, removed: 1, modified: 2, moved: 1, conflict: 1 });
     expect(item.status).toBe('conflict');
-    for (const kind of ['added', 'removed', 'modified'])
+    for (const kind of ['added', 'removed', 'modified', 'moved'])
       expect(item.changeCounts[kind]).toBe(detail.body.summary[kind]);
     expect(item).not.toHaveProperty('payload');
     expect(item.reviewPath).toBe('/ai-access#/proposals/' + item.id);
+  });
+
+  it('keeps move-only proposals approvable with coordinates in the diff and separate counts', async () => {
+    const node = { id: 'move', type: 'debug', z: 'tab-1', x: 100, y: 120, wires: [] };
+    const base = { id: 'tab-1', type: 'tab', label: 'Main', nodes: [node] };
+    const updateFlow = vi.fn(async () => ({ flowId: 'tab-1', rev: 'rev-2' }));
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'reviewer'),
+      adapter: {
+        kind: 'red',
+        getFlows: async () => ({
+          rev: 'rev-1',
+          flows: [{ id: base.id, type: 'tab', label: base.label }, node],
+        }),
+        getFlow: async () => ({ rev: 'rev-1', flow: base }),
+        updateFlow,
+      },
+    });
+    const link = linkStore.create({ kind: 'rest', label: 'moves-agent' });
+    const created = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', 'Bearer ' + link.token)
+      .send({
+        type: 'replace_flow',
+        expectedRev: 'rev-1',
+        payload: {
+          flowId: base.id,
+          flow: { ...base, nodes: [{ ...node, x: 300, y: 240 }] },
+        },
+      });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      title: 'Move debug node in Main',
+      changeSummary: 'Moves 1 node',
+      changeCounts: { added: 0, removed: 0, modified: 0, moved: 1, conflict: 0 },
+    });
+    const detail = await request(app).get('/mcp/api/v1/proposals/' + created.body.id + '/diff');
+    expect(detail.status).toBe(200);
+    expect(detail.body.modified).toEqual([]);
+    expect(detail.body.moved).toEqual([
+      { id: node.id, type: node.type, before: { x: 100, y: 120 }, after: { x: 300, y: 240 } },
+    ]);
+    expect(detail.body.vsCurrent.summary).toMatchObject({ moved: 1, modified: 0 });
+    const approved = await request(app).post(
+      '/mcp/api/v1/proposals/' + created.body.id + '/approve'
+    );
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe('approved');
+    expect(updateFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flow: expect.objectContaining({ nodes: [expect.objectContaining({ x: 300, y: 240 })] }),
+      })
+    );
   });
 
   it('approve accepts deploymentType override in the body', async () => {

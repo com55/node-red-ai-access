@@ -21,17 +21,24 @@ export function changedNodeKeys(before: FlowNode, after: FlowNode): string[] {
     .sort();
 }
 
+/** Classify only after computing all changed keys, including positions and wires. */
+export function isMoveOnly(keys: readonly string[]): boolean {
+  return keys.length > 0 && keys.every(key => key === 'x' || key === 'y');
+}
+
 export function flowChangeCounts(before: Partial<FlowTab>, after: Partial<FlowTab>) {
   const collect = (flow: Partial<FlowTab>) =>
     new Map([...(flow.nodes ?? []), ...(flow.configs ?? [])].map(node => [node.id, node]));
   const left = collect(before),
     right = collect(after);
+  const changed = [...right]
+    .filter(([id]) => left.has(id))
+    .map(([id, node]) => changedNodeKeys(left.get(id)!, node));
   return {
     added: [...right.keys()].filter(id => !left.has(id)).length,
     removed: [...left.keys()].filter(id => !right.has(id)).length,
-    modified: [...right].filter(
-      ([id, node]) => left.has(id) && changedNodeKeys(left.get(id)!, node).length > 0
-    ).length,
+    modified: changed.filter(keys => keys.length > 0 && !isMoveOnly(keys)).length,
+    moved: changed.filter(isMoveOnly).length,
   };
 }
 

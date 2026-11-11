@@ -151,6 +151,7 @@ function formatPresenceText(node: PresenceNodeDiff, format: DiffFormat): Presenc
 function formatSections(sections: DiffSections, format: DiffFormat): DiffSections {
   return {
     summary: sections.summary,
+    moved: sections.moved,
     ...(sections.tabProperties ? { tabProperties: sections.tabProperties } : {}),
     added: sections.added.map(n => formatPresenceText(n, format)),
     removed: sections.removed.map(n => formatPresenceText(n, format)),

@@ -1078,8 +1078,9 @@ paths:
       description: |
         Compares the proposal payload to the **base flow snapshot** stored at
         submit (`baseFlow` at `expectedRev`) — what the AI actually changed —
-        not the live editor flow. Returns counts of added / removed / modified
-        nodes. Added/removed nodes are single presence blocks with properties
+        not the live editor flow. Returns counts of added / removed / modified / moved
+        nodes. Move-only nodes have before/after positions in a separate moved list.
+        Added/removed nodes are single presence blocks with properties
         (long text fields listed for expandable UI). Modified nodes include
         line-level diffs for text fields such as `func` and `template`.
 
@@ -2554,11 +2555,12 @@ components:
             instead of parsing this embedded server clock.
         changeCounts:
           type: object
-          description: Numeric node counts shared by proposal summaries and the detail diff (including wiring and position changes). Conflict counts distinct unresolved node or flow identities.
+          description: Numeric node counts shared by proposal summaries and the detail diff. Position-only changes are moved; property or wire changes are modified. Conflict counts distinct unresolved node or flow identities.
           properties:
             added: { type: integer, minimum: 0 }
             removed: { type: integer, minimum: 0 }
             modified: { type: integer, minimum: 0 }
+            moved: { type: integer, minimum: 0 }
             conflict: { type: integer, minimum: 0 }
         reviewUrl:
           type: string
@@ -2894,9 +2896,34 @@ components:
           items:
             $ref: '#/components/schemas/ProposalDiffPresenceProperty'
 
+    ProposalDiffPosition:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: [number, 'null']
+        y:
+          type: [number, 'null']
+
+    ProposalDiffMovedNode:
+      type: object
+      description: A node whose only changed fields are x and/or y.
+      required: [id, type, before, after]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+        before:
+          $ref: '#/components/schemas/ProposalDiffPosition'
+        after:
+          $ref: '#/components/schemas/ProposalDiffPosition'
+
     ProposalDiffSections:
       type: object
-      required: [summary, added, removed, modified]
+      required: [summary, added, removed, modified, moved]
       properties:
         tabProperties:
           type: array
@@ -2905,13 +2932,15 @@ components:
             $ref: '#/components/schemas/ProposalDiffPropertyChange'
         summary:
           type: object
-          required: [added, removed, modified, tabChanges]
+          required: [added, removed, modified, moved, tabChanges]
           properties:
             added:
               type: integer
             removed:
               type: integer
             modified:
+              type: integer
+            moved:
               type: integer
             tabChanges:
               type: array
@@ -2929,6 +2958,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProposalDiffModifiedNode'
+        moved:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffMovedNode'
 
     ProposalDiff:
       allOf:

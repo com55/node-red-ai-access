@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { editorRevealListenerScript } from '../../src/plugin/editor-sidebar.js';
 import { consentScript } from '../../src/plugin/oauth-consent-script.js';
+import { pageClientIconsScript } from '../../src/plugin/page-client-icons.js';
 import {
   pageClientAutoRefreshScript,
   pageClientEditorJumpScript,
@@ -420,6 +421,7 @@ describe('dashboard → editor jump links', () => {
   it('renders the dashboard toast as a status and removes it after four seconds', () => {
     class Element {
       children: Element[] = [];
+      innerHTML = '';
       parentNode: Element | null = null;
       attributes: Record<string, string> = {};
       setAttribute(key: string, value: string) {
@@ -440,10 +442,12 @@ describe('dashboard → editor jump links', () => {
     const start = script.indexOf('  function showToast(');
     const end = script.indexOf('\n  }', start) + 4;
     runInNewContext(
-      script.slice(start, end) +
-        "\nshowToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });",
+      pageClientIconsScript() +
+        script.slice(start, end) +
+        "\nshowToast('Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000, icon: 'resolved' });",
       {
         $: () => host,
+        esc: (value: string) => value,
         document: { createElement: () => new Element() },
         setTimeout: (callback: () => void, ms: number) => {
           dismiss = callback;
@@ -452,6 +456,7 @@ describe('dashboard → editor jump links', () => {
       }
     );
     expect(host.children[0]?.attributes.role).toBe('status');
+    expect(host.children[0]?.children[0]?.innerHTML).toContain('data-icon="resolved"');
     expect(duration).toBe(4000);
     dismiss!();
     expect(host.children).toHaveLength(0);
@@ -487,9 +492,9 @@ describe('dashboard → editor jump links', () => {
     await new Promise(r => setTimeout(r, 500));
     expect(h.stored.has(key)).toBe(false);
     expect(h.toasts).toEqual([
-      '✓ Sent to Node-RED editor — switch to the editor tab to see this node',
+      'Sent to Node-RED editor — switch to the editor tab to see this node',
     ]);
-    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000 } }]);
+    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000, icon: 'resolved' } }]);
     expect(h.opened).toEqual([]);
   });
 

@@ -14,12 +14,14 @@ function sampleDiff(linesEqualCount: number): ProposalDiffResult {
       added: 0,
       removed: 0,
       modified: 1,
+      moved: 0,
       tabChanges: [],
       beforeNodeCount: 1,
       afterNodeCount: 1,
     },
     added: [],
     removed: [],
+    moved: [],
     modified: [
       {
         id: 'n1',
@@ -78,3 +80,20 @@ describe('diff-format', () => {
     }
   });
 });
+
+it.each(['summary', 'full'] as const)(
+  'preserves moved positions across all %s diff sections',
+  format => {
+    const moved = [
+      { id: 'n', type: 'function', before: { x: 100, y: 120 }, after: { x: 300, y: 240 } },
+    ];
+    const sections = { ...sampleDiff(0), moved };
+    const result = applyDiffFormat(
+      { ...sections, liveChanges: sections, vsCurrent: sections },
+      format
+    );
+    expect(result.moved).toEqual(moved);
+    expect(result.liveChanges?.moved).toEqual(moved);
+    expect(result.vsCurrent?.moved).toEqual(moved);
+  }
+);
