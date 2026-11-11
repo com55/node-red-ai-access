@@ -19,6 +19,8 @@ and this project adheres to
 
 ### Changed
 
+- Show Visual View node changes in a full-width drawer with aligned Split rows
+  and field-level Split/Unified controls.
 - Use shared inline SVG status icons across proposal lists and Visual View.
 - Replace dashboard sidebar navigation with a sticky header and mobile drawer.
   Existing proposal links (`#proposal=<id>`) continue to open the detail page.

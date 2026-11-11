@@ -1967,35 +1967,23 @@ function pageClientScriptPartBDiff(): string {
     try { localStorage.setItem(DIFF_MODE_KEY, mode); } catch (e) { /* ignore */ }
   }
 
-  function renderDiffLine(opts) {
-    var cls = opts.cls || 'diff-eq';
-    var ln = opts.ln == null ? '' : String(opts.ln);
-    var gutter = opts.gutter == null ? ' ' : opts.gutter;
-    var text = opts.text == null ? '' : opts.text;
-    return '<div class="diff-line ' + cls + '">' +
-      '<span class="ln">' + esc(ln) + '</span>' +
-      '<span class="gutter">' + esc(gutter) + '</span>' +
-      '<span class="code">' + esc(text) + '</span></div>';
+  function diffHeaders(conflict) {
+    return conflict ? ['Editor (live)', 'AI proposed'] : ['Before', 'After · proposed'];
   }
 
-  function renderUnifiedTextDiff(ch) {
-    var beforeLn = 0;
-    var afterLn = 0;
+  function renderUnifiedTextDiff(ch, conflict) {
+    var beforeLn = 0, afterLn = 0;
     var lines = (ch.lines || []).map(function (line) {
-      if (line.op === 'add') {
-        afterLn += 1;
-        return renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: line.text });
-      }
-      if (line.op === 'remove') {
-        beforeLn += 1;
-        return renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: line.text });
-      }
-      beforeLn += 1;
-      afterLn += 1;
-      return renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: line.text });
+      var oldNo = '', newNo = '', kind = 'equal', sign = ' ';
+      if (line.op !== 'add') { beforeLn += 1; oldNo = beforeLn; }
+      if (line.op !== 'remove') { afterLn += 1; newNo = afterLn; }
+      if (line.op === 'add') { kind = 'ins'; sign = '+'; }
+      if (line.op === 'remove') { kind = 'del'; sign = '−'; }
+      return '<div class="unifiedline ' + kind + '"><i>' + oldNo + '</i><i>' + newNo +
+        '</i><b>' + sign + '</b><span>' + esc(line.text) + '</span></div>';
     }).join('');
-    return '<div class="diff-block" role="region" aria-label="Unified line diff for ' + esc(ch.key) + '">' +
-      lines + '</div>';
+    return '<div class="unified" role="region" aria-label="Unified line diff for ' + esc(ch.key) + '">' +
+      '<div class="diffhead">' + diffHeaders(conflict).join(' → ') + '</div><div class="diffscroll">' + lines + '</div></div>';
   }
 
   /**
@@ -2031,36 +2019,22 @@ function pageClientScriptPartBDiff(): string {
     return rows;
   }
 
-  function renderSplitTextDiff(ch) {
-    var left = [];
-    var right = [];
-    var beforeLn = 0;
-    var afterLn = 0;
-    alignSplitDiffLines(ch.lines || []).forEach(function (row) {
-      if (row.left && row.left.op === 'equal' && row.right && row.right.op === 'equal') {
-        beforeLn += 1;
-        afterLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-eq', ln: beforeLn, gutter: ' ', text: row.left.text }));
-        right.push(renderDiffLine({ cls: 'diff-eq', ln: afterLn, gutter: ' ', text: row.right.text }));
-        return;
-      }
-      if (row.left && row.left.op === 'remove') {
-        beforeLn += 1;
-        left.push(renderDiffLine({ cls: 'diff-remove', ln: beforeLn, gutter: '-', text: row.left.text }));
-      } else {
-        left.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-      }
-      if (row.right && row.right.op === 'add') {
-        afterLn += 1;
-        right.push(renderDiffLine({ cls: 'diff-add', ln: afterLn, gutter: '+', text: row.right.text }));
-      } else {
-        right.push(renderDiffLine({ cls: 'diff-blank', ln: '', gutter: ' ', text: '' }));
-      }
-    });
-    return '<div class="diff-split" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
-      '<div class="diff-pane"><div class="pane-head">Before</div>' + left.join('') + '</div>' +
-      '<div class="diff-pane"><div class="pane-head">After</div>' + right.join('') + '</div>' +
-      '</div>';
+  function renderSplitTextDiff(ch, conflict) {
+    var beforeLn = 0, afterLn = 0;
+    function cell(line, number) {
+      var kind = !line ? 'filler' : line.op === 'add' ? 'ins' : line.op === 'remove' ? 'del' : 'equal';
+      return '<div class="diffcol line ' + kind + '">' + (line ? '<i>' + number + '</i><span>' + esc(line.text) + '</span>' : '') + '</div>';
+    }
+    var rows = alignSplitDiffLines(ch.lines || []).map(function (row) {
+      if (row.left) beforeLn += 1;
+      if (row.right) afterLn += 1;
+      // Both cells share the grid row height, including when only one wraps.
+      return '<div class="diffrow">' + cell(row.left, beforeLn) + cell(row.right, afterLn) + '</div>';
+    }).join('');
+    return '<div class="shareddiff" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
+      '<div class="diffrow diffheaders">' + diffHeaders(conflict).map(function (heading) {
+        return '<div class="diffhead">' + heading + '</div>';
+      }).join('') + '</div><div class="diffscroll">' + rows + '</div></div>';
   }
 
 `;
@@ -2192,32 +2166,26 @@ function pageClientScriptPartBDiffView(): string {
     return beforeB >= 20000 || afterB >= 20000 || lines >= 80;
   }
 
-  function diffHasTextChanges(sections) {
-    var modified = (sections && sections.modified) || [];
-    for (var i = 0; i < modified.length; i += 1) {
-      var changes = modified[i].changes || [];
-      for (var j = 0; j < changes.length; j += 1) {
-        if (changes[j].kind === 'text') return true;
-      }
-    }
-    return false;
+  function renderDiffModeToggle(mode, conflict) {
+    var attr = conflict ? 'data-conflict-diff-mode' : 'data-diff-mode';
+    return '<div class="diff-mode-toggle diffmodes" role="group" aria-label="Diff layout">' +
+      '<button type="button" ' + attr + '="split" aria-pressed="' + (mode === 'split' ? 'true' : 'false') + '">Split</button>' +
+      '<button type="button" ' + attr + '="unified" aria-pressed="' + (mode === 'unified' ? 'true' : 'false') + '">Unified</button></div>';
   }
 
-  function renderPropertyChange(ch, mode) {
+  function renderPropertyChange(ch, mode, conflict) {
     var labelHtml = fieldLabelHtml(ch.key);
     if (ch.kind === 'text') {
-      var body = mode === 'split' ? renderSplitTextDiff(ch) : renderUnifiedTextDiff(ch);
+      var body = mode === 'split' ? renderSplitTextDiff(ch, conflict) : renderUnifiedTextDiff(ch, conflict);
+      var added = (ch.lines || []).filter(function (line) { return line.op === 'add'; }).length;
+      var summary = '<div class="fieldsummary"><span>Field <code>' + esc(ch.key) + '</code> · ' +
+        (conflict ? 'changed on both sides' : added + ' added lines') + '</span>' + renderDiffModeToggle(mode, conflict) + '</div>';
       var lineCount = textChangeLineCount(ch);
       if (isLargeTextChange(ch)) {
         var lineLabel = lineCount > 0 ? (lineCount + '-line change') : 'large text change';
-        return '<div class="prop-change large-text-diff">' +
-          labelHtml + ' ' +
-          '<details class="large-diff-details">' +
-          '<summary class="large-diff-btn">Show ' + esc(lineLabel) + '</summary>' +
-          body + '</details></div>';
+        body = '<details class="large-diff-details"><summary class="large-diff-btn">Show ' + esc(lineLabel) + '</summary>' + body + '</details>';
       }
-      // Short fields: no byte counts — the sentence/heading already frames the change.
-      return '<div class="prop-change">' + labelHtml + body + '</div>';
+      return '<div class="prop-change">' + summary + body + '</div>';
     }
     if (mode === 'split') {
       return '<div class="prop-change">' + labelHtml +
@@ -2238,24 +2206,24 @@ function pageClientScriptPartBDiffView(): string {
 
 function pageClientScriptPartBDiffView2(): string {
   return `
-  function renderDiffSections(sections, mode, emptyMsg) {
+  function renderDiffSections(sections, mode, emptyMsg, selected) {
     var parts = sections.summary && (sections.summary.tabChanges || []).length
       ? '<p>Flow settings changed: ' + esc(sections.summary.tabChanges.join(', ')) + '</p>' : '';
     if (sections.tabProperties && sections.tabProperties.length) {
       parts += sections.tabProperties.map(function (ch) { return renderPropertyChange(ch, mode); }).join('');
     }
     if (sections.added && sections.added.length) {
-      parts += '<div class="diff-section"><h4>Added nodes</h4>' +
+      parts += '<div class="diff-section">' + (selected ? '' : '<h4>Added nodes</h4>') +
         sections.added.map(function (n) { return renderPresenceNode(n, 'added'); }).join('') +
         '</div>';
     }
     if (sections.removed && sections.removed.length) {
-      parts += '<div class="diff-section"><h4>Removed nodes</h4>' +
+      parts += '<div class="diff-section">' + (selected ? '' : '<h4>Removed nodes</h4>') +
         sections.removed.map(function (n) { return renderPresenceNode(n, 'removed'); }).join('') +
         '</div>';
     }
     if (sections.moved && sections.moved.length) {
-      parts += '<div class="diff-section"><h4>Moved nodes</h4>' +
+      parts += '<div class="diff-section">' + (selected ? '' : '<h4>Moved nodes</h4>') +
         sections.moved.map(function (n) {
           function position(point) { return '(' + esc(point.x) + ', ' + esc(point.y) + ')'; }
           return '<div class="moved-node"><strong>' + esc(n.name || n.type) + '</strong> ' +
@@ -2264,7 +2232,7 @@ function pageClientScriptPartBDiffView2(): string {
         }).join('') + '</div>';
     }
     if (sections.modified && sections.modified.length) {
-      parts += '<div class="diff-section"><h4>Modified nodes</h4>' +
+      parts += '<div class="diff-section">' + (selected ? '' : '<h4>Modified nodes</h4>') +
         sections.modified.map(function (m) {
           var heading = m.summary
             ? esc(m.summary)
@@ -2274,8 +2242,8 @@ function pageClientScriptPartBDiffView2(): string {
             ? ''
             : (' <span class="muted tip-id" title="' + esc(m.id) + '">' + tipId(m.id, 8) + '</span>');
           return '<div class="modified-node">' +
-            '<div class="modified-heading">' + heading + idHint + ' ' +
-            editorJumpLink('node', m.id, 'Show in editor', 'editor-jump-small') + '</div>' +
+            (selected ? '' : '<div class="modified-heading">' + heading + idHint + ' ' +
+            editorJumpLink('node', m.id, 'Show in editor', 'editor-jump-small') + '</div>') +
             (m.changes || []).map(function (ch) { return renderPropertyChange(ch, mode); }).join('') +
             '</div>';
         }).join('') + '</div>';
@@ -2310,21 +2278,6 @@ function pageClientScriptPartBDiffView2(): string {
     var missing = diff.baseSnapshotMissing
       ? '<p class="muted">No starting snapshot was saved with this proposal, so changes are compared with the live flow.</p>'
       : '';
-    // Hide +/-/~ counters and tab:label jargon — the card sentence already says it.
-    var showModeToggle = diffHasTextChanges(diff) || diffHasTextChanges(diff.liveChanges || {}) ||
-      diffHasTextChanges(diff.vsCurrent || {});
-    var toolbar = '';
-    if (showModeToggle) {
-      toolbar =
-        '<div class="diff-toolbar">' +
-        '<div class="diff-mode-toggle" role="group" aria-label="Diff layout" ' +
-        'title="Switch how multi-line text changes are shown">' +
-        '<button type="button" data-diff-mode="split" title="Show before and after side by side" aria-pressed="' +
-        (mode === 'split' ? 'true' : 'false') + '">Split</button>' +
-        '<button type="button" data-diff-mode="unified" title="Show a single combined line diff" aria-pressed="' +
-        (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
-        '</div></div>';
-    }
     var sections = renderDiffSections(diff, mode, 'Nothing changes.');
     var liveChanged = diffHasChanges(diff.liveChanges);
     var identical = diff.vsCurrent && diffComparisonKey(diff) === diffComparisonKey(diff.vsCurrent);
@@ -2339,9 +2292,9 @@ function pageClientScriptPartBDiffView2(): string {
         'The proposal is already reflected in the editor. You can reject it to close it.</p>' + liveHtml;
     }
     if (identical || (!liveChanged && !(diff.rebase && diff.rebase.state === 'conflict'))) {
-      return missing + toolbar + '<h3>Proposed change</h3>' + sections + liveHtml;
+      return missing + sections + liveHtml;
     }
-    return missing + toolbar + '<h3>Proposed change (vs base)</h3>' + sections +
+    return missing + '<h3>Proposal vs base</h3>' + sections +
       liveHtml + '<h3>Will deploy (vs live)</h3>' + deployHtml;
   }
 
@@ -2366,30 +2319,31 @@ function pageClientScriptPartBDiffView2(): string {
     var entry = ((diff && diff.conflictValues) || []).filter(function (v) { return v.nodeId === (c.nodeId || ''); })[0];
     if (!entry) return '<p class="muted">Loading before and after values…</p>';
     var mode = getDiffMode();
-    var toolbar = '<div class="diff-mode-toggle" role="group" aria-label="Conflict diff layout">' + ['split', 'unified'].map(function (layout) { return '<button type="button" data-conflict-diff-mode="' + layout + '" aria-pressed="' + (mode === layout ? 'true' : 'false') + '">' + (layout === 'split' ? 'Split' : 'Unified') + '</button>'; }).join('') + '</div>';
-    return toolbar + entry.fields.map(function (v) {
-      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, getDiffMode())
-        .replace(/<div class="pane-head">Before<\\/div>/g, '<div class="pane-head">Live (in editor)</div>')
-        .replace(/<div class="pane-head">After<\\/div>/g, '<div class="pane-head">Proposed (by AI)</div>') :
-        '<dl><div><dt>Live (in editor)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
-        '<div><dt>Proposed (by AI)</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl>';
-      return '<div class="conflict-values"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + '><h4>' + esc(v.field || 'Node') + '</h4>' +
-        '<details class="conflict-base"><summary>Base (before submission)</summary><pre>' + esc(conflictValueText(v.base)) + '</pre></details>' + body + '</div>';
+    return entry.fields.map(function (v) {
+      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, mode, true) :
+        '<div class="fieldsummary"><span>Field <code>' + esc(v.field || 'Node') + '</code> · changed on both sides</span></div>' +
+        '<dl><div><dt>Editor (live)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
+        '<div><dt>AI proposed</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl>';
+      return '<div class="conflict-values"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + '>' + body +
+        '<details class="conflict-base"><summary>Base (before submission)</summary><pre>' + esc(conflictValueText(v.base)) + '</pre></details></div>';
     }).join('');
   }
 
-  function renderConflictPanel(p, diff) {
+  function renderConflictPanel(p, diff, nodeId) {
+    var inDrawer = nodeId != null;
     var rebase = (diff && diff.rebase) || p.rebase;
-    var selected = p.conflictChoice;
+    var selected = p.conflictChoice && (!inDrawer || p.conflictChoice.nodeId === nodeId) ? p.conflictChoice : null;
+    if (inDrawer && !selected && !(rebase && (rebase.conflicts || []).some(function (c) { return c.nodeId === nodeId; })) &&
+      !(p.aiConflictOverrides || []).some(function (entry) { return entry.nodeId === nodeId; })) return '';
     var chosen = selected ? '<div class="conflict-choice" role="status"><span class="resolved-marker">' + statusIcon('resolved') + ' Resolved</span> · <strong>Chosen: ' +
       (selected.choice === 'live' ? 'Keep live' : 'Use proposed') + '</strong> · ' + esc(selected.nodeId) +
       (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
         '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
       '<p>This choice changes the proposal only. Nothing is deployed until approval. Undo is available until the next proposal edit or choice.</p></div>' : '';
-    if ((p.aiConflictOverrides || []).length) {
+    if ((p.aiConflictOverrides || []).some(function (entry) { return !inDrawer || entry.nodeId === nodeId; })) {
       chosen += '<div class="warning ai-conflict-override" role="alert"><strong>AI chose its own value over your editor change</strong>' +
         '<p>Review the fields below before approving this proposal.</p>' +
-        ((diff && diff.aiOverrideValues) || []).map(function (entry) {
+        ((diff && diff.aiOverrideValues) || []).filter(function (entry) { return !inDrawer || entry.nodeId === nodeId; }).map(function (entry) {
           return '<h4>' + esc(entry.nodeId) + '</h4>' + entry.fields.map(function (v) {
             return '<div class="conflict-values"><h4>' + esc(v.field || 'Node') + '</h4><dl>' +
               '<div><dt>Before (live editor)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
@@ -2397,29 +2351,29 @@ function pageClientScriptPartBDiffView2(): string {
           }).join('');
         }).join('') + (!diff ? '<p>Loading before and after values…</p>' : '') + '</div>';
     }
-    if (!rebase || rebase.state !== 'conflict') {
-      var values = selected && proposalConflictValues[p.id];
+    if (!rebase || rebase.state !== 'conflict' || (inDrawer && !(rebase.conflicts || []).some(function (c) { return c.nodeId === nodeId; }))) {
+      var values = selected && ((diff && diff.conflictValues && diff.conflictValues.length ? diff.conflictValues : null) || proposalConflictValues[p.id]);
       return chosen + (values ? renderConflictValues({ nodeId: selected.nodeId }, { conflictValues: values }, selected.choice) : '');
     }
-    return chosen + '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
-      '<h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>' +
-      (rebase.conflicts || []).map(function (c) {
+    return chosen + (inDrawer ? '' : '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts"><h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>') +
+      (rebase.conflicts || []).filter(function (c) { return !inDrawer || c.nodeId === nodeId; }).map(function (c) {
         var tabConflict = c.nodeId === proposalFlowId(p) || /^tab_/.test(c.kind || '');
-        return '<div class="proposal-conflict"><strong>' + esc(flowLabelOf(p) || 'Flow') + ' · ' +
+        return (inDrawer ? '' : '<div class="proposal-conflict"><strong>' + esc(flowLabelOf(p) || 'Flow') + ' · ' +
           esc(c.nodeName || (tabConflict ? 'Flow settings' : 'Unnamed node')) + '</strong>' +
-          ' · ' + esc(c.nodeType || (tabConflict ? 'tab' : 'unknown type')) + ' · <code>' + esc(c.nodeId || '') + '</code>' +
-          '<p>' + esc(conflictReason(c)) + '</p>' + renderConflictValues(c, diff) +
+          ' · ' + esc(c.nodeType || (tabConflict ? 'tab' : 'unknown type')) + ' · <code>' + esc(c.nodeId || '') + '</code>') +
+          '<div class="drawer-notice">' + esc(conflictReason(c)) + '</div>' + renderConflictValues(c, diff, selected && selected.choice) +
+          '<div class="chooserow">' +
           (canApprove ? (c.choices || []).filter(function (choice) {
             return choice === 'live' || choice === 'proposed';
           }).map(function (choice) {
             return '<div class="conflict-option"><button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
               '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(choice) + '">' +
-              (choice === 'live' ? 'Keep live' : 'Use proposed') + '</button>' +
+              (inDrawer ? (choice === 'live' ? 'Use editor value' : 'Use proposed value') : (choice === 'live' ? 'Keep live' : 'Use proposed')) + '</button>' +
               '<p class="hint">' + (choice === 'live' ? 'Keep the editor value for the conflicting fields.' :
                 'Replace the conflicting editor fields with the AI values.') + ' Other field changes are preserved.</p></div>';
-          }).join('') : '') + '</div>';
+          }).join('') : '') + '</div>' + (inDrawer ? '' : '</div>');
       }).join('') + (canApprove ? '<button type="button" class="action secondary recheck-btn" data-id="' +
-        esc(p.id) + '">Re-check</button>' : '') + '</div>';
+        esc(p.id) + '">Re-check</button>' : '') + (inDrawer ? '' : '</div>');
   }
 
   async function updateProposalConflict(id, nodeId, choice, button) {
@@ -2457,7 +2411,7 @@ function pageClientScriptPartBDiffView2(): string {
   }
 
   function renderDiffView(diff, mode) {
-    // Full view kept for mode-toggle re-render inside .proposal-changes.
+    // The all-changes comparison also supports field-level layout controls.
     return renderHumanDiff(diff, mode);
   }
 `;
@@ -2522,13 +2476,12 @@ function pageClientScriptPartB2(): string {
       });
     });
     list.querySelectorAll('[data-conflict-diff-mode]').forEach(function (btn) {
+      if (btn.closest('.detailregion')) return;
       bindOnce(btn, 'click', function () {
         setDiffMode(btn.getAttribute('data-conflict-diff-mode'));
         var article = btn.closest('.proposal-detail'), id = article && article.getAttribute('data-id');
         if (!id) return;
-        var host = article.querySelector('.proposal-conflict-host');
-        host.innerHTML = renderConflictPanel(proposalDetails[id], proposalDiffCache[id]);
-        bindProposalActions(host);
+        mountProposalVisual(proposalDetails[id], proposalDiffCache[id]);
       });
     });
     list.querySelectorAll('.resolve-conflict-btn, .recheck-btn').forEach(function (btn) {
@@ -2681,13 +2634,9 @@ function pageClientScriptPartB2Cards(): string {
     var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
-    var changes =
-      '<div class="proposal-visual-host" data-visual-for="' + esc(p.id) + '"></div>' +
-      '<div class="proposal-conflict-host">' + renderConflictPanel(p, cached) + '</div>' +
-      '<div class="proposal-changes proposal-diff" data-diff-for="' + esc(p.id) +
-      '" data-changes-for="' + esc(p.id) + '">' +
-      (cached && proposalHasNoNetChange(cached) ? renderHumanDiff(cached) : '<p class="muted">Click a highlighted node to review its changes</p>') +
-      '</div>';
+    var changes = '<div class="proposal-visual-host" data-visual-for="' + esc(p.id) + '">' +
+      '<div class="detailregion proposal-diff" data-diff-for="' + esc(p.id) + '">' +
+      (cached && proposalHasNoNetChange(cached) ? renderHumanDiff(cached) : '<p class="muted">Loading changes…</p>') + '</div></div>';
     return '<article class="proposal-detail" id="proposal-' + esc(p.id) +
       '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
       '<div class="visual-eyebrow">Proposal review / Visual View</div><header class="proposal-card-head">' +
@@ -3010,8 +2959,6 @@ function pageClientScriptPartB2Apply(): string {
       article.setAttribute('data-status', p.status);
       var pill = article.querySelector('.status-pill');
       if (pill) { pill.className = 'status-pill ' + p.status; pill.textContent = p.status === 'conflict' ? 'Conflict' : p.status; }
-      var conflictHost = article.querySelector('.proposal-conflict-host');
-      if (conflictHost) conflictHost.innerHTML = renderConflictPanel(p, diff);
       var actionHost = article.querySelector('.proposal-actions');
       if (actionHost) actionHost.innerHTML = renderPendingActions(p, proposalIsStale(p));
       var notes = article.querySelector('.proposal-review-notes');

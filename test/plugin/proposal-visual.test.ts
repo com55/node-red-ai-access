@@ -18,9 +18,12 @@ import type { Proposal } from '../../src/storage/proposals.js';
 function browserHelpers(
   elements: Record<string, any> = {},
   articles: any[] = [],
-  matchMedia?: (query: string) => { matches: boolean }
+  matchMedia?: (query: string) => { matches: boolean },
+  resizeObserver?: any
 ) {
+  const preferences = new Map<string, string>();
   const context = {
+    ResizeObserver: resizeObserver,
     document: {
       getElementById: (id: string) =>
         id === 'mcp-root'
@@ -39,6 +42,10 @@ function browserHelpers(
     },
     window: { addEventListener: vi.fn(), matchMedia },
     location: { hash: '#proposals' },
+    localStorage: {
+      getItem: (key: string) => preferences.get(key),
+      setItem: (key: string, value: string) => preferences.set(key, value),
+    },
   };
   return runInNewContext(
     pageClientScript().replace(
@@ -46,7 +53,10 @@ function browserHelpers(
       `
     globalThis.ui = {
       visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal,
-      mountProposalVisual, statusIcon, renderHumanDiff, displayTitleForProposal, diffComparisonKey,
+      mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
+      setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
+      setHash: function (hash) { location.hash = hash; },
+      setViewport: function (width) { window.innerWidth = width; window.matchMedia = function () { return { matches: width >= 700 }; }; }, displayTitleForProposal, diffComparisonKey,
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
       settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
       renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
@@ -1068,7 +1078,12 @@ describe('Moved classification and review', () => {
     });
   });
 
-  function mount(patch: Record<string, unknown> = {}, resolved = false, additionalMove = false) {
+  function mount(
+    patch: Record<string, unknown> = {},
+    resolved = false,
+    additionalMove = false,
+    overlayOpen = false
+  ) {
     const extra = additionalMove ? [{ ...original, id: 'second', y: 400 }] : [];
     const p = {
       id: 'p',
@@ -1092,9 +1107,15 @@ describe('Moved classification and review', () => {
     const viewport = { innerHTML: '', setAttribute: vi.fn() };
     const rows = { innerHTML: '' };
     const svg = { addEventListener: vi.fn() };
-    const showAll = { onclick: null as null | (() => void) };
+    const showAll = {
+      onclick: () =>
+        diffHost.onclick!({
+          target: { closest: (selector: string) => (selector === '.visual-show-all' ? {} : null) },
+        }),
+    };
     const diffHost = {
       innerHTML: '',
+      onclick: null as any,
       querySelector: (selector: string) => (selector === '.visual-node-diff' ? diffHost : showAll),
       querySelectorAll: () => [],
     };
@@ -1112,7 +1133,25 @@ describe('Moved classification and review', () => {
       querySelectorAll: () => [],
       onclick: null as any,
     };
-    const ui = browserHelpers({ '[data-visual-for="p"]': host, '[data-diff-for="p"]': diffHost });
+    let resize: () => void = vi.fn();
+    const ui = browserHelpers(
+      {
+        '[data-visual-for="p"]': host,
+        '[data-diff-for="p"]': diffHost,
+        'dialog[open], #mobile-menu:not([hidden]), #approve-menu:not([hidden])': overlayOpen
+          ? {}
+          : null,
+      },
+      [],
+      undefined,
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe = vi.fn();
+        disconnect = vi.fn();
+      }
+    );
     ui.setApi(() => Promise.resolve({}));
     ui.mountProposalVisual(p, diff);
     const click = (selector: string, attr: string) =>
@@ -1122,7 +1161,7 @@ describe('Moved classification and review', () => {
           closest: (query: string) => (query === selector ? { getAttribute: () => attr } : null),
         },
       });
-    return { ui, p, diff, viewport, rows, diffHost, host, showAll, click };
+    return { ui, p, diff, viewport, rows, diffHost, host, showAll, click, resize: () => resize() };
   }
 
   it.each([
@@ -1188,7 +1227,7 @@ describe('Moved classification and review', () => {
     expect(diffHost.innerHTML).toContain('Show all changes');
     expect(diffHost.innerHTML).toContain('(100, 120) → (300, 240)');
     expect(diffHost.innerHTML).not.toMatch(/Modified nodes|prop-change|Nothing changes/);
-    showAll.onclick!();
+    showAll.onclick();
     expect(diffHost.innerHTML).toContain('<h4>Moved nodes</h4>');
     expect(diffHost.innerHTML).not.toContain('visual-diff-heading');
     ui.setPermission(true);
@@ -1198,6 +1237,52 @@ describe('Moved classification and review', () => {
     );
     expect(ui.displayTitleForProposal(p, diff)).toBe('Move node');
     expect(ui.diffComparisonKey(diff)).not.toBe(ui.diffComparisonKey({ ...diff, moved: [] }));
+  });
+
+  it('closes details and clears selection with Close and Escape, retaining Show all changes', () => {
+    const { ui, diffHost, rows, viewport, click } = mount({ func: 'return null;' });
+    ui.setHash('#/proposals/p');
+    click('[data-visual-node]', 'move');
+    expect(rows.innerHTML).toContain('modified selected');
+    expect(viewport.innerHTML).toContain('selection-glow');
+    diffHost.onclick({
+      target: { closest: (selector: string) => (selector === '.drawer-close' ? {} : null) },
+    });
+    expect(diffHost.innerHTML).toContain('Click a highlighted node to review its changes');
+    expect(diffHost.innerHTML).toContain('Show all changes');
+    expect(rows.innerHTML).not.toContain('modified selected');
+    expect(viewport.innerHTML).not.toContain('selection-glow');
+    click('[data-visual-node]', 'move');
+    const preventDefault = vi.fn();
+    ui.visualDetailsEscape({ key: 'Escape', preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(diffHost.innerHTML).toContain('Click a highlighted node to review its changes');
+    expect(viewport.innerHTML).not.toContain('selection-glow');
+  });
+
+  it('switches an open diff to Unified below 700px and restores the desktop preference', () => {
+    const { ui, diffHost, click, resize } = mount({ func: 'return null;' });
+    ui.setViewport(1000);
+    click('[data-visual-node]', 'move');
+    expect(diffHost.innerHTML).toContain('class="shareddiff"');
+    ui.setViewport(375);
+    resize();
+    expect(diffHost.innerHTML).toContain('class="unified"');
+    expect(diffHost.innerHTML).not.toContain('class="shareddiff"');
+    ui.setViewport(1000);
+    resize();
+    expect(diffHost.innerHTML).toContain('class="shareddiff"');
+  });
+
+  it('keeps node details open when Escape belongs to an open dialog or menu', () => {
+    const { ui, diffHost, viewport, click } = mount({}, false, false, true);
+    ui.setHash('#/proposals/p');
+    click('[data-visual-node]', 'move');
+    const preventDefault = vi.fn();
+    ui.visualDetailsEscape({ key: 'Escape', preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(diffHost.innerHTML).toContain('MOVED NODE');
+    expect(viewport.innerHTML).toContain('selection-glow');
   });
 
   it.each([false, true])(
@@ -1228,7 +1313,8 @@ describe('Moved classification and review', () => {
       click('[data-visual-node]', 'move');
       if (property) {
         expect(diff.modified[0]?.changes.map(ch => ch.key)).toEqual(['func', 'x', 'y']);
-        expect(diffHost.innerHTML).toContain('Modified nodes');
+        expect(diffHost.innerHTML).toContain('MODIFIED NODE');
+        expect(diffHost.innerHTML).not.toContain('Modified nodes');
         expect(diffHost.innerHTML).toContain('prop-change');
         expect(diffHost.innerHTML).not.toContain('Moved nodes');
       } else expect(diffHost.innerHTML).not.toContain('prop-change');
@@ -1300,5 +1386,185 @@ describe('shared status SVGs', () => {
       expect(icon).toContain('d="' + head + '"');
     }
     expect(icon).not.toContain('<circle');
+  });
+});
+
+describe('Visual View node drawer', () => {
+  const lines = [
+    { op: 'add', text: 'const first = true;' },
+    { op: 'equal', text: 'msg.payload = {' },
+    { op: 'remove', text: '  old: "short",' },
+    { op: 'add', text: '  next: "' + 'a long wrapped value '.repeat(30) + '",' },
+    { op: 'add', text: '  source: "ai-access",' },
+    { op: 'equal', text: '};' },
+    { op: 'remove', text: 'obsolete();' },
+  ];
+  const change = { key: 'func', kind: 'text', lines };
+  const node = { id: 'n<script>', type: 'function', name: 'Build <reply>', kind: 'modified' };
+  const diff = { summary: { modified: 1 }, modified: [{ ...node, changes: [change] }] };
+
+  it('renders identity, close control, and the mode toggle inside the field summary', () => {
+    const ui = browserHelpers({}, [], () => ({ matches: true }));
+    const html = ui.renderVisualNodeDrawer(node, { id: 'p' }, diff);
+    expect(html).toContain('<div class="visual-eyebrow">MODIFIED NODE</div>');
+    expect(html).toContain('<h2>Build &lt;reply&gt;</h2>');
+    expect(html).toContain('function · n&lt;script&gt;');
+    expect(html).toContain('aria-label="Close details">×</button>');
+    expect(html).toMatch(
+      /class="fieldsummary"><span>Field <code>func<\/code> · 3 added lines<\/span><div class="diff-mode-toggle diffmodes"/
+    );
+    expect(html).toContain('data-diff-mode="split" aria-pressed="true"');
+    expect(html).not.toMatch(/Proposed change|Modified nodes|diff-toolbar/);
+    expect(html).toContain('Show in editor');
+  });
+
+  it('puts both cells in one row for additions, removals and unequal wrapped replacements', () => {
+    const ui = browserHelpers();
+    const html = ui.renderPropertyChange(change, 'split');
+    expect(html).toContain('<div class="diffhead">Before</div>');
+    expect(html).toContain('<div class="diffhead">After · proposed</div>');
+    const rows = html.match(/<div class="diffrow">.*?<\/div><\/div>/g)!;
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toContain(
+      'class="diffcol line filler"></div><div class="diffcol line ins"><i>1</i>'
+    );
+    expect(rows[2]).toContain('class="diffcol line del"><i>2</i>');
+    expect(rows[2]).toContain('class="diffcol line ins"><i>3</i>');
+    expect(rows[2]).toContain('a long wrapped value '.repeat(30));
+    expect(rows[3]).toContain(
+      'class="diffcol line filler"></div><div class="diffcol line ins"><i>4</i>'
+    );
+    expect(rows[5]).toContain('class="diffcol line del"><i>4</i>');
+    expect(rows[5]).toContain('class="diffcol line filler"></div>');
+    expect(html.match(/class="diffscroll"/g)).toHaveLength(1);
+    expect(html).not.toContain('diff-pane');
+  });
+
+  it('renders Unified with old/new line numbers, signs and mockup headers', () => {
+    const ui = browserHelpers();
+    const html = ui.renderPropertyChange(change, 'unified');
+    expect(html).toContain('<div class="diffhead">Before → After · proposed</div>');
+    expect(html).toContain('<div class="unifiedline ins"><i></i><i>1</i><b>+</b>');
+    expect(html).toContain('<div class="unifiedline equal"><i>1</i><i>2</i><b> </b>');
+    expect(html).toContain('<div class="unifiedline del"><i>2</i><i></i><b>−</b>');
+    expect(html).toContain('<div class="unifiedline equal"><i>3</i><i>5</i><b> </b>');
+  });
+
+  it.each(['split', 'unified'])('keeps large-diff collapse and omitted context in %s', mode => {
+    const ui = browserHelpers();
+    const html = ui.renderPropertyChange(
+      {
+        ...change,
+        beforeBytes: 20000,
+        lines: [{ op: 'equal', text: '… (50 unchanged lines) …' }, ...lines],
+      },
+      mode
+    );
+    expect(html).toContain(
+      '<details class="large-diff-details"><summary class="large-diff-btn">Show 8-line change</summary>'
+    );
+    expect(html.split('(50 unchanged lines)')).toHaveLength(mode === 'split' ? 3 : 2);
+    if (mode === 'split')
+      expect(html).toContain(
+        '<div class="diffrow"><div class="diffcol line equal"><i>1</i><span>… (50 unchanged lines) …</span></div><div class="diffcol line equal"><i>1</i>'
+      );
+  });
+
+  it('uses Split from 700px and remembers a preference while forcing Unified below 700px', () => {
+    const ui = browserHelpers();
+    ui.setViewport(700);
+    expect(ui.getDiffMode()).toBe('split');
+    ui.setDiffMode('unified');
+    expect(ui.getDiffMode()).toBe('unified');
+    ui.setDiffMode('split');
+    ui.setViewport(375);
+    expect(ui.getDiffMode()).toBe('unified');
+    ui.setViewport(1000);
+    expect(ui.getDiffMode()).toBe('split');
+  });
+
+  it('uses conflict chrome and retains the existing choice API and Re-check', () => {
+    const ui = browserHelpers({}, [], () => ({ matches: true }));
+    ui.setPermission(true);
+    const rebase = {
+      state: 'conflict',
+      conflicts: [
+        {
+          nodeId: node.id,
+          fields: ['func'],
+          kind: 'node_changed_both',
+          choices: ['live', 'proposed'],
+        },
+      ],
+    };
+    const html = ui.renderVisualNodeDrawer(
+      { ...node, kind: 'conflict' },
+      { id: 'p', rebase },
+      { ...diff, rebase, conflictValues: [{ nodeId: node.id, fields: [{ field: 'func', lines }] }] }
+    );
+    expect(html).toContain('CONFLICT / FUNC');
+    expect(html).toContain('class="drawer-notice"');
+    expect(html).toContain('<div class="diffhead">Editor (live)</div>');
+    expect(html).toContain('<div class="diffhead">AI proposed</div>');
+    expect(html).toMatch(
+      /class="chooserow">.*data-choice="live".*Use editor value.*data-choice="proposed".*Use proposed value/
+    );
+    expect(html).toContain('recheck-btn');
+    expect(html).not.toContain('proposal-conflicts');
+  });
+
+  it.each(['split', 'unified'])(
+    'retains chosen-side attributes for conflict styling in %s',
+    mode => {
+      const ui = browserHelpers();
+      ui.setDiffMode(mode);
+      const html = ui.renderConflictValues(
+        { nodeId: node.id },
+        { conflictValues: [{ nodeId: node.id, fields: [{ field: 'func', lines }] }] },
+        'proposed'
+      );
+      expect(html).toContain('class="conflict-values" data-chosen="proposed"');
+      expect(html).toContain(
+        mode === 'split' ? '<div class="diffhead">AI proposed</div>' : 'Editor (live) → AI proposed'
+      );
+    }
+  );
+
+  it('keeps saved conflict values and chosen styling after the API returns an empty conflict list', () => {
+    const ui = browserHelpers({}, [], () => ({ matches: true }));
+    ui.setConflictValues('p', [{ nodeId: node.id, fields: [{ field: 'func', lines }] }]);
+    const html = ui.renderVisualNodeDrawer(
+      node,
+      {
+        id: 'p',
+        conflictChoice: { nodeId: node.id, choice: 'proposed' },
+        rebase: { state: 'merged' },
+      },
+      { ...diff, conflictValues: [] }
+    );
+    expect(html).toContain('CONFLICT / FUNCTION');
+    expect(html).toContain('data-chosen="proposed"');
+    expect(html).toContain('<div class="diffhead">AI proposed</div>');
+    expect(html).not.toContain('After · proposed');
+  });
+
+  it.each(['added', 'removed', 'moved'])('uses the same drawer chrome for %s nodes', kind => {
+    const ui = browserHelpers();
+    const entry = {
+      ...node,
+      before: { x: 1, y: 2 },
+      after: { x: 3, y: 4 },
+      properties: [{ key: 'name', value: 'a name' }],
+    };
+    const html = ui.renderVisualNodeDrawer(
+      { ...node, kind },
+      { id: 'p' },
+      { summary: {}, [kind]: [entry] }
+    );
+    expect(html).toContain(kind.toUpperCase() + ' NODE');
+    expect(html).toContain('aria-label="Close details"');
+    expect(html).toContain('function · n&lt;script&gt;');
+    if (kind === 'moved') expect(html).toContain('(1, 2) → (3, 4)');
+    else expect(html).toContain('This node will be ' + (kind === 'added' ? 'added.' : 'deleted.'));
   });
 });

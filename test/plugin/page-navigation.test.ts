@@ -102,7 +102,7 @@ describe('settings navigation', () => {
       '.visual-detail-counts {',
       '.visual-detail-counts span {',
     ])
-      expect(html.split(selector)).toHaveLength(2);
+      expect(html.split('\n').filter(line => line.startsWith(selector))).toHaveLength(1);
   });
 
   it('uses thin accent rings only for visible focus on dashboard controls', () => {

@@ -241,7 +241,7 @@ describe('dashboard rebase controls', () => {
       liveChanges: { summary: { tabChanges: ['label'] } },
       vsCurrent: {},
     });
-    expect(html).toContain('Proposed change (vs base)');
+    expect(html).toContain('Proposal vs base');
     expect(html).toContain('Changed in editor since submit');
     expect(html).toContain('Flow settings changed: label');
     expect(html).toContain('Will deploy (vs live)');
@@ -459,7 +459,8 @@ describe('proposal UX details', () => {
       liveChanges: empty,
       vsCurrent: changes,
     });
-    expect(html).toContain('Proposed change</h3>');
+    expect(html).toContain('Flow settings changed: label');
+    expect(html).not.toContain('Proposed change');
     expect(html).not.toContain('vs base');
     expect(html).not.toContain('vs live');
     expect(html).not.toContain('Changed in editor since submit');
@@ -480,7 +481,7 @@ describe('proposal UX details', () => {
         tabProperties: [{ key: 'label', kind: 'scalar', before: 'live', after: 'proposed' }],
       },
     });
-    expect(html).toContain('Proposed change (vs base)');
+    expect(html).toContain('Proposal vs base');
     expect(html).toContain('Will deploy (vs live)');
     expect(html).toContain('base');
     expect(html).toContain('live');
@@ -544,8 +545,8 @@ describe('proposal UX details', () => {
       'tab',
       'same flow settings',
       'Base (before submission)',
-      'Live (in editor)',
-      'Proposed (by AI)',
+      'Editor (live)',
+      'AI proposed',
       'before',
       'editor',
       '&lt;script&gt;after&lt;/script&gt;',

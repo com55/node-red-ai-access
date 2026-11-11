@@ -69,17 +69,24 @@ describe('/mcp audit log page client', () => {
   it('uses a centered settings layout and preserves diff controls', () => {
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/max-width:\s*1600px/);
-    expect(styles).toMatch(/\.diff-split/);
+    expect(styles).toMatch(/\.shareddiff/);
+    expect(styles).toContain(
+      '.diffrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)'
+    );
+    expect(styles).toContain('.diffscroll { max-height: 26rem; overflow: auto; }');
+    expect(styles).toContain('.fieldsummary .diffmodes { margin-left: auto;');
+    expect(styles).toContain('.detailregion { border-top:');
+    expect(styles).toContain('.drawer .drawerhead h2 { font-size: 17px;');
     expect(styles).toMatch(/\.diff-mode-toggle/);
-    expect(styles).toMatch(/\.diff-line/);
+    expect(styles).toMatch(/\.unifiedline/);
     expect(styles).toMatch(/white-space:\s*pre-wrap/);
     expect(styles).toMatch(/overflow-wrap:\s*anywhere/);
     expect(styles).toMatch(/DIFF_SPLIT_MIN_PX/);
     expect(styles).toMatch(/\.empty-state/);
     expect(styles).toMatch(/button\.action\.copied/);
     const client = readFileSync(join(root, 'src/plugin/page-client.ts'), 'utf8');
-    expect(client).toMatch(/data-diff-mode="split"/);
-    expect(client).toMatch(/data-diff-mode="unified"/);
+    expect(client).toContain('="split" aria-pressed=');
+    expect(client).toContain('="unified" aria-pressed=');
     expect(client).toMatch(/renderSplitTextDiff|Side by side/);
     expect(client).toMatch(/bindDiffModeToggle/);
     expect(client).toMatch(/defaultDiffModeFromViewport|DIFF_SPLIT_MIN_PX/);

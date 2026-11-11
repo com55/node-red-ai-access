@@ -81,6 +81,13 @@ export function pageClientVisualGeometryScript(): string {
 
 function pageClientVisualGraphScript(): string {
   return `
+  function visualDetailsEscape(ev) {
+    if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+    if (document.querySelector('dialog[open], #mobile-menu:not([hidden]), #approve-menu:not([hidden])')) return;
+    var state = visualStates[readProposalHashId()];
+    if (state && (state.selected || state.showAll) && state.closeDetails) { ev.preventDefault(); state.closeDetails(); }
+  }
+  document.addEventListener('keydown', visualDetailsEscape, true);
   var visualStates = {};
   var visualTypeMetadata = {};
   var visualColors = { inject: '#a6bbcf', function: '#fdd0a2', template: '#f3b567', debug: '#87a980', change: '#E2D96E', switch: '#E2D96E', 'http in': '#e7e7ae', 'http response': '#e7e7ae', comment: '#fff' };
@@ -269,6 +276,37 @@ function pageClientVisualRenderScript(): string {
   function visualPill(id, label, x, y, collapse) {
     return '<g class="' + (collapse ? 'visual-collapse' : 'visual-run') + '" role="button" tabindex="0" data-visual-run="' + esc(id) + '" aria-label="' + esc(label) + '" transform="translate(' + (x - 55) + ',' + (y - 15) + ')"><rect width="110" height="30" rx="15" fill="#f1f3f4" stroke="#999" stroke-dasharray="5,4"/><text x="55" y="15" text-anchor="middle" dominant-baseline="central" font-size="13" fill="#53616c">' + esc(label) + '</text></g>';
   }
+  function visualDrawer(eyebrow, title, subtitle, body) {
+    return '<section class="drawer" aria-label="Node change details"><div class="drawerhead"><div>' +
+      '<div class="visual-eyebrow">' + esc(eyebrow) + '</div><h2>' + esc(title) + '</h2>' +
+      '<span class="drawer-subtitle">' + esc(subtitle) + '</span></div>' +
+      '<button type="button" class="drawer-close" aria-label="Close details">×</button></div>' +
+      '<div class="drawercontent">' + body + '</div></section>';
+  }
+  function renderVisualNodeDrawer(n, p, diff) {
+    var selectedDiff = Object.assign({}, diff);
+    ['added', 'removed', 'modified', 'moved'].forEach(function (kind) {
+      selectedDiff[kind] = (diff[kind] || []).filter(function (entry) { return entry.id === n.id; });
+    });
+    selectedDiff.tabProperties = [];
+    selectedDiff.summary = Object.assign({}, diff.summary, { tabChanges: [] });
+    var resolved = p.conflictChoice && p.conflictChoice.nodeId === n.id;
+    var savedValues = diff.conflictValues && diff.conflictValues.length ? diff.conflictValues : proposalConflictValues[p.id] || [];
+    var conflict = n.kind === 'conflict' || (resolved && savedValues.some(function (entry) { return entry.nodeId === n.id; }));
+    var fields = ((diff.rebase && diff.rebase.conflicts) || []).filter(function (c) { return c.nodeId === n.id; }).map(function (c) { return (c.fields || []).join(' / '); }).join(' / ');
+    var eyebrow = conflict ? 'CONFLICT / ' + (fields || n.type || 'node').toUpperCase() : (n.kind || 'modified').toUpperCase() + ' NODE';
+    var conflictBody = renderConflictPanel(p, diff, n.id);
+    var body = (diff.baseSnapshotMissing ? '<p class="muted">No starting snapshot was saved with this proposal, so changes are compared with the live flow.</p>' : '') +
+      (conflict ? conflictBody : renderDiffSections(selectedDiff, getDiffMode(), 'Nothing changes.', true));
+    if (!conflict && conflictBody) body = conflictBody + body;
+    if (n.kind === 'added' || n.kind === 'removed') body = '<div class="drawer-notice">This node will be ' + (n.kind === 'added' ? 'added.' : 'deleted.') + '</div>' + body;
+    if (n.kind !== 'added') body += '<div class="drawer-editor-link">' + editorJumpLink('node', n.id, 'Show in editor', 'editor-jump-small') + '</div>';
+    body += '<button type="button" class="visual-show-all">Show all changes</button>';
+    return visualDrawer(eyebrow, n.name, (n.type || 'node') + ' · ' + n.id, body);
+  }
+  function visualEmptyDetail() {
+    return '<div class="visual-diff-placeholder">Click a highlighted node to review its changes <button type="button" class="visual-show-all">Show all changes</button></div>';
+  }
   function visualMarkup(p, diff) {
     var touchHint = window.matchMedia && window.matchMedia('(pointer: coarse), (max-width: 760px)').matches;
     var counts = Object.assign({}, diff.summary, { conflict: ((diff.rebase && diff.rebase.conflicts) || []).map(function (c) { return c.nodeId; }).filter(function (id, i, ids) { return ids.indexOf(id) === i; }).length });
@@ -281,7 +319,7 @@ function pageClientVisualRenderScript(): string {
       }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
       '<span class="visual-pan-hint">Drag to pan' + (touchHint ? '' : ' · Ctrl / ⌘ + scroll to zoom') + '</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
-      '<aside class="visual-changed-list"><div class="visual-list-head"><strong>Changed nodes <span class="visual-list-count"></span></strong></div><div class="visual-node-list"></div><p>Related nodes are shown only on the canvas</p></aside></div></section>';
+      '<aside class="visual-changed-list"><div class="visual-list-head"><strong>Changed nodes <span class="visual-list-count"></span></strong></div><div class="visual-node-list"></div><p>Related nodes are shown only on the canvas</p></aside></div><div class="detailregion proposal-diff" data-diff-for="' + esc(p.id) + '">' + visualEmptyDetail() + '</div></section>';
   }
 `;
 }
@@ -362,28 +400,42 @@ function pageClientVisualInteractionScript(): string {
       transform();
     }
     function toggleRun(id) { visualToggleRun(graph, state, visible, id); paint(); }
+    function detailHost() { return document.querySelector('[data-diff-for="' + p.id + '"]'); }
+    function closeDetails() {
+      state.selected = ''; state.showAll = false; paint();
+      var details = detailHost();
+      if (details) { details.innerHTML = visualEmptyDetail(); bindDetails(details); }
+    }
+    function bindDetails(details) {
+      details.onclick = function (ev) {
+        if (ev.target.closest('.drawer-close')) { closeDetails(); return; }
+        if (ev.target.closest('.visual-show-all')) { showAllDiff(); return; }
+        var mode = ev.target.closest('[data-diff-mode], [data-conflict-diff-mode]');
+        if (mode) {
+          setDiffMode(mode.getAttribute('data-diff-mode') || mode.getAttribute('data-conflict-diff-mode'));
+          if (state.selected) selectNode(state.selected); else showAllDiff();
+        }
+      };
+      bindPresencePreviewToggles(details);
+      bindProposalActions(details);
+    }
     function showAllDiff() {
       state.selected = ''; state.showAll = true; paint();
-      var allHost = document.querySelector('[data-diff-for="' + p.id + '"]');
-      if (allHost) { allHost.innerHTML = renderHumanDiff(diff); bindDiffModeToggle(allHost, diff); bindPresencePreviewToggles(allHost); }
+      var details = detailHost();
+      if (details) {
+        details.innerHTML = visualDrawer('PROPOSAL CHANGES', 'All changes', flowLabelOf(p), renderConflictPanel(p, diff) + renderHumanDiff(diff));
+        bindDetails(details);
+      }
     }
     function selectNode(id) {
       var n = graph.byId[id];
       if (!n || !n.kind) return;
-      state.selected = id; state.showAll = false;
-      paint();
-      var diffHost = document.querySelector('[data-diff-for="' + p.id + '"]');
-      if (!diffHost) return;
-      var selectedDiff = Object.assign({}, diff);
-      ['added', 'removed', 'modified', 'moved'].forEach(function (kind) { selectedDiff[kind] = (diff[kind] || []).filter(function (entry) { return entry.id === id; }); });
-      selectedDiff.tabProperties = [];
-      selectedDiff.summary = Object.assign({}, diff.summary, { tabChanges: [] });
-      delete selectedDiff.liveChanges; delete selectedDiff.vsCurrent;
-      diffHost.innerHTML = '<div class="visual-diff-heading"><strong>' + esc(n.name) + '</strong><span class="muted">' + esc(n.type) + '</span><button type="button" class="visual-show-all">Show all changes</button></div>' + '<div class="visual-node-diff">' + renderHumanDiff(selectedDiff) + '</div>';
-      bindDiffModeToggle(diffHost.querySelector('.visual-node-diff'), selectedDiff);
-      bindPresencePreviewToggles(diffHost);
-      diffHost.querySelector('.visual-show-all').onclick = showAllDiff;
+      state.selected = id; state.showAll = false; paint();
+      var details = detailHost();
+      if (details) { details.innerHTML = renderVisualNodeDrawer(n, p, diff); bindDetails(details); }
     }
+    state.closeDetails = closeDetails;
+
 `;
 }
 
@@ -444,18 +496,20 @@ function pageClientVisualEventsScript(): string {
     paint();
     if (!state.fitted) fit();
     if (typeof ResizeObserver !== 'undefined') {
-      var lastWidth = wrap.clientWidth;
+      var lastWidth = wrap.clientWidth, lastDiffNarrow = window.innerWidth < 700;
       state.resizeObserver = new ResizeObserver(function () {
         if (wrap.clientWidth && wrap.clientWidth !== lastWidth) { lastWidth = wrap.clientWidth; fit(); }
+        var narrow = window.innerWidth < 700;
+        if (narrow !== lastDiffNarrow) {
+          lastDiffNarrow = narrow;
+          if (state.selected) selectNode(state.selected); else if (state.showAll) showAllDiff();
+        }
       });
       state.resizeObserver.observe(wrap);
     }
     if (state.selected && graph.byId[state.selected]) selectNode(state.selected);
     else if (state.showAll || proposalHasNoNetChange(diff)) showAllDiff();
-    else {
-      var diffHost = document.querySelector('[data-diff-for="' + p.id + '"]');
-      if (diffHost) { diffHost.innerHTML = '<div class="visual-diff-placeholder">Click a highlighted node to review its changes <button type="button" class="visual-show-all">Show all changes</button></div>'; diffHost.querySelector('.visual-show-all').onclick = showAllDiff; }
-    }
+    else closeDetails();
     // Palette details enrich ports and colours; failures retain a readable fallback.
     var missingTypes = graph.nodes.map(function (n) { return n.type; }).filter(function (type, i, types) { return types.indexOf(type) === i && !Object.prototype.hasOwnProperty.call(visualTypeMetadata, type); });
     missingTypes.forEach(function (type) {

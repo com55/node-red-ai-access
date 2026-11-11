@@ -204,7 +204,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/wrong_token_kind|separate tokens/);
     expect(res.text).toMatch(/max-width:\s*1600px/);
     expect(res.text).toMatch(/Side by side|data-diff-mode/);
-    expect(res.text).toMatch(/diff-split|diff-line/);
+    expect(res.text).toMatch(/shareddiff|unifiedline/);
     expect(res.text).toMatch(/Node added|Node removed/);
     expect(res.text).toMatch(/base snapshot|vsCurrent/);
     expect(res.text).toMatch(/to review|out of date/);
