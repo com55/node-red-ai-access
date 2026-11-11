@@ -45,8 +45,10 @@ use them. Proposal create/list/get responses include `title`, `displayName`
 (`title ·` **server-local** datetime with explicit offset, e.g.
 `16 Oct 01:35 +00:00`), `reviewUrl` (absolute URL using the request
 Host/protocol — `X-Forwarded-*` only when Express `trust proxy` is set), and
-`reviewPath` (relative `/ai-access#proposal=<id>`). `createdAt` remains
-ISO-8601. The `/ai-access` dashboard renders times in the browser's local
+`reviewPath` (relative `/ai-access#/proposals/<id>`). `createdAt` remains
+ISO-8601. Review links open a persistent proposal detail page; legacy
+`#proposal=<id>` links still work. The list accepts `#proposals` and
+`#/proposals`. The `/ai-access` dashboard renders times in the browser's local
 timezone. AI clients should refer to proposals by `displayName` + `reviewUrl`,
 not the raw id. For access-link callers, `get_status` reports `permission: null`
 and `caller.kind: "access-link"` (expected — AI tokens are not admin sessions).

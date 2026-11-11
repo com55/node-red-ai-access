@@ -7,56 +7,52 @@ import { initialTabFromHash, tabFromHash } from '../../src/plugin/page-hash.js';
 import { renderMcpPage } from '../../src/plugin/page.js';
 
 describe('settings navigation', () => {
-  it('renders grouped navigation with local, theme-aware icons and preserved controls', () => {
+  it('renders a sticky header and mobile drawer with the same local navigation icons', () => {
     const html = renderMcpPage({
       apiBase: '/mcp/api/v1',
       editorRoot: '/',
       authTokenKey: 'auth-tokens',
     });
-    const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(html)![0];
-    expect([...nav.matchAll(/class="nav-group-title"[^>]*>([^<]+)/g)].map(m => m[1])).toEqual([
-      'Overview',
-      'Access',
-      'Proposals',
-      'Advanced',
-    ]);
-    const items = [...nav.matchAll(/<button[^>]*data-tab="([^"]+)"[\s\S]*?<\/button>/g)];
-    expect(items.map(m => m[1])).toEqual([
-      'status',
-      'links',
-      'oauth',
-      'proposals',
-      'settings',
-      'logs',
-    ]);
-    for (const item of items) {
-      expect(item[0]).toContain('aria-controls="section-' + item[1] + '"');
-      expect(item[0]).toMatch(/<svg[^>]*width="16"[^>]*fill="currentColor"/);
-      expect(item[0]).toContain('aria-hidden="true"');
-      expect(item[0]).not.toMatch(/<use|src=|https?:/);
-      expect(html).toContain('id="section-' + item[1] + '"');
+    const header = /<header class="dashboard-header"[\s\S]*?<\/header>/.exec(html)![0];
+    const drawer = /<aside id="mobile-menu"[\s\S]*?<\/aside>/.exec(html)![0];
+    expect(header.indexOf('id="menu-toggle"')).toBeLessThan(
+      header.indexOf('class="dashboard-brand"')
+    );
+    expect(header).toContain('AI Access</span>');
+    expect(header).toContain('aria-controls="mobile-menu" aria-expanded="false"');
+    expect(header).toContain('id="proposals-pending-badge"');
+    expect(header).toContain('aria-label="Settings" title="Settings"');
+    expect(header).toContain('aria-label="Audit log" title="Audit log"');
+    expect(drawer).toContain('role="dialog" aria-modal="true"');
+    expect(drawer).toContain('<hr class="utility-divider">');
+    expect(html).toContain('id="menu-scrim" hidden');
+    for (const markup of [header, drawer]) {
+      const items = [...markup.matchAll(/<button[^>]*data-tab="([^"]+)"[\s\S]*?<\/button>/g)];
+      expect(items.map(m => m[1])).toEqual([
+        'status',
+        'links',
+        'oauth',
+        'proposals',
+        'settings',
+        'logs',
+      ]);
+      for (const item of items) {
+        expect(item[0]).toContain('aria-controls="section-' + item[1] + '"');
+        expect(item[0]).toMatch(/<svg[^>]*width="16"[^>]*fill="currentColor"/);
+        expect(item[0]).toContain('aria-hidden="true"');
+        expect(item[0]).not.toMatch(/<use|src=|https?:/);
+      }
     }
-    expect(items.find(item => item[1] === 'oauth')![0]).toContain('MCP OAuth');
-    expect(html).toContain('id="section-oauth" aria-label="MCP OAuth"');
-    expect(html).toContain('<h2 tabindex="-1">MCP OAuth</h2>');
-    expect(nav).not.toContain('aria-selected');
-    expect(nav).not.toContain('<h2');
-    for (const label of ['overview', 'proposals']) {
-      expect(nav).toContain(`id="nav-group-${label}" aria-hidden="true"`);
-      expect(nav).not.toContain(`aria-labelledby="nav-group-${label}"`);
-    }
-    for (const label of ['access', 'advanced']) {
-      expect(nav).toContain(`role="group" aria-labelledby="nav-group-${label}"`);
-    }
-    expect(html.match(/<h2 tabindex="-1">/g)).toHaveLength(6);
+    const paths = (markup: string) => [...markup.matchAll(/<path d="([^"]+)"/g)].map(m => m[1]);
+    expect(paths(header).slice(-6)).toEqual(paths(drawer));
+    expect(html).not.toContain('nav-group-title');
+    expect(html).not.toContain('grid-template-columns: 220px');
+    expect(html).toContain('.dashboard-header { position: sticky; top: 0;');
+    expect(html).toContain('@media (max-width: 850px)');
     expect(html).toContain('section.panel h2:focus { outline: none; }');
     expect(html).toContain(
       'section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
     );
-    expect(html).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)');
-    expect(html).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)');
-    expect(nav).toContain('id="proposals-pending-badge"');
-    expect(html).toContain('@media (max-width: 768px)');
   });
 
   it('uses thin accent rings only for visible focus on dashboard controls', () => {
@@ -134,70 +130,34 @@ describe('settings navigation', () => {
     }
   );
 
-  it.each(['hash', 'proposalId'])('preserves smooth proposal focus via %s', path => {
-    const script = pageClientScript();
-    const tabs = script.slice(
-      script.indexOf('  // Hash helpers'),
-      script.indexOf('  var TTL_PRESET_15M')
-    );
-    const focus = script.slice(
-      script.indexOf('  function readProposalHashId()'),
-      script.indexOf('  function bindDiffModeToggle(')
-    );
-    const location = {
-      hash: path === 'hash' ? '#proposal=deep' : '#status',
-      pathname: '/ai-access',
-      search: '',
-    };
-    const scrollTo = vi.fn();
-    const scrollIntoView = vi.fn();
-    const animationFrames: (() => void)[] = [];
-    const context = {
-      cancelPublicUrlPoll: vi.fn(),
-      location,
-      history: {
-        replaceState(_a: unknown, _b: string, url: string) {
-          location.hash = url.slice(url.indexOf('#'));
-        },
-      },
-      document: {
-        querySelectorAll: () => [],
-        getElementById: () => ({
-          hasAttribute: () => false,
-          querySelector: () => ({}),
-          classList: { add: vi.fn() },
-          scrollIntoView,
-        }),
-      },
-      window: {
-        scrollTo,
-        requestAnimationFrame(callback: () => void) {
-          animationFrames.push(callback);
-        },
-      },
-      proposalsSearchQuery: '',
-      cachedProposals: [],
-    };
-    runInNewContext(tabs + focus, context);
-    runInNewContext(
-      path === 'hash'
-        ? 'selectTab(initialTabFromHash(location.hash), { skipHash: true });'
-        : "selectTab('proposals', { proposalId: 'deep' });",
-      context
-    );
-    expect(runInNewContext('focusProposalFromHash()', context)).toBe(true);
-    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ behavior: 'smooth', block: 'start' });
-    expect(location.hash).toBe('#proposals');
-    expect(animationFrames).toHaveLength(0);
-    animationFrames.splice(0).forEach(callback => callback());
-    expect(scrollTo).not.toHaveBeenCalled();
-
-    // Returning to the ordinary proposals tab still resets scrolling twice.
-    runInNewContext("selectTab('proposals')", context);
-    expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
-    animationFrames.splice(0).forEach(callback => callback());
-    expect(scrollTo).toHaveBeenCalledTimes(2);
-  });
+  it.each(['#proposal=deep', '#/proposals/deep'])(
+    'keeps the detail URL persistent for %s',
+    hash => {
+      const script = pageClientScript();
+      const tabs = script.slice(
+        script.indexOf('  // Hash helpers'),
+        script.indexOf('  var TTL_PRESET_15M')
+      );
+      const focus = script.slice(
+        script.indexOf('  function readProposalHashId()'),
+        script.indexOf('  function bindDiffModeToggle(')
+      );
+      const location = { hash, pathname: '/ai-access', search: '' };
+      const renderProposalsList = vi.fn();
+      const context = {
+        cancelPublicUrlPoll: vi.fn(),
+        location,
+        document: { querySelectorAll: () => [] },
+        window: { scrollTo: vi.fn() },
+        renderProposalsList,
+      };
+      runInNewContext(tabs + focus, context);
+      expect(runInNewContext('focusProposalFromHash()', context)).toBe(true);
+      expect(renderProposalsList).toHaveBeenCalledOnce();
+      expect(location.hash).toBe(hash);
+      expect(context.window.scrollTo).not.toHaveBeenCalled();
+    }
+  );
 
   it('routes clicks, hashes and back/forward through the actual client script', () => {
     const ids = ['status', 'links', 'settings', 'oauth', 'proposals', 'logs'];
@@ -240,6 +200,8 @@ describe('settings navigation', () => {
     };
     const context = {
       cancelPublicUrlPoll: vi.fn(),
+      closeDashboardMenu: vi.fn(),
+      proposalListScroll: 0,
       location,
       history: {
         scrollRestoration: 'auto',
@@ -271,6 +233,7 @@ describe('settings navigation', () => {
       loadSettings: vi.fn(),
       loadOAuthTab: vi.fn(),
       loadLinks: vi.fn(),
+      renderProposalsList: vi.fn(),
       loadProposals: vi.fn(),
       loadLogs: vi.fn(),
       readProposalHashId() {

@@ -123,6 +123,69 @@ describe('proposals / flows / logs HTTP API', () => {
     rmSync(userDir, { recursive: true, force: true });
   });
 
+  it('lists numeric change counts matching the detail diff, including unresolved conflicts', async () => {
+    const base = {
+      id: 'tab-1',
+      type: 'tab',
+      label: 'Main',
+      nodes: [
+        { id: 'n1', type: 'inject', x: 100, y: 100, wires: [['n2']] },
+        { id: 'n2', type: 'debug', x: 300, y: 100, wires: [] },
+        { id: 'n4', type: 'function', x: 200, y: 200, func: 'return msg;', wires: [] },
+      ],
+    };
+    const live = structuredClone(base);
+    let rev = 'rev-1';
+    const { app, linkStore } = createApp({
+      userDir,
+      authenticate: asUser('*', 'reviewer'),
+      adapter: {
+        kind: 'red',
+        getFlows: async () => ({
+          rev,
+          flows: [
+            { id: live.id, type: 'tab', label: live.label },
+            ...live.nodes.map(n => ({ ...n, z: live.id })),
+          ],
+        }),
+        getFlow: async () => ({ rev, flow: live }),
+        updateFlow: async () => ({ rev: 'unused' }),
+      },
+    });
+    const link = linkStore.create({ kind: 'rest', label: 'counts-agent' });
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set('Authorization', 'Bearer ' + link.token)
+      .send({
+        type: 'replace_flow',
+        expectedRev: rev,
+        payload: {
+          flowId: live.id,
+          flow: {
+            ...base,
+            nodes: [
+              { ...base.nodes[0], x: 150, wires: [['n3']] },
+              { id: 'n3', type: 'debug', x: 400, y: 100, wires: [] },
+              { ...base.nodes[2], func: 'msg.payload = "proposed"; return msg;' },
+            ],
+          },
+        },
+      });
+    expect(submitted.status).toBe(201);
+    live.nodes[2]!.func = 'msg.payload = "live"; return msg;';
+    rev = 'rev-2';
+    const list = await request(app).get('/mcp/api/v1/proposals');
+    const item = list.body.proposals.find((p: { id: string }) => p.id === submitted.body.id);
+    const detail = await request(app).get('/mcp/api/v1/proposals/' + submitted.body.id + '/diff');
+    expect(detail.status).toBe(200);
+    expect(item.changeCounts).toEqual({ added: 1, removed: 1, modified: 2, conflict: 1 });
+    expect(item.status).toBe('conflict');
+    for (const kind of ['added', 'removed', 'modified'])
+      expect(item.changeCounts[kind]).toBe(detail.body.summary[kind]);
+    expect(item).not.toHaveProperty('payload');
+    expect(item.reviewPath).toBe('/ai-access#/proposals/' + item.id);
+  });
+
   it('approve accepts deploymentType override in the body', async () => {
     const updateFlow = vi.fn(async () => ({ rev: 'rev-9' }));
     const { app, linkStore } = createApp({
@@ -206,8 +269,8 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(created.body.title).toBeTruthy();
     expect(created.body.displayName).toContain(created.body.title);
     expect(created.body.displayName).toMatch(/[+-]\d{2}:\d{2}$/);
-    expect(created.body.reviewPath).toBe(`/ai-access#proposal=${created.body.id}`);
-    expect(created.body.reviewUrl).toMatch(new RegExp(`/ai-access#proposal=${created.body.id}$`));
+    expect(created.body.reviewPath).toBe(`/ai-access#/proposals/${created.body.id}`);
+    expect(created.body.reviewUrl).toMatch(new RegExp(`/ai-access#/proposals/${created.body.id}$`));
 
     const withTitle = await request(app)
       .post('/mcp/api/v1/proposals')
@@ -230,9 +293,9 @@ describe('proposals / flows / logs HTTP API', () => {
     expect(withTitle.status).toBe(201);
     expect(withTitle.body.title).toBe('Add inject sensor in Main');
     expect(withTitle.body.displayName.startsWith('Add inject sensor in Main · ')).toBe(true);
-    expect(withTitle.body.reviewPath).toBe(`/ai-access#proposal=${withTitle.body.id}`);
+    expect(withTitle.body.reviewPath).toBe(`/ai-access#/proposals/${withTitle.body.id}`);
     expect(withTitle.body.reviewUrl).toBe(
-      `http://nr.example:1880/ai-access#proposal=${withTitle.body.id}`
+      `http://nr.example:1880/ai-access#/proposals/${withTitle.body.id}`
     );
 
     const listed = await request(app)

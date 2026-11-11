@@ -495,13 +495,27 @@ describe('auto-rebase service and HTTP API', () => {
         expect.objectContaining({
           nodeId: 'a',
           fields: expect.arrayContaining([
-            { field: 'func', base: 'return msg;', live: 'live code', proposed: 'proposed code' },
+            expect.objectContaining({
+              field: 'func',
+              base: 'return msg;',
+              live: 'live code',
+              proposed: 'proposed code',
+              lines: [
+                { op: 'remove', text: 'live code' },
+                { op: 'add', text: 'proposed code' },
+              ],
+            }),
           ]),
         }),
         expect.objectContaining({
           nodeId: 'tab',
           fields: expect.arrayContaining([
-            { field: 'env["MODE"].value', base: 'base', live: 'live', proposed: 'proposed' },
+            expect.objectContaining({
+              field: 'env["MODE"].value',
+              base: 'base',
+              live: 'live',
+              proposed: 'proposed',
+            }),
           ]),
         }),
       ])

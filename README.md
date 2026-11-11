@@ -80,6 +80,10 @@ GET links are capped at 24 hours, REST / MCP links at 30 days.
 The AI reads flows and submits proposals. Open **Proposals** on the dashboard to
 review the readable node/property diff against the live flow, then approve or
 reject. Approval deploys the changes; rejection never mutates flows.
+Review in Visual View at `#/proposals/<id>`; see the
+[dashboard](https://github.com/com55/node-red-ai-access/blob/main/docs/dashboard.md)
+and [REST API](https://github.com/com55/node-red-ai-access/blob/main/docs/rest-api.md)
+guides.
 
 Users with `read` (including guest, if configured) have a read-only view.
 Creating or revoking access links and approving or rejecting proposals require

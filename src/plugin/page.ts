@@ -33,12 +33,6 @@ function escapeHtml(value: string): string {
 
 function renderMcpPageHeader(): string {
   return `
-    <header class="page-header">
-      <h1>Node-RED AI Access</h1>
-      <p class="lede">
-        Let an AI assistant suggest changes to your flows — nothing changes until you approve.
-      </p>
-    </header>
     <div id="boot-flash" class="flash" hidden></div>
     <div id="auth-gate" class="auth-gate" hidden>
       <div class="sg-card" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
@@ -62,8 +56,7 @@ function renderMcpPageHeader(): string {
       </div>
     </div>
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
-    <div class="settings-layout">
-    ${renderMcpPageNav()}`;
+    <div class="settings-layout">`;
 }
 
 // Octicons-style inline icons, inspired by GitHub Octicons (MIT license).
@@ -117,27 +110,34 @@ function renderMcpPageNav(): string {
       ],
     },
   ];
-  return `<nav class="tabs" aria-label="Admin views" hidden id="main-nav">
-    ${groups
-      .map(
-        group => `<div class="nav-group"${group.items.length === 1 && group.items[0]?.[1] === group.title ? '' : ` role="group" aria-labelledby="nav-group-${group.title.toLowerCase()}"`}>
-      <div class="nav-group-title" id="nav-group-${group.title.toLowerCase()}"${group.items.length === 1 && group.items[0]?.[1] === group.title ? ' aria-hidden="true"' : ''}>${group.title}</div>
-      ${group.items
-        .map(
-          ([
-            id,
-            label,
-            path,
-          ]) => `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-current="${id === 'status' ? 'page' : 'false'}">
-        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="${path}"/></svg>
-        <span>${label}</span>${id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}
-      </button>`
-        )
-        .join('')}
-    </div>`
-      )
-      .join('')}
-  </nav>`;
+  const items = groups.flatMap(group => group.items);
+  const button = ([id, label, path]: string[], iconOnly = false, badge = false) =>
+    `<button type="button" data-tab="${id}" aria-controls="section-${id}" aria-current="${id === 'status' ? 'page' : 'false'}"${iconOnly ? ` aria-label="${label}" title="${label}"` : ''}>
+      <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="${path}"/></svg>
+      ${iconOnly ? '' : `<span>${label}</span>`}${badge && id === 'proposals' ? ' <span class="tab-badge" id="proposals-pending-badge" hidden>0</span>' : ''}</button>`;
+  return `<header class="dashboard-header" id="main-nav" hidden>
+    <button type="button" id="menu-toggle" aria-label="Open dashboard menu" aria-controls="mobile-menu" aria-expanded="false">☰</button>
+    <a class="dashboard-brand" href="#overview"><span class="dashboard-brand-mark" aria-hidden="true">ai</span><span>AI Access</span></a>
+    <nav class="tabs desktop-nav" aria-label="Dashboard">${items
+      .slice(0, 4)
+      .map(item => button(item, false, true))
+      .join('')}</nav>
+    <nav class="tabs header-icons" aria-label="Dashboard utilities">${items
+      .slice(4)
+      .map(item => button(item, true))
+      .join('')}</nav>
+    </header>
+    <div id="menu-scrim" hidden></div>
+    <aside id="mobile-menu" role="dialog" aria-modal="true" aria-label="Dashboard menu" hidden>
+      <div class="menu-heading">AI Access <button type="button" id="menu-close" aria-label="Close dashboard menu">×</button></div>
+      <nav class="tabs" aria-label="Mobile dashboard">${items
+        .slice(0, 4)
+        .map(item => button(item))
+        .join('')}<hr class="utility-divider">${items
+        .slice(4)
+        .map(item => button(item))
+        .join('')}</nav>
+    </aside>`;
 }
 
 function renderMcpPageStatusSection(): string {
@@ -443,15 +443,16 @@ function renderMcpPageProposalsSection(): string {
         <button type="button" class="filter-chip" data-filter="pending" aria-pressed="true">
           Pending <span id="filter-pending-count">0</span>
         </button>
-        <button type="button" class="filter-chip" data-filter="decided" aria-pressed="false">
-          Decided <span id="filter-decided-count">0</span>
-        </button>
+        <button type="button" class="filter-chip" data-filter="conflict" aria-pressed="false">Conflict <span id="filter-conflict-count">0</span></button>
+        <button type="button" class="filter-chip" data-filter="resolved" aria-pressed="false">Resolved <span id="filter-resolved-count">0</span></button>
+        <button type="button" class="filter-chip" data-filter="all" aria-pressed="false">All <span id="filter-all-count">0</span></button>
         <input type="search" id="proposals-search" class="proposals-search"
           placeholder="Search title or id (e.g. efd159aa)…"
           aria-label="Search proposals by title or id"
           autocomplete="off" />
       </div>
       <div id="proposals-flash" class="flash" hidden></div>
+      <div id="proposal-detail-page" hidden></div>
       <div id="proposals-list"><p class="muted">Loading…</p></div>
     </section>`;
 }
@@ -546,6 +547,7 @@ export function renderMcpPage(options: RenderMcpPageOptions): string {
   <style>${pageStyles()}</style>
 </head>
 <body>
+  ${renderMcpPageNav()}
   <main
     id="mcp-root"
     data-config="${escapeHtml(JSON.stringify(config))}"

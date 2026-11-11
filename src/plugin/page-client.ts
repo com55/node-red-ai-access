@@ -2,7 +2,9 @@
 
 import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
 import { editorSignInHelpers } from './editor-signin-script.js';
+import { pageClientReviewScript } from './page-client-review.js';
 import { pageClientSettingsScript } from './page-client-settings.js';
+import { pageClientVisualScript } from './page-client-visual.js';
 
 function pageClientScriptPartA(): string {
   return `
@@ -22,6 +24,11 @@ function pageClientScriptPartA(): string {
   var accessToken = null;
   var proposalsFilter = 'pending';
   var proposalsSearchQuery = '';
+  var proposalDeployTypes = {};
+  var proposalDetails = {};
+  var proposalListScroll = 0;
+  try { proposalsFilter = sessionStorage.getItem('proposal-filter') || 'pending'; } catch (e) {}
+  if (['pending', 'conflict', 'resolved', 'all'].indexOf(proposalsFilter) < 0) proposalsFilter = 'pending';
   var cachedProposals = [];
   var deployUnknownBlocks = [];
   // Decided proposals load in pages (Load more); pending always load in full.
@@ -78,8 +85,8 @@ function pageClientScriptPartA(): string {
   var decidedLoaded = 0;
   var decidedTotal = 0;
   var decidedHasMore = false;
-  var decidedLoadingAll = false;
   var proposalDiffCache = {};
+  var proposalConflictValues = {};
   var cachedLinksById = {};
   var cachedFlowLabels = {};
   var pendingRejectId = null;
@@ -271,7 +278,7 @@ ${editorSignInHelpers}
       link.textContent = opts.linkLabel || 'View';
       link.addEventListener('click', function (ev) {
         // Stay in-app: set hash so focusProposalFromHash can run.
-        if (opts.href.indexOf('#proposal=') >= 0) {
+        if (readProposalHashIdFrom(opts.href.replace(/^[^#]*/, ''))) {
           ev.preventDefault();
           location.hash = opts.href.replace(/^[^#]*/, '');
           focusProposalFromHash();
@@ -294,7 +301,7 @@ ${editorSignInHelpers}
   }
 
   function proposalViewHref(id) {
-    return '#proposal=' + encodeURIComponent(String(id || ''));
+    return '#/proposals/' + encodeURIComponent(String(id || ''));
   }
 
   /** Notify the editor AI Access sidebar (if open) to refresh pending counts. */
@@ -655,12 +662,12 @@ function pageClientScriptPartAAudit(): string {
     }
     var linked = '';
     if (title && d.proposalId) {
-      linked = '<a class="audit-proposal-link" href="#proposal=' +
+      linked = '<a class="audit-proposal-link" href="#/proposals/' +
         encodeURIComponent(String(d.proposalId)) + '">' + esc(String(title)) + '</a>';
     } else if (title) {
       linked = '<strong class="audit-display-name">' + esc(String(title)) + '</strong>';
     } else if (d.proposalId) {
-      linked = '<a class="audit-proposal-link" href="#proposal=' +
+      linked = '<a class="audit-proposal-link" href="#/proposals/' +
         encodeURIComponent(String(d.proposalId)) + '">' + tipId(d.proposalId, 12) + '</a>';
     }
     if (linked && atIso) {
@@ -773,7 +780,7 @@ function pageClientScriptPartATabs(): string {
   }
 
   function tabFromHash(hash) {
-    var raw = String(hash || '').replace(/^#/, '').replace(/^section-/, '');
+    var raw = String(hash || '').replace(/^#\\/?/, '').replace(/^section-/, '');
     if (!raw || raw.indexOf('proposal=') === 0) return '';
     if (raw === 'audit' || raw === 'logs') return 'logs';
     if (raw === 'overview') return 'status';
@@ -789,9 +796,9 @@ function pageClientScriptPartATabs(): string {
 
   function readProposalHashIdFrom(hash) {
     try {
-      var m = String(hash || '').match(/^#proposal=([^&]+)/);
+      var m = String(hash || '').match(/^(?:#\\/proposals\\/([^/?#]+)|#proposal=([^&]+))$/);
       if (!m) return '';
-      return decodeURIComponent(m[1]);
+      return decodeURIComponent(m[1] || m[2] || '');
     } catch (e) {
       return '';
     }
@@ -836,13 +843,13 @@ function pageClientScriptPartATabs(): string {
     }
     if (!options.skipHash) {
       if (options.proposalId && target === 'proposals') {
-        replaceLocationHash('#proposal=' + encodeURIComponent(String(options.proposalId)));
+        replaceLocationHash('#/proposals/' + encodeURIComponent(String(options.proposalId)));
       } else {
         replaceLocationHash('#' + hashForTab(target));
       }
     }
     selectedLocationHash = String(location.hash || '');
-    // The deep-link focus owns scrolling until it consumes the proposal hash.
+    // The detail view owns scrolling while a persistent proposal route is active.
     if (target === 'proposals' && readProposalHashIdFrom(location.hash)) return;
     window.scrollTo(0, 0);
     // Run after history traversal's scroll restoration and fragment scrolling.
@@ -855,7 +862,7 @@ function pageClientScriptPartATabs(): string {
     if (target === 'settings') loadSettings();
     if (target === 'oauth') loadOAuthTab();
     if (target === 'links') { loadLinks(); loadSettings(); }
-    if (target === 'proposals') loadProposals();
+    if (target === 'proposals') { if (readProposalHashId()) renderProposalsList(); loadProposals(); }
     if (target === 'logs') {
       // Load proposals so older audit rows can resolve titles / flow labels.
       loadProposals();
@@ -870,6 +877,7 @@ function pageClientScriptPartATabs(): string {
         history.pushState(null, '', location.pathname + location.search + '#' + hashForTab(target));
       }
       selectTab(target, { skipHash: true });
+      closeDashboardMenu(false);
       loadTabData(target);
     });
   });
@@ -1934,6 +1942,7 @@ function pageClientScriptPartBDiff(): string {
       ? 'split' : 'unified';
   }
   function getDiffMode() {
+    if (typeof window !== 'undefined' && window.innerWidth && window.innerWidth < 700) return 'unified';
     try {
       var v = localStorage.getItem(DIFF_MODE_KEY);
       if (v === 'unified' || v === 'split') return v;
@@ -2287,7 +2296,7 @@ function pageClientScriptPartBDiffView2(): string {
         '<div class="diff-mode-toggle" role="group" aria-label="Diff layout" ' +
         'title="Switch how multi-line text changes are shown">' +
         '<button type="button" data-diff-mode="split" title="Show before and after side by side" aria-pressed="' +
-        (mode === 'split' ? 'true' : 'false') + '">Side by side</button>' +
+        (mode === 'split' ? 'true' : 'false') + '">Split</button>' +
         '<button type="button" data-diff-mode="unified" title="Show a single combined line diff" aria-pressed="' +
         (mode === 'unified' ? 'true' : 'false') + '">Unified</button>' +
         '</div></div>';
@@ -2329,22 +2338,26 @@ function pageClientScriptPartBDiffView2(): string {
   function conflictValueText(value) {
     return value === undefined ? '(not present)' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   }
-  function renderConflictValues(c, diff) {
+  function renderConflictValues(c, diff, choice) {
     var entry = ((diff && diff.conflictValues) || []).filter(function (v) { return v.nodeId === (c.nodeId || ''); })[0];
     if (!entry) return '<p class="muted">Loading before and after values…</p>';
-    return entry.fields.map(function (v) {
-      return '<div class="conflict-values"><h4>' + esc(v.field || 'Node') + '</h4><dl>' +
-        ['base', 'live', 'proposed'].map(function (side) {
-          return '<div><dt>' + (side === 'base' ? 'Base (before submission)' : side === 'live' ? 'Live (in editor)' : 'Proposed (by AI)') +
-            '</dt><dd><pre>' + esc(conflictValueText(v[side])) + '</pre></dd></div>';
-        }).join('') + '</dl></div>';
+    var mode = getDiffMode();
+    var toolbar = '<div class="diff-mode-toggle" role="group" aria-label="Conflict diff layout">' + ['split', 'unified'].map(function (layout) { return '<button type="button" data-conflict-diff-mode="' + layout + '" aria-pressed="' + (mode === layout ? 'true' : 'false') + '">' + (layout === 'split' ? 'Split' : 'Unified') + '</button>'; }).join('') + '</div>';
+    return toolbar + entry.fields.map(function (v) {
+      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, getDiffMode())
+        .replace(/<div class="pane-head">Before<\\/div>/g, '<div class="pane-head">Live (in editor)</div>')
+        .replace(/<div class="pane-head">After<\\/div>/g, '<div class="pane-head">Proposed (by AI)</div>') :
+        '<dl><div><dt>Live (in editor)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
+        '<div><dt>Proposed (by AI)</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl>';
+      return '<div class="conflict-values"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + '><h4>' + esc(v.field || 'Node') + '</h4>' +
+        '<details class="conflict-base"><summary>Base (before submission)</summary><pre>' + esc(conflictValueText(v.base)) + '</pre></details>' + body + '</div>';
     }).join('');
   }
 
   function renderConflictPanel(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
     var selected = p.conflictChoice;
-    var chosen = selected ? '<div class="conflict-choice" role="status"><strong>Chosen: ' +
+    var chosen = selected ? '<div class="conflict-choice" role="status"><span class="resolved-marker">Resolved</span> · <strong>Chosen: ' +
       (selected.choice === 'live' ? 'Keep live' : 'Use proposed') + '</strong> · ' + esc(selected.nodeId) +
       (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
         '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
@@ -2360,7 +2373,10 @@ function pageClientScriptPartBDiffView2(): string {
           }).join('');
         }).join('') + (!diff ? '<p>Loading before and after values…</p>' : '') + '</div>';
     }
-    if (!rebase || rebase.state !== 'conflict') return chosen;
+    if (!rebase || rebase.state !== 'conflict') {
+      var values = selected && proposalConflictValues[p.id];
+      return chosen + (values ? renderConflictValues({ nodeId: selected.nodeId }, { conflictValues: values }, selected.choice) : '');
+    }
     return chosen + '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts">' +
       '<h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>' +
       (rebase.conflicts || []).map(function (c) {
@@ -2435,10 +2451,11 @@ function pageClientScriptPartB2(): string {
       badge.hidden = counts.pending <= 0;
       badge.title = fullText;
     }
-    var filterCount = $('filter-pending-count');
-    if (filterCount) { filterCount.textContent = String(counts.pending); filterCount.title = fullText; }
-    var decidedCount = $('filter-decided-count');
-    if (decidedCount) decidedCount.textContent = String(counts.decided);
+    var filterCounts = { pending: counts.live, conflict: counts.stale, resolved: counts.decided, all: counts.pending + counts.decided };
+    Object.keys(filterCounts).forEach(function (key) {
+      var el = $('filter-' + key + '-count');
+      if (el) el.textContent = String(filterCounts[key]);
+    });
     var dashPending = $('dash-pending');
     if (dashPending) {
       dashPending.textContent = String(counts.pending);
@@ -2447,17 +2464,8 @@ function pageClientScriptPartB2(): string {
   }
 
   function setProposalsFilter(next) {
-    proposalsFilter = next === 'decided' ? 'decided' : 'pending';
-    var blockBanner = document.getElementById('deploy-unknown-blocks');
-    if (!blockBanner && list.parentNode) {
-      blockBanner = document.createElement('div');
-      blockBanner.id = 'deploy-unknown-blocks';
-      list.parentNode.insertBefore(blockBanner, list);
-    }
-    if (blockBanner) {
-      blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
-      bindProposalActions(blockBanner);
-    }
+    proposalsFilter = ['pending', 'conflict', 'resolved', 'all'].indexOf(next) >= 0 ? next : next === 'decided' ? 'resolved' : 'pending';
+    try { sessionStorage.setItem('proposal-filter', proposalsFilter); } catch (e) {}
     var filters = $('proposals-filters');
     if (filters) {
       filters.querySelectorAll('.filter-chip').forEach(function (chip) {
@@ -2487,6 +2495,16 @@ function pageClientScriptPartB2(): string {
         }).catch(function () {
           showFlash(flash, 'Clipboard unavailable — id is ' + fullId, false);
         });
+      });
+    });
+    list.querySelectorAll('[data-conflict-diff-mode]').forEach(function (btn) {
+      bindOnce(btn, 'click', function () {
+        setDiffMode(btn.getAttribute('data-conflict-diff-mode'));
+        var article = btn.closest('.proposal-detail'), id = article && article.getAttribute('data-id');
+        if (!id) return;
+        var host = article.querySelector('.proposal-conflict-host');
+        host.innerHTML = renderConflictPanel(proposalDetails[id], proposalDiffCache[id]);
+        bindProposalActions(host);
       });
     });
     list.querySelectorAll('.resolve-conflict-btn, .recheck-btn').forEach(function (btn) {
@@ -2532,35 +2550,12 @@ function pageClientScriptPartB2(): string {
         openRejectDialog(btn.getAttribute('data-id'));
       });
     });
-    list.querySelectorAll('.deploy-type').forEach(function (sel) {
-      bindOnce(sel, 'change', function () {
-        var warn = list.querySelector('.full-deploy-warn[data-id="' + sel.getAttribute('data-id') + '"]');
-        if (warn) warn.hidden = sel.value !== 'full';
-      });
-    });
+    bindReviewControls(list);
     list.querySelectorAll('.proposal-card-compact').forEach(function (card) {
-      bindOnce(card, 'click', function () {
-        var id = card.getAttribute('data-id');
-        var full = list.querySelector('.proposal-detail[data-id="' + id + '"]');
-        if (!full) return;
-        var open = full.hasAttribute('hidden');
-        if (open) {
-          var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-          if (p) {
-            var wrap = document.createElement('div');
-            wrap.innerHTML = renderProposalCard(p);
-            var next = wrap.firstChild;
-            full.parentNode.replaceChild(next, full);
-            full = next;
-            bindProposalActions(list);
-          }
-          full.hidden = false;
-          card.setAttribute('aria-expanded', 'true');
-          loadProposalDiff(id);
-        } else {
-          full.hidden = true;
-          card.setAttribute('aria-expanded', 'false');
-        }
+      function open() { openProposalDetail(card.getAttribute('data-id')); }
+      bindOnce(card, 'click', open);
+      card.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
       });
     });
   }
@@ -2578,32 +2573,7 @@ function pageClientScriptPartB2Actions(): string {
   }
 
   function renderPendingActions(p, stale) {
-    if (!canApprove || (p.status !== 'pending' && p.status !== 'conflict')) return '';
-    var cached = proposalDiffCache[p.id];
-    if (proposalHasNoNetChange(cached)) {
-      return '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) + '">Reject to close</button>';
-    }
-    return       '<p class="muted approve-help">Approve deploys this change to Node-RED. Nothing is live until you approve.</p>' +
-      '<div class="row">' +
-      '<button type="button" class="action approve-btn" data-id="' + esc(p.id) +
-      '"' + (stale ? ' disabled title="Resolve conflicts before approving"' : (!cached ? ' disabled title="Wait for the diff to load"' : '')) + '>Approve &amp; deploy</button>' +
-      '<button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) +
-      '">Reject</button>' +
-      '</div>' +
-      '<details class="advanced-block">' +
-      '<summary>Deploy options</summary>' +
-      '<label>Deploy type<select class="deploy-type" data-id="' + esc(p.id) + '">' +
-      '<option value="nodes"' + (defaultDeploy === 'nodes' ? ' selected' : '') +
-      '>Only changed nodes (recommended)</option>' +
-      '<option value="flows"' + (defaultDeploy === 'flows' ? ' selected' : '') +
-      '>Changed flows</option>' +
-      '<option value="full"' + (defaultDeploy === 'full' ? ' selected' : '') +
-      '>Full redeploy</option>' +
-      '</select></label>' +
-      '<p class="full-deploy-warn" data-id="' + esc(p.id) + '"' +
-      (defaultDeploy === 'full' ? '' : ' hidden') +
-      '>Warning: full restarts the entire runtime.</p>' +
-      '</details>';
+    return renderReviewActionRow(p, stale);
   }
 
 `;
@@ -2612,14 +2582,10 @@ function pageClientScriptPartB2Actions(): string {
 function pageClientScriptPartB2Cards(): string {
   return `
   function renderRequestedVia(p) {
-    if (!p.createdBy) return '';
-    if (p.createdBy.label) {
-      return '<span class="muted">Requested via link "' + esc(p.createdBy.label) + '"</span>';
-    }
-    if (p.createdBy.linkId) {
-      return '<span class="muted">Requested via link ' + tipId(p.createdBy.linkId, 8) + '</span>';
-    }
-    return '';
+    var creator = p.createdBy;
+    if (!creator) return '';
+    var label = creator.label || creator.user || creator.clientId;
+    return '<span class="muted">Created by ' + (label ? '<code>' + esc(label) + '</code>' : 'AI agent') + '</span>';
   }
 
   function renderProposalTech(p, cached) {
@@ -2663,9 +2629,8 @@ function pageClientScriptPartB2Cards(): string {
 
   function renderRebaseChip(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
-    var count = rebase && rebase.liveChangedCount;
-    return '<span class="rebase-chip"' + (p.status === 'pending' && rebase && rebase.state === 'merged' ? '' : ' hidden') +
-      '>Rebased · ' + esc(count == null ? 0 : count) + ' live changes</span>';
+    return p.status === 'pending' && rebase ? '<span class="rebase-chip">Rebase: ' + esc(rebase.state) +
+      (rebase.state === 'merged' ? ' · ' + esc(rebase.liveChangedCount == null ? (p.rebase && p.rebase.liveChangedCount || 0) : rebase.liveChangedCount) + ' live changes' : '') + '</span>' : '';
   }
 
   function renderProposalCard(p) {
@@ -2686,33 +2651,33 @@ function pageClientScriptPartB2Cards(): string {
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
-          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(p.deployPending.attemptId || '') + '" data-id="' + esc(p.id) + '">Confirm live checked</button></div>'
+          : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(p.deployPending.attemptId || '') + '" data-id="' + esc(p.id) + '"' + (!canApprove ? ' disabled' : '') + '>Confirm live checked</button></div>'
       : '';
     var warnBanner = deployBanner + renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
     var changes =
+      '<div class="proposal-visual-host" data-visual-for="' + esc(p.id) + '"></div>' +
+      '<div class="proposal-conflict-host">' + renderConflictPanel(p, cached) + '</div>' +
       '<div class="proposal-changes proposal-diff" data-diff-for="' + esc(p.id) +
       '" data-changes-for="' + esc(p.id) + '">' +
-      (cached ? renderHumanDiff(cached) : '<p class="muted">Loading changes…</p>') +
+      (cached && proposalHasNoNetChange(cached) ? renderHumanDiff(cached) : '<p class="muted">Click a highlighted node to review its changes</p>') +
       '</div>';
     return '<article class="proposal-detail" id="proposal-' + esc(p.id) +
       '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
-      '<header class="proposal-card-head">' +
+      '<div class="visual-eyebrow">Proposal review / Visual View</div><header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
       '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status === 'conflict' ? 'Conflict' : p.status) + '</span> ' +
       renderLandedAfterWithdraw(p) + renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
-      '</header>' +
-      (createdBy ? createdBy + '<br/>' : '') +
+      (createdBy ? '<span class="proposal-created-by">' + createdBy + '</span>' : '') + '</header>' +
+      '<div class="proposal-actions">' + actions + '</div>' +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
       (plain ? esc(plain) : '<span class="muted">Loading summary…</span>') + '</p>' +
       deleteBanner +
       '<div class="proposal-review-notes">' + warnBanner + '</div>' +
       reason +
-      '<div class="proposal-conflict-host">' + renderConflictPanel(p, cached) + '</div>' +
       changes +
       renderProposalTech(p, cached) +
-      '<div class="proposal-actions">' + actions + '</div>' +
       '</article>';
   }
 `;
@@ -2724,16 +2689,21 @@ function pageClientScriptPartB2CardsList(): string {
     return p.status === 'withdrawn' && p.landedAfterWithdraw
       ? '<span class="status-pill landed-after-withdraw">Landed after withdraw</span> ' : '';
   }
+  function renderChangeCounts(counts) {
+    var symbols = { added: '+', removed: '−', modified: '✎', conflict: '!' };
+    return '<span class="change-counts">' + Object.keys(symbols).map(function (kind) {
+      var count = Number(counts && counts[kind]) || 0;
+      return count ? '<span class="' + kind + '" title="' + count + ' ' + kind + '">' + symbols[kind] + ' ' + count + '</span>' : '';
+    }).join('') + '</span>';
+  }
   function renderCompactProposal(p) {
-    var title = titleForProposalCard(p);
-    return '<div class="proposal-card-compact" data-id="' + esc(p.id) +
-      '" role="button" tabindex="0" aria-expanded="false">' +
-      '<strong>' + esc(title) + '</strong>' +
-      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' +
-      renderLandedAfterWithdraw(p) + renderProposalMetaLine(p) +
-      '</div>' +
-      '<div class="proposal-detail" id="proposal-' + esc(p.id) + '" data-id="' + esc(p.id) +
-      '" data-status="' + esc(p.status) + '" hidden></div>';
+    var warning = p.deployPending || p.deploymentAlert || p.rejectedWhileDeployUnknown;
+    return '<div class="proposal-card-compact" data-id="' + esc(p.id) + '" role="button" tabindex="0">' +
+      '<div class="proposal-top"><span class="proposal-row-heading"><strong data-title-for="' + esc(p.id) + '">' + esc(titleForProposalCard(p)) + '</strong>' +
+      (warning ? '<span class="proposal-inline-warning" title="Deploy pending" aria-label="Deploy pending">⚠</span>' : '') + '</span>' +
+      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '</div>' +
+      '<div class="proposal-row-meta"><span class="flow-name">' + esc(flowLabelOf(p) || 'Flow') + '</span>' + renderChangeCounts(p.changeCounts) +
+      '<span class="proposal-by">Created by ' + esc((p.createdBy && (p.createdBy.label || p.createdBy.user || p.createdBy.clientId)) || 'AI agent') + '</span>' + timeCell(p.createdAt) + '<span class="row-chevron">›</span></div></div>';
   }
 
   function proposalMatchesSearch(p) {
@@ -2755,33 +2725,14 @@ function pageClientScriptPartB2CardsList(): string {
       display.indexOf(q) >= 0;
   }
 
+  function proposalMatchesFilter(p, filter) {
+    if (filter === 'all') return true;
+    if (filter === 'resolved' || filter === 'decided') return p.status !== 'pending' && p.status !== 'conflict';
+    if (filter === 'conflict') return proposalIsStale(p);
+    return p.status === 'pending' && !proposalIsStale(p);
+  }
   function countSearchMatchesInFilter(filter) {
-    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
-    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
-    if (filter === 'decided') {
-      return decided.filter(proposalMatchesSearch).length;
-    }
-    return pending.filter(proposalMatchesSearch).length;
-  }
-
-  function renderCrossTabSearchHint(otherFilter, otherCount) {
-    if (!proposalsSearchQuery.trim() || otherCount <= 0) return '';
-    var label = otherFilter === 'decided' ? 'Decided' : 'Pending';
-    var matchWord = otherCount === 1 ? '1 match' : otherCount + ' matches';
-    return '<p class="cross-tab-hint" role="status">' +
-      esc(matchWord) + ' in ' + esc(label) +
-      ' <button type="button" class="cross-tab-switch" data-filter="' + esc(otherFilter) + '">' +
-      'Switch to ' + esc(label) + '</button></p>';
-  }
-
-  function bindCrossTabHint(list) {
-    if (!list) return;
-    list.querySelectorAll('.cross-tab-switch').forEach(function (btn) {
-      bindOnce(btn, 'click', function () {
-        var f = btn.getAttribute('data-filter');
-        setProposalsFilter(f === 'decided' ? 'decided' : 'pending');
-      });
-    });
+    return cachedProposals.filter(function (p) { return proposalMatchesFilter(p, filter) && proposalMatchesSearch(p); }).length;
   }
 
   function renderEmptyProposalsState(title, muted, extraHtml) {
@@ -2795,7 +2746,7 @@ function pageClientScriptPartB2CardsList(): string {
     return blocks.map(function (b) {
       return '<div role="alert" class="proposal-warnings">All approvals blocked. Deployment target tabs: ' +
         esc(b.flowIds.join(', ')) + ' — proposal ' + esc(b.proposalId) + ', attempt ' + esc(b.attemptId || '') +
-        '. An earlier deploy may still land. <button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(b.attemptId || '') + '" data-id="' + esc(b.proposalId) + '">Confirm live checked</button></div>';
+        '. An earlier deploy may still land. <button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(b.attemptId || '') + '" data-id="' + esc(b.proposalId) + '"' + (!canApprove ? ' disabled' : '') + '>Confirm live checked</button></div>';
     }).join('');
   }
 
@@ -2812,58 +2763,30 @@ function pageClientScriptPartB2CardsList(): string {
       blockBanner.innerHTML = renderDeployUnknownBlocks(deployUnknownBlocks);
       bindProposalActions(blockBanner);
     }
-    var filters = $('proposals-filters');
-    var pending = cachedProposals.filter(function (p) { return (p.status === 'pending' || p.status === 'conflict'); });
-    var decided = cachedProposals.filter(function (p) { return (p.status !== 'pending' && p.status !== 'conflict'); });
     updatePendingBadges();
-    if (filters) filters.hidden = cachedProposals.length === 0;
-    if (!cachedProposals.length) {
-      list.innerHTML = renderEmptyProposalsState(
-        'No proposals yet',
-        'When an AI submits a change it will appear here for review.'
-      );
-      return;
-    }
-    if (proposalsFilter === 'pending') {
-      var live = pending.filter(proposalMatchesSearch);
-      if (!live.length) {
-        var decidedMatches = countSearchMatchesInFilter('decided');
-        list.innerHTML = renderEmptyProposalsState(
-          proposalsSearchQuery.trim() ? 'No matching proposals' : 'No pending proposals',
-          proposalsSearchQuery.trim()
-            ? 'Try a different title or id, or clear the search.'
-            : 'Switch the filter above to see other proposals.',
-          renderCrossTabSearchHint('decided', decidedMatches)
-        );
-        bindCrossTabHint(list);
-        return;
-      }
-      disambiguatedTitleCache = buildDisambiguatedTitles(live);
-      list.innerHTML = live.map(renderProposalCard).join('');
-      live.forEach(function (p) { loadProposalDiff(p.id); });
-    } else {
-      var matchedDecided = decided.filter(proposalMatchesSearch);
-      if (proposalsSearchQuery.trim() && decidedHasMore) {
-        loadAllDecidedForSearch();
-      }
-      if (!matchedDecided.length && !decidedHasMore) {
-        var pendingMatches = countSearchMatchesInFilter('pending');
-        list.innerHTML = renderEmptyProposalsState(
-          proposalsSearchQuery.trim() ? 'No matching proposals' : 'No decided proposals',
-          proposalsSearchQuery.trim()
-            ? 'Try a different title or id, or clear the search.'
-            : 'Switch the filter above to see other proposals.',
-          renderCrossTabSearchHint('pending', pendingMatches)
-        );
-        bindCrossTabHint(list);
-        return;
-      }
-      disambiguatedTitleCache = buildDisambiguatedTitles(matchedDecided);
-      list.innerHTML = matchedDecided.map(renderCompactProposal).join('') + renderDecidedLoadMore();
-      bindDecidedLoadMore(list);
-    }
+    var detailId = readProposalHashId();
+    var filters = $('proposals-filters');
+    if (filters) filters.hidden = !!detailId;
+    var detailPage = $('proposal-detail-page');
+    if (detailPage) { detailPage.hidden = !detailId; if (!detailId) detailPage.removeAttribute('data-detail-id'); }
+    list.hidden = !!detailId;
+    var sectionHeading = $('section-proposals').querySelector('h2');
+    if (sectionHeading) sectionHeading.hidden = !!detailId;
+    var hint = $('proposals-hint');
+    if (hint) hint.hidden = !!detailId;
+    if (detailId) { showProposalDetail(detailId); return; }
+    var matched = cachedProposals.filter(function (p) {
+      return proposalMatchesFilter(p, proposalsFilter) && proposalMatchesSearch(p);
+    }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+    disambiguatedTitleCache = buildDisambiguatedTitles(matched);
+    list.innerHTML = matched.length ? matched.map(renderCompactProposal).join('') : renderEmptyProposalsState(
+      proposalsSearchQuery.trim() ? 'No matching proposals' : 'No ' + (proposalsFilter === 'all' ? '' : proposalsFilter + ' ') + 'proposals',
+      proposalsSearchQuery.trim() ? 'Try a different title or id, or clear the search.' : 'When proposals match this filter they will appear here.'
+    );
+    if (proposalsFilter === 'resolved' || proposalsFilter === 'all') list.innerHTML += renderDecidedLoadMore();
+    bindDecidedLoadMore(list);
     bindProposalActions(list);
-    focusProposalFromHash();
+
   }
 `;
 }
@@ -2912,7 +2835,7 @@ function pageClientScriptPartB2Focus(): string {
         if (id && label) cachedFlowLabels[id] = String(label);
       });
       var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
-        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title];
+        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title, p.rebase, p.changeCounts, p.deployPending, p.conflictChoice, p.deploymentAlert];
       })]);
       var unchanged = sameAsLastRender('proposals', sig);
       if (opts.skipRender || (opts.auto && unchanged)) {
@@ -2941,27 +2864,8 @@ function pageClientScriptPartB2Focus(): string {
     decidedHasMore = !!(data && data.hasMore) && more.length > 0;
   }
 
-  /** Search must cover every decided proposal, not just the loaded pages. */
-  async function loadAllDecidedForSearch() {
-    if (decidedLoadingAll || !decidedHasMore) return;
-    decidedLoadingAll = true;
-    try {
-      while (decidedHasMore) {
-        await loadMoreDecided();
-      }
-    } catch (e) {
-      showFlash($('proposals-flash'), e.message || String(e), false);
-    } finally {
-      decidedLoadingAll = false;
-    }
-    renderProposalsList();
-  }
-
   function renderDecidedLoadMore() {
     if (!decidedHasMore) return '';
-    if (proposalsSearchQuery.trim()) {
-      return '<p class="muted decided-more" role="status">Searching all decided proposals…</p>';
-    }
     return '<div class="decided-more"><button type="button" class="action" id="decided-load-more">' +
       'Load more</button> <span class="muted">' + esc(String(decidedLoaded)) + ' of ' +
       esc(String(decidedTotal)) + ' shown</span></div>';
@@ -2985,66 +2889,15 @@ function pageClientScriptPartB2Focus(): string {
     return readProposalHashIdFrom(location.hash || '');
   }
 
-  /**
-   * Deep-link focus: scroll/highlight once, then replace #proposal=<id> with
-   * #proposals so reload / returning to the tab does not re-trigger.
-   */
+  /** Persistent detail routing, including old #proposal=<id> links. */
   function focusProposalFromHash() {
     var id = readProposalHashId();
     if (!id) return false;
     selectTab('proposals', { skipHash: true });
-    var needsRerender = false;
-    // Clear search so a deep-linked card is not hidden by the filter box.
-    if (proposalsSearchQuery) {
-      proposalsSearchQuery = '';
-      var searchEl = $('proposals-search');
-      if (searchEl) searchEl.value = '';
-      needsRerender = true;
-    }
-    var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    if (p && (p.status !== 'pending' && p.status !== 'conflict') && proposalsFilter === 'pending') {
-      proposalsFilter = 'decided';
-      var filtersEl = $('proposals-filters');
-      if (filtersEl) {
-        filtersEl.querySelectorAll('.filter-chip').forEach(function (chip) {
-          var f = chip.getAttribute('data-filter');
-          chip.setAttribute('aria-pressed', f === 'decided' ? 'true' : 'false');
-        });
-      }
-      needsRerender = true;
-    }
-    if (needsRerender) {
-      // Nested renderProposalsList → focusProposalFromHash finishes the deep link.
-      renderProposalsList();
-      return !readProposalHashId();
-    }
-    var el = document.getElementById('proposal-' + id) ||
-      document.querySelector('.proposal-detail[data-id="' + id + '"]');
-    if (!el) return false;
-    if (el.hasAttribute('hidden') || !el.querySelector('.proposal-heading')) {
-      if (p) {
-        var wrap = document.createElement('div');
-        wrap.innerHTML = renderProposalCard(p);
-        var next = wrap.firstChild;
-        el.parentNode.replaceChild(next, el);
-        el = next;
-        var compact = document.querySelector('.proposal-card-compact[data-id="' + id + '"]');
-        if (compact) compact.setAttribute('aria-expanded', 'true');
-        bindProposalActions($('proposals-list'));
-        loadProposalDiff(id);
-      }
-    }
-    clearProposalHighlight();
-    el.classList.add('proposal-highlight');
-    try {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (e) {
-      el.scrollIntoView(true);
-    }
-    // Consume the deep link so it is not sticky across reloads/tab returns.
-    replaceLocationHash('#proposals');
+    renderProposalsList();
     return true;
   }
+
 `;
 }
 
@@ -3065,19 +2918,14 @@ function pageClientScriptPartB2Apply(): string {
 
   function applyDiffToProposalCard(id, diff) {
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
-    var wasStale = p ? proposalIsStale(p) : false;
     proposalDiffCache[id] = diff;
+    if (diff.conflictValues && diff.conflictValues.length) proposalConflictValues[id] = diff.conflictValues;
     if (p && diff.rebase && (p.status === 'pending' || p.status === 'conflict')) {
       p.rebase = Object.assign({}, p.rebase || {}, diff.rebase);
       p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
     }
     if (p && typeof diff.baseRevChanged === 'boolean') {
       p.baseRevChanged = diff.baseRevChanged;
-    }
-    // Move cards between review and conflict groups when the rebase state changes.
-    if (p && (p.status === 'pending' || p.status === 'conflict') && wasStale !== proposalIsStale(p)) {
-      renderProposalsList();
-      return;
     }
     var flowLabel = p ? flowLabelOf(p) : '';
     var plainEl = document.querySelector('.proposal-plain-summary[data-plain-for="' + id + '"]');
@@ -3163,11 +3011,14 @@ function pageClientScriptPartB2Apply(): string {
     try {
       var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
       applyDiffToProposalCard(id, diff);
+      host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
       if (host) {
         host.innerHTML = renderHumanDiff(diff);
         bindDiffModeToggle(host, diff);
         bindPresencePreviewToggles(host);
       }
+      var visualProposal = proposalDetails[id];
+      if (visualProposal && readProposalHashId() === id) mountProposalVisual(visualProposal, diff);
       // Audit rows reuse displayTitleForProposal — refresh if the log table is open.
       var logsSection = $('section-logs');
       if (logsSection && !logsSection.hidden && cachedLogs.length) {
@@ -3346,6 +3197,8 @@ function pageClientScriptPartC(): string {
    * moved there, or clear an empty search with a short note.
    */
   function settleSearchAfterAction(actedId, actedStatus) {
+    // Detail actions keep the user's list filter and search for the Back control.
+    if (readProposalHashId()) { renderProposalsList(); return; }
     var flash = $('proposals-flash');
     var q = String(proposalsSearchQuery || '').trim();
     if (!q) {
@@ -3474,8 +3327,7 @@ function pageClientScriptPartC(): string {
   }
 
   async function approveProposal(id) {
-    var select = document.querySelector('select.deploy-type[data-id="' + id + '"]');
-    var deploymentType = select ? select.value : defaultDeploy;
+    var deploymentType = proposalDeployTypes[id] || defaultDeploy;
     var diff = proposalDiffCache[id];
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     if ((p && p.status === 'conflict') || (diff && diff.rebase && diff.rebase.state === 'conflict')) {
@@ -3616,13 +3468,6 @@ function pageClientScriptPartCLogs(): string {
               (a === current ? ' selected' : '') + '>' + esc(actionFilterLabel(a)) + '</option>';
           }).join('');
       }
-      // Prefetch diffs for proposal ids referenced in the log so titles refresh.
-      cachedLogs.forEach(function (e) {
-        var pid = e.details && e.details.proposalId;
-        if (pid && lookupCachedProposal(pid) && !proposalDiffCache[pid]) {
-          loadProposalDiff(pid);
-        }
-      });
       applyLogFilter();
     } catch (e) {
       showFlash(flash, e.message || String(e), false);
@@ -3699,21 +3544,6 @@ function pageClientScriptPartD(): string {
       : 'Review proposals here. A full Node-RED admin can approve or reject them.';
 
     renderLinksManage();
-  }
-
-  function setupStickyNav() {
-    var nav = $('main-nav');
-    if (!nav) return;
-    function updateStuck() {
-      var rect = nav.getBoundingClientRect();
-      if (rect.height > 0) document.documentElement.style.setProperty('--nav-height', (rect.height + 20) + 'px');
-      var top = rect.top;
-      nav.classList.toggle('is-stuck', top <= 0);
-    }
-    window.addEventListener('scroll', updateStuck, { passive: true });
-    window.addEventListener('resize', updateStuck);
-    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updateStuck).observe(nav);
-    updateStuck();
   }
 
   function clearDialogPending(dialog) {
@@ -3818,13 +3648,14 @@ function pageClientScriptPartDBoot(): string {
       $('section-oauth').hidden = false;
       $('section-proposals').hidden = false;
       $('section-logs').hidden = false;
-      setupStickyNav();
-      // Restore tab from hash (or default #status); keep #proposal=<id> until focus consumes it.
+      setupDashboardMenu();
+      // Restore the section or persistent proposal detail route.
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId(), focusHeading: !!location.hash });
       if (initialTab === 'settings') loadSettings();
       if (initialTab === 'links') loadSettings();
       if (initialTab === 'oauth') loadOAuthTab();
+      if (readProposalHashId()) renderProposalsList();
       if (aiOn) {
         if (canManage) loadLinks();
         loadProposals();
@@ -3907,6 +3738,7 @@ function pageClientScriptPartDBoot(): string {
     var tab = tabFromHash(location.hash) || 'status';
     selectTab(tab, { skipHash: true, focusHeading: true });
     loadTabData(tab);
+    if (tab === 'proposals') window.requestAnimationFrame(function () { window.scrollTo(0, proposalListScroll); });
   }
   window.addEventListener('hashchange', routeFromLocation);
   window.addEventListener('popstate', routeFromLocation);
@@ -4044,6 +3876,7 @@ export function pageClientAutoRefreshScript(): string {
   var autoRefreshing = false;
   function autoRefreshBlocked() {
     if (document.querySelector('dialog[open]')) return true;
+    if (document.querySelector('.approve-wrap [role="menu"]:not([hidden]), #mobile-menu:not([hidden])')) return true;
     var el = document.activeElement;
     if (el && el !== document.body) {
       var tag = (el.tagName || '').toLowerCase();
@@ -4099,6 +3932,8 @@ export function pageClientScript(): string {
     pageClientScriptPartBDiffView() +
     pageClientScriptPartBDiffView2() +
     pageClientScriptPartB2() +
+    pageClientReviewScript() +
+    pageClientVisualScript() +
     pageClientScriptPartB2Actions() +
     pageClientScriptPartB2Cards() +
     pageClientScriptPartB2CardsList() +

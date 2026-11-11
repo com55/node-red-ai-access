@@ -276,10 +276,12 @@ describe('presentProposal', () => {
       buildProposalDisplayName('Rename inject', presented.createdAt)
     );
     expect(presented.displayName).toMatch(/[+-]\d{2}:\d{2}$/);
-    expect(presented.reviewPath).toBe('/ai-access#proposal=prop-abcdef012345');
-    expect(presented.reviewUrl).toBe('/ai-access#proposal=prop-abcdef012345');
-    expect(buildProposalReviewPath('prop-x')).toBe('/ai-access#proposal=prop-x');
-    expect(buildProposalReviewPath('prop-x', '/editor')).toBe('/editor/ai-access#proposal=prop-x');
+    expect(presented.reviewPath).toBe('/ai-access#/proposals/prop-abcdef012345');
+    expect(presented.reviewUrl).toBe('/ai-access#/proposals/prop-abcdef012345');
+    expect(buildProposalReviewPath('prop-x')).toBe('/ai-access#/proposals/prop-x');
+    expect(buildProposalReviewPath('prop-x', '/editor')).toBe(
+      '/editor/ai-access#/proposals/prop-x'
+    );
   });
 
   it('absolutizes reviewUrl from request Host (no trust proxy → ignore X-Forwarded-*)', () => {
@@ -300,9 +302,9 @@ describe('presentProposal', () => {
       req,
       httpAdminRoot: '/',
     });
-    expect(presented.reviewPath).toBe('/ai-access#proposal=prop-abcdef012345');
+    expect(presented.reviewPath).toBe('/ai-access#/proposals/prop-abcdef012345');
     expect(presented.reviewUrl).toBe(
-      'http://nodered.local:1880/ai-access#proposal=prop-abcdef012345'
+      'http://nodered.local:1880/ai-access#/proposals/prop-abcdef012345'
     );
     expect(buildProposalReviewUrl('prop-abcdef012345', { req })).toBe(presented.reviewUrl);
   });
@@ -323,7 +325,7 @@ describe('presentProposal', () => {
 
     const presented = presentProposal(baseProposal({ title: 'T' }), { req });
     expect(presented.reviewUrl).toBe(
-      'https://flows.example.com/ai-access#proposal=prop-abcdef012345'
+      'https://flows.example.com/ai-access#/proposals/prop-abcdef012345'
     );
   });
 

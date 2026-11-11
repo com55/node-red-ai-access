@@ -9,6 +9,8 @@ import type { Proposal } from '../storage/proposals.js';
 
 import { absolutizePath } from './access-path.js';
 import { normalizeHttpAdminRoot } from './auth.js';
+import { changedNodeKeys, proposalChangeCounts } from './proposal-changes.js';
+import { nestedLiveTab } from './proposal-rebase.js';
 
 /** Max length for a stored/submitted proposal title. */
 export const PROPOSAL_TITLE_MAX = 80;
@@ -68,6 +70,8 @@ export interface PresentProposalOptions {
 export interface PresentProposalApiOptions extends PresentProposalOptions {
   /** Comma-parsed include set — currently `payload` and/or `baseFlow`. */
   include?: Set<string>;
+  /** Live snapshot fallback for legacy proposals with no stored base. */
+  liveFlows?: readonly FlowNode[];
 }
 
 /** Lean proposal shape returned by default from create/get/list/propose. */
@@ -94,6 +98,8 @@ export interface PresentedProposalApi {
   createdBy: Proposal['createdBy'];
   /** Short classify-counts summary, e.g. `Adds 1 node`. */
   changeSummary: string;
+  /** Numeric node counts shared with the detail diff; conflict nodes are counted once. */
+  changeCounts: { added: number; removed: number; modified: number; conflict: number };
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
@@ -188,11 +194,11 @@ export interface PresentedProposal extends Proposal {
   displayName: string;
   /**
    * Absolute deep link when the request Host is known
-   * (`https://host/ai-access#proposal=<id>`); otherwise same as `reviewPath`.
+   * (`https://host/ai-access#/proposals/<id>`); otherwise same as `reviewPath`.
    * Honors `X-Forwarded-*` only when Express `trust proxy` is set.
    */
   reviewUrl: string;
-  /** Relative deep link path (`/ai-access#proposal=<id>` or under httpAdminRoot). */
+  /** Relative deep link path (`/ai-access#/proposals/<id>` or under httpAdminRoot). */
   reviewPath: string;
 }
 
@@ -222,15 +228,7 @@ function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
 }
 
 function nodeContentChanged(prev: FlowNode, next: FlowNode): boolean {
-  const ignore = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
-  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
-  for (const key of keys) {
-    if (ignore.has(key)) continue;
-    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-      return true;
-    }
-  }
-  return false;
+  return changedNodeKeys(prev, next).length > 0;
 }
 
 /** True when the only meaningful change is the display name/label. */
@@ -596,11 +594,11 @@ export function sanitizeProposalTitle(raw: unknown): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-/** Relative `/ai-access#proposal=<id>` path (respects httpAdminRoot). */
+/** Relative `/ai-access#/proposals/<id>` path (respects httpAdminRoot). */
 export function buildProposalReviewPath(proposalId: string, httpAdminRoot?: string): string {
   const root = normalizeHttpAdminRoot(httpAdminRoot);
   const base = root === '/' ? '/ai-access' : `${root}/ai-access`;
-  return `${base}#proposal=${encodeURIComponent(proposalId)}`;
+  return `${base}#/proposals/${encodeURIComponent(proposalId)}`;
 }
 
 /**
@@ -757,6 +755,12 @@ export function presentProposalForApi(
     baseRev: full.expectedRev,
     createdBy: presentCreatedByForApi(full.createdBy),
     changeSummary: buildChangeSummary(proposal),
+    changeCounts: proposalChangeCounts(
+      proposal,
+      options.liveFlows
+        ? nestedLiveTab(options.liveFlows, proposal.payload.flowId, proposal.payload.flow)
+        : undefined
+    ),
   };
   if (include.has('payload')) {
     lean.payload = full.payload;

@@ -68,7 +68,7 @@ describe('/mcp audit log page client', () => {
 
   it('uses a centered settings layout and preserves diff controls', () => {
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
-    expect(styles).toMatch(/max-width:\s*1200px/);
+    expect(styles).toMatch(/max-width:\s*1600px/);
     expect(styles).toMatch(/\.diff-split/);
     expect(styles).toMatch(/\.diff-mode-toggle/);
     expect(styles).toMatch(/\.diff-line/);
@@ -111,24 +111,28 @@ describe('/mcp audit log page client', () => {
     expect(client).toMatch(/history\.replaceState|replaceLocationHash/);
     expect(client).toMatch(/hashForTab|tabFromHash|initialTabFromHash/);
     expect(client).toMatch(/tab === 'logs'\) return 'audit'/);
-    expect(client).toMatch(/replaceLocationHash\('#proposals'\)/);
+    expect(client).toContain("return '#/proposals/'");
+    expect(client).not.toContain("replaceLocationHash('#proposals')");
     expect(client).toMatch(/vsCurrent|live flow/i);
     expect(client).toMatch(/what the AI started from|base snapshot|live flow/);
     expect(client).toMatch(/showAuthGate|Approve &amp; deploy|fieldLabel|Connects to/);
     expect(client).toMatch(/Function code|HTML template|fieldLabelHtml/);
     expect(client).toMatch(/You \(admin\)/);
     expect(client).toMatch(/AI \(/);
-    expect(client).toMatch(/Deploy options/);
-    expect(client).toMatch(/Only changed nodes \(recommended\)/);
-    expect(client).toMatch(/Changed flows|Full redeploy/);
+    const review = readFileSync(join(root, 'src/plugin/page-client-review.ts'), 'utf8');
+    expect(review).toContain('approve-split');
+    expect(review).toContain('Modified Nodes');
+    expect(review).toContain('Modified Flows');
+    expect(review).toContain('Full');
+    expect(client).not.toContain('Deploy options');
     expect(client).toMatch(/to review.*out of date|formatPendingBadgeText/);
     expect(client).toMatch(/badge\.textContent = String\(counts\.pending\)/);
     expect(client).toMatch(/displayTitleForProposal|data-title-for/);
-    expect(client).toMatch(/Resolve conflicts before approving/);
+    expect(review).toContain('Resolve conflicts before approving');
     expect(client).toMatch(/displayTitleForProposal|resolveLinkDetails|cachedLinksById/);
     expect(client).toMatch(/ensureTitleIncludesFlowName|cachedFlowLabels/);
     expect(client).toMatch(/buildDisambiguatedTitles|fmtClockHm|titleForProposalCard/);
-    expect(client).toMatch(/Resolve conflicts before approving|dismiss-all-stale/);
+    expect(review).toContain('Resolve conflicts before approving');
     expect(client).toMatch(/renderHumanDiff/);
     expect(client).toMatch(/isLargeDelete/);
     expect(client).toMatch(/needsApproveConfirm/);
@@ -144,7 +148,7 @@ describe('/mcp audit log page client', () => {
     // Round-2 regression guard: banner must NOT be gated on !stale.
     expect(client).not.toMatch(/isLargeDelete\([^)]*\) && !/);
     expect(client).toMatch(/renderConflictPanel|proposal-conflicts/);
-    expect(client).toMatch(/Requested via link/);
+    expect(client).toMatch(/Created by/);
     expect(client).toMatch(/Show .*line change|large-diff-btn/);
     const styles = readFileSync(join(root, 'src/plugin/page-styles.ts'), 'utf8');
     expect(styles).toMatch(/\.node-presence/);

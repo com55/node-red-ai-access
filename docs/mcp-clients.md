@@ -2,15 +2,16 @@
 
 ## OAuth (for clients with OAuth discovery)
 
-Enable MCP OAuth (AI Access editor sidebar, or the dashboard **OAuth** tab at
-`/ai-access`) and set a public HTTPS origin in **Public URL** (dashboard
-**Settings** tab). Give the client the MCP endpoint `https://YOUR-NODE-RED/mcp`
-(`/mcp/rpc` also works). It can discover the authorization server from the
-protected resource metadata, register itself, and request `read` or `propose`
-scope. Sign in to Node-RED and approve the client on the consent page. The
-dashboard **OAuth** tab lists registered clients and lets an admin revoke them
-and their tokens. Localhost HTTP is supported for development. If `httpNodeRoot`
-is disabled, see the OAuth tab for the metadata fallback path.
+Enable MCP OAuth (AI Access editor sidebar, or the dashboard **MCP OAuth**
+header link at `/ai-access`) and set a public HTTPS origin in **Public URL**
+(dashboard **Settings** sliders button). Give the client the MCP endpoint
+`https://YOUR-NODE-RED/mcp` (`/mcp/rpc` also works). It can discover the
+authorization server from the protected resource metadata, register itself, and
+request `read` or `propose` scope. Sign in to Node-RED and approve the client on
+the consent page. The dashboard **MCP OAuth** page lists registered clients and
+lets an admin revoke them and their tokens. Localhost HTTP is supported for
+development. If `httpNodeRoot` is disabled, see the OAuth tab for the metadata
+fallback path.
 
 Notes:
 

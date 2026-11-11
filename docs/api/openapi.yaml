@@ -2552,19 +2552,27 @@ components:
             Prefer this when referring to the proposal with a human. UIs with a
             browser should render `createdAt` in the client's local timezone
             instead of parsing this embedded server clock.
+        changeCounts:
+          type: object
+          description: Numeric node counts shared by proposal summaries and the detail diff (including wiring and position changes). Conflict counts distinct unresolved node or flow identities.
+          properties:
+            added: { type: integer, minimum: 0 }
+            removed: { type: integer, minimum: 0 }
+            modified: { type: integer, minimum: 0 }
+            conflict: { type: integer, minimum: 0 }
         reviewUrl:
           type: string
           description: |
-            Absolute deep link (`https://host/ai-access#proposal=<id>`) built from the
+            Absolute deep link (`https://host/ai-access#/proposals/<id>`) built from the
             request Host/protocol. Uses `X-Forwarded-Host` / `X-Forwarded-Proto`
             only when Express `trust proxy` is enabled; otherwise falls back to
             the relative `reviewPath` when Host is unavailable.
         reviewPath:
           type: string
           description: |
-            Relative deep link `/ai-access#proposal=<id>` (under `httpAdminRoot` when
+            Relative deep link `/ai-access#/proposals/<id>` (under `httpAdminRoot` when
             set) that opens the admin page, switches to Proposals, and
-            scrolls/highlights this item.
+            opens this proposal’s detail page.
         createdBy:
           $ref: '#/components/schemas/ProposalCreator'
         createdAt:

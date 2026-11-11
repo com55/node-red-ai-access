@@ -390,14 +390,14 @@ describe('proposal status presentation', () => {
     ui.setProposal(p, { rebase: p.rebase });
     expect(ui.countPendingBuckets()).toMatchObject({ pending: 1, decided: 0 });
     expect(ui.renderPendingActions(p, true)).toContain(
-      'disabled title="Resolve conflicts before approving"'
+      'title="Resolve conflicts before approving" disabled'
     );
   });
 
   it('shows the live change count on rebased pending proposals', () => {
     const ui = dashboard();
     const p = { id: 'p', status: 'pending', rebase: { state: 'merged', liveChangedCount: 3 } };
-    expect(ui.renderRebaseChip(p)).toContain('Rebased · 3 live changes');
+    expect(ui.renderRebaseChip(p)).toContain('Rebase: merged · 3 live changes');
     expect(ui.renderRebaseChip(p)).not.toContain(' hidden');
   });
 
@@ -439,9 +439,10 @@ describe('proposal UX details', () => {
     ui.setProposal(p, diff);
     const html = ui.renderProposalCard(p);
     expect(html).toContain('Nothing changes in the live flow.');
-    expect(html).not.toContain('approve-btn');
+    expect(html).toMatch(/class="action approve-btn"[^>]*disabled/);
+    expect(html).toMatch(/class="approve-options"[^>]*disabled/);
     expect(html).not.toContain('Security review');
-    expect(html).toContain('Reject to close');
+    expect(html).toContain('>Reject</button>');
     const approve = vi.fn();
     ui.setApprove(approve);
     ui.setToast(vi.fn());
@@ -678,7 +679,7 @@ describe('proposal UX details', () => {
     }
   );
 
-  it('uses the same total on the pending filter, dashboard and badge while keeping the conflict breakdown', () => {
+  it('counts the pending and conflict filters separately while the dashboard badge counts all open work', () => {
     const ui = dashboard();
     ui.setProposals([
       { id: 'a', status: 'pending' },
@@ -689,16 +690,20 @@ describe('proposal UX details', () => {
       'proposals-pending-badge',
       'filter-pending-count',
       'dash-pending',
-      'filter-decided-count',
+      'filter-resolved-count',
+      'filter-conflict-count',
+      'filter-all-count',
     ].map(id => {
       const el = { textContent: '', title: '', hidden: true };
       ui.setElement(id, el);
       return el;
     });
     ui.updatePendingBadges();
-    expect(elements.slice(0, 3).map(el => el.textContent)).toEqual(['2', '2', '2']);
+    expect(elements.slice(0, 3).map(el => el.textContent)).toEqual(['2', '1', '2']);
     expect(elements[0]?.title).toBe('1 to review · 1 conflict');
     expect(elements[3]?.textContent).toBe('1');
+    expect(elements[4]?.textContent).toBe('1');
+    expect(elements[5]?.textContent).toBe('3');
   });
 
   it('marks errors as alerts without changing the sign-in button', () => {

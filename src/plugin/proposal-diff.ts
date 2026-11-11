@@ -12,6 +12,7 @@ import { conflictFieldValue } from '../storage/field-value.js';
 import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
+import { changedNodeKeys } from './proposal-changes.js';
 import { nodeTypeText } from './proposal-present.js';
 import { nestedLiveTab, type RebaseResult } from './proposal-rebase.js';
 import { rebaseProposal } from './proposal-sync.js';
@@ -35,9 +36,6 @@ const TEXT_PROPERTY_KEYS = new Set([
   'format',
   'syntax',
 ]);
-
-/** Keys ignored in modified-node compares (layout / wiring noise). */
-const IGNORE_COMPARE_KEYS = new Set(['x', 'y', 'w', 'h', 'wires', 'g']);
 
 /** Keys omitted from added/removed property dumps (keep x/y/wires visible). */
 const IGNORE_PRESENCE_KEYS = new Set(['w', 'h', 'g']);
@@ -152,7 +150,13 @@ export interface ProposalDiffResult extends DiffSections {
   /** Values for the conflicting paths, using the same redacted view as this diff. */
   conflictValues?: {
     nodeId: string;
-    fields: { field: string; base?: unknown; live?: unknown; proposed?: unknown }[];
+    fields: {
+      field: string;
+      base?: unknown;
+      live?: unknown;
+      proposed?: unknown;
+      lines?: LineDiffEntry[];
+    }[];
   }[];
   /** Live editor values the AI chose to replace, and the reviewed deploy values. */
   aiOverrideValues?: ProposalDiffResult['conflictValues'];
@@ -375,12 +379,8 @@ function toPresenceNode(
 }
 
 function compareNodes(before: FlowNode, after: FlowNode): PropertyChange[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
   const changes: PropertyChange[] = [];
-  for (const key of [...keys].sort()) {
-    if (IGNORE_COMPARE_KEYS.has(key) || key === 'id' || key === 'z') {
-      continue;
-    }
+  for (const key of changedNodeKeys(before, after)) {
     const left = before[key];
     const right = after[key];
     if (valuesEqual(left, right)) {
@@ -667,6 +667,14 @@ export async function computeProposalDiff(
           : target(deployTab, c.nodeId),
       })),
     }));
+    // Use the same bounded server line diff for competing, already-redacted values.
+    for (const entry of result.conflictValues) {
+      for (const field of entry.fields) {
+        const text = (value: unknown) =>
+          typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '(not present)');
+        field.lines = diffLines(text(field.live), text(field.proposed));
+      }
+    }
     result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);
     if (rebase.state !== 'conflict' && rebase.merged) {
       result.vsCurrent = buildDiffSections(

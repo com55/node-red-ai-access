@@ -174,6 +174,7 @@ export function listProposalsHandler(
     const presentOpts = {
       ...presentOptionsFor(req, httpAdminRoot),
       ...(liveFlowLabels ? { liveFlowLabels } : {}),
+      ...(live ? { liveFlows: live.flows } : {}),
     };
     const include = resolveIncludeFromQuery(req.query);
     let listFilter: ReturnType<typeof parseListProposalsQuery>;
@@ -288,7 +289,13 @@ export function getProposalHandler(
       } else {
         expireByTtl(store);
       }
-      res.json(presentProposalForApi(store.get(id), { ...presentOpts, include }));
+      res.json(
+        presentProposalForApi(store.get(id), {
+          ...presentOpts,
+          include,
+          ...(live ? { liveFlows: live.flows } : {}),
+        })
+      );
     } catch (error) {
       if (error instanceof ProposalNotFoundError) {
         sendSafeJsonError(res, 404, error.code);
