@@ -32,6 +32,13 @@ ${pageClientIconsScript()}
   try { proposalsFilter = sessionStorage.getItem('proposal-filter') || 'pending'; } catch (e) {}
   if (['pending', 'conflict', 'resolved', 'all'].indexOf(proposalsFilter) < 0) proposalsFilter = 'pending';
   var cachedProposals = [];
+  var proposalsLoadPromise = null;
+  var proposalsLoaded = false;
+  var proposalListSignatures = Object.create(null);
+  var proposalDiffLoads = Object.create(null);
+  var proposalListRenderSig = '';
+  var proposalListPainted = false;
+  var proposalListNeedsRender = false;
   var deployUnknownBlocks = [];
   // Decided proposals load in pages (Load more); pending always load in full.
   var DECIDED_PAGE_SIZE = 50;
@@ -833,6 +840,15 @@ function pageClientScriptPartATabs(): string {
     options = options || {};
     if (!target) return;
     if (target !== 'settings') cancelPublicUrlPoll();
+
+    if (!options.skipHash) {
+      if (options.proposalId && target === 'proposals') {
+        replaceLocationHash('#/proposals/' + encodeURIComponent(String(options.proposalId)));
+      } else {
+        replaceLocationHash('#' + hashForTab(target));
+      }
+    }
+    syncProposalRoute(target === 'proposals' ? readProposalHashIdFrom(location.hash) : '');
     document.querySelectorAll('nav.tabs button').forEach(function (b) {
       b.setAttribute('aria-current', b.getAttribute('data-tab') === target ? 'page' : 'false');
     });
@@ -846,16 +862,9 @@ function pageClientScriptPartATabs(): string {
     if (target !== 'proposals') {
       clearProposalHighlight();
     }
-    if (!options.skipHash) {
-      if (options.proposalId && target === 'proposals') {
-        replaceLocationHash('#/proposals/' + encodeURIComponent(String(options.proposalId)));
-      } else {
-        replaceLocationHash('#' + hashForTab(target));
-      }
-    }
     selectedLocationHash = String(location.hash || '');
     // The detail view owns scrolling while a persistent proposal route is active.
-    if (target === 'proposals' && readProposalHashIdFrom(location.hash)) return;
+    if (options.preserveScroll || (target === 'proposals' && readProposalHashIdFrom(location.hash))) return;
     window.scrollTo(0, 0);
     // Run after history traversal's scroll restoration and fragment scrolling.
     if (window.requestAnimationFrame) {
@@ -867,7 +876,16 @@ function pageClientScriptPartATabs(): string {
     if (target === 'settings') loadSettings();
     if (target === 'oauth') loadOAuthTab();
     if (target === 'links') { loadLinks(); loadSettings(); }
-    if (target === 'proposals') { if (readProposalHashId()) renderProposalsList(); loadProposals(); }
+    if (target === 'proposals') {
+      var detailId = readProposalHashId();
+      if (detailId) {
+        showProposalDetail(detailId);
+        if (!proposalsLoaded) loadProposals({ keepFlash: true });
+      } else {
+        showCachedProposalsList();
+        loadProposals({ keepFlash: true });
+      }
+    }
     if (target === 'logs') {
       // Load proposals so older audit rows can resolve titles / flow labels.
       loadProposals();
@@ -2727,6 +2745,11 @@ function pageClientScriptPartB2CardsList(): string {
     }).join('');
   }
 
+  function showCachedProposalsList() {
+    syncProposalRoute('');
+    if (!proposalListPainted) renderProposalsList();
+  }
+
   function renderProposalsList(skipSearchLoad) {
     var list = $('proposals-list');
     if (!list) return;
@@ -2742,31 +2765,43 @@ function pageClientScriptPartB2CardsList(): string {
     }
     updatePendingBadges();
     var detailId = readProposalHashId();
-    var filters = $('proposals-filters');
-    if (filters) filters.hidden = !!detailId;
-    var detailPage = $('proposal-detail-page');
-    if (detailPage) { detailPage.hidden = !detailId; if (!detailId) detailPage.removeAttribute('data-detail-id'); }
-    list.hidden = !!detailId;
-    var sectionHeading = $('section-proposals').querySelector('h2');
-    if (sectionHeading) sectionHeading.hidden = !!detailId;
-    var hint = $('proposals-hint');
-    if (hint) hint.hidden = !!detailId;
+    syncProposalRoute(detailId);
     if (detailId) { showProposalDetail(detailId); return; }
+    if (!proposalsLoaded && !cachedProposals.length) {
+      list.innerHTML = '<p class="muted" role="status">Loading proposals…</p>';
+      return;
+    }
     if (!skipSearchLoad && proposalsSearchQuery.trim() && (proposalsFilter === 'resolved' || proposalsFilter === 'all') && decidedHasMore) loadAllDecidedForSearch();
+    // Reuse the existing DOM across tab/back navigation, including its scroll
+    // and bindings. Titles are computed linearly; payloads/graphs stay out of
+    // this small list-only signature.
+    var sig = JSON.stringify([proposalsFilter, proposalsSearchQuery, decidedHasMore, decidedTotal, decidedLoaded, decidedLoadingAll,
+      deployUnknownBlocks, canApprove, Math.floor(Date.now() / 60000), cachedProposals.map(function (p) {
+        return [p.id, p.status, p.title, p.displayName, p.createdAt, p.createdBy, p.changeCounts, p.deployPending,
+          p.deploymentAlert, p.rejectedWhileDeployUnknown, p.landedAfterWithdraw, p.rebase,
+          proposalIsStale(p), flowLabelOf(p), displayTitleForProposal(p, proposalDiffCache[p.id])];
+      })]);
+    if (sig === proposalListRenderSig) { proposalListNeedsRender = false; return; }
+
     var matched = cachedProposals.filter(function (p) {
       return proposalMatchesFilter(p, proposalsFilter) && proposalMatchesSearch(p);
     }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
     disambiguatedTitleCache = buildDisambiguatedTitles(matched);
-    list.innerHTML = matched.length ? matched.map(renderCompactProposal).join('') : renderEmptyProposalsState(
+    var html = matched.length ? matched.map(renderCompactProposal).join('') : renderEmptyProposalsState(
       proposalsSearchQuery.trim() ? 'No matching proposals' : 'No ' + (proposalsFilter === 'all' ? '' : proposalsFilter + ' ') + 'proposals',
       proposalsSearchQuery.trim() ? 'Try a different title or id, or clear the search.' : 'When proposals match this filter they will appear here.'
     );
     if (!matched.length && proposalsFilter !== 'all') {
       ['pending', 'conflict', 'resolved'].forEach(function (filter) {
-        if (filter !== proposalsFilter) list.innerHTML += renderCrossTabSearchHint(filter, countSearchMatchesInFilter(filter));
+        if (filter !== proposalsFilter) html += renderCrossTabSearchHint(filter, countSearchMatchesInFilter(filter));
       });
     }
-    if (proposalsFilter === 'resolved' || proposalsFilter === 'all') list.innerHTML += renderDecidedLoadMore();
+    if (proposalsFilter === 'resolved' || proposalsFilter === 'all') html += renderDecidedLoadMore();
+    proposalListRenderSig = sig;
+    proposalListPainted = true;
+    proposalListNeedsRender = false;
+    if (list.innerHTML === html) return;
+    list.innerHTML = html;
     bindCrossTabHint(list);
     bindDecidedLoadMore(list);
     bindProposalActions(list);
@@ -2777,60 +2812,65 @@ function pageClientScriptPartB2CardsList(): string {
 
 function pageClientScriptPartB2Focus(): string {
   return `
-  async function refreshFlowLabels() {
-    try {
-      var data = await api('/flows');
-      var flows = (data && data.flows) || [];
-      flows.forEach(function (f) {
-        if (f && f.type === 'tab' && f.id && f.label) {
-          cachedFlowLabels[f.id] = String(f.label);
-        }
-      });
-    } catch (e) {
-      /* optional enrichment for oldest cards */
-    }
+  function loadProposals(opts) {
+    if (!aiOn) return Promise.resolve();
+    opts = opts || {};
+    // Actions must supersede any read started before their write completed.
+    if (proposalsLoadPromise && !opts.force && !(proposalActionsInFlight && !opts.auto)) return proposalsLoadPromise;
+    var work = loadProposalsInner(opts);
+    proposalsLoadPromise = work;
+    function finished() { if (proposalsLoadPromise === work) proposalsLoadPromise = null; }
+    work.then(finished, finished);
+    return work;
   }
 
-  async function loadProposals(opts) {
-    if (!aiOn) return;
-    opts = opts || {};
+  async function loadProposalsInner(opts) {
     var gen = beginLoad('proposals');
     var flash = $('proposals-flash');
     if (!opts.skipRender && !opts.keepFlash) {
       showFlash(flash, '', true);
     }
     try {
-      await refreshFlowLabels();
-      var pendingData = await api('/proposals?status=pending,conflict');
       // Refresh keeps however many decided cards were already loaded.
       var decidedLimit = Math.min(200, Math.max(DECIDED_PAGE_SIZE, decidedLoaded));
-      var decidedData = await api('/proposals?status=' + DECIDED_STATUSES +
-        '&limit=' + decidedLimit + '&offset=0');
+      var results = await Promise.all([
+        api('/proposals?status=pending,conflict'),
+        api('/proposals?status=' + DECIDED_STATUSES + '&limit=' + decidedLimit + '&offset=0')
+      ]);
+      var pendingData = results[0], decidedData = results[1];
       if (!isLatestLoad('proposals', gen)) return; // a newer refresh superseded this one
+      proposalsLoaded = true;
+      var detailId = readProposalHashId();
+      var previousDetailSig = proposalListSignatures[detailId];
       var decidedList = (decidedData && decidedData.proposals) || [];
       decidedLoaded = decidedList.length;
       decidedTotal = Number(decidedData && decidedData.total) || decidedList.length;
       decidedHasMore = !!(decidedData && decidedData.hasMore);
       deployUnknownBlocks = (pendingData && pendingData.deployUnknownBlocks) || [];
       cachedProposals = ((pendingData && pendingData.proposals) || []).concat(decidedList);
+      proposalListSignatures = Object.create(null);
       cachedProposals.forEach(function (p) {
+        proposalListSignatures[p.id] = JSON.stringify(p);
         var id = proposalFlowId(p);
         var label = p && p.flowLabel;
         if (id && label) cachedFlowLabels[id] = String(label);
       });
-      var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
-        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title, p.rebase, p.changeCounts, p.deployPending, p.conflictChoice, p.conflictChoices, p.deploymentAlert];
-      })]);
+      var sig = JSON.stringify([decidedHasMore, decidedTotal, deployUnknownBlocks, cachedProposals]);
       var unchanged = sameAsLastRender('proposals', sig);
-      if (opts.skipRender || (opts.auto && unchanged)) {
-        updatePendingBadges();
-      } else if (opts.auto) {
+      updatePendingBadges();
+      if (!unchanged) proposalListNeedsRender = true;
+      if (opts.skipRender) return;
+      if (detailId) {
+        // A list load must never reopen an already loaded detail. Auto refresh
+        // also checks the live flow/diff, even when the summary is unchanged.
+        if (opts.auto || opts.refreshDetail || (previousDetailSig && previousDetailSig !== proposalListSignatures[detailId])) {
+          await showProposalDetail(detailId, { refresh: true, auto: opts.auto, force: !!proposalActionsInFlight });
+        }
+      } else if (!unchanged || proposalListNeedsRender) {
         preserveUiState($('proposals-list'), renderProposalsList);
-      } else {
-        renderProposalsList();
       }
     } catch (e) {
-      if (isLatestLoad('proposals', gen)) showFlash(flash, e.message || String(e), false);
+      if (!opts.auto && isLatestLoad('proposals', gen)) showFlash(flash, e.message || String(e), false);
     }
   }
 
@@ -3004,10 +3044,26 @@ function pageClientScriptPartB2Apply(): string {
     updatePendingBadges();
   }
 
+  function fetchProposalDiff(id) {
+    if (proposalDiffLoads[id]) return proposalDiffLoads[id];
+    var work = api('/proposals/' + encodeURIComponent(id) + '/diff');
+    proposalDiffLoads[id] = work;
+    function finished() { if (proposalDiffLoads[id] === work) delete proposalDiffLoads[id]; }
+    work.then(finished, finished);
+    return work;
+  }
+
   async function loadProposalDiff(id) {
+    if (detailLoadId === id) return detailLoadPromise;
+    // A full detail load may already have fetched and mounted this diff while
+    // an action was awaiting its list refresh.
+    var detail = $('proposal-detail-page');
+    if (proposalDiffCache[id] && detailRenderSig && detail && detail.getAttribute('data-detail-id') === id) return;
     var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
     try {
-      var diff = await api('/proposals/' + encodeURIComponent(id) + '/diff');
+      var gen = detailLoadGen;
+      var diff = await fetchProposalDiff(id);
+      if (readProposalHashId() !== id || gen !== detailLoadGen) return;
       applyDiffToProposalCard(id, diff);
       host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
       if (host) {
@@ -3023,6 +3079,7 @@ function pageClientScriptPartB2Apply(): string {
         applyLogFilter();
       }
     } catch (e) {
+      if (readProposalHashId() !== id || gen !== detailLoadGen) return;
       if (host) {
         host.innerHTML = '<p class="muted" role="alert">Could not load changes: ' +
           esc(e.message || String(e)) + '</p>';
@@ -3196,7 +3253,7 @@ function pageClientScriptPartC(): string {
    */
   function settleSearchAfterAction(actedId, actedStatus) {
     // Detail actions keep the user's list filter and search for the Back control.
-    if (readProposalHashId()) { renderProposalsList(); return; }
+    if (readProposalHashId()) { showProposalDetail(readProposalHashId(), { refresh: true, force: true }); return; }
     var flash = $('proposals-flash');
     var q = String(proposalsSearchQuery || '').trim();
     if (!q) {
@@ -3691,7 +3748,7 @@ function pageClientScriptPartDBoot(): string {
         applyStatus(s);
         if (aiOn) {
           if (canManage) loadLinks();
-          loadProposals();
+          loadProposals({ refreshDetail: true });
         }
       } catch (e) {
         showFlash($('status-flash'), e.message || String(e), false);

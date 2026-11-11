@@ -580,6 +580,7 @@ function proposalsHarness() {
     'sameAsLastRender',
     'proposalFlowId',
     'loadProposals',
+    'loadProposalsInner',
     'doApproveProposal',
     'setProposalActionPending',
   ]
@@ -598,7 +599,7 @@ function proposalsHarness() {
       new Promise(resolve => {
         pending.push({ path, resolve });
       }),
-    refreshFlowLabels: () => Promise.resolve(),
+    readProposalHashId: () => '',
     $: () => ({}),
     showFlash() {},
     updatePendingBadges() {},
@@ -611,10 +612,11 @@ function proposalsHarness() {
       }),
   };
   runInNewContext(
-    `var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0, proposalActionPending = Object.create(null);
+    `var proposalListNeedsRender = false, proposalsLoadPromise = null, proposalsLoaded = false, proposalListSignatures = {}, deployUnknownBlocks = [];
+     var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0, proposalActionPending = Object.create(null);
      var DECIDED_PAGE_SIZE = 20, DECIDED_STATUSES = 'approved', decidedLoaded = 0,
        decidedTotal = 0, decidedHasMore = false, cachedProposals = [], cachedFlowLabels = {};
-     function renderProposalsList() { out.render(cachedProposals.map(function (p) { return p.id; })); }
+     function renderProposalsList() { proposalListNeedsRender = false; out.render(cachedProposals.map(function (p) { return p.id; })); }
      ${fns}
      out.load = loadProposals; out.approve = doApproveProposal;
      out.inFlight = function () { return proposalActionsInFlight; };
@@ -640,16 +642,16 @@ describe('dashboard loaders: stale responses and in-flight actions', () => {
     const h = proposalsHarness();
     const first = h.out.load!();
     await flush();
-    const second = h.out.load!();
+    const second = h.out.load!({ force: true });
     await flush();
-    // pending: first/pending, second/pending
-    const [p1, p2] = [h.pending.shift()!, h.pending.shift()!];
+    // Each load starts pending + decided together. A forced post-write refresh
+    // supersedes the older pair, even if its responses arrive last.
+    const [p1, d1, p2, d2] = h.pending.splice(0);
     p2.resolve({ proposals: [{ id: 'new', status: 'pending' }] });
+    d2.resolve({ proposals: [] });
     await flush();
-    await h.answer([]); // second decided
     p1.resolve({ proposals: [{ id: 'old', status: 'pending' }] });
-    await flush();
-    await h.answer([]); // first decided — arrives last
+    d1.resolve({ proposals: [] });
     await Promise.all([first, second]);
     expect(h.rendered).toEqual([['new']]);
   });

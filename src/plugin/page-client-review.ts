@@ -44,40 +44,99 @@ export function pageClientReviewScript(): string {
     location.hash = '/proposals/' + encodeURIComponent(id);
   }
   function backToProposals() {
-    location.hash = '/proposals';
+    // pushState avoids the browser's fragment-navigation popstate dispatch.
+    try { history.pushState(null, '', location.pathname + location.search + '#/proposals'); }
+    catch (e) { location.hash = '/proposals'; }
+    // Flip the view and reuse rows on this turn, before starting any loaders.
+
+    selectTab('proposals', { skipHash: true, preserveScroll: true });
+    showCachedProposalsList();
+    loadProposals({ keepFlash: true });
+    window.scrollTo(0, proposalListScroll);
   }
   var detailLoadId = '';
   var detailLoadGen = 0;
-  async function showProposalDetail(id) {
+  var detailLoadPromise = null;
+  var detailRenderSig = '';
+  var proposalRouteId = '';
+  var detailNeedsRefresh = true;
+  function syncProposalRoute(id) {
+    if (proposalRouteId !== id) {
+      proposalRouteId = id;
+      detailNeedsRefresh = true;
+      ++detailLoadGen;
+      detailLoadId = '';
+      detailLoadPromise = null;
+      proposalDiffLoads = Object.create(null);
+    }
+    var detail = $('proposal-detail-page'), list = $('proposals-list');
+    if (detail) detail.hidden = !id;
+    if (list) list.hidden = !!id;
+    ['proposals-filters', 'proposals-hint'].forEach(function (key) { var el = $(key); if (el) el.hidden = !!id; });
+    var section = $('section-proposals'), heading = section && section.querySelector('h2');
+    if (heading) heading.hidden = !!id;
+  }
+  function showProposalDetail(id, opts) {
+    opts = opts || {};
     var host = $('proposal-detail-page');
-    if (!host || detailLoadId === id) return;
+    if (!host || readProposalHashId() !== id) return Promise.resolve();
+    if (detailLoadId === id && !opts.force) return detailLoadPromise;
+    if (!opts.refresh && !detailNeedsRefresh && host.getAttribute('data-detail-id') === id && detailRenderSig && proposalDiffCache[id]) return Promise.resolve();
+    if (opts.force) delete proposalDiffLoads[id];
     detailLoadId = id;
     var gen = ++detailLoadGen;
-    var sameDetail = host.getAttribute('data-detail-id') === id;
+    var work = loadProposalDetail(id, host, gen, opts);
+    detailLoadPromise = work;
+    function finished() {
+      if (gen === detailLoadGen) { detailLoadId = ''; detailLoadPromise = null; }
+    }
+    work.then(finished, finished);
+    return work;
+  }
+  async function loadProposalDetail(id, host, gen, opts) {
+    var sameDetail = host.getAttribute('data-detail-id') === id && !!detailRenderSig;
     if (!sameDetail) {
+      detailRenderSig = '';
       host.setAttribute('data-detail-id', id);
       host.innerHTML = '<button type="button" class="action secondary back-proposals">← Proposals</button><p role="status">Loading proposal…</p>';
       host.querySelector('.back-proposals').onclick = backToProposals;
       window.scrollTo(0, 0);
     }
     try {
-      var p = await api('/proposals/' + encodeURIComponent(id) + '?include=payload,baseFlow');
+      var known = proposalDetails[id] || cachedProposals.find(function (item) { return item.id === id; });
+      var flowId = known && proposalFlowId(known);
+      function liveFlow(flow) { return api('/flows/' + encodeURIComponent(flow)).catch(function () { return null; }); }
+      var results = await Promise.all([
+        api('/proposals/' + encodeURIComponent(id) + '?include=payload,baseFlow'),
+        fetchProposalDiff(id),
+        flowId ? liveFlow(flowId) : Promise.resolve(null)
+      ]);
       if (readProposalHashId() !== id || gen !== detailLoadGen) return;
-      try { var live = await api('/flows/' + encodeURIComponent(p.flowId || p.payload.flowId)); p.visualLiveFlow = live.flow || live; } catch (e) {}
+      var p = results[0], diff = results[1], live = results[2];
+      if (!flowId || flowId !== proposalFlowId(p)) live = await liveFlow(proposalFlowId(p));
       if (readProposalHashId() !== id || gen !== detailLoadGen) return;
+      if (live) p.visualLiveFlow = live.flow || live;
+      var sig = JSON.stringify([p, diff, canApprove, defaultDeploy]);
+      detailNeedsRefresh = false;
       proposalDetails[id] = p;
-      var index = cachedProposals.map(function (item) { return item.id; }).indexOf(id);
+      var index = cachedProposals.findIndex(function (item) { return item.id === id; });
       if (index < 0) cachedProposals.push(p); else cachedProposals[index] = p;
-      preserveUiState(host, function () { host.innerHTML = renderProposalCard(p); });
-      bindProposalActions(host);
-      await loadProposalDiff(id);
+      if (sameDetail && sig === detailRenderSig) return;
+      proposalListNeedsRender = true;
+      // Set caches before building the card, then mount Visual View just once.
+      applyDiffToProposalCard(id, diff);
+      preserveUiState(host, function () {
+        host.innerHTML = renderProposalCard(p);
+        bindProposalActions(host);
+        mountProposalVisual(p, diff);
+      });
+      detailRenderSig = sig;
     } catch (e) {
-      if (readProposalHashId() !== id || gen !== detailLoadGen) return;
+      if (readProposalHashId() !== id || gen !== detailLoadGen || (opts.auto && sameDetail)) return;
+      detailRenderSig = '';
       host.innerHTML = '<button type="button" class="action secondary back-proposals">← Proposals</button>' +
         '<p class="flash error" role="alert">Could not open proposal. ' + esc(e.message || String(e)) + '</p>';
       host.querySelector('.back-proposals').onclick = backToProposals;
-    } finally {
-      if (gen === detailLoadGen) detailLoadId = '';
     }
   }
   var deployTypes = [

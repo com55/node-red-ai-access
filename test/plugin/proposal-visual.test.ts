@@ -60,7 +60,7 @@ function browserHelpers(
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
       settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
       renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
-      setSearch: function (filter, query, proposals, more) { proposalsFilter = filter; proposalsSearchQuery = query; cachedProposals = proposals; decidedHasMore = more; },
+      setSearch: function (filter, query, proposals, more) { proposalsFilter = filter; proposalsSearchQuery = query; proposalsLoaded = true; cachedProposals = proposals; decidedHasMore = more; },
       setTypeMetadata: function (type, meta) { visualTypeMetadata[type] = meta; },
       setApi: function (fn) { api = fn; },
       setDetails: function (p) { proposalDetails[p.id] = p; },

@@ -31,6 +31,9 @@ and this project adheres to
 
 ### Fixed
 
+- Show cached proposal lists immediately, coalesce review loads, and refresh
+  silently on focus without resetting unchanged Visual View state.
+
 - Replace decided proposals' approval controls with a history notice while
   retaining the full Visual View.
 - Match the conflict drawer to the mockup: apply editor/proposed choices

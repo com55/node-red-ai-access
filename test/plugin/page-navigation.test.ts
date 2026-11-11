@@ -195,6 +195,7 @@ describe('settings navigation', () => {
       const location = { hash, pathname: '/ai-access', search: '' };
       const renderProposalsList = vi.fn();
       const context = {
+        syncProposalRoute: vi.fn(),
         cancelPublicUrlPoll: vi.fn(),
         location,
         document: { querySelectorAll: () => [] },
@@ -249,8 +250,10 @@ describe('settings navigation', () => {
       animationFrames.splice(0).forEach(callback => callback());
     };
     const context = {
+      syncProposalRoute: vi.fn(),
       cancelPublicUrlPoll: vi.fn(),
       closeDashboardMenu: vi.fn(),
+      proposalsLoaded: false,
       proposalListScroll: 0,
       location,
       history: {
@@ -283,6 +286,8 @@ describe('settings navigation', () => {
       loadSettings: vi.fn(),
       loadOAuthTab: vi.fn(),
       loadLinks: vi.fn(),
+      showCachedProposalsList: vi.fn(),
+      showProposalDetail: vi.fn(),
       renderProposalsList: vi.fn(),
       loadProposals: vi.fn(),
       loadLogs: vi.fn(),

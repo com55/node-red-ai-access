@@ -805,6 +805,7 @@ describe('OAuth Public URL state', () => {
       const start = script.indexOf('  function selectTab(target, options)');
       const end = script.indexOf('  function loadTabData', start);
       const selectTab = runInNewContext(script.slice(start, end) + ';selectTab;', {
+        syncProposalRoute: () => undefined,
         cancelPublicUrlPoll: out.cancelPublicUrlPoll,
         document: { querySelectorAll: () => [] },
         clearProposalHighlight: () => {
