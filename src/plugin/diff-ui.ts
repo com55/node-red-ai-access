@@ -3,7 +3,7 @@
  */
 
 /** Viewport width at/above which the default layout is side-by-side. */
-export const DIFF_SPLIT_MIN_PX = 900;
+export const DIFF_SPLIT_MIN_PX = 700;
 
 /** Max length for a single-line presence field shown inline (not collapsed). */
 export const PRESENCE_SHORT_TEXT_MAX = 120;

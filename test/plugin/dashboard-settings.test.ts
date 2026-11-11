@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeHttpAdminRoot } from '../../src/plugin/auth.js';
 import { acceptedMediaTypes, registerRoutes } from '../../src/plugin/index.js';
 import { renderConsentPage } from '../../src/plugin/oauth-consent-page.js';
+import { pageClientIconsScript } from '../../src/plugin/page-client-icons.js';
 import { pageClientSettingsScript } from '../../src/plugin/page-client-settings.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
 import { renderMcpPage } from '../../src/plugin/page.js';
@@ -289,6 +290,7 @@ function loadSettingsClient(
       function copyTextToClipboard() {}
       var editorRoot = ${JSON.stringify(editorRoot)};
       var mcpRpc = '/mcp/rpc';
+      ${pageClientIconsScript()}
       ${pageClientSettingsScript()}
       out.collectSettingsPayload = collectSettingsPayload;
       out.applySettings = applySettings;
@@ -748,11 +750,14 @@ describe('OAuth Public URL state', () => {
       apply({ publicBaseUrl: 'https://example.com', ok, status: ok ? 200 : 503 });
       expect(result.hidden).toBe(false);
       expect(result.className).toBe('check-result is-' + (ok ? 'ok' : 'fail'));
-      expect(result.textContent).toContain(ok ? '✓ Reachable:' : '✗ Failed:');
-      expect(result.textContent).toContain(ok ? 'HTTP 200' : 'HTTP 503');
+      expect(result.innerHTML).toContain(ok ? 'Reachable:' : 'Failed:');
+      expect(result.innerHTML).toContain(
+        'data-icon="' + (ok ? 'resolved' : 'deploy-pending') + '"'
+      );
+      expect(result.innerHTML).toContain(ok ? 'HTTP 200' : 'HTTP 503');
       apply({ publicBaseUrl: 'https://other.example', ok });
       expect(result.hidden).toBe(true);
-      expect(result.textContent).toBe('');
+      expect(result.innerHTML).toBe('');
     }
     apply();
     expect(result.hidden).toBe(true);
@@ -772,7 +777,7 @@ describe('OAuth Public URL state', () => {
     const { dom, out, calls } = loadSettingsClient(responses);
     out.applySettings!({ settings: { publicBaseUrl: 'https://old.example' } });
     await out.persistSettings!({ publicBaseUrl: 'https://new.example' });
-    expect(dom.get('set-check-result').textContent).toBe('Checking…');
+    expect(dom.get('set-check-result').innerHTML).toBe('Checking…');
     expect(dom.get('oauth-public-url-warning').hidden).toBe(true);
     responses['/settings'].publicUrlCheck = {
       publicBaseUrl: 'https://new.example',
@@ -780,7 +785,7 @@ describe('OAuth Public URL state', () => {
       status: 502,
     };
     await vi.waitFor(() => {
-      expect(dom.get('set-check-result').textContent).toContain('HTTP 502');
+      expect(dom.get('set-check-result').innerHTML).toContain('HTTP 502');
       expect(dom.get('oauth-public-url-warning').hidden).toBe(false);
     });
     expect(calls.some(call => call.path === '/settings' && !call.options)).toBe(true);
@@ -800,6 +805,7 @@ describe('OAuth Public URL state', () => {
       const start = script.indexOf('  function selectTab(target, options)');
       const end = script.indexOf('  function loadTabData', start);
       const selectTab = runInNewContext(script.slice(start, end) + ';selectTab;', {
+        syncProposalRoute: () => undefined,
         cancelPublicUrlPoll: out.cancelPublicUrlPoll,
         document: { querySelectorAll: () => [] },
         clearProposalHighlight: () => {
@@ -835,7 +841,7 @@ describe('OAuth Public URL state', () => {
       await vi.advanceTimersByTimeAsync(10_000);
       expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(40);
       const result = dom.get('set-check-result');
-      expect(result.textContent).toBe('Check still running — ');
+      expect(result.innerHTML).toBe('Check still running — ');
       const refresh = result.children[0]!;
       expect(refresh.tagName).toBe('button');
       expect(refresh.textContent).toBe('Refresh');
@@ -844,7 +850,7 @@ describe('OAuth Public URL state', () => {
       responses['/settings'].publicUrlCheck.pending = false;
       refresh.listeners.click![0]!();
       await vi.advanceTimersByTimeAsync(0);
-      expect(result.textContent).toContain('✗ Failed:');
+      expect(result.innerHTML).toContain('Failed:');
       expect(calls.filter(c => c.path === '/settings' && !c.options)).toHaveLength(41);
     } finally {
       vi.useRealTimers();

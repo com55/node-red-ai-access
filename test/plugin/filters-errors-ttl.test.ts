@@ -865,12 +865,16 @@ describe('titles never render a non-string node type', () => {
 describe('/mcp page UI follow-ups', () => {
   const html = renderMcpPage({ apiBase: '/mcp/api/v1' } as never);
 
-  it('Decided list pages with Load more and searches beyond the first page', () => {
+  it('Resolved and All retain manual pagination and search every decided page', () => {
     expect(html).toContain('DECIDED_PAGE_SIZE = 50');
     expect(html).toContain("'&limit=' + DECIDED_PAGE_SIZE + '&offset=' + decidedLoaded");
     expect(html).toContain('id="decided-load-more"');
     expect(html).toContain('Load more');
-    expect(html).toContain('loadAllDecidedForSearch()');
+    expect(html).toContain('loadAllDecidedForSearch');
+    expect(html).toContain('while (decidedHasMore) await loadMoreDecided()');
+    expect(html).toContain('Searching all decided proposals…');
+    expect(html).toContain("proposalsFilter === 'resolved' || proposalsFilter === 'all'");
+    expect(html).toContain('proposalMatchesSearch(p)');
     expect(html).toContain("api('/proposals?status=pending,conflict')");
   });
 

@@ -67,6 +67,19 @@ describe('ProposalStore + ProposalService', () => {
     });
   }
 
+  it('normalizes a stored conflict row to live pending plus conflict metadata and accepts both filters', () => {
+    const p = createPending();
+    const path = join(resolveAiAccessPaths(root).proposals, p.id + '.json');
+    writeFileSync(path, JSON.stringify({ ...p, status: 'conflict' }));
+    expect(store.get(p.id)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
+    expect(store.list({ status: 'pending' }).map(p => p.id)).toEqual([p.id]);
+    expect(store.list({ status: 'conflict' }).map(p => p.id)).toEqual([p.id]);
+    expect(store.beginApprove(p.id).status).toBe('pending');
+    store.releaseLock(p.id);
+    expect(store.markWithdrawn(p.id, { kind: 'admin' }, 'Stop').status).toBe('withdrawn');
+    expect(JSON.parse(readFileSync(path, 'utf8')).status).toBe('withdrawn');
+  });
+
   it.each(['withdrawn', 'rejected', 'expired', 'superseded', 'failed'] as const)(
     'retains unknown deploy blocks when %s',
     status => {

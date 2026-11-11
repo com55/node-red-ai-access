@@ -12,6 +12,7 @@ import { conflictFieldValue } from '../storage/field-value.js';
 import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { diffLines, type LineDiffEntry } from './line-diff.js';
+import { changedNodeKeys, isMoveOnly } from './proposal-changes.js';
 import { nodeTypeText } from './proposal-present.js';
 import { nestedLiveTab, type RebaseResult } from './proposal-rebase.js';
 import { rebaseProposal } from './proposal-sync.js';
@@ -35,9 +36,6 @@ const TEXT_PROPERTY_KEYS = new Set([
   'format',
   'syntax',
 ]);
-
-/** Keys ignored in modified-node compares (layout / wiring noise). */
-const IGNORE_COMPARE_KEYS = new Set(['x', 'y', 'w', 'h', 'wires', 'g']);
 
 /** Keys omitted from added/removed property dumps (keep x/y/wires visible). */
 const IGNORE_PRESENCE_KEYS = new Set(['w', 'h', 'g']);
@@ -107,10 +105,20 @@ export interface PresenceNodeDiff {
   properties: PresenceProperty[];
 }
 
+/** Position-only change, kept separate from the property diff. */
+export interface MovedNodeDiff {
+  id: string;
+  type: string;
+  name?: string;
+  before: { x: number | null; y: number | null };
+  after: { x: number | null; y: number | null };
+}
+
 export interface DiffSectionSummary {
   added: number;
   removed: number;
   modified: number;
+  moved: number;
   tabChanges: string[];
   /** Node count in the before snapshot (for delete-ratio warnings). */
   beforeNodeCount: number;
@@ -124,6 +132,7 @@ export interface DiffSections {
   added: PresenceNodeDiff[];
   removed: PresenceNodeDiff[];
   modified: ModifiedNodeDiff[];
+  moved: MovedNodeDiff[];
   /** Soft validation notes (e.g. optional unset config refs). */
   warnings?: { code: string; error: string; [key: string]: unknown }[];
 }
@@ -152,7 +161,13 @@ export interface ProposalDiffResult extends DiffSections {
   /** Values for the conflicting paths, using the same redacted view as this diff. */
   conflictValues?: {
     nodeId: string;
-    fields: { field: string; base?: unknown; live?: unknown; proposed?: unknown }[];
+    fields: {
+      field: string;
+      base?: unknown;
+      live?: unknown;
+      proposed?: unknown;
+      lines?: LineDiffEntry[];
+    }[];
   }[];
   /** Live editor values the AI chose to replace, and the reviewed deploy values. */
   aiOverrideValues?: ProposalDiffResult['conflictValues'];
@@ -374,13 +389,9 @@ function toPresenceNode(
   return entry;
 }
 
-function compareNodes(before: FlowNode, after: FlowNode): PropertyChange[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+function compareNodes(before: FlowNode, after: FlowNode, keys: string[]): PropertyChange[] {
   const changes: PropertyChange[] = [];
-  for (const key of [...keys].sort()) {
-    if (IGNORE_COMPARE_KEYS.has(key) || key === 'id' || key === 'z') {
-      continue;
-    }
+  for (const key of keys) {
     const left = before[key];
     const right = after[key];
     if (valuesEqual(left, right)) {
@@ -461,6 +472,7 @@ export function buildDiffSections(
   const added: PresenceNodeDiff[] = [];
   const removed: PresenceNodeDiff[] = [];
   const modified: ModifiedNodeDiff[] = [];
+  const moved: MovedNodeDiff[] = [];
 
   // Preserve flow/wiring order (nodes array order) — do not sort added by id.
   for (const node of afterFlow.nodes ?? []) {
@@ -488,7 +500,25 @@ export function buildDiffSections(
     if (!before) {
       continue;
     }
-    const changes = compareNodes(before, after);
+    const keys = changedNodeKeys(before, after);
+    if (isMoveOnly(before, after, keys)) {
+      const name = nodeName(after) ?? nodeName(before);
+      moved.push({
+        id,
+        type: after.type || before.type,
+        ...(name !== undefined ? { name } : {}),
+        before: {
+          x: typeof before.x === 'number' ? before.x : null,
+          y: typeof before.y === 'number' ? before.y : null,
+        },
+        after: {
+          x: typeof after.x === 'number' ? after.x : null,
+          y: typeof after.y === 'number' ? after.y : null,
+        },
+      });
+      continue;
+    }
+    const changes = compareNodes(before, after, keys);
     if (changes.length > 0) {
       const entry: ModifiedNodeDiff = {
         id,
@@ -506,12 +536,14 @@ export function buildDiffSections(
 
   // Modified can stay id-sorted for stable UI; added/removed keep patch order.
   modified.sort((a, b) => a.id.localeCompare(b.id));
+  moved.sort((a, b) => a.id.localeCompare(b.id));
 
   return {
     summary: {
       added: added.length,
       removed: removed.length,
       modified: modified.length,
+      moved: moved.length,
       tabChanges: compareTabMeta(beforeFlow, afterFlow),
       beforeNodeCount: beforeNodes.size,
       afterNodeCount: afterNodes.size,
@@ -525,6 +557,7 @@ export function buildDiffSections(
     added,
     removed,
     modified,
+    moved,
   };
 }
 
@@ -650,6 +683,30 @@ export async function computeProposalDiff(
           : target(view.payload.flow, c.nodeId),
       })),
     }));
+    // Keep both alternatives available after resolution, including after a reload.
+    // Snapshots stay private; only the same redacted field values as an unresolved
+    // conflict are sent to readers.
+    for (const saved of rawProposal.conflictChoices ??
+      (rawProposal.conflictChoice ? [rawProposal.conflictChoice] : [])) {
+      if (!saved.undo || result.conflictValues.some(c => c.nodeId === saved.nodeId)) continue;
+      const originalBase = ai ? redactFlowData(saved.undo.baseFlow).value : saved.undo.baseFlow;
+      const originalFlow = ai ? redactFlowData(saved.undo.flow).value : saved.undo.flow;
+      result.conflictValues.push({
+        nodeId: saved.nodeId,
+        fields: (saved.fields?.length ? saved.fields : ['']).map(field => ({
+          field,
+          base: field
+            ? conflictFieldValue(target(originalBase, saved.nodeId), field)
+            : target(originalBase, saved.nodeId),
+          live: field
+            ? conflictFieldValue(target(currentTab, saved.nodeId), field)
+            : target(currentTab, saved.nodeId),
+          proposed: field
+            ? conflictFieldValue(target(originalFlow, saved.nodeId), field)
+            : target(originalFlow, saved.nodeId),
+        })),
+      });
+    }
     const deployTab = rebase.merged
       ? ai
         ? redactFlowData(rebase.merged).value
@@ -667,6 +724,14 @@ export async function computeProposalDiff(
           : target(deployTab, c.nodeId),
       })),
     }));
+    // Diff competing, already-redacted values; large inputs use whole-block replacement.
+    for (const entry of result.conflictValues) {
+      for (const field of entry.fields) {
+        const text = (value: unknown) =>
+          typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '(not present)');
+        field.lines = diffLines(text(field.live), text(field.proposed));
+      }
+    }
     result.liveChanges = buildDiffSections(currentTab, view.baseFlow ?? currentTab);
     if (rebase.state !== 'conflict' && rebase.merged) {
       result.vsCurrent = buildDiffSections(

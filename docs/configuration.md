@@ -180,7 +180,7 @@ patterns of 6+ letters also match glued names like `DBPASSWORD`):
 `KEY` matches `API_KEY` / `apiKey` but not `KEYBOARD` or `MONKEY`; `AUTH` does
 not match `AUTHOR` or `OAUTH`. Names ending in a descriptor word (`TOKEN_URL`,
 `AUTH_TYPE`, `SESSION_TIMEOUT`, `keyType`) are not redacted. Edit the list on
-the dashboard **Settings** tab (add, remove, reset to defaults) or lock it with
+the dashboard **Settings** page (add, remove, reset to defaults) or lock it with
 `aiAccess.secretNamePatterns`.
 
 ### Settings precedence
@@ -189,7 +189,7 @@ Effective values are resolved **without restart** in this order (highest wins):
 
 1. **`settings.js`** — keys present in the `aiAccess` block are locked
 2. **Disk** — `<userDir>/.ai-access/config.json` (dashboard **Settings** / **MCP
-   OAuth** tabs, editor sidebar toggles, or `PUT /mcp/api/v1/settings`)
+   OAuth** pages, editor sidebar toggles, or `PUT /mcp/api/v1/settings`)
 3. **Built-in defaults** — as documented above
 
 This is a breaking precedence change in 0.2.0: settings.js now wins over disk.
@@ -205,16 +205,16 @@ Access features** toggle (the `allowWithoutAdminAuth` local-only opt-in when
 warning with links that reveal the conflicting node (only when conflicts exist),
 and an **Open AI Access dashboard** button.
 
-Everything else is on the dashboard. The **Settings** tab lets `*` admins change
-default deploy type, access-token TTL, maximum active tokens, Public URL (with a
-reachability **Check**), CORS origins, secret redaction patterns, and the three
-rate limits, and shows Express's effective `trust proxy` setting. The **MCP
-OAuth** tab configures token lifetimes and the client limit, lists registered
-clients with revoke buttons, and reports route collisions (linking `http in`
-nodes to the editor) and the `httpNodeRoot: false` metadata fallback. `read`
-users see the same values read-only; writes need `*`, exactly as before. Changes
-apply immediately; changing limits starts fresh rate-limit buckets. Enabling
-OAuth with no Public URL or an HTTP non-loopback URL shows a warning
+Everything else is on the dashboard. The **Settings** page lets `*` admins
+change default deploy type, access-token TTL, maximum active tokens, Public URL
+(with a reachability **Check**), CORS origins, secret redaction patterns, and
+the three rate limits, and shows Express's effective `trust proxy` setting. The
+**MCP OAuth** page configures token lifetimes and the client limit, lists
+registered clients with revoke buttons, and reports route collisions (linking
+`http in` nodes to the editor) and the `httpNodeRoot: false` metadata fallback.
+`read` users see the same values read-only; writes need `*`, exactly as before.
+Changes apply immediately; changing limits starts fresh rate-limit buckets.
+Enabling OAuth with no Public URL or an HTTP non-loopback URL shows a warning
 confirmation; it does not block the change. Fields set in `settings.js` are
 locked.
 

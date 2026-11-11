@@ -49,7 +49,7 @@ GET-link `401` responses include a `WWW-Authenticate: Bearer …` header.
 | `missing_expected_rev` | 400 | Proposal submitted without `expectedRev` / `rev` | Read the flow and pass its `rev` | GET, REST, MCP |
 | `version_mismatch` | 409 | Unknown or unavailable `rev` / `expectedRev` snapshot | Re-read flows and resubmit | GET, REST, MCP |
 | `proposal_not_found` | 404 | Unknown proposal id | List proposals and use an existing id | GET, REST, MCP |
-| `proposal_not_pending` | 409 | Action needs an open proposal | Only pending or conflict proposals can withdraw / decide | GET, REST, MCP |
+| `proposal_not_pending` | 409 | Action needs an open proposal | Only pending proposals (including conflicts) can withdraw / decide | GET, REST, MCP |
 | `proposal_not_owned` | 403 | Resolve or withdraw another token’s proposal | Use the creating token; lost-token withdrawal requires a full admin session | GET, REST, MCP |
 | `validation_failed` | 400 | Several validation errors at once (message `N validation errors`) | Fix every entry in errors[] and resubmit. | GET, REST, MCP |
 | `duplicate_node_id` | 400 | The same node id appears more than once in a full tab or batch | Give every node a unique id | GET, REST, MCP |
@@ -98,6 +98,6 @@ Returned in `warnings[]` on a successful propose/submit; they never block.
 
 | Code | HTTP | Meaning | Hint / next step | Channels |
 | --- | --- | --- | --- | --- |
-| `conflict` | 200 | Status: open proposal has conflicting editor changes; approval blocked | Read the current flow and resolve the proposal | GET, REST, MCP |
+| `conflict` | 200 | Deprecated status alias: use status=pending with rebase.state=conflict; approval blocked | Read the current flow and resolve the proposal | GET, REST, MCP |
 | `expired` | 200 | Status: open proposal expired after the configured TTL (default 7 days) | Re-read the flow and submit a new proposal | GET, REST, MCP |
 | `superseded` | 200 | Legacy closed status; new approvals rebase other open proposals | Re-read the flow and submit a new proposal if still needed | GET, REST, MCP |

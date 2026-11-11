@@ -140,7 +140,8 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/http-equiv="Cache-Control"[^>]*no-store/);
     expect(res.text).toMatch(/alignSplitDiffLines/);
     expect(res.text).toMatch(/history\.replaceState/);
-    expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
+    expect(res.text).toContain("return '#/proposals/'");
+    expect(res.text).not.toContain("replaceLocationHash('#proposals')");
     expect(res.text).toMatch(/initialTabFromHash/);
     expect(res.text).toMatch(/Intl\.DateTimeFormat/);
     expect(res.text).toMatch(/titleFromDisplayName/);
@@ -201,15 +202,16 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Copy GET link for AI chat/);
     expect(res.text).toMatch(/kind-badge|data-kind/);
     expect(res.text).toMatch(/wrong_token_kind|separate tokens/);
-    expect(res.text).toMatch(/max-width:\s*1200px/);
+    expect(res.text).toMatch(/max-width:\s*1600px/);
     expect(res.text).toMatch(/Side by side|data-diff-mode/);
-    expect(res.text).toMatch(/diff-split|diff-line/);
+    expect(res.text).toMatch(/shareddiff|unifiedline/);
     expect(res.text).toMatch(/Node added|Node removed/);
     expect(res.text).toMatch(/base snapshot|vsCurrent/);
     expect(res.text).toMatch(/to review|out of date/);
     expect(res.text).toMatch(/Resolve conflicts before approving/);
-    expect(res.text).toMatch(/Deploy options/);
-    expect(res.text).toMatch(/filter-decided-count/);
+    expect(res.text).toContain('approve-split');
+    expect(res.text).not.toContain('Deploy options');
+    expect(res.text).toMatch(/filter-resolved-count/);
     expect(res.text).toMatch(/for troubleshooting/);
     expect(res.text).toMatch(/You're an admin/);
     // Diagnostics "Your role" row — never a "full access" chip (sounds like AI scope).
@@ -229,8 +231,9 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/proposal-conflicts/);
     expect(res.text).toMatch(/Conflicts/);
     expect(res.text).toMatch(/renderConflictPanel|proposal-conflicts/);
-    expect(res.text).toMatch(/Requested via link/);
-    expect(res.text).toMatch(/Keep live/);
+    expect(res.text).toMatch(/Created by/);
+    expect(res.text).toMatch(/editor value/);
+    expect(res.text).not.toMatch(/Keep live|Use proposed values\?|Keep live values\?/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/Changed in editor since submit/);
     expect(res.text).toMatch(/Will deploy \(vs live\)/);
@@ -241,11 +244,13 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/proposalMatchesSearch/);
     expect(res.text).toMatch(/first 8 hex|prop-/);
     expect(res.text).toMatch(/idCompact|any substring|full id|short id/);
-    expect(res.text).toMatch(/cross-tab-hint|Switch to Decided|Switch to Pending/);
+    for (const filter of ['pending', 'conflict', 'resolved', 'all'])
+      expect(res.text).toContain('data-filter="' + filter + '"');
     expect(res.text).toMatch(/Copied proposal id/);
     expect(res.text).toMatch(/efd159aa/);
     expect(res.text).toMatch(/focusProposalFromHash/);
-    expect(res.text).toMatch(/replaceLocationHash\('#proposals'\)/);
+    expect(res.text).toContain("return '#/proposals/'");
+    expect(res.text).not.toContain("replaceLocationHash('#proposals')");
     // Reject modal shows proposal title; destructive approve uses confirm + summary.
     expect(res.text).toMatch(/reject-dialog-title/);
     expect(res.text).toMatch(/delete-confirm-dialog/);
@@ -267,7 +272,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/openConfirmDialog/);
     expect(res.text).toMatch(/trapDialogFocus|showInPageDialog/);
     expect(res.text).toMatch(/Revoke access link/);
-    expect(res.text).toMatch(/Re-check/);
+    expect(res.text).not.toMatch(/recheck-btn|>Re-check<\//);
     expect(res.text).not.toMatch(/window\.confirm|window\.alert|window\.prompt/);
     // Regression: Deletes X of Y banner must show for large deletes even when stale.
     expect(res.text).toMatch(/renderDeleteBanner|Deletes .* of .* nodes/);

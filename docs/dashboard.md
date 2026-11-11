@@ -16,12 +16,37 @@ grant. The token is shared with the editor, stored under the editor's
 `/admin`). Other login strategies open the editor to sign in. All data and
 actions stay behind permission checks.
 
-The dashboard has tabs for **Overview** (status and diagnostics), **Settings**,
-**Access tokens**, **MCP OAuth**, **Proposals** and **Audit log**. You can
-create access tokens, review proposals (with a readable node/property diff
-against the live flow), approve or reject changes, and read a human-readable
-audit log. Users with `read` (including guest, if configured) get a read-only
-view; only users with `*` can create/revoke links and approve/reject proposals.
+The dashboard uses a sticky header with **Overview** (status and diagnostics),
+**Access tokens**, **MCP OAuth**, and **Proposals** as text navigation. The
+sliders and document icon buttons on the right open **Settings** and **Audit
+log**. On mobile, a menu button opens a navigation drawer. **Settings** and
+**MCP OAuth** are pages; see [Configuration](./configuration.md) for their
+controls.
+
+Review happens on a persistent proposal detail page with **Visual View**: real
+flow nodes, related-node expansion, editor positions, change diffs against the
+live flow, and approval with a choice of deploy type. The proposal list filters
+by **Pending**, **Conflict**, **Resolved**, or **All** and shares numeric change
+counts with the detail page. Conflicting proposals remain **Pending** with a
+**Conflict** chip; the Conflict filter is a subset of Pending and both counts
+include them. API responses use `status: pending` and `rebase.state: conflict`;
+legacy stored `status: conflict` rows are normalized to that shape on read.
+
+Select an amber Conflict node to review the under-canvas drawer. Compare
+**Editor (live)** and **AI proposed** in Split or Unified, then choose **Use
+editor value** or **Use proposed value**. Choices apply immediately to the
+proposal and automatically recheck live changes. The chosen button turns green;
+changed lines on that side become bold and the other side fades. Select the
+other button to change your choice, including after reloading. Approval stays
+disabled until every conflict is resolved. Nothing deploys until approval.
+
+The canonical detail hash is `#/proposals/<id>`; legacy `#proposal=<id>` links
+still open the detail page. The list accepts `#proposals` and `#/proposals`.
+
+You can create access tokens, approve or reject proposals, and read a
+human-readable audit log. Users with `read` (including guest, if configured) get
+a read-only view; only users with `*` can create/revoke links and approve/reject
+proposals.
 
 See also: [Configuration](./configuration.md) for the editor sidebar and
 Settings / MCP OAuth controls, [AI quickstart](./ai-quickstart.md), and

@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Node-RED AI Access Plugin API
-  version: 0.2.0-beta.13
+  version: 0.2.0-beta.14
   summary: Temporary, owner-approved Node-RED access for AI clients
   description: |
     REST surface exposed by the `@com55/node-red-ai-access` Node-RED plugin
@@ -184,7 +184,7 @@ info:
     `N validation errors` and every entry in `errors[]`. Duplicate node ids in a
     full tab or batch return `duplicate_node_id`.
 
-    Open proposals (`pending` or `conflict`) auto-rebase when live revisions change.
+    Pending proposals (including conflicts) auto-rebase when live revisions change.
     Disjoint node and tab fields merge automatically. Only fields changed on both
     sides conflict (even identical edits); x/y never conflict and proposed positions
     win ties. Env merges by unique name and entry field, credentials by key.
@@ -1078,8 +1078,9 @@ paths:
       description: |
         Compares the proposal payload to the **base flow snapshot** stored at
         submit (`baseFlow` at `expectedRev`) — what the AI actually changed —
-        not the live editor flow. Returns counts of added / removed / modified
-        nodes. Added/removed nodes are single presence blocks with properties
+        not the live editor flow. Returns counts of added / removed / modified / moved
+        nodes. Move-only nodes have before/after positions in a separate moved list.
+        Added/removed nodes are single presence blocks with properties
         (long text fields listed for expandable UI). Modified nodes include
         line-level diffs for text fields such as `func` and `template`.
 
@@ -1350,7 +1351,7 @@ paths:
       description: |
         Accepts the creating access-link Bearer, or a full (`*`) admin session
         for lost-token recovery. Other tokens and read-only admins are forbidden.
-        Withdraws an **open** (pending or conflict) proposal. Status becomes `withdrawn` (not `rejected`). Optional
+        Withdraws a **pending** proposal (including one with conflicts). Status becomes `withdrawn` (not `rejected`). Optional
         JSON body `{ "reason": "…" }`.
       operationId: withdrawProposal
       security:
@@ -2405,7 +2406,7 @@ components:
 
     ProposalRebase:
       type: object
-      description: Merge metadata; conflicts contain field names only, never field values.
+      description: Merge metadata; state=conflict tags a pending proposal and blocks approval. Conflicts contain field names only, never field values.
       properties:
         state:
           type: string
@@ -2441,6 +2442,12 @@ components:
           format: date-time
 
     ProposalStatus:
+      description: |
+        Responses use pending for every proposal awaiting a decision. Unresolved
+        conflicts are signalled by rebase.state=conflict and block approval.
+        The conflict enum value is a deprecated legacy input/read alias for pending
+        with conflicts. The status=pending filter includes these proposals;
+        status=conflict selects only that pending subset.
       type: string
       enum: [pending, conflict, approved, rejected, failed, withdrawn, expired, superseded]
 
@@ -2463,7 +2470,7 @@ components:
       properties:
         conflictChoice:
           type: object
-          description: Latest manual resolution; admins can undo it until the next body edit or choice. Undo snapshots are never returned.
+          description: Latest resolution (compatibility alias of the last conflictChoices entry). Undo snapshots are never returned.
           required: [nodeId, choice]
           properties:
             nodeId:
@@ -2471,6 +2478,28 @@ components:
             choice:
               type: string
               enum: [live, proposed]
+        conflictChoices:
+          type: array
+          description: |
+            Per-node resolutions retained until the next body edit. POST resolve-conflict
+            with the other choice to change a resolution immediately. Snapshot values
+            are never returned; conflictValues in the diff provides safe alternatives.
+          items:
+            type: object
+            required: [nodeId, choice]
+            properties:
+              nodeId:
+                type: string
+              choice:
+                type: string
+                enum: [live, proposed]
+              fields:
+                type: array
+                items:
+                  type: string
+              chooser:
+                type: string
+                enum: [ai, human]
         rejectedWhileDeployUnknown:
           type: boolean
           description: Rejected while a full-snapshot deploy could still land. Check live flows; late landing triggers an alert and audit entry.
@@ -2552,19 +2581,28 @@ components:
             Prefer this when referring to the proposal with a human. UIs with a
             browser should render `createdAt` in the client's local timezone
             instead of parsing this embedded server clock.
+        changeCounts:
+          type: object
+          description: Numeric node counts shared by proposal summaries and the detail diff. Position-only changes are moved; property or wire changes are modified. Conflict counts distinct unresolved node or flow identities.
+          properties:
+            added: { type: integer, minimum: 0 }
+            removed: { type: integer, minimum: 0 }
+            modified: { type: integer, minimum: 0 }
+            moved: { type: integer, minimum: 0 }
+            conflict: { type: integer, minimum: 0 }
         reviewUrl:
           type: string
           description: |
-            Absolute deep link (`https://host/ai-access#proposal=<id>`) built from the
+            Absolute deep link (`https://host/ai-access#/proposals/<id>`) built from the
             request Host/protocol. Uses `X-Forwarded-Host` / `X-Forwarded-Proto`
             only when Express `trust proxy` is enabled; otherwise falls back to
             the relative `reviewPath` when Host is unavailable.
         reviewPath:
           type: string
           description: |
-            Relative deep link `/ai-access#proposal=<id>` (under `httpAdminRoot` when
+            Relative deep link `/ai-access#/proposals/<id>` (under `httpAdminRoot` when
             set) that opens the admin page, switches to Proposals, and
-            scrolls/highlights this item.
+            opens this proposal’s detail page.
         createdBy:
           $ref: '#/components/schemas/ProposalCreator'
         createdAt:
@@ -2620,7 +2658,7 @@ components:
           type: string
           description: |
             Present when rejected, failed, withdrawn, or expired. Revision changes
-            keep open proposals pending or in conflict; they do not close them.
+            keep open proposals pending, with conflicts in `rebase.state`; they do not close them.
         resultRev:
           type: string
 
@@ -2733,7 +2771,7 @@ components:
         choice:
           type: string
           enum: [live, proposed, undo]
-          description: Undo restores the proposal before the latest choice for nodeId and rechecks against live. Available until the next body edit or choice; admin only. Nothing is deployed.
+          description: live/proposed applies immediately and may replace an earlier choice for this node. Undo restores this node before its latest choice and rechecks against live, preserving choices on other nodes; admin only. Nothing is deployed.
 
     ResolveProposalRequest:
       oneOf:
@@ -2886,9 +2924,34 @@ components:
           items:
             $ref: '#/components/schemas/ProposalDiffPresenceProperty'
 
+    ProposalDiffPosition:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: [number, 'null']
+        y:
+          type: [number, 'null']
+
+    ProposalDiffMovedNode:
+      type: object
+      description: A node whose only changed fields are x and/or y, with finite numeric coordinates on both sides and at least one coordinate differing.
+      required: [id, type, before, after]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+        before:
+          $ref: '#/components/schemas/ProposalDiffPosition'
+        after:
+          $ref: '#/components/schemas/ProposalDiffPosition'
+
     ProposalDiffSections:
       type: object
-      required: [summary, added, removed, modified]
+      required: [summary, added, removed, modified, moved]
       properties:
         tabProperties:
           type: array
@@ -2897,13 +2960,15 @@ components:
             $ref: '#/components/schemas/ProposalDiffPropertyChange'
         summary:
           type: object
-          required: [added, removed, modified, tabChanges]
+          required: [added, removed, modified, moved, tabChanges]
           properties:
             added:
               type: integer
             removed:
               type: integer
             modified:
+              type: integer
+            moved:
               type: integer
             tabChanges:
               type: array
@@ -2921,6 +2986,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProposalDiffModifiedNode'
+        moved:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProposalDiffMovedNode'
 
     ProposalDiff:
       allOf:
@@ -2979,6 +3048,17 @@ components:
                         base: {}
                         live: {}
                         proposed: {}
+                        lines:
+                          type: array
+                          description: |
+                            Line diff from the live value to the proposed value, after
+                            redaction for AI callers. Strings are compared directly;
+                            other values use indented JSON, or "(not present)" when
+                            absent. Operations are equal, add (proposed), and remove
+                            (live). Large inputs may use whole-block entries whose
+                            text contains multiple lines.
+                          items:
+                            $ref: '#/components/schemas/ProposalDiffLine'
             liveChanges:
               $ref: '#/components/schemas/ProposalDiffSections'
             vsCurrent:

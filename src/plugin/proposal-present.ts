@@ -5,10 +5,12 @@
 import type { Request } from 'express';
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
-import type { Proposal } from '../storage/proposals.js';
+import { normalizeProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { absolutizePath } from './access-path.js';
 import { normalizeHttpAdminRoot } from './auth.js';
+import { changedNodeKeys, isMoveOnly, proposalChangeCounts } from './proposal-changes.js';
+import { nestedLiveTab } from './proposal-rebase.js';
 
 /** Max length for a stored/submitted proposal title. */
 export const PROPOSAL_TITLE_MAX = 80;
@@ -68,7 +70,11 @@ export interface PresentProposalOptions {
 export interface PresentProposalApiOptions extends PresentProposalOptions {
   /** Comma-parsed include set — currently `payload` and/or `baseFlow`. */
   include?: Set<string>;
+  /** Live snapshot fallback for legacy proposals with no stored base. */
+  liveFlows?: readonly FlowNode[];
 }
+
+type PresentedConflictChoice = Omit<NonNullable<Proposal['conflictChoice']>, 'undo'>;
 
 /** Lean proposal shape returned by default from create/get/list/propose. */
 export interface PresentedProposalApi {
@@ -94,11 +100,20 @@ export interface PresentedProposalApi {
   createdBy: Proposal['createdBy'];
   /** Short classify-counts summary, e.g. `Adds 1 node`. */
   changeSummary: string;
+  /** Numeric node counts shared with the detail diff; conflict nodes are counted once. */
+  changeCounts: {
+    added: number;
+    removed: number;
+    modified: number;
+    moved: number;
+    conflict: number;
+  };
   payload?: Proposal['payload'];
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
   aiConflictOverrides?: Proposal['aiConflictOverrides'];
-  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed'; chooser?: 'ai' | 'human' };
+  conflictChoice?: PresentedConflictChoice;
+  conflictChoices?: PresentedConflictChoice[];
   deployPending?: Proposal['deployPending'];
   deploymentAlert?: string;
   rejectedWhileDeployUnknown?: boolean;
@@ -188,11 +203,11 @@ export interface PresentedProposal extends Proposal {
   displayName: string;
   /**
    * Absolute deep link when the request Host is known
-   * (`https://host/ai-access#proposal=<id>`); otherwise same as `reviewPath`.
+   * (`https://host/ai-access#/proposals/<id>`); otherwise same as `reviewPath`.
    * Honors `X-Forwarded-*` only when Express `trust proxy` is set.
    */
   reviewUrl: string;
-  /** Relative deep link path (`/ai-access#proposal=<id>` or under httpAdminRoot). */
+  /** Relative deep link path (`/ai-access#/proposals/<id>` or under httpAdminRoot). */
   reviewPath: string;
 }
 
@@ -221,18 +236,6 @@ function collectNodes(flow: Partial<FlowTab>): Map<string, FlowNode> {
   return map;
 }
 
-function nodeContentChanged(prev: FlowNode, next: FlowNode): boolean {
-  const ignore = new Set(['x', 'y', 'w', 'h', 'g', 'id', 'z']);
-  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
-  for (const key of keys) {
-    if (ignore.has(key)) continue;
-    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /** True when the only meaningful change is the display name/label. */
 function isRenameOnly(prev: FlowNode, next: FlowNode): boolean {
   const beforeName = nodeLabel(prev);
@@ -258,10 +261,12 @@ function classifyFlowChanges(
   added: FlowNode[];
   removed: FlowNode[];
   modified: { before: FlowNode; after: FlowNode }[];
+  moved: { before: FlowNode; after: FlowNode }[];
 } {
   const added: FlowNode[] = [];
   const removed: FlowNode[] = [];
   const modified: { before: FlowNode; after: FlowNode }[] = [];
+  const moved: { before: FlowNode; after: FlowNode }[] = [];
   for (const [id, node] of after) {
     if (!before.has(id)) {
       added.push(node);
@@ -274,11 +279,13 @@ function classifyFlowChanges(
   }
   for (const [id, node] of after) {
     const prev = before.get(id);
-    if (prev && nodeContentChanged(prev, node)) {
-      modified.push({ before: prev, after: node });
+    if (prev) {
+      const keys = changedNodeKeys(prev, node);
+      if (isMoveOnly(prev, node, keys)) moved.push({ before: prev, after: node });
+      else if (keys.length > 0) modified.push({ before: prev, after: node });
     }
   }
-  return { added, removed, modified };
+  return { added, removed, modified, moved };
 }
 
 function pluralNodes(n: number): string {
@@ -312,6 +319,7 @@ export function buildReplaceFlowTitle(options: {
   added?: FlowNode[];
   addedCount?: number;
   modified?: number;
+  moved?: number;
 }): string {
   const parts: string[] = [];
   if (options.removed > 0) {
@@ -329,6 +337,9 @@ export function buildReplaceFlowTitle(options: {
   if ((options.modified ?? 0) > 0) {
     parts.push(describeModifiedClause(options.modified ?? 0));
   }
+  if ((options.moved ?? 0) > 0) {
+    parts.push(`moves ${options.moved} ${pluralNodes(options.moved ?? 0)}`);
+  }
   const detail = parts.length ? parts.join(', ') : 'replaces nodes';
   const label = options.flowLabel?.trim();
   return label ? `Replace ${label}: ${detail}` : `Replace flow: ${detail}`;
@@ -338,9 +349,10 @@ function describeOneChange(changes: {
   added: FlowNode[];
   removed: FlowNode[];
   modified: { before: FlowNode; after: FlowNode }[];
+  moved: { before: FlowNode; after: FlowNode }[];
 }): string | undefined {
-  const { added, removed, modified } = changes;
-  const total = added.length + removed.length + modified.length;
+  const { added, removed, modified, moved } = changes;
+  const total = added.length + removed.length + modified.length + moved.length;
   if (total !== 1) {
     return undefined;
   }
@@ -355,6 +367,12 @@ function describeOneChange(changes: {
     const type = nodeTypeText(node.type);
     const name = nodeLabel(node);
     return name ? `Remove ${type} node ${quoteName(name)}` : `Remove ${type} node`;
+  }
+  if (moved[0]) {
+    const node = moved[0].after;
+    const type = nodeTypeText(node.type);
+    const name = nodeLabel(node);
+    return name ? `Move ${type} node ${quoteName(name)}` : `Move ${type} node`;
   }
   const pair = modified[0];
   if (!pair) return undefined;
@@ -439,7 +457,8 @@ export function autoGenerateProposalTitle(
   afterFlow: Partial<FlowTab>
 ): string {
   const changes = classifyFlowChanges(collectNodes(baseFlow ?? {}), collectNodes(afterFlow));
-  const total = changes.added.length + changes.removed.length + changes.modified.length;
+  const total =
+    changes.added.length + changes.removed.length + changes.modified.length + changes.moved.length;
   const label = flowLabelHint(afterFlow, baseFlow);
 
   if (total === 0) {
@@ -453,6 +472,7 @@ export function autoGenerateProposalTitle(
       removed: changes.removed.length,
       added: changes.added,
       modified: changes.modified.length,
+      moved: changes.moved.length,
     });
   }
 
@@ -487,6 +507,7 @@ export function titleFromDiffSummary(
     added?: number;
     removed?: number;
     modified?: number;
+    moved?: number;
   },
   options: {
     flowLabel?: string;
@@ -498,6 +519,7 @@ export function titleFromDiffSummary(
   const removed = Number(summary.removed) || 0;
   const added = Number(summary.added) || 0;
   const modified = Number(summary.modified) || 0;
+  const moved = Number(summary.moved) || 0;
   const stored = options.storedTitle?.trim() ?? '';
   const firstAddedType =
     typeof options.firstAddedType === 'string' && options.firstAddedType.trim()
@@ -516,14 +538,18 @@ export function titleFromDiffSummary(
       added: addedNodes,
       addedCount: added,
       modified,
+      moved,
     });
   }
-  const total = added + modified;
+  const total = added + modified + moved;
   if (total === 0) {
     return label ? `Update ${label}` : 'Update flow';
   }
   if (total === 1 && added === 1 && firstAddedType) {
     return ensureTitleIncludesFlowName(`Add ${firstAddedType} node`, label);
+  }
+  if (total === 1 && moved === 1) {
+    return label ? `Move node in ${label}` : 'Move node';
   }
   if (total === 1 && modified === 1) {
     return label ? `Edit node in ${label}` : 'Edit node';
@@ -596,11 +622,11 @@ export function sanitizeProposalTitle(raw: unknown): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-/** Relative `/ai-access#proposal=<id>` path (respects httpAdminRoot). */
+/** Relative `/ai-access#/proposals/<id>` path (respects httpAdminRoot). */
 export function buildProposalReviewPath(proposalId: string, httpAdminRoot?: string): string {
   const root = normalizeHttpAdminRoot(httpAdminRoot);
   const base = root === '/' ? '/ai-access' : `${root}/ai-access`;
-  return `${base}#proposal=${encodeURIComponent(proposalId)}`;
+  return `${base}#/proposals/${encodeURIComponent(proposalId)}`;
 }
 
 /**
@@ -659,6 +685,7 @@ export function presentProposal(
   proposal: Proposal,
   options: PresentProposalOptions = {}
 ): PresentedProposal {
+  proposal = normalizeProposalStatus(proposal);
   const title = resolveProposalTitle(proposal, options);
   const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
   const storedTitle = storedTitleOf(proposal) ?? title;
@@ -675,6 +702,16 @@ export function presentProposal(
               ? { chooser: proposal.conflictChoice.chooser }
               : {}),
           },
+        }
+      : {}),
+    ...(proposal.conflictChoices
+      ? {
+          conflictChoices: proposal.conflictChoices.map(({ nodeId, choice, fields, chooser }) => ({
+            nodeId,
+            choice,
+            fields,
+            chooser,
+          })),
         }
       : {}),
     title,
@@ -708,6 +745,9 @@ export function buildChangeSummary(proposal: Proposal): string {
     parts.push(
       changes.modified.length === 1 ? 'Edits 1 node' : `Edits ${changes.modified.length} nodes`
     );
+  }
+  if (changes.moved.length > 0) {
+    parts.push(`Moves ${changes.moved.length} ${pluralNodes(changes.moved.length)}`);
   }
   if (parts.length === 0) {
     return 'No node changes';
@@ -757,6 +797,12 @@ export function presentProposalForApi(
     baseRev: full.expectedRev,
     createdBy: presentCreatedByForApi(full.createdBy),
     changeSummary: buildChangeSummary(proposal),
+    changeCounts: proposalChangeCounts(
+      proposal,
+      options.liveFlows
+        ? nestedLiveTab(options.liveFlows, proposal.payload.flowId, proposal.payload.flow)
+        : undefined
+    ),
   };
   if (include.has('payload')) {
     lean.payload = full.payload;
@@ -779,6 +825,7 @@ export function presentProposalForApi(
   if (full.deployPending) lean.deployPending = full.deployPending;
   if (full.aiConflictOverrides) lean.aiConflictOverrides = full.aiConflictOverrides;
   if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;
+  if (full.conflictChoices) lean.conflictChoices = full.conflictChoices;
   if (full.rebase) {
     lean.rebase = full.rebase;
   }

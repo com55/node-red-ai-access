@@ -457,7 +457,7 @@ function registerProposalTools(
         'or the auto-generated title, which may already name the flow). ' +
         'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
-        'Humans approve on the /ai-access dashboard (reviewUrl opens/scrolls to it).',
+        'Humans approve on the /ai-access dashboard (reviewUrl opens its persistent detail page).',
       inputSchema: {
         type: z.literal('replace_flow').describe("Must be 'replace_flow'"),
         // Both optional in Zod so a missing rev yields our friendly
@@ -580,7 +580,8 @@ function registerListProposalsTools(
       .describe(
         'Filter by proposal status: one value, an array, or a comma-separated string ' +
           '(pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). ' +
-          'An empty array or empty string means no status filter.'
+          'pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. ' +
+          'Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter.'
       ),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
     limit: z
@@ -660,7 +661,7 @@ function registerListProposalsTools(
         'mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with ' +
         'limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return ' +
         'invalid_filter. Returns lean { proposals, total, … } with title, ' +
-        'displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). ' +
+        'displayName, reviewUrl, changeSummary, changeCounts (added, removed, modified, moved, conflict; no payload/baseFlow unless include_payload=true). ' +
         'Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).',
       inputSchema: listProposalsInputSchema,
     },
@@ -693,7 +694,7 @@ function registerProposalQueryTools(
     {
       description:
         'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
-        'open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. ' +
+        'pending proposals (including conflicts), conflictingProposals when other open work touches the same flow. ' +
         'baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
         'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
@@ -735,6 +736,7 @@ function registerProposalActionTools(
     {
       description:
         'Diff any proposal against its stored baseFlow snapshot (what changed). ' +
+        'Position-only changes appear in moved (before/after x/y), separately from modified property or wire changes. ' +
         'Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.',
       inputSchema: {
         id: z.string().min(1).describe('Proposal id (prop-…)'),
@@ -849,7 +851,7 @@ function registerProposalActionTools(
     'withdraw_proposal',
     {
       description:
-        'Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). ' +
+        'Withdraw one of YOUR pending proposals (including conflicts) (status becomes withdrawn, not rejected). ' +
         'Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. ' +
         'Cite displayName + reviewUrl when telling the user.',
       inputSchema: {

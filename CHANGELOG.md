@@ -8,28 +8,66 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Distinguish Moved nodes in proposal counts, summaries, titles, and position
+  diffs.
+- Review proposals in a dedicated Visual View with real flow nodes, related-node
+  expansion, editor positions, change diffs, and a deploy-type approval menu.
+- Filter proposal summaries by Pending, Conflict, Resolved, or All, with shared
+  numeric change counts and persistent detail links (`#/proposals/<id>`).
+
+### Changed
+
+- Keep conflicting proposals pending with `rebase.state: conflict`. Pending
+  filters/counts include conflicts; Conflict is a pending subset. Normalize the
+  deprecated stored `status: conflict` alias on read for API and MCP consumers.
+
+- Show Visual View node changes in a full-width drawer with aligned Split rows
+  and field-level Split/Unified controls.
+- Use shared inline SVG status icons across proposal lists and Visual View.
+- Replace dashboard sidebar navigation with a sticky header and mobile drawer.
+  Existing proposal links (`#proposal=<id>`) continue to open the detail page.
+
 ### Fixed
 
+- Show cached proposal lists immediately, coalesce review loads, and refresh
+  silently on focus without resetting unchanged Visual View state.
+
+- Replace decided proposals' approval controls with a history notice while
+  retaining the full Visual View.
+- Match the conflict drawer to the mockup: apply editor/proposed choices
+  immediately without confirmation or Re-check, retain per-node choices for
+  switching sides, and highlight chosen/rejected Split and Unified lines. Keep
+  conflict nodes amber and block approval until every conflict is resolved.
+
+- Stop Visual View move arrows at the outer edge of the highlight outline,
+  keeping arrows visible when the outline landing has room for the tip.
+- Draw Visual View ports from instance counts and registered node definitions,
+  including zero-input inject nodes and zero-output nodes in every view state.
+  Start move arrows at the ghost centre and paint them over the ghost.
+- Apply ghost styling to Visual View buttons, require finite numeric moves, and
+  clarify search counts, accessibility, touch hints, and review documentation.
+- Clarify the Moved status icon at badge size and draw purple move arrows
+  between node edges, behind nodes, hiding arrows for overlapping bodies or tiny
+  gaps.
+- Bound Visual View rendering and review diffs, restore complete proposal
+  search, and fix review controls, navigation, and narrow-screen behavior.
 - Support Home and End keys in the Access tokens base URL segmented control,
   skipping disabled options (#129).
-
 - Stop dashboard Public URL polling when leaving Settings and offer Refresh when
   the background check outlasts polling (#129).
-
 - Cancel Public URL probes during plugin cleanup and ignore late settings writes
   after disposal, including when the plugin is re-registered (#129).
-
 - Return immediately after saving a Public URL while serialized background
   checks keep only the latest matching result. Refresh dashboard check results
   and OAuth warnings when checks finish, and match persistent warning text in
   the editor sidebar (#129).
-
 - Skip the Public URL probe when clearing the URL and clear persisted check
   metadata so stale failures are removed (#129).
 - Persist Public URL probe results only for the current validated settings
   origin, preserving saved failures and OAuth warnings when other URLs are
   checked (#129).
-
 - Use thin theme-accent focus rings only for keyboard focus on dashboard
   navigation, details summaries, and buttons.
 - Recover dashboard editor jumps when the last-focused editor tab has closed or
@@ -64,6 +102,21 @@ and this project adheres to
 
 - Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
   switches.
+
+## [0.2.0-beta.14] - 2026-11-11
+
+- Add a Visual View on the proposal detail page for reviewing flow changes on a
+  Node-RED-like canvas, with compact and editor-position layouts, related nodes,
+  and change diffs.
+- Approve proposals from a Deploy-style split button that chooses the deployment
+  type.
+- Distinguish Moved (position-only) nodes from Modified, with shared inline SVG
+  status icons and purple move arrows from the old-position ghost to the
+  highlight outline.
+- Draw input and output ports from the registered node type, so inject has no
+  input port and debug has no output port.
+- Split dashboard, REST, MCP, OAuth, and configuration documentation out of the
+  README.
 
 ## [0.2.0-beta.13] - 2026-11-10
 

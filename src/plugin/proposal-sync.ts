@@ -1,13 +1,14 @@
 /**
  * Keep open proposals in step with the live flows:
  * - TTL expiry (configurable, default 7 days) closes old open proposals.
- * - Auto-rebase re-checks every open proposal against the live rev and flips
- *   `pending` ↔ `conflict` (never closes a proposal because the rev moved).
+ * - Auto-rebase re-checks every open proposal against the live rev and records
+ *   `rebase.state` (status stays `pending`) (never closes a proposal because the rev moved).
  */
 
 import type { FlowAdapter, FlowsSnapshot } from '../runtime/types.js';
 import {
   isOpenProposalStatus,
+  proposalHasConflict,
   type Proposal,
   type ProposalRebaseInfo,
   type ProposalStore,
@@ -156,7 +157,7 @@ export function rebaseOpenProposalsWith(
       }
       const { proposal: updated } = syncOneProposal(store, proposal, live);
       summary.checked += 1;
-      if (updated.status === 'conflict') summary.conflicts += 1;
+      if (proposalHasConflict(updated)) summary.conflicts += 1;
     } catch {
       // Corrupt / racing record — skip.
     }

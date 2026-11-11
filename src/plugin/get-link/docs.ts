@@ -174,7 +174,7 @@ when it does not name the flow), \`storedTitle\` (the title as saved: your title
 \` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
 \`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
-Host is known), and \`reviewPath\` (relative \`/ai-access#proposal=<id>\`).
+Host is known), and \`reviewPath\` (relative \`/ai-access#/proposals/<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
 \`displayName\` + \`reviewUrl\` — not the raw id.**
 
@@ -239,8 +239,10 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 8. Optional: \`GET ./proposals/<id>/diff\` (default \`format=summary\` compact
    line hunks + byte sizes; \`format=full\` for complete text) against the
    **base snapshot** stored at submit. Added/removed nodes are presence blocks
-   with a summary sentence; open proposals include \`rebase\` and \`liveChanges\`; \`vsCurrent\` shows the merged deployment when there are no conflicts.
-9. Withdraw your own open (pending or conflict) proposal:
+   with a summary sentence. Position-only changes are \`moved\` (before/after x/y),
+   separate from modified property or wire changes; \`changeCounts.moved\` and
+   \`changeSummary\` report moves separately. Open proposals include \`rebase\` and \`liveChanges\`; \`vsCurrent\` shows the merged deployment when there are no conflicts.
+9. Withdraw your own pending proposal (including one with conflicts):
    \`GET ./proposals/<id>/withdraw?confirm=1&reason=<text>\` (status becomes \`withdrawn\`,
    not \`rejected\`). Only the link that created a proposal can withdraw it;
    others get \`403 proposal_not_owned\`. If the token is lost, an admin with full permission can withdraw using an authenticated dashboard session via \`POST /mcp/api/v1/proposals/<id>/withdraw\`; this recovery is audit-logged.
@@ -248,7 +250,11 @@ GET ./propose?flow=<flowId>&rev=<rev>&patch=<base64url-json>&title=<text>
 **Recommended edit loop:** summary → search → read a line range →
 \`replace_text\` → propose.
 
-On submit and on read of an open (pending or conflict) proposal, the response may include
+Conflicts keep \`status: pending\` and set \`rebase.state: conflict\`.
+The Pending filter includes them; the Conflict filter selects that pending subset.
+Legacy stored \`status: conflict\` rows are normalized to pending plus the conflict signal.
+
+On submit and on read of a pending proposal (including one with conflicts), the response may include
 \`conflictingProposals\` (overlapping open work; list omits this) with
 \`overlappingNodeIds\` / \`overlappingFields\` when detectable — treat like a
 git conflict warning; prefer one pending change per flow when possible.

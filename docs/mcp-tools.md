@@ -45,7 +45,7 @@ Get detail for one installed node type: defaults (JSON), inputs/outputs (always 
 
 ## `get_proposal`
 
-Get any proposal by id (all tokens can read). Response includes mine:true|false and, for open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
+Get any proposal by id (all tokens can read). Response includes mine:true|false and, for pending proposals (including conflicts), conflictingProposals when other open work touches the same flow. baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -54,7 +54,7 @@ Get any proposal by id (all tokens can read). Response includes mine:true|false 
 
 ## `get_proposal_diff`
 
-Diff any proposal against its stored baseFlow snapshot (what changed). Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.
+Diff any proposal against its stored baseFlow snapshot (what changed). Position-only changes appear in moved (before/after x/y), separately from modified property or wire changes. Optional format=summary|full (default summary). Open proposals include rebase and liveChanges; conflict blocks approval, otherwise vsCurrent shows the merged deployment.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@ Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this 
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter. |
 
 ## `list_node_types`
 
@@ -96,7 +96,7 @@ List installed Node-RED palette node types (type, module, category, description,
 
 ## `list_proposals`
 
-List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return invalid_filter. Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary (no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
+List proposals visible to this access link (all proposals by default). Each item includes mine:true|false for the caller. Filter with mine, status, and/or flowId; paginate with limit/offset (response includes total, offset, hasMore, nextOffset). Invalid filters return invalid_filter. Returns lean { proposals, total, … } with title, displayName, reviewUrl, changeSummary, changeCounts (added, removed, modified, moved, conflict; no payload/baseFlow unless include_payload=true). Prefer displayName + reviewUrl when referring to a proposal with the user (not the raw id).
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -105,7 +105,7 @@ List proposals visible to this access link (all proposals by default). Each item
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter. |
 
 ## `resolve_proposal_conflict`
 
@@ -139,7 +139,7 @@ Search the public Node-RED catalogue for modules to recommend. Returns module id
 
 ## `submit_proposal`
 
-Submit a replace_flow proposal for owner approval (does not deploy). Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", node, field, find, replace, occurrence? }] } — find must be unique unless occurrence (1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). Inputs (all top-level, next to each other): type="replace_flow", expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. Do not nest expectedRev inside payload. Secret values appear as "[REDACTED]" in reads; leave the placeholder unchanged to keep the stored secret (it is restored on submit), or replace it with a new value to change it. Payload size limit is 1500000 bytes (413 if exceeded). Recent known expectedRev snapshots are accepted and auto-rebased; unknown revisions return 409 version_mismatch. Open proposals auto-rebase on revision changes; conflict blocks approval until resolved. Proposals expire after the configured TTL (default 7 days). replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / search_palette and ask the user to install via Manage palette (never auto-install). Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; title may gain " in <flow>"; storedTitle is the title as saved (your title without that suffix, or the auto-generated title, which may already name the flow). Pass include_payload=true to include payload and baseFlow. When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. Humans approve on the /ai-access dashboard (reviewUrl opens/scrolls to it).
+Submit a replace_flow proposal for owner approval (does not deploy). Preferred for small string edits: payload: { flowId, nodes: [{ op:"replace_text", node, field, find, replace, occurrence? }] } — find must be unique unless occurrence (1-based) is set; multiple replace_text ops apply in order; yields a short readable diff. Or send a full tab: payload.flow from get_flow (id, type, label?, nodes[], configs?). Inputs (all top-level, next to each other): type="replace_flow", expectedRev (required string from list_flows/get_flow rev; expected_rev alias accepted), optional title (≤80 chars), and payload: { flowId, flow? } and/or payload.nodes / top-level nodes. Do not nest expectedRev inside payload. Secret values appear as "[REDACTED]" in reads; leave the placeholder unchanged to keep the stored secret (it is restored on submit), or replace it with a new value to change it. Payload size limit is 1500000 bytes (413 if exceeded). Recent known expectedRev snapshots are accepted and auto-rebased; unknown revisions return 409 version_mismatch. Open proposals auto-rebase on revision changes; conflict blocks approval until resolved. Proposals expire after the configured TTL (default 7 days). replace_text errors: 400 text_not_found; 409 ambiguous_match with matchCount. Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / search_palette and ask the user to install via Manage palette (never auto-install). Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; title may gain " in <flow>"; storedTitle is the title as saved (your title without that suffix, or the auto-generated title, which may already name the flow). Pass include_payload=true to include payload and baseFlow. When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. Humans approve on the /ai-access dashboard (reviewUrl opens its persistent detail page).
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -153,7 +153,7 @@ Submit a replace_flow proposal for owner approval (does not deploy). Preferred f
 
 ## `withdraw_proposal`
 
-Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. Cite displayName + reviewUrl when telling the user.
+Withdraw one of YOUR pending proposals (including conflicts) (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. Cite displayName + reviewUrl when telling the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

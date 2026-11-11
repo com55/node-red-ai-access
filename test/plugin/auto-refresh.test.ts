@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { editorRevealListenerScript } from '../../src/plugin/editor-sidebar.js';
 import { consentScript } from '../../src/plugin/oauth-consent-script.js';
+import { pageClientIconsScript } from '../../src/plugin/page-client-icons.js';
 import {
   pageClientAutoRefreshScript,
   pageClientEditorJumpScript,
@@ -420,6 +421,7 @@ describe('dashboard → editor jump links', () => {
   it('renders the dashboard toast as a status and removes it after four seconds', () => {
     class Element {
       children: Element[] = [];
+      innerHTML = '';
       parentNode: Element | null = null;
       attributes: Record<string, string> = {};
       setAttribute(key: string, value: string) {
@@ -440,10 +442,12 @@ describe('dashboard → editor jump links', () => {
     const start = script.indexOf('  function showToast(');
     const end = script.indexOf('\n  }', start) + 4;
     runInNewContext(
-      script.slice(start, end) +
-        "\nshowToast('✓ Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000 });",
+      pageClientIconsScript() +
+        script.slice(start, end) +
+        "\nshowToast('Sent to Node-RED editor — switch to the editor tab to see this node', true, { durationMs: 4000, icon: 'resolved' });",
       {
         $: () => host,
+        esc: (value: string) => value,
         document: { createElement: () => new Element() },
         setTimeout: (callback: () => void, ms: number) => {
           dismiss = callback;
@@ -452,6 +456,7 @@ describe('dashboard → editor jump links', () => {
       }
     );
     expect(host.children[0]?.attributes.role).toBe('status');
+    expect(host.children[0]?.children[0]?.innerHTML).toContain('data-icon="resolved"');
     expect(duration).toBe(4000);
     dismiss!();
     expect(host.children).toHaveLength(0);
@@ -487,9 +492,9 @@ describe('dashboard → editor jump links', () => {
     await new Promise(r => setTimeout(r, 500));
     expect(h.stored.has(key)).toBe(false);
     expect(h.toasts).toEqual([
-      '✓ Sent to Node-RED editor — switch to the editor tab to see this node',
+      'Sent to Node-RED editor — switch to the editor tab to see this node',
     ]);
-    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000 } }]);
+    expect(h.toastOptions).toEqual([{ ok: true, opts: { durationMs: 4000, icon: 'resolved' } }]);
     expect(h.opened).toEqual([]);
   });
 
@@ -575,7 +580,9 @@ function proposalsHarness() {
     'sameAsLastRender',
     'proposalFlowId',
     'loadProposals',
+    'loadProposalsInner',
     'doApproveProposal',
+    'setProposalActionPending',
   ]
     .map(n => extractFn(src, n))
     .join('\n');
@@ -592,11 +599,12 @@ function proposalsHarness() {
       new Promise(resolve => {
         pending.push({ path, resolve });
       }),
-    refreshFlowLabels: () => Promise.resolve(),
+    readProposalHashId: () => '',
     $: () => ({}),
     showFlash() {},
     updatePendingBadges() {},
     preserveUiState: (_c: unknown, fn: () => void) => fn(),
+    document: { querySelectorAll: () => [] },
     approveGate: null as null | { resolve: () => void },
     doApproveProposalInner: () =>
       new Promise<void>(resolve => {
@@ -604,10 +612,11 @@ function proposalsHarness() {
       }),
   };
   runInNewContext(
-    `var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0;
+    `var proposalListNeedsRender = false, proposalsLoadPromise = null, proposalsLoaded = false, proposalListSignatures = {}, deployUnknownBlocks = [];
+     var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0, proposalActionPending = Object.create(null);
      var DECIDED_PAGE_SIZE = 20, DECIDED_STATUSES = 'approved', decidedLoaded = 0,
        decidedTotal = 0, decidedHasMore = false, cachedProposals = [], cachedFlowLabels = {};
-     function renderProposalsList() { out.render(cachedProposals.map(function (p) { return p.id; })); }
+     function renderProposalsList() { proposalListNeedsRender = false; out.render(cachedProposals.map(function (p) { return p.id; })); }
      ${fns}
      out.load = loadProposals; out.approve = doApproveProposal;
      out.inFlight = function () { return proposalActionsInFlight; };
@@ -633,16 +642,16 @@ describe('dashboard loaders: stale responses and in-flight actions', () => {
     const h = proposalsHarness();
     const first = h.out.load!();
     await flush();
-    const second = h.out.load!();
+    const second = h.out.load!({ force: true });
     await flush();
-    // pending: first/pending, second/pending
-    const [p1, p2] = [h.pending.shift()!, h.pending.shift()!];
+    // Each load starts pending + decided together. A forced post-write refresh
+    // supersedes the older pair, even if its responses arrive last.
+    const [p1, d1, p2, d2] = h.pending.splice(0);
     p2.resolve({ proposals: [{ id: 'new', status: 'pending' }] });
+    d2.resolve({ proposals: [] });
     await flush();
-    await h.answer([]); // second decided
     p1.resolve({ proposals: [{ id: 'old', status: 'pending' }] });
-    await flush();
-    await h.answer([]); // first decided — arrives last
+    d1.resolve({ proposals: [] });
     await Promise.all([first, second]);
     expect(h.rendered).toEqual([['new']]);
   });

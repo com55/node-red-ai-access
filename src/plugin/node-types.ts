@@ -109,8 +109,8 @@ export interface NodeTypeDetail {
   enabled?: boolean;
   category?: string;
   color?: string;
-  inputs: number;
-  outputs: number;
+  inputs?: number;
+  outputs?: number;
   /** Property defaults from registerType (JSON values, not raw JS source). */
   defaults?: Record<string, unknown> | null;
   requiredConfigNodeTypes?: string[];
@@ -879,6 +879,7 @@ function extractBalancedObject(text: string): string | null {
   let depth = 0;
   let inStr: '"' | "'" | '`' | null = null;
   let escaped = false;
+  let canStartRegex = true;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (inStr) {
@@ -892,13 +893,51 @@ function extractBalancedObject(text: string): string | null {
       }
       if (ch === inStr) {
         inStr = null;
+        canStartRegex = false;
       }
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '/') {
+      while (i + 1 < text.length && !/[\r\n]/.test(text[i + 1]!)) i++;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end < 0) return null;
+      i = end + 1;
+      continue;
+    }
+    if (ch === '/' && canStartRegex) {
+      let inClass = false;
+      for (i++; i < text.length; i++) {
+        const part = text[i];
+        if (part === '\\') {
+          i++;
+        } else if (part === '[') {
+          inClass = true;
+        } else if (part === ']') {
+          inClass = false;
+        } else if (part === '/' && !inClass) {
+          break;
+        }
+      }
+      while (/[a-z]/i.test(text[i + 1] ?? '')) i++;
+      canStartRegex = false;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === '`') {
       inStr = ch;
       continue;
     }
+    if (ch && /[a-zA-Z_$]/.test(ch)) {
+      const start = i;
+      while (/[\w$]/.test(text[i + 1] ?? '')) i++;
+      canStartRegex = /^(return|throw|case|delete|void|typeof|new|in|of|yield|await|else|do)$/.test(
+        text.slice(start, i + 1)
+      );
+      continue;
+    }
+    if (!ch || /\s/.test(ch)) continue;
     if (ch === '{') {
       depth += 1;
     } else if (ch === '}') {
@@ -907,6 +946,8 @@ function extractBalancedObject(text: string): string | null {
         return text.slice(0, i + 1);
       }
     }
+    // Values and closing delimiters imply division; operators expect an expression.
+    canStartRegex = /[([{:;,=!?&|+*%~^<>/-]/.test(ch);
   }
   return null;
 }
@@ -1322,8 +1363,6 @@ export async function getNodeTypeDetail(
     type,
     module: exact.set.module,
     setId: exact.setId,
-    inputs: 1,
-    outputs: 1,
     defaults: null,
   };
   if (exact.set.version) {
@@ -1350,8 +1389,8 @@ export async function getNodeTypeDetail(
           if (parsed.color) {
             detail.color = parsed.color;
           }
-          detail.inputs = parsed.inputs ?? detail.inputs;
-          detail.outputs = parsed.outputs ?? detail.outputs;
+          if (parsed.inputs !== undefined) detail.inputs = parsed.inputs;
+          if (parsed.outputs !== undefined) detail.outputs = parsed.outputs;
           if (parsed.defaults && Object.keys(parsed.defaults).length > 0) {
             detail.defaults = parsed.defaults;
           } else {

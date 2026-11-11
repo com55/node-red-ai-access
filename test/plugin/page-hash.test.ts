@@ -22,6 +22,7 @@ describe('tabFromHash', () => {
     expect(tabFromHash('#status')).toBe('status');
     expect(tabFromHash('#links')).toBe('links');
     expect(tabFromHash('#proposals')).toBe('proposals');
+    expect(tabFromHash('#/proposals')).toBe('proposals');
     expect(tabFromHash('#audit')).toBe('logs');
     expect(tabFromHash('#logs')).toBe('logs');
     expect(tabFromHash('audit')).toBe('logs');
@@ -36,8 +37,17 @@ describe('tabFromHash', () => {
 });
 
 describe('readProposalHashId', () => {
-  it('decodes #proposal=<id> only', () => {
+  it('decodes canonical detail URLs and legacy aliases', () => {
+    expect(readProposalHashId('#/proposals/prop-1')).toBe('prop-1');
+    expect(readProposalHashId('#/proposals/a%2Fb')).toBe('a/b');
+    expect(readProposalHashId('#/proposals/%invalid')).toBe('');
+    expect(readProposalHashId('#/proposals/')).toBe('');
+    expect(readProposalHashId('#/proposals/a/extra')).toBe('');
     expect(readProposalHashId('#proposal=prop-1')).toBe('prop-1');
+    expect(readProposalHashId('#proposal=prop-1&tab=review')).toBe('prop-1');
+    expect(readProposalHashId('#proposal=')).toBe('');
+    expect(readProposalHashId('#proposal=&tab=review')).toBe('');
+    expect(readProposalHashId('#/proposals/prop-1/')).toBe('prop-1');
     expect(readProposalHashId('#proposal=a%2Fb')).toBe('a/b');
     expect(readProposalHashId('#proposals')).toBe('');
     expect(readProposalHashId('#status')).toBe('');
@@ -48,6 +58,7 @@ describe('readProposalHashId', () => {
 describe('initialTabFromHash', () => {
   it('prefers proposal deep link, then tab fragment, else status', () => {
     expect(initialTabFromHash('#proposal=x')).toBe('proposals');
+    expect(initialTabFromHash('#/proposals/x')).toBe('proposals');
     expect(initialTabFromHash('#audit')).toBe('logs');
     expect(initialTabFromHash('#links')).toBe('links');
     expect(initialTabFromHash('')).toBe('status');

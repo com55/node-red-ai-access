@@ -6,6 +6,20 @@ import { buildProposalDiff } from '../../src/plugin/proposal-diff.js';
 import type { Proposal } from '../../src/storage/proposals.js';
 
 describe('diffLines', () => {
+  it.each([1100, 2001])('falls back to whole blocks above the LCS limits (%s lines)', length => {
+    const before = Array.from({ length }, (_, i) => 'old-' + i).join('\n');
+    const after = length > 2000 ? 'small' : before.replaceAll('old-', 'new-');
+    expect(diffLines(before, after)).toEqual([
+      { op: 'remove', text: before },
+      { op: 'add', text: after },
+    ]);
+    expect(diffLines(before, before)).toEqual([{ op: 'equal', text: before }]);
+    if (length > 2000) {
+      expect(diffLines('', before)).toEqual([{ op: 'add', text: before }]);
+      expect(diffLines(before, '')).toEqual([{ op: 'remove', text: before }]);
+    }
+  });
+
   it('marks equal lines', () => {
     expect(diffLines('a\nb', 'a\nb')).toEqual([
       { op: 'equal', text: 'a' },
