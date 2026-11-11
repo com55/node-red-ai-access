@@ -31,6 +31,8 @@ and this project adheres to
 
 ### Fixed
 
+- Use registered Node-RED palette icons and editor text sizing on the Visual
+  View canvas, preserving node centres in Editor positions mode.
 - Show cached proposal lists immediately, coalesce review loads, and refresh
   silently on focus without resetting unchanged Visual View state.
 

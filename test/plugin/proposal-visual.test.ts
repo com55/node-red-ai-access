@@ -19,15 +19,19 @@ function browserHelpers(
   elements: Record<string, any> = {},
   articles: any[] = [],
   matchMedia?: (query: string) => { matches: boolean },
-  resizeObserver?: any
+  resizeObserver?: any,
+  environment: { canvas?: any; red?: any; editorRoot?: string } = {}
 ) {
   const preferences = new Map<string, string>();
   const context = {
     ResizeObserver: resizeObserver,
     document: {
+      createElement: environment.canvas
+        ? () => ({ getContext: () => environment.canvas })
+        : undefined,
       getElementById: (id: string) =>
         id === 'mcp-root'
-          ? { getAttribute: () => '{}' }
+          ? { getAttribute: () => JSON.stringify({ editorRoot: environment.editorRoot }) }
           : (elements[id] ?? {
               addEventListener: vi.fn(),
               setAttribute: vi.fn(),
@@ -40,7 +44,7 @@ function browserHelpers(
       querySelectorAll: (selector: string) => (selector === '.proposal-detail' ? articles : []),
       addEventListener: vi.fn(),
     },
-    window: { addEventListener: vi.fn(), matchMedia },
+    window: { addEventListener: vi.fn(), matchMedia, RED: environment.red },
     location: { hash: '#proposals' },
     localStorage: {
       getItem: (key: string) => preferences.get(key),
@@ -52,7 +56,7 @@ function browserHelpers(
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal, renderProposalCard,
+      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
@@ -114,6 +118,249 @@ function viewState() {
 }
 
 const centres = (visible: any) => visible.nodes.map((n: any) => [n.id, n.px, n.py]);
+
+describe('Visual View palette icons and editor sizing', () => {
+  function graphNode(ui: any, raw: Record<string, unknown>) {
+    return ui.visualGraph(
+      { payload: { flow: { nodes: [{ id: 'n', type: 'function', ...raw }] } } },
+      {}
+    ).byId.n;
+  }
+
+  it.each([
+    ['inject', 'inject.svg'],
+    ['function', 'function.svg'],
+    ['debug', 'debug.svg'],
+    ['change', 'swap.svg'],
+    ['switch', 'switch.svg'],
+    ['http in', 'white-globe.svg'],
+    ['http response', 'white-globe.svg'],
+    ['link in', 'link-out.svg'],
+    ['link out', 'link-out.svg'],
+    ['catch', 'alert.svg'],
+    ['comment', 'comment.svg'],
+    ['complete', 'alert.svg'],
+  ])(
+    'upgrades %s from its fallback to a registered palette image on nodes and ghosts',
+    (type, icon) => {
+      const ui = browserHelpers();
+      const raw = { type, x: 360, y: 200 };
+      let n = graphNode(ui, raw);
+      expect(ui.visualNodeSvg(n, {}, false)).toContain('visual-icon-fallback');
+      expect(ui.visualNodeSvg(n, {}, false)).not.toContain('<image');
+      ui.setTypeMetadata(type, { module: 'node-red', icon });
+      n = graphNode(ui, raw);
+      for (const ghost of [false, true]) {
+        const html = ui.visualNodeSvg({ ...n, kind: 'moved', old: { x: 0, y: 0 } }, {}, ghost);
+        expect(html).toContain('href="/icons/node-red/' + icon + '"');
+        expect(html).toContain(
+          'class="visual-icon-image" x="' +
+            (type === 'debug' ? n.w - 30 : 0) +
+            '" y="0" width="30" height="30"'
+        );
+      }
+    }
+  );
+
+  it('resolves module-qualified, scoped, admin-root and legacy icon paths', () => {
+    const ui = browserHelpers({}, [], undefined, undefined, { editorRoot: '/red/' });
+    expect(ui.visualIconUrls({ icon: 'function.svg', module: 'node-red' })).toEqual([
+      '/red/icons/node-red/function.svg',
+    ]);
+    expect(ui.visualIconUrls({ icon: '@example/nodes/custom.svg' })[0]).toBe(
+      '/red/icons/%40example/nodes/custom.svg'
+    );
+    expect(ui.visualIconUrls({ icon: '/red/icons/node-red/function.svg' })[0]).toBe(
+      '/red/icons/node-red/function.svg'
+    );
+    expect(ui.visualIconUrls({ icon: 'swap.png', module: 'contrib' })).toEqual([
+      '/red/icons/contrib/swap.png',
+      '/red/icons/contrib/swap.svg',
+      '/red/icons/node-red/swap.png',
+      '/red/icons/node-red/swap.svg',
+    ]);
+  });
+
+  it.each([
+    undefined,
+    'font-awesome/fa-bolt',
+    'fa fa-bolt',
+    'https://example.com/icon.svg',
+    '../icon.svg',
+    '/unrelated/icon.svg',
+  ])('keeps the typed fallback for unsupported icon %s', icon => {
+    const ui = browserHelpers();
+    ui.setTypeMetadata('custom', { icon, module: 'contrib' });
+    const html = ui.visualNodeSvg(graphNode(ui, { type: 'custom' }), {}, false);
+    expect(html).toContain('visual-icon-fallback');
+    expect(html).not.toContain('<image');
+  });
+
+  it('replaces the fallback only after a successful image load and retains it on errors', () => {
+    const ui = browserHelpers();
+    const fallback = { setAttribute: vi.fn() };
+    const attributes: Record<string, string> = {
+      'data-icon-urls': JSON.stringify([
+        '/icons/contrib/missing.svg',
+        '/icons/node-red/missing.svg',
+      ]),
+      'data-icon-index': '0',
+      visibility: 'hidden',
+    };
+    const image = {
+      classList: { contains: (value: string) => value === 'visual-icon-image' },
+      parentNode: { querySelector: () => fallback },
+      getAttribute: (key: string) => attributes[key],
+      setAttribute: (key: string, value: string) => {
+        attributes[key] = String(value);
+      },
+      removeAttribute: (key: string) => {
+        delete attributes[key];
+      },
+    };
+    ui.visualIconEvent({ type: 'error', target: image });
+    expect(attributes.href).toBe('/icons/node-red/missing.svg');
+    ui.visualIconEvent({ type: 'error', target: image });
+    expect(attributes.visibility).toBe('hidden');
+    expect(fallback.setAttribute).not.toHaveBeenCalled();
+    ui.visualIconEvent({ type: 'load', target: image });
+    expect(fallback.setAttribute).toHaveBeenCalledWith('visibility', 'hidden');
+    expect(attributes).not.toHaveProperty('visibility');
+  });
+
+  it('uses the registered alignment and vertically centres the icon for tall nodes', () => {
+    const ui = browserHelpers();
+    ui.setTypeMetadata('custom', {
+      module: 'contrib',
+      icon: 'custom.svg',
+      align: 'right',
+      outputs: 4,
+    });
+    const n = graphNode(ui, { type: 'custom' });
+    const html = ui.visualNodeSvg(n, {}, false);
+    expect(html).toContain(
+      'class="visual-icon-image" x="' + (n.w - 30) + '" y="15" width="30" height="30"'
+    );
+    expect(html).toContain('text-anchor="end"');
+    expect(html).not.toContain('width="32" height="26"');
+  });
+
+  it('uses both registered link-out icons according to the instance mode', () => {
+    const ui = browserHelpers();
+    ui.setTypeMetadata('link out', { module: 'node-red', icon: 'link-out.svg', align: 'right' });
+    for (const mode of ['link', 'return']) {
+      const n = graphNode(ui, { type: 'link out', mode });
+      expect(ui.visualNodeSvg(n, {}, false)).toContain(
+        '/icons/node-red/link-' + (mode === 'return' ? 'return' : 'out') + '.svg'
+      );
+    }
+  });
+
+  it.each([
+    ['i', 0, 0, 100, 30],
+    ['i', 1, 1, 100, 30],
+    ['MMMM', 0, 1, 100, 30],
+    ['MMMM', 1, 1, 120, 30],
+    ['iiiiiiiiiiii', 1, 2, 100, 30],
+    ['MMMMMMMMMMMM', 1, 4, 200, 60],
+    ['Format payload', 1, 3, 160, 45],
+    ['msg.payload', 1, 0, 140, 30],
+  ])(
+    'sizes %s with inputs=%s outputs=%s using editor advances and 20px snapping',
+    (name, inputs, outputs, w, h) => {
+      const ui = browserHelpers();
+      const n = graphNode(ui, { name, inputs, outputs });
+      expect(n).toMatchObject({ w, h });
+      expect(n.w % 20).toBe(0);
+    }
+  );
+
+  it('measures actual browser text at 14px Arial and refreshes sizing when ports arrive', () => {
+    const canvas = { font: '', measureText: vi.fn(() => ({ width: 46.65 })) };
+    const ui = browserHelpers({}, [], undefined, undefined, { canvas });
+    let n = graphNode(ui, { type: 'custom', name: 'MMMM', inputs: 0 });
+    expect(n).toMatchObject({ w: 100, h: 30 });
+    expect(canvas.font).toBe('14px Arial');
+    expect(canvas.measureText).toHaveBeenCalledWith('MMMM');
+    ui.setTypeMetadata('custom', { inputs: 1, outputs: 4 });
+    n = graphNode(ui, { type: 'custom', name: 'MMMM' });
+    expect(n).toMatchObject({ w: 120, h: 60 });
+  });
+
+  it('keeps proportional advances and kerning without Canvas', () => {
+    const ui = browserHelpers();
+    expect(ui.visualTextWidth('MMMM')).toBeCloseTo(46.6484375);
+    expect(ui.visualTextWidth('iiiiiiiiiiii')).toBeCloseTo(37.32421875);
+    expect(ui.visualTextWidth('AVATAR')).toBeCloseTo(51.857421875);
+    expect(ui.visualTextWidth('To')).toBeCloseTo(14.7861328125);
+  });
+
+  it.each([
+    [{ type: 'debug', complete: 'true' }, 'msg'],
+    [{ type: 'debug', complete: 'topic' }, 'msg.topic'],
+    [{ type: 'debug' }, 'msg.payload'],
+    [{ type: 'inject', payloadType: 'date' }, 'timestamp'],
+    [{ type: 'inject', name: 'Every 5s', repeat: '5' }, 'Every 5s\t↻'],
+    [{ type: 'http response', statusCode: 201 }, 'http (201)'],
+  ])('sizes the editor label for %j', (raw, name) => {
+    const ui = browserHelpers();
+    const n = graphNode(ui, raw);
+    expect(n.name).toBe(name);
+    expect(n.w).toBe(
+      Math.max(100, 20 * Math.ceil((ui.visualTextWidth(name) + 50 + (n.input ? 7 : 0)) / 20))
+    );
+  });
+
+  it('reads live editor labels, icons and alignment when the registry is available', () => {
+    const definition = { icon: 'palette.svg', align: 'right' };
+    const getNodeLabel = vi.fn(() => 'Dynamic palette label');
+    const getNodeIcon = vi.fn(() => '/icons/node-red/function.svg');
+    const red = { nodes: { getType: () => definition }, utils: { getNodeLabel, getNodeIcon } };
+    const ui = browserHelpers({}, [], undefined, undefined, { red });
+    const n = graphNode(ui, { name: 'Custom', x: 0, y: 0 });
+    expect(n).toMatchObject({
+      name: 'Dynamic palette label',
+      icon: '/icons/node-red/function.svg',
+      align: 'right',
+    });
+    expect(getNodeLabel.mock.calls[0]![0]).toMatchObject({ name: 'Custom', _def: definition });
+    expect(ui.visualNodeSvg(n, {}, false)).toContain('font-style="italic"');
+  });
+
+  it('preserves all editor centres, including zero and negative coordinates and move ghosts', () => {
+    const ui = browserHelpers();
+    const before = {
+      nodes: [
+        { id: 'a', type: 'function', x: 0, y: -30, name: 'MMMM', wires: [['b']] },
+        { id: 'b', type: 'debug', x: -120, y: 0 },
+      ],
+    };
+    const after = { nodes: [{ ...before.nodes[0], x: 340, y: 200 }, before.nodes[1]] };
+    const graph = ui.visualGraph(
+      { baseFlow: before, payload: { flow: after } },
+      buildDiffSections(after, before)
+    );
+    const state = { ...viewState(), layout: 'editor', positions: { a: { x: 999, y: 999 } } };
+    const visible = ui.visualVisible(graph, state);
+    expect(centres(visible)).toEqual([
+      ['b', -120, 0],
+      ['a', 340, 200],
+    ]);
+    for (const n of visible.nodes) {
+      expect(ui.visualNodeSvg(n, state, false)).toContain(
+        'transform="translate(' + (n.raw.x - n.w / 2) + ',' + (n.raw.y - n.h / 2) + ')"'
+      );
+    }
+    const a = graph.byId.a;
+    expect(ui.visualNodeSvg(a, state, true)).toContain(
+      'transform="translate(' + -a.w / 2 + ',' + (-30 - a.h / 2) + ')"'
+    );
+    const compact = ui.visualVisible(graph, viewState());
+    const left = compact.byId.a,
+      right = compact.byId.b;
+    expect(right.px - right.w / 2 - (left.px + left.w / 2)).toBe(65);
+  });
+});
 
 describe('Visual View geometry', () => {
   const moveGeometry = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveGeometry;');

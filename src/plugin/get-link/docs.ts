@@ -266,7 +266,9 @@ Before proposing unfamiliar nodes:
 1. \`GET ./node-types?q=<text>\` — list installed palette types (filter optional;
    results capped; may include \`truncated\` / \`total\`).
 2. \`GET ./node-types/<type>\` — detail (\`defaults\` as JSON, \`inputs\`/\`outputs\`,
-   \`requiredConfigNodeTypes\`, help sections). Pass \`?help=0\` to omit help.
+   \`requiredConfigNodeTypes\`, help sections, palette \`color\`/\`icon\`/\`align\`
+   when available). Icons are registered filenames or module/file identifiers;
+   dynamic icons may be omitted. Pass \`?help=0\` to omit help.
    Types are **case-sensitive** (\`Debug\` → did you mean \`debug\`?).
 3. \`GET ./palette/search?q=<text>\` — search the public Node-RED catalogue.
    **Recommend only** — ask the user to install via **Manage palette**, then

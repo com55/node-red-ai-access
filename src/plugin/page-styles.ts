@@ -1347,7 +1347,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .visual-canvas-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; }
 .visual-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
 .visual-canvas:active { cursor: grabbing; }
-.visual-node text { font-family: "Helvetica Neue", Arial, Helvetica, sans-serif; }
+.visual-node text { font-family: Arial, Helvetica, sans-serif; }
 .visual-node.changed, .visual-run, .visual-collapse { cursor: pointer; }
 .visual-node:focus-visible .change-outline { stroke-width: 4px; }
 .context-node { opacity: .55; }

@@ -816,7 +816,7 @@ paths:
       summary: Get one installed node type
       description: |
         Detail for one type: `properties`/`defaults`, `inputs`/`outputs`,
-        `requiredConfigNodeTypes`, short `help`, plus `category`/`module`/`color`
+        `requiredConfigNodeTypes`, short `help`, plus `category`/`module`/`color`/`icon`/`align`
         when available. **404** `node_type_not_found` when unknown (may include
         `nearest` suggestions).
       operationId: getNodeType
@@ -1847,6 +1847,13 @@ components:
           type: string
         color:
           type: string
+        icon:
+          type: string
+          description: Registered palette icon filename or module/file identifier when available (for example inject.svg or node-red/function.svg). Font Awesome identifiers may also occur. Dynamic icons may be omitted.
+        align:
+          type: string
+          enum: [left, right]
+          description: Registered palette icon and label alignment when available.
         inputs:
           type: number
         outputs:

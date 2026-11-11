@@ -1,6 +1,30 @@
 /** ES5 browser helpers for the proposal canvas. Kept separate from dashboard orchestration. */
 export function pageClientVisualGeometryScript(): string {
   return `
+
+  var visualMeasureContext;
+  // Arial-compatible advances and kerning (2048 units/em, Liberation Sans).
+  // Used only without Canvas, including Node tests; browsers measure the actual font.
+  var visualArialWidths = [569, 569, 727, 1139, 1139, 1821, 1366, 391, 682, 682, 797, 1196, 569, 682, 569, 569, 1139, 1139, 1139, 1139, 1139, 1139, 1139, 1139, 1139, 1139, 569, 569, 1196, 1196, 1196, 1139, 2079, 1366, 1366, 1479, 1479, 1366, 1251, 1593, 1479, 569, 1024, 1366, 1139, 1706, 1479, 1593, 1366, 1593, 1479, 1366, 1251, 1479, 1366, 1933, 1366, 1366, 1251, 569, 569, 569, 961, 1139, 682, 1139, 1139, 1024, 1139, 1139, 569, 1139, 1139, 455, 455, 1024, 455, 1706, 1139, 1139, 1139, 1139, 682, 1024, 569, 1139, 1024, 1479, 1024, 1024, 1024, 684, 532, 684, 1196];
+  var visualArialKerning = {" A": -113, " T": -37, " Y": -37, "11": -152, "A ": -113, "AT": -152, "AV": -152, "AW": -76, "AY": -152, "Av": -37, "Aw": -37, "Ay": -37, "F,": -227, "F.": -227, "FA": -113, "L ": -76, "LT": -152, "LV": -152, "LW": -152, "LY": -152, "Ly": -76, "P ": -37, "P,": -264, "P.": -264, "PA": -152, "RT": -37, "RV": -37, "RW": -37, "RY": -37, "T ": -37, "T,": -227, "T-": -113, "T.": -227, "T:": -227, "T;": -227, "TA": -152, "TO": -37, "Ta": -227, "Tc": -227, "Te": -227, "Ti": -76, "To": -227, "Tr": -76, "Ts": -227, "Tu": -76, "Tw": -113, "Ty": -113, "V,": -188, "V-": -113, "V.": -188, "V:": -76, "V;": -76, "VA": -152, "Va": -152, "Ve": -113, "Vi": -37, "Vo": -113, "Vr": -76, "Vu": -76, "Vy": -76, "W,": -113, "W-": -37, "W.": -113, "W:": -37, "W;": -37, "WA": -76, "Wa": -76, "We": -37, "Wo": -37, "Wr": -37, "Wu": -37, "Wy": -18, "Y ": -37, "Y,": -264, "Y-": -188, "Y.": -264, "Y:": -113, "Y;": -133, "YA": -152, "Ya": -152, "Ye": -188, "Yi": -76, "Yo": -188, "Yp": -152, "Yq": -188, "Yu": -113, "Yv": -113, "ff": -37, "r,": -113, "r.": -113, "v,": -152, "v.": -152, "w,": -113, "w.": -113, "y,": -152, "y.": -152};
+  function visualTextWidth(label) {
+    label = label.replace(/[\\t\\n\\r\\f]/g, ' ');
+    if (visualMeasureContext === undefined) {
+      visualMeasureContext = null;
+      try { visualMeasureContext = document.createElement('canvas').getContext('2d'); } catch (e) {}
+    }
+    if (visualMeasureContext) {
+      visualMeasureContext.font = '14px Arial';
+      return visualMeasureContext.measureText(label).width;
+    }
+    var units = 0;
+    for (var i = 0; i < label.length; i += 1) {
+      var code = label.charCodeAt(i);
+      units += code >= 32 && code <= 126 ? visualArialWidths[code - 32] : code >= 0x2e80 ? 2048 : 1139;
+      if (i) units += visualArialKerning[label.slice(i - 1, i + 1)] || 0;
+    }
+    return units * 14 / 2048;
+  }
   // Pure geometry: the pill centre is the fixed point at the current zoom.
   function visualRunGeometry(widths, anchor, mode, gap) {
     gap = gap == null ? 65 : gap;
@@ -92,6 +116,45 @@ function pageClientVisualGraphScript(): string {
   var visualTypeMetadata = {};
   var visualColors = { inject: '#a6bbcf', function: '#fdd0a2', template: '#f3b567', debug: '#87a980', change: '#E2D96E', switch: '#E2D96E', 'http in': '#e7e7ae', 'http response': '#e7e7ae', comment: '#fff' };
   var visualStatusColors = { added: '#2a9d4a', removed: '#c65353', modified: '#2f6fed', moved: '#7a6fb0', conflict: '#dc9419' };
+  function visualEditorType(raw) {
+    try {
+      var red = window.RED || window.parent && window.parent.RED;
+      var definition = red && red.nodes && red.nodes.getType(raw.type);
+      if (definition) return { red: red, definition: definition, node: Object.assign({}, raw, { _def: definition, _: definition._ }) };
+    } catch (e) {}
+    return null;
+  }
+  function visualNodeLabel(raw, editor) {
+    if (editor) {
+      try { return editor.red.utils.getNodeLabel(editor.node, raw.type); } catch (e) {}
+    }
+    var suffix = raw.type === 'inject' ? (raw.repeat && raw.repeat != 0 || raw.crontab ? '\\t↻' : raw.once ? ' ¹' : '') : raw.type === 'debug' && (raw.console === true || raw.console === 'true') ? '\\t⇲' : '';
+    if (raw.name) return String(raw.name) + suffix;
+    if (raw.label) return String(raw.label);
+    if (raw.type === 'debug') return (raw.targetType === 'jsonata' ? 'JSONata' : raw.complete === true || raw.complete === 'true' ? 'msg' : 'msg.' + (!raw.complete || raw.complete === 'false' ? 'payload' : raw.complete)) + suffix;
+    if (raw.type === 'http response') return 'http' + (raw.statusCode ? ' (' + raw.statusCode + ')' : '');
+    if (raw.type === 'http in') return raw.url ? '[' + (raw.method || 'get') + '] ' + (raw.url.charAt(0) === '/' ? raw.url : '/' + raw.url) : 'http';
+    if (raw.type === 'inject') {
+      var payload = String(raw.payload || ''), topic = String(raw.topic || ''), payloadType = raw.payloadType || 'str';
+      if (['string', 'str', 'num', 'bool', 'json'].indexOf(payloadType) >= 0) {
+        if (topic && topic.length + payload.length <= 32) return topic + ':' + payload + suffix;
+        return (payload && payload.length < 24 ? payload : 'inject') + suffix;
+      }
+      if (['date', 'bin', 'env'].indexOf(payloadType) >= 0) return (topic && topic.length <= 16 ? topic + ':' : '') + ({ date: 'timestamp', bin: 'buffer', env: 'env variable' }[payloadType]) + suffix;
+      if (payloadType === 'flow' || payloadType === 'global') return payloadType + '.' + payload + suffix;
+      return 'inject' + suffix;
+    }
+    if (raw.type === 'change') {
+      var rule = raw.rules && raw.rules.length === 1 ? raw.rules[0] : !raw.rules ? { t: raw.action || 'delete', p: raw.property, pt: 'msg' } : null;
+      if (rule) return ({ set: 'set', change: 'change', move: 'move', delete: 'delete' }[rule.t] || 'change') + ' ' + (rule.pt || 'msg') + '.' + (rule.p || 'payload');
+      return raw.rules ? 'change: ' + raw.rules.length + ' rules' : 'change';
+    }
+    if (raw.type === 'link in') return 'link in';
+    if (raw.type === 'link out') return raw.mode === 'return' ? 'link return' : 'link out';
+    if (raw.type === 'catch') return 'catch: ' + (raw.scope === 'group' ? 'group' : Array.isArray(raw.scope) ? raw.scope.length : raw.uncaught ? 'uncaught' : 'all');
+    if (raw.type === 'complete') return 'complete: ' + (Array.isArray(raw.scope) ? raw.scope.length : 0);
+    return String(raw.type || 'node');
+  }
   function visualCollect(flow) {
     var result = Object.create(null);
     ((flow && flow.nodes) || []).concat((flow && flow.configs) || []).forEach(function (n) { result[n.id] = n; });
@@ -121,16 +184,22 @@ function pageClientVisualGraphScript(): string {
     var ids = Object.keys(after).concat(Object.keys(before).filter(function (id) { return !after[id]; }));
     var nodes = ids.map(function (id, index) {
       var raw = after[id] || before[id], old = before[id], meta = visualTypeMetadata[raw.type] || {};
-      var name = String(raw.name || raw.label || raw.type || 'node');
+      var editor = visualEditorType(raw), name = visualNodeLabel(raw, editor);
       var outputs = visualPortCount(raw, meta, 'outputs');
       var renderedOutputs = Math.min(32, outputs);
-      var width = Math.max(100, Math.ceil((name.length * 7.5 + 55) / 20) * 20);
+      var input = visualPortCount(raw, meta, 'inputs') > 0;
+      var width = Math.max(100, 20 * Math.ceil((visualTextWidth(name) + 50 + (input ? 7 : 0)) / 20));
+      var icon = raw.icon || meta.icon, align = meta.align;
+      if (editor) {
+        try { icon = editor.red.utils.getNodeIcon(editor.definition, editor.node); align = editor.definition.align; } catch (e) {}
+      } else if (raw.type === 'link out' && raw.mode === 'return' && icon === 'link-out.svg') icon = 'link-return.svg';
       return { id: id, raw: raw, old: old, name: name, type: raw.type, kind: kinds[id] || '', entry: entries[id],
         w: width, h: Math.max(30, renderedOutputs * 15), outputs: renderedOutputs, hiddenOutputs: outputs - renderedOutputs,
-        input: visualPortCount(raw, meta, 'inputs') > 0,
+        input: input, icon: icon, module: meta.module, align: align,
         editorMerged: !!(live[id] && old && JSON.stringify(live[id]) !== JSON.stringify(old)),
         color: /^#[0-9a-f]{3,8}$/i.test(meta.color || '') ? meta.color : (Object.prototype.hasOwnProperty.call(visualColors, raw.type) ? visualColors[raw.type] : '#d6dadd'),
-        x: Number(raw.x) || 100 + index * 180, y: Number(raw.y) || 100,
+        x: typeof raw.x === 'number' && isFinite(raw.x) ? raw.x : 100 + index * 180,
+        y: typeof raw.y === 'number' && isFinite(raw.y) ? raw.y : 100,
         moved: !!(kinds[id] && old && (old.x !== raw.x || old.y !== raw.y) && (typeof old.x === 'number' && typeof old.y === 'number')) };
     });
     var byId = Object.create(null);
@@ -247,8 +316,46 @@ function pageClientVisualRenderScript(): string {
     };
     return paths[type] || '<circle cx="20" cy="30" r="13" fill="none" stroke="#fff" stroke-width="3"/><path d="M7 30h26M20 17v26" stroke="#fff" stroke-width="2"/>';
   }
+  function visualIconUrls(n) {
+    var icon = n.icon;
+    if (typeof icon !== 'string' || !icon || /^(?:font-awesome\\/|fa[ -])/.test(icon)) return [];
+    var root = editorRoot.replace(/\\/$/, '') + '/';
+    if (icon.indexOf(root + 'icons/') === 0) icon = icon.slice((root + 'icons/').length);
+    else if (icon.indexOf('/icons/') === 0) icon = icon.slice(7);
+    // Palette identifiers only: never load remote URLs or arbitrary dashboard paths.
+    if (!/^[a-z0-9_@./ -]+\\.(?:svg|png|gif|jpe?g|webp)$/i.test(icon) || icon.split('/').some(function (part) { return !part || part === '.' || part === '..'; })) return [];
+    var file = icon.slice(icon.lastIndexOf('/') + 1);
+    var path = icon.indexOf('/') >= 0 ? icon : (n.module || 'node-red') + '/' + icon;
+    var paths = [path];
+    if (/\\.png$/i.test(path)) paths.push(path.replace(/\\.png$/i, '.svg'));
+    if (path !== 'node-red/' + file) {
+      paths.push('node-red/' + file);
+      if (/\\.png$/i.test(file)) paths.push('node-red/' + file.replace(/\\.png$/i, '.svg'));
+    }
+    return paths.map(function (p) { return root + 'icons/' + p.split('/').map(encodeURIComponent).join('/'); });
+  }
+  function visualPaletteIcon(n, x, y) {
+    var urls = visualIconUrls(n);
+    var fallback = '<svg class="visual-icon-fallback" x="' + x + '" y="' + y + '" width="30" height="30" viewBox="0 0 40 60">' + visualIcon(n.type) + '</svg>';
+    return '<g class="visual-palette-icon" pointer-events="none">' + fallback + (urls.length ? '<image class="visual-icon-image" x="' + x + '" y="' + y + '" width="30" height="30" href="' + esc(urls[0]) + '" visibility="hidden" data-icon-urls="' + esc(JSON.stringify(urls)) + '" data-icon-index="0"/>' : '') + '</g>';
+  }
+  function visualIconEvent(ev) {
+    var target = ev.target;
+    if (!target || !target.classList || !target.classList.contains('visual-icon-image')) return;
+    if (ev.type === 'load') {
+      target.parentNode.querySelector('.visual-icon-fallback').setAttribute('visibility', 'hidden');
+      target.removeAttribute('visibility');
+    } else {
+      var urls = JSON.parse(target.getAttribute('data-icon-urls') || '[]');
+      var next = Number(target.getAttribute('data-icon-index')) + 1;
+      if (next < urls.length) {
+        target.setAttribute('data-icon-index', next);
+        target.setAttribute('href', urls[next]);
+      }
+    }
+  }
   function visualNodeSvg(n, state, oldPosition) {
-    var ghost = !!oldPosition, context = !n.kind, right = n.type === 'debug', width = n.w, height = n.h;
+    var ghost = !!oldPosition, context = !n.kind, right = n.align === 'right' || !n.align && n.type === 'debug', width = n.w, height = n.h;
     var color = ghost || !context ? n.color : '#d6dadd';
     var x = ghost ? Number(n.old.x) : n.px, y = ghost ? Number(n.old.y) : n.py;
     var outline = n.kind ? visualStatusColors[n.kind] : '#999';
@@ -259,13 +366,13 @@ function pageClientVisualRenderScript(): string {
       (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(n.kind + ': ' + n.name) + '"' : '') +
       ' transform="translate(' + (x - width / 2) + ',' + (y - height / 2) + ')">';
     if (interactive && selected) svg += '<rect class="selection-glow" x="' + -visualOutlineOffset + '" y="' + -visualOutlineOffset + '" width="' + (width + 2 * visualOutlineOffset) + '" height="' + (height + 2 * visualOutlineOffset) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
-    if (n.type === 'inject' || right) svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"' + ghostStyle + '/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + ghostStyle + '/></g>';
+    if (n.type === 'inject' || n.type === 'debug') svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"' + ghostStyle + '/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + ghostStyle + '/></g>';
     svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + ghostStyle + '/>' +
       '<rect x="' + (right ? width - 30 : 0) + '" width="30" height="' + height + '" rx="5" fill="#000" opacity=".05"/>' +
       '<path d="M' + (right ? width - 30 : 30) + ' 1v' + (height - 2) + '" stroke="#000" opacity=".1"/>' +
-      '<svg x="' + (right ? width - 30 : 0) + '" y="' + ((height - 30) / 2) + '" width="30" height="30" viewBox="0 0 40 60">' + visualIcon(n.type) + '</svg>' +
+      visualPaletteIcon(n, right ? width - 30 : 0, (height - 30) / 2) +
       '<text x="' + (right ? width - 38 : 38) + '" y="' + height / 2 + '" dominant-baseline="central" text-anchor="' + (right ? 'end' : 'start') + '" font-size="14" fill="#333"' +
-      (n.raw.name ? ' font-style="italic"' : '') + '>' + esc(n.name) + '</text>';
+      ' font-family="Arial, Helvetica, sans-serif"' + (n.raw.name ? ' font-style="italic"' : '') + '>' + esc(n.name) + '</text>';
     function port(px, py) { return '<rect x="' + px + '" y="' + py + '" width="10" height="10" rx="3" fill="#d9d9d9" stroke="#999" fill-opacity="1" stroke-dasharray="none"/>'; }
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
@@ -443,6 +550,9 @@ function pageClientVisualInteractionScript(): string {
 
 function pageClientVisualEventsScript(): string {
   return `
+    // SVG image load/error events do not bubble; capture before the first paint.
+    svg.addEventListener('load', visualIconEvent, true);
+    svg.addEventListener('error', visualIconEvent, true);
     var drag = null, suppressClick = false;
     svg.addEventListener('pointerdown', function (ev) {
       if (ev.button && ev.button !== 0) return;
