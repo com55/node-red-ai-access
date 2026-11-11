@@ -51,6 +51,7 @@ function browserHelpers(
       settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
       renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
       setSearch: function (filter, query, proposals, more) { proposalsFilter = filter; proposalsSearchQuery = query; cachedProposals = proposals; decidedHasMore = more; },
+      setTypeMetadata: function (type, meta) { visualTypeMetadata[type] = meta; },
       setApi: function (fn) { api = fn; },
       setDetails: function (p) { proposalDetails[p.id] = p; },
       setAction: function (approve, reject) { doApproveProposalInner = approve; rejectProposalInner = reject; },
@@ -108,21 +109,18 @@ describe('Visual View geometry', () => {
   const moveGeometry = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveGeometry;');
 
   it.each([
-    { next: { x: 200, y: 120 }, start: { x: 25, y: 15 }, end: { x: 175, y: 105 } },
-    { next: { x: 400, y: 0 }, start: { x: 50, y: 0 }, end: { x: 350, y: 0 } },
-    { next: { x: 0, y: 60 }, start: { x: 0, y: 15 }, end: { x: 0, y: 45 } },
-    { next: { x: -200, y: -120 }, start: { x: -25, y: -15 }, end: { x: -175, y: -105 } },
-    { next: { x: -400, y: 0 }, start: { x: -50, y: 0 }, end: { x: -350, y: 0 } },
-    { next: { x: 0, y: -60 }, start: { x: 0, y: -15 }, end: { x: 0, y: -45 } },
-  ])('clips a centre-line move to rectangle edges: $next', ({ next, start, end }) => {
+    { next: { x: 200, y: 120 }, end: { x: 175, y: 105 } },
+    { next: { x: 400, y: 0 }, end: { x: 350, y: 0 } },
+    { next: { x: 0, y: 60 }, end: { x: 0, y: 45 } },
+    { next: { x: -200, y: -120 }, end: { x: -175, y: -105 } },
+    { next: { x: -400, y: 0 }, end: { x: -350, y: 0 } },
+    { next: { x: 0, y: -60 }, end: { x: 0, y: -45 } },
+  ])('starts at the ghost centre and clips the landing to the new edge: $next', ({ next, end }) => {
     const old = { x: 0, y: 0 };
     const arrow = moveGeometry(old, next, 100, 30);
-    expect(arrow.start).toEqual(start);
+    expect(arrow.start).toEqual(old);
     expect(arrow.end).toEqual(end);
-    for (const [point, centre] of [
-      [arrow.start, old],
-      [arrow.end, next],
-    ]) {
+    for (const [point, centre] of [[arrow.end, next]]) {
       const dx = Math.abs(point.x - centre.x),
         dy = Math.abs(point.y - centre.y);
       expect(dx).toBeLessThanOrEqual(50);
@@ -130,7 +128,7 @@ describe('Visual View geometry', () => {
       expect(dx === 50 || dy === 15).toBe(true);
       expect((point.x - centre.x) * next.y - (point.y - centre.y) * next.x).toBeCloseTo(0);
     }
-    expect(arrow.gap).toBeCloseTo(Math.hypot(end.x - start.x, end.y - start.y));
+    expect(arrow.gap).toBeCloseTo(2 * Math.hypot(end.x, end.y) - Math.hypot(next.x, next.y));
     expect(Math.hypot(end.x - arrow.shaftEnd.x, end.y - arrow.shaftEnd.y)).toBeCloseTo(12);
     expect(arrow.shaftEnd.x).toBeCloseTo(end.x - (next.x / Math.hypot(next.x, next.y)) * 12);
     expect(arrow.shaftEnd.y).toBeCloseTo(end.y - (next.y / Math.hypot(next.x, next.y)) * 12);
@@ -251,13 +249,61 @@ describe('Visual View geometry', () => {
     expect(runInNewContext('visualPointerMoved({x:0,y:0}, {x:3,y:3})', context)).toBe(true);
   });
 
+  it.each([
+    'inject',
+    'link in',
+    'catch',
+    'status',
+    'complete',
+    'http in',
+    'mqtt in',
+    'comment',
+    'debug',
+    'link out',
+    'http response',
+  ])('resolves %s ports for changed, ghost, and context nodes before and after metadata', type => {
+    const ui = browserHelpers();
+    const inputs = ['debug', 'link out', 'http response'].includes(type) ? 1 : 0;
+    const outputs = ['debug', 'link out', 'http response', 'comment'].includes(type) ? 0 : 1;
+    const p = { payload: { flow: { nodes: [{ id: 'n', type, wires: [[]] }] } } };
+    for (const meta of [{}, { inputs, outputs }]) {
+      ui.setTypeMetadata(type, meta);
+      const n = ui.visualGraph(p, {}).byId.n;
+      expect(n.input).toBe(inputs > 0);
+      expect(n.outputs).toBe(outputs);
+      for (const kind of ['modified', '']) {
+        for (const ghost of [false, true]) {
+          const svg = ui.visualNodeSvg({ ...n, kind, old: { x: 100, y: 100 } }, {}, ghost);
+          expect(svg.includes('<rect x="-5"')).toBe(inputs > 0);
+          expect(svg.match(/width="10" height="10" rx="3"/g) ?? []).toHaveLength(inputs + outputs);
+        }
+      }
+    }
+  });
+
+  it('prefers finite instance counts, then metadata, then unknown-type fallbacks', () => {
+    const ui = browserHelpers();
+    ui.setTypeMetadata('function', { inputs: 0, outputs: 0 });
+    const graph = (raw: Record<string, unknown>) =>
+      ui.visualGraph({ payload: { flow: { nodes: [{ id: 'n', ...raw }] } } }, {}).byId.n;
+    expect(graph({ type: 'function', inputs: 1, outputs: 3 })).toMatchObject({
+      input: true,
+      outputs: 3,
+    });
+    expect(
+      graph({ type: 'function', inputs: NaN, outputs: Infinity, wires: [[], []] })
+    ).toMatchObject({ input: false, outputs: 0 });
+    expect(graph({ type: 'unknown' })).toMatchObject({ input: true, outputs: 1 });
+    expect(graph({ type: 'unknown', wires: [[], []] })).toMatchObject({ input: true, outputs: 2 });
+  });
+
   it.each([200000, 1, 2, -1, NaN, Infinity, -Infinity])(
     'bounds rendered outputs for %s',
     outputs => {
       const ui = browserHelpers();
       const p = { payload: { flow: { nodes: [{ id: 'n', type: 'inject', outputs }] } } };
       const n = ui.visualGraph(p, {}).byId.n;
-      const visible = Number.isFinite(outputs) && outputs > 0 ? Math.min(32, outputs) : 0;
+      const visible = Number.isFinite(outputs) ? Math.max(0, Math.min(32, outputs)) : 1;
       expect(n.outputs).toBe(visible);
       expect(n.h).toBe(Math.max(30, visible * 15));
       const html = ui.visualNodeSvg(n, {}, false);
@@ -1058,19 +1104,19 @@ describe('Moved classification and review', () => {
         /class="move-arrow"[^>]*pointer-events="none"><path[^>]*stroke="#7a6fb0"[^>]*stroke-dasharray="6,5"/
       );
       expect(html).toMatch(/class="move-arrowhead" d="M[^L]+L[^L]+L[^Z]+Z" fill="#7a6fb0"/);
-      expect(html.indexOf('class="move-arrow"')).toBeLessThan(html.indexOf('move-ghost'));
+      expect(html.indexOf('move-ghost')).toBeLessThan(html.indexOf('class="move-arrow"'));
     }
   });
 
-  it('paints every arrow before every ghost, then wires and live nodes', () => {
+  it('paints every ghost before every arrow, then wires and live nodes', () => {
     const { viewport, click } = mount({ wires: [['second']] }, false, true);
     click('[data-visual-layout]', 'editor');
     const html = viewport.innerHTML;
     expect(html.match(/class="move-arrow"/g)).toHaveLength(2);
     expect(html.match(/move-ghost/g)).toHaveLength(2);
-    expect(html.lastIndexOf('class="move-arrow"')).toBeLessThan(html.indexOf('move-ghost'));
+    expect(html.lastIndexOf('move-ghost')).toBeLessThan(html.indexOf('class="move-arrow"'));
     const wire = html.indexOf('stroke-width="3"');
-    expect(html.lastIndexOf('move-ghost')).toBeLessThan(wire);
+    expect(html.lastIndexOf('class="move-arrow"')).toBeLessThan(wire);
     expect(wire).toBeLessThan(html.indexOf('class="visual-node changed"'));
   });
 

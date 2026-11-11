@@ -25,6 +25,9 @@ and this project adheres to
 
 ### Fixed
 
+- Draw Visual View ports from instance counts and registered node definitions,
+  including zero-input inject nodes and zero-output nodes in every view state.
+  Start move arrows at the ghost centre and paint them over the ghost.
 - Apply ghost styling to Visual View buttons, require finite numeric moves, and
   clarify search counts, accessibility, touch hints, and review documentation.
 - Clarify the Moved status icon at badge size and draw purple move arrows

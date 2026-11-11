@@ -63,7 +63,7 @@ export function pageClientVisualGeometryScript(): string {
     var gap = distance * (1 - 2 * scale), tipLength = 12, halfHead = 6;
     if (gap < 16) return null;
     var ux = dx / distance, uy = dy / distance;
-    var start = { x: old.x + dx * scale, y: old.y + dy * scale };
+    var start = { x: old.x, y: old.y };
     var end = { x: next.x - dx * scale, y: next.y - dy * scale };
     var shaftEnd = { x: end.x - ux * tipLength, y: end.y - uy * tipLength };
     return { start: start, end: end, shaftEnd: shaftEnd, gap: gap,
@@ -84,6 +84,14 @@ function pageClientVisualGraphScript(): string {
     ((flow && flow.nodes) || []).concat((flow && flow.configs) || []).forEach(function (n) { result[n.id] = n; });
     return result;
   }
+  function visualPortCount(raw, meta, key) {
+    var value = typeof raw[key] === 'number' && isFinite(raw[key]) ? raw[key] : meta[key];
+    if (typeof value !== 'number' || !isFinite(value)) {
+      if (key === 'inputs') value = ['inject', 'comment', 'http in', 'mqtt in', 'link in', 'catch', 'status', 'complete'].indexOf(raw.type) >= 0 ? 0 : 1;
+      else value = ['debug', 'link out', 'http response', 'comment'].indexOf(raw.type) >= 0 ? 0 : Array.isArray(raw.wires) ? raw.wires.length : 1;
+    }
+    return Math.max(0, Math.floor(value));
+  }
   function visualGraph(p, diff) {
     var before = visualCollect(p.baseFlow || p.visualLiveFlow), after = visualCollect(p.payload && p.payload.flow), live = visualCollect(p.visualLiveFlow), kinds = Object.create(null), entries = Object.create(null);
     ['added', 'removed', 'modified', 'moved'].forEach(function (kind) {
@@ -100,13 +108,12 @@ function pageClientVisualGraphScript(): string {
     var nodes = ids.map(function (id, index) {
       var raw = after[id] || before[id], old = before[id], meta = visualTypeMetadata[raw.type] || {};
       var name = String(raw.name || raw.label || raw.type || 'node');
-      var outputs = typeof raw.outputs === 'number' ? raw.outputs : Array.isArray(raw.wires) ? raw.wires.length : Number(meta.outputs) || 0;
-      outputs = isFinite(outputs) && outputs > 0 ? Math.floor(outputs) : 0;
+      var outputs = visualPortCount(raw, meta, 'outputs');
       var renderedOutputs = Math.min(32, outputs);
       var width = Math.max(100, Math.ceil((name.length * 7.5 + 55) / 20) * 20);
       return { id: id, raw: raw, old: old, name: name, type: raw.type, kind: kinds[id] || '', entry: entries[id],
         w: width, h: Math.max(30, renderedOutputs * 15), outputs: renderedOutputs, hiddenOutputs: outputs - renderedOutputs,
-        input: typeof meta.inputs === 'number' ? meta.inputs > 0 : ['inject', 'comment', 'http in', 'mqtt in', 'link in', 'catch', 'status', 'complete'].indexOf(raw.type) < 0,
+        input: visualPortCount(raw, meta, 'inputs') > 0,
         editorMerged: !!(live[id] && old && JSON.stringify(live[id]) !== JSON.stringify(old)),
         color: /^#[0-9a-f]{3,8}$/i.test(meta.color || '') ? meta.color : (Object.prototype.hasOwnProperty.call(visualColors, raw.type) ? visualColors[raw.type] : '#d6dadd'),
         x: Number(raw.x) || 100 + index * 180, y: Number(raw.y) || 100,
@@ -296,6 +303,7 @@ function pageClientVisualInteractionScript(): string {
       visible = visualVisible(graph, state);
       var html = '';
       if (state.layout === 'editor') {
+        graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
         graph.nodes.forEach(function (n) {
           if (!n.moved) return;
           var arrow = visualMoveGeometry(n.old, { x: n.px, y: n.py }, n.w, n.h);
@@ -303,7 +311,6 @@ function pageClientVisualInteractionScript(): string {
           html += '<g class="move-arrow" pointer-events="none"><path d="M' + arrow.start.x + ' ' + arrow.start.y + 'L' + arrow.shaftEnd.x + ' ' + arrow.shaftEnd.y + '" fill="none" stroke="#7a6fb0" stroke-width="2" stroke-dasharray="6,5"/>' +
             '<path class="move-arrowhead" d="M' + arrow.end.x + ' ' + arrow.end.y + 'L' + arrow.headLeft.x + ' ' + arrow.headLeft.y + 'L' + arrow.headRight.x + ' ' + arrow.headRight.y + 'Z" fill="#7a6fb0"/></g>';
         });
-        graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
       }
       visible.edges.forEach(function (e) {
         var from = visible.byId[e.from], to = visible.byId[e.to], x = from.px + from.w / 2, y = from.py + (e.port - ((from.outputs || 1) - 1) / 2) * 13, end = to.px - to.w / 2;

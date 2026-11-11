@@ -270,6 +270,36 @@ describe('node-types helpers', () => {
     expect(parsed?.defaults?.rules).toEqual(expect.objectContaining({ value: [] }));
   });
 
+  it('parses ports after regex literals, comments, and division in defaults', async () => {
+    const html = String.raw`RED.nodes.registerType('inject', {
+      category: 'common',
+      defaults: { props: { validate: function(v) {
+        // comment with }
+        /* another } */
+        var half = v.length / 2;
+        var ratio = half / 2;
+        if (/^\${[^}]+}$/.test(v[0].v)) { return /[}/\\]/.test(v[0].v); }
+        return ratio > 0;
+      } } },
+      inputs: 0, outputs: 1
+    });`;
+    expect(parseRegisterTypeFromHtml(html, 'inject')).toMatchObject({ inputs: 0, outputs: 1 });
+    const adapter = createStaticNodeTypesAdapter(['inject'], { configs: { inject: html } });
+    expect(await getNodeTypeDetail(adapter, 'inject')).toMatchObject({ inputs: 0, outputs: 1 });
+  });
+
+  it.each([undefined, '<div>unparsable</div>', "RED.nodes.registerType('inject', {"])(
+    'omits unknown port counts when HTML is %s',
+    async html => {
+      const adapter = createStaticNodeTypesAdapter(['inject'], {
+        configs: html === undefined ? {} : { inject: html },
+      });
+      const detail = await getNodeTypeDetail(adapter, 'inject');
+      expect(detail).not.toHaveProperty('inputs');
+      expect(detail).not.toHaveProperty('outputs');
+    }
+  );
+
   it('parseRegisterTypeFromHtml tolerates bad HTML', () => {
     expect(parseRegisterTypeFromHtml('<div>nope</div>')).toBeNull();
   });
