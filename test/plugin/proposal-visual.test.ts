@@ -109,50 +109,76 @@ describe('Visual View geometry', () => {
   const moveGeometry = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveGeometry;');
 
   it.each([
-    { next: { x: 200, y: 120 }, end: { x: 175, y: 105 } },
-    { next: { x: 400, y: 0 }, end: { x: 350, y: 0 } },
-    { next: { x: 0, y: 60 }, end: { x: 0, y: 45 } },
-    { next: { x: -200, y: -120 }, end: { x: -175, y: -105 } },
-    { next: { x: -400, y: 0 }, end: { x: -350, y: 0 } },
-    { next: { x: 0, y: -60 }, end: { x: 0, y: -45 } },
-  ])('starts at the ghost centre and clips the landing to the new edge: $next', ({ next, end }) => {
-    const old = { x: 0, y: 0 };
-    const arrow = moveGeometry(old, next, 100, 30);
-    expect(arrow.start).toEqual(old);
-    expect(arrow.end).toEqual(end);
-    for (const [point, centre] of [[arrow.end, next]]) {
-      const dx = Math.abs(point.x - centre.x),
-        dy = Math.abs(point.y - centre.y);
-      expect(dx).toBeLessThanOrEqual(50);
-      expect(dy).toBeLessThanOrEqual(15);
-      expect(dx === 50 || dy === 15).toBe(true);
-      expect((point.x - centre.x) * next.y - (point.y - centre.y) * next.x).toBeCloseTo(0);
+    { next: { x: 200, y: 120 }, end: { x: 166.66666666666669, y: 100 } },
+    { next: { x: 400, y: 0 }, end: { x: 345, y: 0 } },
+    { next: { x: 0, y: 60 }, end: { x: 0, y: 40 } },
+    { next: { x: -200, y: -120 }, end: { x: -166.66666666666669, y: -100 } },
+    { next: { x: -400, y: 0 }, end: { x: -345, y: 0 } },
+    { next: { x: 0, y: -60 }, end: { x: 0, y: -40 } },
+  ])(
+    'starts at the ghost centre and clips the landing to the new outline edge: $next',
+    ({ next, end }) => {
+      const old = { x: 0, y: 0 };
+      const arrow = moveGeometry(old, next, 100, 30);
+      expect(arrow.start).toEqual(old);
+      expect(arrow.end).toEqual(end);
+      for (const [point, centre] of [[arrow.end, next]]) {
+        const dx = Math.abs(point.x - centre.x),
+          dy = Math.abs(point.y - centre.y);
+        expect(dx).toBeLessThanOrEqual(55);
+        expect(dy).toBeLessThanOrEqual(20);
+        expect(dx === 55 || dy === 20).toBe(true);
+        expect((point.x - centre.x) * next.y - (point.y - centre.y) * next.x).toBeCloseTo(0);
+      }
+      expect(arrow.gap).toBeCloseTo(
+        Math.hypot(end.x, end.y) -
+          Math.hypot(next.x, next.y) *
+            Math.min(
+              next.x ? 50 / Math.abs(next.x) : Infinity,
+              next.y ? 15 / Math.abs(next.y) : Infinity
+            )
+      );
+      expect(Math.hypot(end.x - arrow.shaftEnd.x, end.y - arrow.shaftEnd.y)).toBeCloseTo(12);
+      expect(arrow.shaftEnd.x).toBeCloseTo(end.x - (next.x / Math.hypot(next.x, next.y)) * 12);
+      expect(arrow.shaftEnd.y).toBeCloseTo(end.y - (next.y / Math.hypot(next.x, next.y)) * 12);
+      expect((arrow.headLeft.x + arrow.headRight.x) / 2).toBeCloseTo(arrow.shaftEnd.x);
+      expect((arrow.headLeft.y + arrow.headRight.y) / 2).toBeCloseTo(arrow.shaftEnd.y);
+      expect(
+        Math.hypot(arrow.headLeft.x - arrow.headRight.x, arrow.headLeft.y - arrow.headRight.y)
+      ).toBeCloseTo(12);
     }
-    expect(arrow.gap).toBeCloseTo(2 * Math.hypot(end.x, end.y) - Math.hypot(next.x, next.y));
-    expect(Math.hypot(end.x - arrow.shaftEnd.x, end.y - arrow.shaftEnd.y)).toBeCloseTo(12);
-    expect(arrow.shaftEnd.x).toBeCloseTo(end.x - (next.x / Math.hypot(next.x, next.y)) * 12);
-    expect(arrow.shaftEnd.y).toBeCloseTo(end.y - (next.y / Math.hypot(next.x, next.y)) * 12);
-    expect((arrow.headLeft.x + arrow.headRight.x) / 2).toBeCloseTo(arrow.shaftEnd.x);
-    expect((arrow.headLeft.y + arrow.headRight.y) / 2).toBeCloseTo(arrow.shaftEnd.y);
-    expect(
-      Math.hypot(arrow.headLeft.x - arrow.headRight.x, arrow.headLeft.y - arrow.headRight.y)
-    ).toBeCloseTo(12);
-  });
+  );
 
   it.each([
     { x: 0, y: 0 },
     { x: 90, y: 20 },
     { x: 100, y: 30 },
+    { x: 105, y: 35 },
+    { x: 116, y: 0 },
+    { x: 120, y: 0 },
     { x: 115, y: 0 },
-    { x: 0, y: 45 },
+    { x: 0, y: 40 },
     { x: -115, y: 0 },
   ])('hides overlapping, touching or tiny-gap moves: %j', next => {
     expect(moveGeometry({ x: 0, y: 0 }, next, 100, 30)).toBeNull();
   });
 
+  it('derives selected and unselected landings from their crisp outline strokes', () => {
+    const pad = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveOutlinePad;');
+    expect(pad(false)).toBe(5);
+    expect(pad(true)).toBe(5.875);
+    const ends = [false, true].map(selected => {
+      const arrow = moveGeometry({ x: 0, y: 0 }, { x: 400, y: 0 }, 100, 30, pad(selected));
+      expect(400 - arrow.end.x).toBe(50 + pad(selected));
+      return arrow.end.x;
+    });
+    expect(ends).toEqual([345, 344.125]);
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 121, y: 0 }, 100, 30, pad(true))).toBeNull();
+  });
+
   it('shows an arrow at the minimum readable edge gap, independent of centre distance', () => {
-    expect(moveGeometry({ x: 0, y: 0 }, { x: 116, y: 0 }, 100, 30).gap).toBeCloseTo(16);
-    expect(moveGeometry({ x: 0, y: 0 }, { x: 0, y: 46 }, 100, 30).gap).toBeCloseTo(16);
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 121, y: 0 }, 100, 30).gap).toBeCloseTo(16);
+    expect(moveGeometry({ x: 0, y: 0 }, { x: 0, y: 51 }, 100, 30).gap).toBeCloseTo(16);
   });
 
   it.each([3, 4, 5, 6])(
@@ -1106,6 +1132,21 @@ describe('Moved classification and review', () => {
       expect(html).toMatch(/class="move-arrowhead" d="M[^L]+L[^L]+L[^Z]+Z" fill="#7a6fb0"/);
       expect(html.indexOf('move-ghost')).toBeLessThan(html.indexOf('class="move-arrow"'));
     }
+  });
+
+  it.each([false, true])('lands outside the painted body with selected=%s', selected => {
+    const { viewport, click } = mount({ x: 600, y: 120 });
+    click('[data-visual-layout]', 'editor');
+    if (selected) click('[data-visual-node]', 'move');
+    const html = viewport.innerHTML;
+    const tip = /class="move-arrowhead" d="M([^ ]+) ([^L]+)L/.exec(html)!;
+    const outline = /<rect class="change-outline"[^>]*>/.exec(html)![0];
+    const width = Number(/width="([^"]+)"/.exec(outline)![1]) - 8;
+    const pad = selected ? 5.875 : 5;
+    expect(600 - Number(tip[1])).toBe(width / 2 + pad);
+    expect(600 - Number(tip[1])).toBeGreaterThan(width / 2);
+    expect(Number(tip[2])).toBe(120);
+    expect(html.includes('class="selection-glow"')).toBe(selected);
   });
 
   it('paints every ghost before every arrow, then wires and live nodes', () => {

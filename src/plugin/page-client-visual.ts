@@ -54,13 +54,18 @@ export function pageClientVisualGeometryScript(): string {
   function visualPointerMoved(start, point) {
     return Math.pow(point.x - start.x, 2) + Math.pow(point.y - start.y, 2) > 16;
   }
-  function visualMoveGeometry(old, next, width, height) {
+  var visualOutlineOffset = 4;
+  function visualOutlineStrokeWidth(selected) { return selected ? 3.75 : 2; }
+  function visualMoveOutlinePad(selected) { return visualOutlineOffset + visualOutlineStrokeWidth(selected) / 2; }
+  function visualMoveGeometry(old, next, width, height, pad) {
+    pad = pad == null ? visualMoveOutlinePad(false) : pad;
     var dx = next.x - old.x, dy = next.y - old.y;
-    // Touching or overlapping main bodies leave no room for a move arrow.
-    if (Math.abs(dx) <= width && Math.abs(dy) <= height) return null;
+    // The ghost body must clear the destination outline before an arrow can fit.
+    if (Math.abs(dx) <= width + pad && Math.abs(dy) <= height + pad) return null;
     var distance = Math.sqrt(dx * dx + dy * dy);
-    var scale = Math.min(dx ? width / 2 / Math.abs(dx) : Infinity, dy ? height / 2 / Math.abs(dy) : Infinity);
-    var gap = distance * (1 - 2 * scale), tipLength = 12, halfHead = 6;
+    var ghostScale = Math.min(dx ? width / 2 / Math.abs(dx) : Infinity, dy ? height / 2 / Math.abs(dy) : Infinity);
+    var scale = Math.min(dx ? (width / 2 + pad) / Math.abs(dx) : Infinity, dy ? (height / 2 + pad) / Math.abs(dy) : Infinity);
+    var gap = distance - distance * ghostScale - distance * scale, tipLength = 12, halfHead = 6;
     if (gap < 16) return null;
     var ux = dx / distance, uy = dy / distance;
     var start = { x: old.x, y: old.y };
@@ -244,7 +249,7 @@ function pageClientVisualRenderScript(): string {
     var svg = '<g class="visual-node' + (context ? ' context-node' : ' changed') + (ghost ? ' move-ghost' : '') + '"' +
       (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(n.kind + ': ' + n.name) + '"' : '') +
       ' transform="translate(' + (x - width / 2) + ',' + (y - height / 2) + ')">';
-    if (interactive && selected) svg += '<rect class="selection-glow" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="3.75" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
+    if (interactive && selected) svg += '<rect class="selection-glow" x="' + -visualOutlineOffset + '" y="' + -visualOutlineOffset + '" width="' + (width + 2 * visualOutlineOffset) + '" height="' + (height + 2 * visualOutlineOffset) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
     if (n.type === 'inject' || right) svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"' + ghostStyle + '/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + ghostStyle + '/></g>';
     svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + ghostStyle + '/>' +
       '<rect x="' + (right ? width - 30 : 0) + '" width="30" height="' + height + '" rx="5" fill="#000" opacity=".05"/>' +
@@ -256,7 +261,7 @@ function pageClientVisualRenderScript(): string {
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
     if (n.hiddenOutputs) svg += '<text x="' + (width - 10) + '" y="' + (height - 4) + '" text-anchor="end" font-size="11" fill="#333">+' + esc(n.hiddenOutputs) + '</text>';
-    if (!ghost && n.kind) svg += '<rect class="change-outline" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + (selected ? 3.75 : 2) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
+    if (!ghost && n.kind) svg += '<rect class="change-outline" x="' + -visualOutlineOffset + '" y="' + -visualOutlineOffset + '" width="' + (width + 2 * visualOutlineOffset) + '" height="' + (height + 2 * visualOutlineOffset) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
     if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/>' + statusIcon(n.kind, { x: width - 8, y: -12, size: 12, color: '#fff' });
     return svg + '</g>';
   }
@@ -306,7 +311,7 @@ function pageClientVisualInteractionScript(): string {
         graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
         graph.nodes.forEach(function (n) {
           if (!n.moved) return;
-          var arrow = visualMoveGeometry(n.old, { x: n.px, y: n.py }, n.w, n.h);
+          var arrow = visualMoveGeometry(n.old, { x: n.px, y: n.py }, n.w, n.h, visualMoveOutlinePad(state.selected === n.id));
           if (!arrow) return;
           html += '<g class="move-arrow" pointer-events="none"><path d="M' + arrow.start.x + ' ' + arrow.start.y + 'L' + arrow.shaftEnd.x + ' ' + arrow.shaftEnd.y + '" fill="none" stroke="#7a6fb0" stroke-width="2" stroke-dasharray="6,5"/>' +
             '<path class="move-arrowhead" d="M' + arrow.end.x + ' ' + arrow.end.y + 'L' + arrow.headLeft.x + ' ' + arrow.headLeft.y + 'L' + arrow.headRight.x + ' ' + arrow.headRight.y + 'Z" fill="#7a6fb0"/></g>';
