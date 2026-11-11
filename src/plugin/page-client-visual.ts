@@ -215,11 +215,12 @@ function pageClientVisualRenderScript(): string {
     var x = ghost ? Number(n.old.x) : n.px, y = ghost ? Number(n.old.y) : n.py;
     var outline = n.kind ? visualStatusColors[n.kind] : '#999';
     var interactive = !ghost && n.kind;
+    var selected = state.selected === n.id;
     var svg = '<g class="visual-node' + (context ? ' context-node' : ' changed') + (ghost ? ' move-ghost' : '') + '"' +
       (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(n.kind + ': ' + n.name) + '"' : '') +
       ' transform="translate(' + (x - width / 2) + ',' + (y - height / 2) + ')">';
+    if (interactive && selected) svg += '<rect class="selection-glow" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="3.75" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
     if (n.type === 'inject' || right) svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + (ghost ? ' fill-opacity=".6"' : '') + '/></g>';
-    if (!ghost && n.kind) svg += '<rect class="change-outline" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + (state.selected === n.id ? 3 : 2) + '"' + (n.kind === 'conflict' ? ' stroke-dasharray="6,4"' : '') + '/>';
     svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + (ghost ? ' stroke-dasharray="8,3" fill-opacity=".6"' : '') + '/>' +
       '<rect x="' + (right ? width - 30 : 0) + '" width="30" height="' + height + '" rx="5" fill="#000" opacity=".05"/>' +
       '<path d="M' + (right ? width - 30 : 30) + ' 1v' + (height - 2) + '" stroke="#000" opacity=".1"/>' +
@@ -229,6 +230,7 @@ function pageClientVisualRenderScript(): string {
     function port(px, py) { return '<rect x="' + px + '" y="' + py + '" width="10" height="10" rx="3" fill="#d9d9d9" stroke="#999" fill-opacity="1" stroke-dasharray="none"/>'; }
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
+    if (!ghost && n.kind) svg += '<rect class="change-outline" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + (selected ? 3.75 : 2) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
     if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/><text x="' + (width - 2) + '" y="-6" dominant-baseline="central" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">' + visualBadges[n.kind] + '</text>';
     return svg + '</g>';
   }
@@ -241,7 +243,9 @@ function pageClientVisualRenderScript(): string {
       return '<span><i style="background:' + visualStatusColors[kind] + '">' + visualBadges[kind] + '</i>' + kind + '</span>';
     }).join('') + '<span><i class="context-dot"></i>Related nodes</span><span><i class="editor-merged-dot">•</i>Editor-merged</span></div></div>' +
       '<section class="visual-workspace" aria-label="Visual View"><div class="visual-workhead"><strong>Flow preview <span>/ ' + esc(flowLabelOf(p)) + '</span></strong><span>Changed nodes + related nodes</span></div>' +
-      '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs><pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern><marker id="visual-move-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#909aa2"/></marker></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
+      '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs>' + ['conflict', 'modified', 'added', 'removed'].map(function (kind) {
+        return '<filter id="halo-' + kind + '" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="' + visualStatusColors[kind] + '" flood-opacity="1"/></filter>';
+      }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern><marker id="visual-move-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10" fill="none" stroke="#909aa2"/></marker></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
       '<span class="visual-pan-hint">Drag to pan · Scroll to zoom</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
       '<aside class="visual-changed-list"><div class="visual-list-head"><strong>Changed nodes <span class="visual-list-count"></span></strong></div><div class="visual-node-list"></div><p>Related nodes are shown only on the canvas</p></aside></div></section>';

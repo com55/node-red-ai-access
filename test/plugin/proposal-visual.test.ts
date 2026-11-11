@@ -32,7 +32,7 @@ function browserHelpers() {
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, renderCompactProposal,
+      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal,
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
       settleSearchAfterAction,
       setListState: function (filter, query, hash) { proposalsFilter = filter; proposalsSearchQuery = query; location.hash = hash; renderProposalsList = function () {}; },
@@ -190,9 +190,75 @@ describe('Visual View geometry', () => {
     expect(html).toContain('rx="5"');
     expect(html).toContain('fill-opacity="1" stroke-dasharray="none"');
     expect(html).not.toMatch(
-      /data-visual-node|tabindex|role="button"|change-outline|font-style="italic"/
+      /data-visual-node|tabindex|role="button"|change-outline|selection-glow|filter=|font-style="italic"/
     );
   });
+});
+
+describe('selected node halos', () => {
+  const colors = {
+    conflict: '#dc9419',
+    modified: '#2f6fed',
+    added: '#2a9d4a',
+    removed: '#c65353',
+  };
+
+  it('defines all four halo filters with the approved bounds, color and strength', () => {
+    const ui = browserHelpers(),
+      { p, diff } = chain([4]);
+    const html = ui.visualMarkup(p, diff);
+    const defs = html.match(/<defs>([\s\S]*?)<\/defs>/)![1]!;
+    expect(defs.match(/<filter /g)).toHaveLength(4);
+    for (const [kind, color] of Object.entries(colors)) {
+      expect(defs).toContain(
+        `<filter id="halo-${kind}" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="${color}" flood-opacity="1"/></filter>`
+      );
+    }
+  });
+
+  it.each(Object.keys(colors))(
+    'layers the selected %s glow behind the node and its crisp outline above it',
+    kind => {
+      const ui = browserHelpers(),
+        { p, diff } = chain([4]);
+      const n = {
+        ...ui.visualGraph(p, diff).byId.n4,
+        kind,
+        type: 'inject',
+        input: true,
+        outputs: 1,
+      };
+      const html = ui.visualNodeSvg(n, { selected: n.id }, false);
+      const glow = html.match(/<rect class="selection-glow"[^>]*\/>/)![0];
+      const outline = html.match(/<rect class="change-outline"[^>]*\/>/)![0];
+      expect(html.indexOf(glow)).toBe(html.indexOf('>') + 1);
+      expect(html.indexOf(glow)).toBeLessThan(html.indexOf('class="node-body"'));
+      expect(glow).toContain(`filter="url(#halo-${kind})"`);
+      expect(glow).toContain('pointer-events="none"');
+      for (const attr of ['x', 'y', 'width', 'height', 'rx', 'stroke', 'stroke-width']) {
+        expect(glow.match(new RegExp(` ${attr}="[^"]*"`))![0]).toBe(
+          outline.match(new RegExp(` ${attr}="[^"]*"`))![0]
+        );
+      }
+      expect(outline).toContain('stroke-width="3.75"');
+      expect(outline).not.toMatch(/filter=|stroke-dasharray=/);
+      expect(html.match(/ filter=/g)).toHaveLength(1);
+      expect(html.indexOf(outline)).toBeGreaterThan(html.lastIndexOf('stroke-dasharray="none"'));
+      expect(html.indexOf(outline)).toBeGreaterThan(html.indexOf('</text>'));
+      expect(html.indexOf(outline)).toBeLessThan(html.indexOf('<circle'));
+
+      const unselected = ui.visualNodeSvg(n, {}, false);
+      expect(unselected).not.toMatch(/selection-glow|filter=/);
+      const unselectedOutline = unselected.match(/<rect class="change-outline"[^>]*\/>/)![0];
+      expect(unselectedOutline.includes('stroke-dasharray="6,4"')).toBe(
+        kind === 'conflict' || kind === 'removed'
+      );
+      expect(unselectedOutline).not.toContain('filter=');
+      expect(ui.visualNodeSvg({ ...n, kind: null }, { selected: n.id }, false)).not.toMatch(
+        /selection-glow|change-outline|filter=/
+      );
+    }
+  );
 });
 
 describe('proposal summaries and deploy controls', () => {
