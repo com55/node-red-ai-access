@@ -205,16 +205,16 @@ Access features** toggle (the `allowWithoutAdminAuth` local-only opt-in when
 warning with links that reveal the conflicting node (only when conflicts exist),
 and an **Open AI Access dashboard** button.
 
-Everything else is on the dashboard. The **Settings** page lets `*` admins change
-default deploy type, access-token TTL, maximum active tokens, Public URL (with a
-reachability **Check**), CORS origins, secret redaction patterns, and the three
-rate limits, and shows Express's effective `trust proxy` setting. The **MCP
-OAuth** page configures token lifetimes and the client limit, lists registered
-clients with revoke buttons, and reports route collisions (linking `http in`
-nodes to the editor) and the `httpNodeRoot: false` metadata fallback. `read`
-users see the same values read-only; writes need `*`, exactly as before. Changes
-apply immediately; changing limits starts fresh rate-limit buckets. Enabling
-OAuth with no Public URL or an HTTP non-loopback URL shows a warning
+Everything else is on the dashboard. The **Settings** page lets `*` admins
+change default deploy type, access-token TTL, maximum active tokens, Public URL
+(with a reachability **Check**), CORS origins, secret redaction patterns, and
+the three rate limits, and shows Express's effective `trust proxy` setting. The
+**MCP OAuth** page configures token lifetimes and the client limit, lists
+registered clients with revoke buttons, and reports route collisions (linking
+`http in` nodes to the editor) and the `httpNodeRoot: false` metadata fallback.
+`read` users see the same values read-only; writes need `*`, exactly as before.
+Changes apply immediately; changing limits starts fresh rate-limit buckets.
+Enabling OAuth with no Public URL or an HTTP non-loopback URL shows a warning
 confirmation; it does not block the change. Fields set in `settings.js` are
 locked.
 

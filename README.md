@@ -58,7 +58,7 @@ Node 20/22, Node-RED 5.0 on Node 22/24), and **`adminAuth` enabled**
    when `httpAdminRoot` is set), or click **Open AI Access dashboard** in the
    editor sidebar. Opening `/mcp` in a browser redirects to the dashboard (MCP
    clients keep using `/mcp`).
-2. Create an access token on the dashboard's **Access tokens** tab (admin `*`
+2. Create an access token on the dashboard's **Access tokens** page (admin `*`
    only). Choose the token kind for your client.
 3. Either
    [connect an MCP client](https://github.com/com55/node-red-ai-access/blob/main/docs/mcp-clients.md)
@@ -79,28 +79,29 @@ GET links are capped at 24 hours, REST / MCP links at 30 days.
 
 The AI reads flows and submits proposals. Open **Proposals** on the dashboard to
 review the readable node/property diff against the live flow, then approve or
-reject. Approval deploys the changes; rejection never mutates flows.
-Review in Visual View at `#/proposals/<id>`; see the
+reject. Approval deploys the changes; rejection never mutates flows. Review in
+Visual View at `#/proposals/<id>`; see the
 [dashboard](https://github.com/com55/node-red-ai-access/blob/main/docs/dashboard.md)
-and [REST API](https://github.com/com55/node-red-ai-access/blob/main/docs/rest-api.md)
+and
+[REST API](https://github.com/com55/node-red-ai-access/blob/main/docs/rest-api.md)
 guides.
 
 Users with `read` (including guest, if configured) have a read-only view.
 Creating or revoking access links and approving or rejecting proposals require
-`*` permission. The **Audit log** tab records activity for review.
+`*` permission. The **Audit log** page records activity for review.
 
 See the
 [AI quickstart](https://github.com/com55/node-red-ai-access/blob/main/docs/ai-quickstart.md)
 for GET links and Bearer REST / MCP examples, and the
 [dashboard guide](https://github.com/com55/node-red-ai-access/blob/main/docs/dashboard.md)
-for sign-in, tabs, and permissions.
+for sign-in, navigation, and permissions.
 
 ## Docs
 
 | Document                                                                                       | Description                                                                      |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | [Channel index](https://github.com/com55/node-red-ai-access/blob/main/docs/README.md)          | GET link / REST / MCP overview                                                   |
-| [Dashboard](https://github.com/com55/node-red-ai-access/blob/main/docs/dashboard.md)           | Sign-in, tabs, and permissions                                                   |
+| [Dashboard](https://github.com/com55/node-red-ai-access/blob/main/docs/dashboard.md)           | Sign-in, navigation, and permissions                                             |
 | [Configuration](https://github.com/com55/node-red-ai-access/blob/main/docs/configuration.md)   | Settings, proxy URLs, CORS, redaction, and storage                               |
 | [MCP OAuth](https://github.com/com55/node-red-ai-access/blob/main/docs/oauth.md)               | Endpoints, consent, token lifetimes, and public exposure                         |
 | [REST API](https://github.com/com55/node-red-ai-access/blob/main/docs/rest-api.md)             | Routes, MCP JSON-RPC, proposals, and runtime adapters                            |

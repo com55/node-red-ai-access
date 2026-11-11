@@ -17,10 +17,11 @@ grant. The token is shared with the editor, stored under the editor's
 actions stay behind permission checks.
 
 The dashboard uses a sticky header with **Overview** (status and diagnostics),
-**Access tokens**, **MCP OAuth**, and **Proposals** as text navigation. The sliders
-and document icon buttons on the right open **Settings** and **Audit log**. On
-mobile, a menu button opens a navigation drawer. **Settings** and **MCP OAuth**
-are pages; see [Configuration](./configuration.md) for their controls.
+**Access tokens**, **MCP OAuth**, and **Proposals** as text navigation. The
+sliders and document icon buttons on the right open **Settings** and **Audit
+log**. On mobile, a menu button opens a navigation drawer. **Settings** and
+**MCP OAuth** are pages; see [Configuration](./configuration.md) for their
+controls.
 
 Review happens on a persistent proposal detail page with **Visual View**: real
 flow nodes, related-node expansion, editor positions, change diffs against the
