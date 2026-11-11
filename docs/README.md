@@ -13,6 +13,18 @@ bodies. Use a **GET link** only as a fallback for headerless GET-only clients.
 
 ## Index
 
+- [Channel index](./README.md) — GET link / REST / MCP overview
+- [Dashboard](./dashboard.md) — opening, signing in, tabs, and permissions
+- [Configuration](./configuration.md) — settings, proxy URLs, CORS, redaction,
+  precedence, and storage
+- [MCP OAuth](./oauth.md) — endpoints, clients, consent, and public exposure
+- [REST API](./rest-api.md) — routes, MCP JSON-RPC, proposals, and runtime
+  adapters
+- [AI quickstart](./ai-quickstart.md) — GET links, Bearer REST / MCP, and
+  examples
+- [Development](./development.md) — build, test, quality, and generated
+  references
+
 - [MCP client setup](./mcp-clients.md) — Claude Desktop, Cursor, VS Code, Claude
   Code CLI, generic Streamable HTTP
 - [MCP tools reference](./mcp-tools.md) — generated from live `tools/list`
