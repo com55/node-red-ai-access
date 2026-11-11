@@ -102,6 +102,7 @@ export function pageClientReviewScript(): string {
     return cachedProposals.filter(function (p) { return p.id === id; })[0] || proposalDetails[id];
   }
   function renderReviewActionRow(p, stale) {
+    stale = stale || proposalIsStale(p);
     var type = proposalDeployType(p.id);
     var pending = !!proposalActionPending[p.id];
     var open = p.status === 'pending' || p.status === 'conflict';

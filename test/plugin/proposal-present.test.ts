@@ -369,6 +369,14 @@ describe('presentProposal', () => {
 });
 
 describe('presentProposalForApi', () => {
+  it('presents legacy conflict rows as pending with the rebase conflict signal', () => {
+    const legacy = baseProposal({ status: 'conflict' });
+    for (const present of [presentProposal, presentProposalForApi]) {
+      expect(present(legacy)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
+    }
+    expect(legacy.status).toBe('conflict'); // presenters do not mutate callers
+  });
+
   it('exposes landedAfterWithdraw only when true', () => {
     const proposal = baseProposal({ status: 'withdrawn', landedAfterWithdraw: true });
     expect(presentProposalForApi(proposal).landedAfterWithdraw).toBe(true);

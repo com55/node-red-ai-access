@@ -529,6 +529,119 @@ describe('auto-rebase service and HTTP API', () => {
     expect(JSON.stringify(ai.body.conflictValues)).toContain('[REDACTED]');
   });
 
+  it('keeps conflicts pending in API filters and switches per-node choices after reload without reverting other resolutions', async () => {
+    const submitted = await request(app)
+      .post('/mcp/api/v1/proposals')
+      .set(auth())
+      .send({
+        type: 'replace_flow',
+        expectedRev: head.rev,
+        payload: {
+          flowId: 'tab',
+          nodes: [
+            { op: 'set', id: 'a', set: { func: 'proposal' } },
+            { op: 'set', id: 'b', set: { name: 'AI name' } },
+          ],
+        },
+      });
+    expect(submitted.status).toBe(201);
+    const id = submitted.body.id;
+    edit('a', { func: 'editor' });
+    edit('b', { name: 'editor name' });
+    for (const status of ['pending', 'conflict', 'pending,conflict']) {
+      const page = await request(app)
+        .get('/mcp/api/v1/proposals?status=' + status)
+        .set(auth());
+      expect(page.body.total).toBe(1);
+      expect(page.body.proposals).toEqual([
+        expect.objectContaining({
+          id,
+          status: 'pending',
+          rebase: expect.objectContaining({ state: 'conflict' }),
+        }),
+      ]);
+    }
+    const choose = (nodeId: string, choice: string) =>
+      request(app).post(`/mcp/api/v1/proposals/${id}/resolve-conflict`).send({ nodeId, choice });
+    expect((await approve(id)).body.code).toBe('proposal_conflict');
+    const first = await choose('a', 'live');
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
+    expect((await approve(id)).body.code).toBe('proposal_conflict');
+    expect((await choose('b', 'proposed')).status).toBe(200);
+    const reloaded = new ProposalStore(resolveAiAccessPaths(dir)).get(id);
+    expect(reloaded.status).toBe('pending');
+    expect(reloaded.rebase?.state).not.toBe('conflict');
+    expect(reloaded.conflictChoices).toHaveLength(2);
+    const switched = await choose('a', 'proposed');
+    expect(switched.status, JSON.stringify(switched.body)).toBe(200);
+    expect(switched.body.conflictChoices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nodeId: 'a', choice: 'proposed' }),
+        expect.objectContaining({ nodeId: 'b', choice: 'proposed' }),
+      ])
+    );
+    expect(JSON.stringify(switched.body)).not.toContain('"undo"');
+    expect(store.get(id).payload.flow.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'a', func: 'proposal' }),
+        expect.objectContaining({ id: 'b', name: 'AI name' }),
+      ])
+    );
+    expect((await choose('b', 'live')).status).toBe(200);
+    expect(store.get(id).payload.flow.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'a', func: 'proposal' }),
+        expect.objectContaining({ id: 'b', name: 'editor name' }),
+      ])
+    );
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${id}/diff`);
+    expect(diff.body.conflictValues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: 'a',
+          fields: [
+            expect.objectContaining({ field: 'func', live: 'editor', proposed: 'proposal' }),
+          ],
+        }),
+        expect.objectContaining({
+          nodeId: 'b',
+          fields: [
+            expect.objectContaining({ field: 'name', live: 'editor name', proposed: 'AI name' }),
+          ],
+        }),
+      ])
+    );
+    expect(updateFlow).not.toHaveBeenCalled();
+  });
+
+  it('preserves newer unchanged secrets when switching a saved resolution and redacts saved diff alternatives', async () => {
+    edit('a', { password: 'OLD_SECRET' });
+    const p = await submit('a', head.rev, { func: 'proposal' });
+    const id = p.body.id;
+    edit('a', { func: 'editor', password: 'NEW_SECRET' });
+    const choose = (choice: string) =>
+      request(app)
+        .post(`/mcp/api/v1/proposals/${id}/resolve-conflict`)
+        .send({ nodeId: 'a', choice });
+    expect((await choose('live')).status).toBe(200);
+    edit('a', { password: 'NEWEST_SECRET' });
+    expect((await choose('proposed')).status).toBe(200);
+    expect(store.get(id).payload.flow.nodes?.find(n => n.id === 'a')?.password).toBe(
+      'NEWEST_SECRET'
+    );
+    const diff = await request(app).get(`/mcp/api/v1/proposals/${id}/diff`).set(auth());
+    const read = await request(app)
+      .get(`/mcp/api/v1/proposals/${id}?include=payload,baseFlow`)
+      .set(auth());
+    expect(JSON.stringify([diff.body, read.body])).not.toMatch(
+      /OLD_SECRET|NEW_SECRET|NEWEST_SECRET|"undo"/
+    );
+    expect(read.body.conflictChoices).toEqual([
+      expect.objectContaining({ nodeId: 'a', choice: 'proposed' }),
+    ]);
+  });
+
   it('persists the latest conflict choice, exposes only its metadata and allows admin undo/change', async () => {
     const p = await submit();
     edit('a', { func: 'live' });
@@ -547,7 +660,7 @@ describe('auto-rebase service and HTTP API', () => {
     edit('b', { name: 'new independent edit' });
     const undone = await request(app).post(url).send({ nodeId: 'a', choice: 'undo' });
     expect(undone.status).toBe(200);
-    expect(undone.body.status).toBe('conflict');
+    expect(undone.body).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     expect(undone.body.conflictChoice).toBeUndefined();
     expect(head.flows.find(n => n.id === 'b')?.name).toBe('new independent edit');
     expect(updateFlow).not.toHaveBeenCalled();
@@ -665,7 +778,7 @@ describe('auto-rebase service and HTTP API', () => {
     const undo = await request(app)
       .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
       .send({ nodeId: 'a', choice: 'undo' });
-    expect(undo.body.status).toBe('conflict');
+    expect(undo.body).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     expect(undo.body.aiConflictOverrides).toBeUndefined();
     const human = await request(app)
       .post(`/mcp/api/v1/proposals/${p.body.id}/resolve-conflict`)
@@ -1111,7 +1224,10 @@ describe('auto-rebase service and HTTP API', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect((await successor).status).toBe('approved');
     expect(head.flows.find(n => n.id === 'b')!.name).toBe('successor');
-    expect(store.get(b.body.id).status).toBe('conflict'); // successor changed the same node
+    expect(store.get(b.body.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    }); // successor changed the same node
     expect(store.isApproving(a.body.id)).toBe(false);
     expect(updateFlow).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
@@ -1659,7 +1775,10 @@ describe('auto-rebase service and HTTP API', () => {
       conflicts: [expect.objectContaining({ kind: 'node_changed_both', nodeId: 'a' })],
     });
     expect(updateFlow).toHaveBeenCalledTimes(1);
-    expect(store.get(p.body.id).status).toBe('conflict');
+    expect(store.get(p.body.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    });
   });
 
   it('requires a new acknowledgement when a race changes the merged result', async () => {
@@ -1744,7 +1863,7 @@ describe('auto-rebase service and HTTP API', () => {
     });
     edit('a', { func: 'editor' });
     await list();
-    expect(store.get(p.id).status).toBe('conflict');
+    expect(store.get(p.id)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     const resolved = await call('resolve_proposal_conflict', {
       id: p.id,
       expectedRev: head.rev,
@@ -1902,7 +2021,10 @@ describe('auto-rebase service and HTTP API', () => {
     const p = await submit();
     edit('a', { func: 'live' });
     await list();
-    expect(store.get(p.body.id).status).toBe('conflict');
+    expect(store.get(p.body.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    });
     edit('a', { func: 'return msg;' });
     await list();
     expect(store.get(p.body.id).status).toBe('pending');
@@ -1945,7 +2067,10 @@ describe('auto-rebase service and HTTP API', () => {
     await vi.advanceTimersByTimeAsync(499);
     expect(store.get(p.body.id).status).toBe('pending');
     await vi.advanceTimersByTimeAsync(1);
-    expect(store.get(p.body.id).status).toBe('conflict');
+    expect(store.get(p.body.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    });
   });
 
   it('protects an in-flight approve against background checks, body changes and decisions', async () => {
@@ -2032,7 +2157,10 @@ describe('auto-rebase service and HTTP API', () => {
       conflicts: [expect.objectContaining({ nodeId: 'a', fields: ['func'] })],
     });
     expect(JSON.stringify(resolved.body)).not.toMatch(/OLDPW|FIRSTNEW|SECONDNEW/);
-    expect(store.get(p.body.id).status).toBe('conflict');
+    expect(store.get(p.body.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    });
     expect((await approve(p.body.id)).body.code).toBe('proposal_conflict');
     expect(updateFlow).not.toHaveBeenCalled();
     const keepLive = await request(app)

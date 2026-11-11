@@ -57,6 +57,7 @@ import {
   presentProposalForApi,
   presentProposalsForApi,
 } from './proposal-present.js';
+import { restoreConflictTarget } from './proposal-rebase.js';
 import {
   ProposalRebaseAckRequiredError,
   ProposalRebaseRaceError,
@@ -219,7 +220,7 @@ export function listProposalsHandler(
       storeFilter.flowId = listFilter.flowId;
     }
     const all = presentProposalsForApi(
-      store.list(storeFilter).filter(p => matchesStatusFilter(p.status, listFilter.status)),
+      store.list(storeFilter).filter(p => matchesStatusFilter(p, listFilter.status)),
       { ...presentOpts, include }
     );
     const offset = listFilter.offset ?? 0;
@@ -615,7 +616,32 @@ export function resolveProposalConflictHandler(
           });
           return;
         }
-        const restored = store.updateBody(existing.id, saved.undo);
+        const choices = (existing.conflictChoices ?? []).filter(c => c.nodeId !== saved.nodeId);
+        const last = choices[choices.length - 1];
+        const restored = store.updateBody(existing.id, {
+          baseFlow: restoreConflictTarget(
+            existing.baseFlow ?? {},
+            saved.undo.baseFlow,
+            existing.payload.flowId,
+            saved.nodeId
+          ),
+          flow: restoreConflictTarget(
+            existing.payload.flow,
+            saved.undo.flow,
+            existing.payload.flowId,
+            saved.nodeId
+          ),
+          warnings: [
+            ...(existing.warnings ?? []).filter(w => w.nodeId !== saved.nodeId),
+            ...saved.undo.warnings.filter(w => w.nodeId === saved.nodeId),
+          ],
+          aiConflictOverrides: [
+            ...(existing.aiConflictOverrides ?? []).filter(c => c.nodeId !== saved.nodeId),
+            ...(saved.undo.aiConflictOverrides ?? []).filter(c => c.nodeId === saved.nodeId),
+          ],
+          conflictChoices: choices,
+          ...(last ? { conflictChoice: last } : {}),
+        });
         const live = await adapter.getFlows();
         const proposal = syncOneProposal(store, restored, live).proposal;
         audit.append('proposal.conflict_resolved', adminActor(req), {

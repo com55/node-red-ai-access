@@ -110,6 +110,7 @@ function pageClientVisualGraphScript(): string {
     ['added', 'removed', 'modified', 'moved'].forEach(function (kind) {
       (diff[kind] || []).forEach(function (n) { kinds[n.id] = kind; entries[n.id] = n; });
     });
+    (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).forEach(function (c) { kinds[c.nodeId] = 'conflict'; });
     ((diff.rebase && diff.rebase.conflicts) || []).forEach(function (c) { if (c.nodeId) kinds[c.nodeId] = 'conflict'; });
     Object.keys(live).forEach(function (id) {
       if (!kinds[id]) {
@@ -290,10 +291,11 @@ function pageClientVisualRenderScript(): string {
     });
     selectedDiff.tabProperties = [];
     selectedDiff.summary = Object.assign({}, diff.summary, { tabChanges: [] });
-    var resolved = p.conflictChoice && p.conflictChoice.nodeId === n.id;
+    var resolved = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).some(function (entry) { return entry.nodeId === n.id; });
     var savedValues = diff.conflictValues && diff.conflictValues.length ? diff.conflictValues : proposalConflictValues[p.id] || [];
     var conflict = n.kind === 'conflict' || (resolved && savedValues.some(function (entry) { return entry.nodeId === n.id; }));
-    var fields = ((diff.rebase && diff.rebase.conflicts) || []).filter(function (c) { return c.nodeId === n.id; }).map(function (c) { return (c.fields || []).join(' / '); }).join(' / ');
+    var fields = ((diff.rebase && diff.rebase.conflicts) || p.rebase && p.rebase.conflicts || []).filter(function (c) { return c.nodeId === n.id; }).map(function (c) { return (c.fields || []).join(' / '); }).join(' / ');
+    if (!fields && resolved) fields = savedValues.filter(function (entry) { return entry.nodeId === n.id; }).map(function (entry) { return entry.fields.map(function (v) { return v.field; }).filter(Boolean).join(' / '); }).join(' / ');
     var eyebrow = conflict ? 'CONFLICT / ' + (fields || n.type || 'node').toUpperCase() : (n.kind || 'modified').toUpperCase() + ' NODE';
     var conflictBody = renderConflictPanel(p, diff, n.id);
     var body = (diff.baseSnapshotMissing ? '<p class="muted">No starting snapshot was saved with this proposal, so changes are compared with the live flow.</p>' : '') +
@@ -372,7 +374,7 @@ function pageClientVisualInteractionScript(): string {
       var changed = graph.nodes.filter(function (n) { return n.kind; });
       host.querySelector('.visual-list-count').textContent = '(' + changed.length + ')';
       host.querySelector('.visual-node-list').innerHTML = changed.map(function (n) {
-        var resolved = p.conflictChoice && p.conflictChoice.nodeId === n.id && n.kind !== 'conflict';
+        var resolved = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).some(function (entry) { return entry.nodeId === n.id; }) && !((diff.rebase && diff.rebase.conflicts) || []).some(function (c) { return c.nodeId === n.id; });
         return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + statusIcon(n.kind) + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' node') + '</span><span class="visual-node-arrow">↗</span></button>';
       }).join('') || '<p class="muted">Only flow settings changed.</p>';
       transform();

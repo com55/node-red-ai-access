@@ -580,7 +580,8 @@ function registerListProposalsTools(
       .describe(
         'Filter by proposal status: one value, an array, or a comma-separated string ' +
           '(pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). ' +
-          'An empty array or empty string means no status filter.'
+          'pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. ' +
+          'Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter.'
       ),
     flowId: z.string().optional().describe('Filter by flow tab id (payload.flowId)'),
     limit: z
@@ -693,7 +694,7 @@ function registerProposalQueryTools(
     {
       description:
         'Get any proposal by id (all tokens can read). Response includes mine:true|false and, for ' +
-        'open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. ' +
+        'pending proposals (including conflicts), conflictingProposals when other open work touches the same flow. ' +
         'baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. ' +
         'Cite displayName + reviewUrl when talking to the user.',
       inputSchema: {
@@ -850,7 +851,7 @@ function registerProposalActionTools(
     'withdraw_proposal',
     {
       description:
-        'Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). ' +
+        'Withdraw one of YOUR pending proposals (including conflicts) (status becomes withdrawn, not rejected). ' +
         'Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. ' +
         'Cite displayName + reviewUrl when telling the user.',
       inputSchema: {

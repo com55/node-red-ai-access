@@ -5,7 +5,7 @@
 import type { Request } from 'express';
 
 import type { FlowNode, FlowTab } from '../runtime/types.js';
-import type { Proposal } from '../storage/proposals.js';
+import { normalizeProposalStatus, type Proposal } from '../storage/proposals.js';
 
 import { absolutizePath } from './access-path.js';
 import { normalizeHttpAdminRoot } from './auth.js';
@@ -74,6 +74,8 @@ export interface PresentProposalApiOptions extends PresentProposalOptions {
   liveFlows?: readonly FlowNode[];
 }
 
+type PresentedConflictChoice = Omit<NonNullable<Proposal['conflictChoice']>, 'undo'>;
+
 /** Lean proposal shape returned by default from create/get/list/propose. */
 export interface PresentedProposalApi {
   /** Target flow/tab id (for editor jump links). */
@@ -110,7 +112,8 @@ export interface PresentedProposalApi {
   baseFlow?: Proposal['baseFlow'];
   rebase?: Proposal['rebase'];
   aiConflictOverrides?: Proposal['aiConflictOverrides'];
-  conflictChoice?: { nodeId: string; choice: 'live' | 'proposed'; chooser?: 'ai' | 'human' };
+  conflictChoice?: PresentedConflictChoice;
+  conflictChoices?: PresentedConflictChoice[];
   deployPending?: Proposal['deployPending'];
   deploymentAlert?: string;
   rejectedWhileDeployUnknown?: boolean;
@@ -682,6 +685,7 @@ export function presentProposal(
   proposal: Proposal,
   options: PresentProposalOptions = {}
 ): PresentedProposal {
+  proposal = normalizeProposalStatus(proposal);
   const title = resolveProposalTitle(proposal, options);
   const flowLabel = resolveFlowLabel(proposal, options.liveFlowLabels);
   const storedTitle = storedTitleOf(proposal) ?? title;
@@ -698,6 +702,16 @@ export function presentProposal(
               ? { chooser: proposal.conflictChoice.chooser }
               : {}),
           },
+        }
+      : {}),
+    ...(proposal.conflictChoices
+      ? {
+          conflictChoices: proposal.conflictChoices.map(({ nodeId, choice, fields, chooser }) => ({
+            nodeId,
+            choice,
+            fields,
+            chooser,
+          })),
         }
       : {}),
     title,
@@ -811,6 +825,7 @@ export function presentProposalForApi(
   if (full.deployPending) lean.deployPending = full.deployPending;
   if (full.aiConflictOverrides) lean.aiConflictOverrides = full.aiConflictOverrides;
   if (full.conflictChoice) lean.conflictChoice = full.conflictChoice;
+  if (full.conflictChoices) lean.conflictChoices = full.conflictChoices;
   if (full.rebase) {
     lean.rebase = full.rebase;
   }

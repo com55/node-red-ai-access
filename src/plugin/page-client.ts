@@ -1971,7 +1971,7 @@ function pageClientScriptPartBDiff(): string {
     return conflict ? ['Editor (live)', 'AI proposed'] : ['Before', 'After · proposed'];
   }
 
-  function renderUnifiedTextDiff(ch, conflict) {
+  function renderUnifiedTextDiff(ch, conflict, choice) {
     var beforeLn = 0, afterLn = 0;
     var lines = (ch.lines || []).map(function (line) {
       var oldNo = '', newNo = '', kind = 'equal', sign = ' ';
@@ -1979,7 +1979,8 @@ function pageClientScriptPartBDiff(): string {
       if (line.op !== 'remove') { afterLn += 1; newNo = afterLn; }
       if (line.op === 'add') { kind = 'ins'; sign = '+'; }
       if (line.op === 'remove') { kind = 'del'; sign = '−'; }
-      return '<div class="unifiedline ' + kind + '"><i>' + oldNo + '</i><i>' + newNo +
+      var selectedClass = choice && kind !== 'equal' ? (kind === (choice === 'proposed' ? 'ins' : 'del') ? ' chosen-line' : ' rejected') : '';
+      return '<div class="unifiedline ' + kind + selectedClass + '"><i>' + oldNo + '</i><i>' + newNo +
         '</i><b>' + sign + '</b><span>' + esc(line.text) + '</span></div>';
     }).join('');
     return '<div class="unified" role="region" aria-label="Unified line diff for ' + esc(ch.key) + '">' +
@@ -2019,11 +2020,11 @@ function pageClientScriptPartBDiff(): string {
     return rows;
   }
 
-  function renderSplitTextDiff(ch, conflict) {
+  function renderSplitTextDiff(ch, conflict, choice) {
     var beforeLn = 0, afterLn = 0;
     function cell(line, number) {
       var kind = !line ? 'filler' : line.op === 'add' ? 'ins' : line.op === 'remove' ? 'del' : 'equal';
-      return '<div class="diffcol line ' + kind + '">' + (line ? '<i>' + number + '</i><span>' + esc(line.text) + '</span>' : '') + '</div>';
+      return '<div class="diffcol line ' + kind + (choice && kind === (choice === 'proposed' ? 'ins' : 'del') ? ' chosen-line' : '') + '">' + (line ? '<i>' + number + '</i><span>' + esc(line.text) + '</span>' : '') + '</div>';
     }
     var rows = alignSplitDiffLines(ch.lines || []).map(function (row) {
       if (row.left) beforeLn += 1;
@@ -2031,7 +2032,7 @@ function pageClientScriptPartBDiff(): string {
       // Both cells share the grid row height, including when only one wraps.
       return '<div class="diffrow">' + cell(row.left, beforeLn) + cell(row.right, afterLn) + '</div>';
     }).join('');
-    return '<div class="shareddiff" role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
+    return '<div class="shareddiff"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + ' role="region" aria-label="Side-by-side line diff for ' + esc(ch.key) + '">' +
       '<div class="diffrow diffheaders">' + diffHeaders(conflict).map(function (heading) {
         return '<div class="diffhead">' + heading + '</div>';
       }).join('') + '</div><div class="diffscroll">' + rows + '</div></div>';
@@ -2173,10 +2174,10 @@ function pageClientScriptPartBDiffView(): string {
       '<button type="button" ' + attr + '="unified" aria-pressed="' + (mode === 'unified' ? 'true' : 'false') + '">Unified</button></div>';
   }
 
-  function renderPropertyChange(ch, mode, conflict) {
+  function renderPropertyChange(ch, mode, conflict, choice) {
     var labelHtml = fieldLabelHtml(ch.key);
     if (ch.kind === 'text') {
-      var body = mode === 'split' ? renderSplitTextDiff(ch, conflict) : renderUnifiedTextDiff(ch, conflict);
+      var body = mode === 'split' ? renderSplitTextDiff(ch, conflict, choice) : renderUnifiedTextDiff(ch, conflict, choice);
       var added = (ch.lines || []).filter(function (line) { return line.op === 'add'; }).length;
       var summary = '<div class="fieldsummary"><span>Field <code>' + esc(ch.key) + '</code> · ' +
         (conflict ? 'changed on both sides' : added + ' added lines') + '</span>' + renderDiffModeToggle(mode, conflict) + '</div>';
@@ -2320,26 +2321,22 @@ function pageClientScriptPartBDiffView2(): string {
     if (!entry) return '<p class="muted">Loading before and after values…</p>';
     var mode = getDiffMode();
     return entry.fields.map(function (v) {
-      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, mode, true) :
+      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, mode, true, choice) :
         '<div class="fieldsummary"><span>Field <code>' + esc(v.field || 'Node') + '</code> · changed on both sides</span></div>' +
         '<dl><div><dt>Editor (live)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
         '<div><dt>AI proposed</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl>';
       return '<div class="conflict-values"' + (choice ? ' data-chosen="' + esc(choice) + '"' : '') + '>' + body +
-        '<details class="conflict-base"><summary>Base (before submission)</summary><pre>' + esc(conflictValueText(v.base)) + '</pre></details></div>';
+        '</div>';
     }).join('');
   }
 
   function renderConflictPanel(p, diff, nodeId) {
     var inDrawer = nodeId != null;
     var rebase = (diff && diff.rebase) || p.rebase;
-    var selected = p.conflictChoice && (!inDrawer || p.conflictChoice.nodeId === nodeId) ? p.conflictChoice : null;
+    var selected = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).filter(function (entry) { return !inDrawer || entry.nodeId === nodeId; })[0];
     if (inDrawer && !selected && !(rebase && (rebase.conflicts || []).some(function (c) { return c.nodeId === nodeId; })) &&
       !(p.aiConflictOverrides || []).some(function (entry) { return entry.nodeId === nodeId; })) return '';
-    var chosen = selected ? '<div class="conflict-choice" role="status"><span class="resolved-marker">' + statusIcon('resolved') + ' Resolved</span> · <strong>Chosen: ' +
-      (selected.choice === 'live' ? 'Keep live' : 'Use proposed') + '</strong> · ' + esc(selected.nodeId) +
-      (canApprove ? ' <button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
-        '" data-node-id="' + esc(selected.nodeId) + '" data-choice="undo">Undo / change choice</button>' : '') +
-      '<p>This choice changes the proposal only. Nothing is deployed until approval. Undo is available until the next proposal edit or choice.</p></div>' : '';
+    var chosen = '';
     if ((p.aiConflictOverrides || []).some(function (entry) { return !inDrawer || entry.nodeId === nodeId; })) {
       chosen += '<div class="warning ai-conflict-override" role="alert"><strong>AI chose its own value over your editor change</strong>' +
         '<p>Review the fields below before approving this proposal.</p>' +
@@ -2351,29 +2348,31 @@ function pageClientScriptPartBDiffView2(): string {
           }).join('');
         }).join('') + (!diff ? '<p>Loading before and after values…</p>' : '') + '</div>';
     }
-    if (!rebase || rebase.state !== 'conflict' || (inDrawer && !(rebase.conflicts || []).some(function (c) { return c.nodeId === nodeId; }))) {
-      var values = selected && ((diff && diff.conflictValues && diff.conflictValues.length ? diff.conflictValues : null) || proposalConflictValues[p.id]);
-      return chosen + (values ? renderConflictValues({ nodeId: selected.nodeId }, { conflictValues: values }, selected.choice) : '');
-    }
-    return chosen + (inDrawer ? '' : '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts"><h3>Conflicts</h3><p>Resolve these conflicts before approving.</p>') +
-      (rebase.conflicts || []).filter(function (c) { return !inDrawer || c.nodeId === nodeId; }).map(function (c) {
-        var tabConflict = c.nodeId === proposalFlowId(p) || /^tab_/.test(c.kind || '');
-        return (inDrawer ? '' : '<div class="proposal-conflict"><strong>' + esc(flowLabelOf(p) || 'Flow') + ' · ' +
-          esc(c.nodeName || (tabConflict ? 'Flow settings' : 'Unnamed node')) + '</strong>' +
-          ' · ' + esc(c.nodeType || (tabConflict ? 'tab' : 'unknown type')) + ' · <code>' + esc(c.nodeId || '') + '</code>') +
-          '<div class="drawer-notice">' + esc(conflictReason(c)) + '</div>' + renderConflictValues(c, diff, selected && selected.choice) +
-          '<div class="chooserow">' +
-          (canApprove ? (c.choices || []).filter(function (choice) {
-            return choice === 'live' || choice === 'proposed';
-          }).map(function (choice) {
-            return '<div class="conflict-option"><button type="button" class="action secondary resolve-conflict-btn" data-id="' + esc(p.id) +
-              '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(choice) + '">' +
-              (inDrawer ? (choice === 'live' ? 'Use editor value' : 'Use proposed value') : (choice === 'live' ? 'Keep live' : 'Use proposed')) + '</button>' +
-              '<p class="hint">' + (choice === 'live' ? 'Keep the editor value for the conflicting fields.' :
-                'Replace the conflicting editor fields with the AI values.') + ' Other field changes are preserved.</p></div>';
+    var conflicts = ((rebase && rebase.state === 'conflict' && rebase.conflicts) || []).slice();
+    (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).forEach(function (entry) {
+      if (!conflicts.some(function (c) { return c.nodeId === entry.nodeId; })) {
+        conflicts.push({ nodeId: entry.nodeId, fields: entry.fields, kind: 'node_changed_both', choices: ['live', 'proposed'], resolved: true });
+      }
+    });
+    if (!conflicts.length) return chosen;
+    return chosen + (inDrawer ? '' : '<div class="proposal-conflicts" role="region" aria-label="Proposal conflicts"><h3>Conflicts</h3>') +
+      conflicts.filter(function (c) { return !inDrawer || c.nodeId === nodeId; }).map(function (c) {
+        var selection = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).filter(function (entry) { return entry.nodeId === c.nodeId; })[0];
+        var choice = c.resolved && selection ? selection.choice : null;
+        var fields = c.fields && c.fields.length ? c.fields : ((diff && diff.conflictValues) || proposalConflictValues[p.id] || []).filter(function (entry) { return entry.nodeId === c.nodeId; }).reduce(function (all, entry) { return all.concat(entry.fields.map(function (v) { return v.field; }).filter(Boolean)); }, []);
+        var notice = c.kind === 'node_changed_both' || c.kind === 'tab_changed_both'
+          ? 'This node was also edited in the editor. ' + (fields.length ? (fields.length === 1 ? 'Field ' : 'Fields ') + fields.map(function (f) { return '<code>' + esc(f) + '</code>'; }).join(', ') + ' changed on both sides.' : 'Changed on both sides.')
+          : esc(conflictReason(c));
+        var values = diff && diff.conflictValues && diff.conflictValues.some(function (entry) { return entry.nodeId === c.nodeId; }) ? diff : { conflictValues: proposalConflictValues[p.id] || [] };
+        return (inDrawer ? '' : '<div class="proposal-conflict"><strong>' + esc(c.nodeName || c.nodeId || 'Flow settings') + '</strong>') +
+          '<div class="drawer-notice">' + notice + (choice ? '<br><strong>Resolution selected.</strong>' : '') + '</div>' + renderConflictValues(c, values, choice) +
+          '<div class="chooserow">' + (canApprove ? (c.choices || []).filter(function (side) { return side === 'live' || side === 'proposed'; }).map(function (side) {
+            var active = side === choice;
+            return '<div class="conflict-option"><button type="button" class="action secondary resolve-conflict-btn' + (active ? ' chosen' : '') + '" data-id="' + esc(p.id) +
+              '" data-node-id="' + esc(c.nodeId || '') + '" data-choice="' + esc(side) + '" aria-pressed="' + active + '">' +
+              (active ? '✓ Using ' : 'Use ') + (side === 'live' ? 'editor value' : 'proposed value') + '</button></div>';
           }).join('') : '') + '</div>' + (inDrawer ? '' : '</div>');
-      }).join('') + (canApprove ? '<button type="button" class="action secondary recheck-btn" data-id="' +
-        esc(p.id) + '">Re-check</button>' : '') + (inDrawer ? '' : '</div>');
+      }).join('') + (inDrawer ? '' : '</div>');
   }
 
   async function updateProposalConflict(id, nodeId, choice, button) {
@@ -2382,19 +2381,18 @@ function pageClientScriptPartBDiffView2(): string {
     if (button) {
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
-      button.innerHTML = '<span class="spinner" aria-hidden="true"></span> ' + (choice ? 'Saving…' : 'Re-checking…');
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Saving…';
     }
     try {
-      var result = await api('/proposals/' + encodeURIComponent(id) + (choice ? '/resolve-conflict' : '/recheck'), {
-        method: 'POST', body: JSON.stringify(choice ? { nodeId: nodeId, choice: choice } : {})
+      var result = await api('/proposals/' + encodeURIComponent(id) + '/resolve-conflict', {
+        method: 'POST', body: JSON.stringify({ nodeId: nodeId, choice: choice })
       });
       delete proposalDiffCache[id];
       await loadProposals();
       await loadProposalDiff(id);
       var current = cachedProposals.filter(function (p) { return p.id === id; })[0];
-      var conflict = current ? proposalIsStale(current) : result && result.proposal && result.proposal.status === 'conflict';
-      showToast(choice === 'undo' ? 'Choice undone. Review the conflict again.' :
-        conflict ? 'Still conflicting. Review the remaining conflicts.' : 'Resolved. Review the updated proposal.', true);
+      var conflict = current ? proposalIsStale(current) : proposalIsStale(result && (result.proposal || result));
+      showToast(conflict ? 'Still conflicting. Review the remaining conflicts.' : 'Resolved. Review the updated proposal.', true);
       notifySidebarPendingRefresh();
     } catch (e) {
       showFlash($('proposals-flash'), e.message || String(e), false);
@@ -2429,7 +2427,7 @@ function pageClientScriptPartB2(): string {
       badge.hidden = counts.pending <= 0;
       badge.title = fullText;
     }
-    var filterCounts = { pending: counts.live, conflict: counts.stale, resolved: counts.decided, all: counts.pending + counts.decided };
+    var filterCounts = { pending: counts.pending, conflict: counts.stale, resolved: counts.decided, all: counts.pending + counts.decided };
     Object.keys(filterCounts).forEach(function (key) {
       var el = $('filter-' + key + '-count');
       if (el) el.textContent = String(filterCounts[key]);
@@ -2484,19 +2482,10 @@ function pageClientScriptPartB2(): string {
         mountProposalVisual(proposalDetails[id], proposalDiffCache[id]);
       });
     });
-    list.querySelectorAll('.resolve-conflict-btn, .recheck-btn').forEach(function (btn) {
+    list.querySelectorAll('.resolve-conflict-btn').forEach(function (btn) {
       bindOnce(btn, 'click', function () {
-        if (btn.disabled) return;
-        var id = btn.getAttribute('data-id'), nodeId = btn.getAttribute('data-node-id'), choice = btn.getAttribute('data-choice');
-        if (!choice) { updateProposalConflict(id, nodeId, choice, btn); return; }
-        openConfirmDialog({
-          title: choice === 'undo' ? 'Undo this choice?' : choice === 'live' ? 'Keep live values?' : 'Use proposed values?',
-          message: choice === 'undo' ? 'Restore the proposal before the latest choice, then re-check against the current editor.' :
-            (choice === 'live' ? 'The conflicting fields will keep the editor values.' : 'The conflicting fields will use the AI values.') +
-            ' Independent field changes are preserved. This updates the proposal; it does not deploy.',
-          confirmLabel: choice === 'undo' ? 'Undo choice' : 'Confirm choice',
-          onConfirm: function () { updateProposalConflict(id, nodeId, choice, btn); }
-        });
+        if (btn.disabled || btn.getAttribute('aria-pressed') === 'true') return;
+        return updateProposalConflict(btn.getAttribute('data-id'), btn.getAttribute('data-node-id'), btn.getAttribute('data-choice'), btn);
       });
     });
     list.querySelectorAll('.approve-btn').forEach(function (btn) {
@@ -2607,7 +2596,8 @@ function pageClientScriptPartB2Cards(): string {
 
   function renderRebaseChip(p, diff) {
     var rebase = (diff && diff.rebase) || p.rebase;
-    return p.status === 'pending' && rebase ? '<span class="rebase-chip">Rebase: ' + esc(rebase.state) +
+    if ((p.status === 'pending' || p.status === 'conflict') && (p.status === 'conflict' || rebase && rebase.state === 'conflict')) return '<span class="rebase-chip conflict">Conflict</span>';
+    return (p.status === 'pending' || p.status === 'conflict') && rebase ? '<span class="rebase-chip">Rebase: ' + esc(rebase.state) +
       (rebase.state === 'merged' ? ' · ' + esc(rebase.liveChangedCount == null ? (p.rebase && p.rebase.liveChangedCount || 0) : rebase.liveChangedCount) + ' live changes' : '') + '</span>' : '';
   }
 
@@ -2641,7 +2631,7 @@ function pageClientScriptPartB2Cards(): string {
       '" data-id="' + esc(p.id) + '" data-status="' + esc(p.status) + '">' +
       '<div class="visual-eyebrow">Proposal review / Visual View</div><header class="proposal-card-head">' +
       '<h3 class="proposal-heading" data-title-for="' + esc(p.id) + '">' + esc(title) + '</h3>' +
-      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status === 'conflict' ? 'Conflict' : p.status) + '</span> ' +
+      '<span class="status-pill ' + esc(p.status === 'conflict' ? 'pending' : p.status) + '">' + esc(p.status === 'conflict' ? 'pending' : p.status) + '</span> ' +
       renderLandedAfterWithdraw(p) + renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
       (createdBy ? '<span class="proposal-created-by">' + createdBy + '</span>' : '') + '</header>' +
       '<div class="proposal-actions">' + actions + '</div>' +
@@ -2674,7 +2664,7 @@ function pageClientScriptPartB2CardsList(): string {
     return '<div class="proposal-card-compact" data-id="' + esc(p.id) + '" role="button" tabindex="0">' +
       '<div class="proposal-top"><span class="proposal-row-heading"><strong data-title-for="' + esc(p.id) + '">' + esc(titleForProposalCard(p)) + '</strong>' +
       (warning ? '<span class="proposal-inline-warning" title="Deploy pending" aria-label="Deploy pending">' + statusIcon('deploy-pending') + '</span>' : '') + '</span>' +
-      '<span class="status-pill ' + esc(p.status) + '">' + esc(p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '</div>' +
+      '<span class="status-pill ' + esc(p.status === 'conflict' ? 'pending' : p.status) + '">' + esc(p.status === 'conflict' ? 'pending' : p.status) + '</span>' + renderLandedAfterWithdraw(p) + renderRebaseChip(p) + '</div>' +
       '<div class="proposal-row-meta"><span class="flow-name">' + esc(flowLabelOf(p) || 'Flow') + '</span>' + renderChangeCounts(p.changeCounts) +
       '<span class="proposal-by">Created by ' + esc((p.createdBy && (p.createdBy.label || p.createdBy.user || p.createdBy.clientId)) || 'AI agent') + '</span>' + timeCell(p.createdAt) + '<span class="row-chevron">›</span></div></div>';
   }
@@ -2702,7 +2692,7 @@ function pageClientScriptPartB2CardsList(): string {
     if (filter === 'all') return true;
     if (filter === 'resolved' || filter === 'decided') return p.status !== 'pending' && p.status !== 'conflict';
     if (filter === 'conflict') return proposalIsStale(p);
-    return p.status === 'pending' && !proposalIsStale(p);
+    return p.status === 'pending' || p.status === 'conflict';
   }
   function countSearchMatchesInFilter(filter) {
     return cachedProposals.filter(function (p) { return proposalMatchesFilter(p, filter) && proposalMatchesSearch(p); }).length;
@@ -2829,7 +2819,7 @@ function pageClientScriptPartB2Focus(): string {
         if (id && label) cachedFlowLabels[id] = String(label);
       });
       var sig = JSON.stringify([decidedHasMore, decidedTotal, cachedProposals.map(function (p) {
-        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title, p.rebase, p.changeCounts, p.deployPending, p.conflictChoice, p.deploymentAlert];
+        return [p.id, p.status, p.updatedAt, p.baseRevChanged, p.flowLabel, p.title, p.rebase, p.changeCounts, p.deployPending, p.conflictChoice, p.conflictChoices, p.deploymentAlert];
       })]);
       var unchanged = sameAsLastRender('proposals', sig);
       if (opts.skipRender || (opts.auto && unchanged)) {
@@ -2932,7 +2922,7 @@ function pageClientScriptPartB2Apply(): string {
     if (diff.conflictValues && diff.conflictValues.length) proposalConflictValues[id] = diff.conflictValues;
     if (p && diff.rebase && (p.status === 'pending' || p.status === 'conflict')) {
       p.rebase = Object.assign({}, p.rebase || {}, diff.rebase);
-      p.status = diff.rebase.state === 'conflict' ? 'conflict' : 'pending';
+      p.status = 'pending';
     }
     if (p && typeof diff.baseRevChanged === 'boolean') {
       p.baseRevChanged = diff.baseRevChanged;
@@ -2958,7 +2948,7 @@ function pageClientScriptPartB2Apply(): string {
     if (p) {
       article.setAttribute('data-status', p.status);
       var pill = article.querySelector('.status-pill');
-      if (pill) { pill.className = 'status-pill ' + p.status; pill.textContent = p.status === 'conflict' ? 'Conflict' : p.status; }
+      if (pill) { pill.className = 'status-pill ' + (p.status === 'conflict' ? 'pending' : p.status); pill.textContent = p.status === 'conflict' ? 'pending' : p.status; }
       var actionHost = article.querySelector('.proposal-actions');
       if (actionHost) actionHost.innerHTML = renderPendingActions(p, proposalIsStale(p));
       var notes = article.querySelector('.proposal-review-notes');

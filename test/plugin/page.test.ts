@@ -232,7 +232,8 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/Conflicts/);
     expect(res.text).toMatch(/renderConflictPanel|proposal-conflicts/);
     expect(res.text).toMatch(/Created by/);
-    expect(res.text).toMatch(/Keep live/);
+    expect(res.text).toMatch(/editor value/);
+    expect(res.text).not.toMatch(/Keep live|Use proposed values\?|Keep live values\?/);
     expect(res.text).toMatch(/Show .*line change|large-diff-btn/);
     expect(res.text).toMatch(/Changed in editor since submit/);
     expect(res.text).toMatch(/Will deploy \(vs live\)/);
@@ -271,7 +272,7 @@ describe('/mcp admin page', () => {
     expect(res.text).toMatch(/openConfirmDialog/);
     expect(res.text).toMatch(/trapDialogFocus|showInPageDialog/);
     expect(res.text).toMatch(/Revoke access link/);
-    expect(res.text).toMatch(/Re-check/);
+    expect(res.text).not.toMatch(/recheck-btn|>Re-check<\//);
     expect(res.text).not.toMatch(/window\.confirm|window\.alert|window\.prompt/);
     // Regression: Deletes X of Y banner must show for large deletes even when stale.
     expect(res.text).toMatch(/renderDeleteBanner|Deletes .* of .* nodes/);

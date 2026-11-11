@@ -55,6 +55,15 @@ function dashboard() {
 }
 
 describe('dashboard auto-rebase review', () => {
+  it('omits conflict controls from proposals without conflicts or saved choices', () => {
+    expect(
+      dashboard().renderConflictPanel({
+        id: 'p',
+        status: 'pending',
+        rebase: { state: 'clean', conflicts: [] },
+      })
+    ).toBe('');
+  });
   it('shows block identity, affected tabs and the confirmation action', () => {
     const ui = dashboard();
     const html = ui.renderDeployUnknownBlocks([
@@ -357,12 +366,14 @@ describe('dashboard rebase controls', () => {
       },
     });
     expect(html).toContain('&lt;img src=x&gt;');
-    expect(html).toContain('The editor and proposal changed the same fields');
+    expect(html).toContain(
+      'This node was also edited in the editor. Field <code>func</code> changed on both sides.'
+    );
     expect(html).not.toContain('node_changed_both');
     expect(html).not.toContain('<script>');
-    expect(html).toContain('Keep live');
+    expect(html).toContain('Use editor value');
     expect(html).not.toContain('Use proposed');
-    expect(html).toContain('Re-check');
+    expect(html).not.toContain('recheck-btn');
   });
 
   it('posts a conflict choice and reloads the proposal and diff', async () => {
@@ -541,13 +552,11 @@ describe('proposal UX details', () => {
       }
     );
     for (const text of [
-      'Main · Main',
-      'tab',
-      'same flow settings',
-      'Base (before submission)',
+      'Main',
+      'This node was also edited in the editor.',
+      'changed on both sides',
       'Editor (live)',
       'AI proposed',
-      'before',
       'editor',
       '&lt;script&gt;after&lt;/script&gt;',
       'MODE',
@@ -593,7 +602,7 @@ describe('proposal UX details', () => {
     ).not.toContain('AI chose its own value');
   });
 
-  it('shows the chosen state and a real undo/change control after resolution', () => {
+  it('shows the chosen state with both buttons available to change sides', () => {
     const ui = dashboard();
     ui.setCanApprove(true);
     const html = ui.renderConflictPanel({
@@ -601,16 +610,18 @@ describe('proposal UX details', () => {
       conflictChoice: { nodeId: 'n', choice: 'live' },
       rebase: { state: 'clean' },
     });
-    expect(html).toContain('Chosen: Keep live');
-    expect(html).toContain('Undo / change choice');
-    expect(html).toContain('data-choice="undo"');
+    expect(html).toContain('Resolution selected.');
+    expect(html).toContain('✓ Using editor value');
+    expect(html).toContain('Use proposed value');
+    expect(html).toContain('resolve-conflict-btn chosen');
+    expect(html).not.toContain('data-choice="undo"');
   });
 
-  it('requires confirmation before sending a conflict choice', () => {
+  it('applies a conflict choice immediately without opening a confirmation dialog', async () => {
     const ui = dashboard();
     const api = vi.fn();
     const confirm = vi.fn();
-    let click: (() => void) | undefined;
+    let click: (() => Promise<void>) | undefined;
     const attrs: Record<string, string> = {
       'data-id': 'p',
       'data-node-id': 'n',
@@ -621,29 +632,29 @@ describe('proposal UX details', () => {
       setAttribute: (k: string, v: string) => {
         attrs[k] = v;
       },
-      addEventListener: (_event: string, fn: () => void) => {
+      addEventListener: (_event: string, fn: () => Promise<void>) => {
         click = fn;
       },
     };
+    Object.assign(button, { removeAttribute: vi.fn() });
     ui.setApi(api);
     ui.setConfirm(confirm);
     ui.bindProposalActions({
       querySelectorAll: (selector: string) =>
         selector.includes('resolve-conflict-btn') ? [button] : [],
     });
-    click?.();
-    expect(api).not.toHaveBeenCalled();
-    expect(confirm).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'Use proposed values?',
-        confirmLabel: 'Confirm choice',
-        onConfirm: expect.any(Function),
-      })
-    );
+    ui.setReload(vi.fn(), vi.fn());
+    ui.setToast(vi.fn());
+    await click?.();
+    expect(api).toHaveBeenCalledWith('/proposals/p/resolve-conflict', {
+      method: 'POST',
+      body: JSON.stringify({ nodeId: 'n', choice: 'proposed' }),
+    });
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it.each([true, false])(
-    'shows a spinner during recheck and the result (conflicting=%s)',
+    'shows a spinner while saving a choice and the result (conflicting=%s)',
     async conflict => {
       const ui = dashboard();
       let finish: ((value: unknown) => void) | undefined;
@@ -661,13 +672,13 @@ describe('proposal UX details', () => {
       const toast = vi.fn();
       ui.setToast(toast);
       const button = {
-        textContent: 'Re-check',
+        textContent: 'Use proposed value',
         innerHTML: '',
         disabled: false,
         setAttribute: vi.fn(),
         removeAttribute: vi.fn(),
       };
-      const work = ui.updateProposalConflict('p', null, null, button);
+      const work = ui.updateProposalConflict('p', 'n', 'proposed', button);
       expect(button.disabled).toBe(true);
       expect(button.innerHTML).toContain('spinner');
       finish?.({});
@@ -680,7 +691,7 @@ describe('proposal UX details', () => {
     }
   );
 
-  it('counts the pending and conflict filters separately while the dashboard badge counts all open work', () => {
+  it('includes conflicts in both Pending and Conflict filter counts while the dashboard badge counts all open work', () => {
     const ui = dashboard();
     ui.setProposals([
       { id: 'a', status: 'pending' },
@@ -700,7 +711,7 @@ describe('proposal UX details', () => {
       return el;
     });
     ui.updatePendingBadges();
-    expect(elements.slice(0, 3).map(el => el.textContent)).toEqual(['2', '1', '2']);
+    expect(elements.slice(0, 3).map(el => el.textContent)).toEqual(['2', '2', '2']);
     expect(elements[0]?.title).toBe('1 to review · 1 conflict');
     expect(elements[3]?.textContent).toBe('1');
     expect(elements[4]?.textContent).toBe('1');

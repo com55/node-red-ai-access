@@ -184,7 +184,7 @@ info:
     `N validation errors` and every entry in `errors[]`. Duplicate node ids in a
     full tab or batch return `duplicate_node_id`.
 
-    Open proposals (`pending` or `conflict`) auto-rebase when live revisions change.
+    Pending proposals (including conflicts) auto-rebase when live revisions change.
     Disjoint node and tab fields merge automatically. Only fields changed on both
     sides conflict (even identical edits); x/y never conflict and proposed positions
     win ties. Env merges by unique name and entry field, credentials by key.
@@ -1351,7 +1351,7 @@ paths:
       description: |
         Accepts the creating access-link Bearer, or a full (`*`) admin session
         for lost-token recovery. Other tokens and read-only admins are forbidden.
-        Withdraws an **open** (pending or conflict) proposal. Status becomes `withdrawn` (not `rejected`). Optional
+        Withdraws a **pending** proposal (including one with conflicts). Status becomes `withdrawn` (not `rejected`). Optional
         JSON body `{ "reason": "…" }`.
       operationId: withdrawProposal
       security:
@@ -2406,7 +2406,7 @@ components:
 
     ProposalRebase:
       type: object
-      description: Merge metadata; conflicts contain field names only, never field values.
+      description: Merge metadata; state=conflict tags a pending proposal and blocks approval. Conflicts contain field names only, never field values.
       properties:
         state:
           type: string
@@ -2442,6 +2442,12 @@ components:
           format: date-time
 
     ProposalStatus:
+      description: |
+        Responses use pending for every proposal awaiting a decision. Unresolved
+        conflicts are signalled by rebase.state=conflict and block approval.
+        The conflict enum value is a deprecated legacy input/read alias for pending
+        with conflicts. The status=pending filter includes these proposals;
+        status=conflict selects only that pending subset.
       type: string
       enum: [pending, conflict, approved, rejected, failed, withdrawn, expired, superseded]
 
@@ -2464,7 +2470,7 @@ components:
       properties:
         conflictChoice:
           type: object
-          description: Latest manual resolution; admins can undo it until the next body edit or choice. Undo snapshots are never returned.
+          description: Latest resolution (compatibility alias of the last conflictChoices entry). Undo snapshots are never returned.
           required: [nodeId, choice]
           properties:
             nodeId:
@@ -2472,6 +2478,28 @@ components:
             choice:
               type: string
               enum: [live, proposed]
+        conflictChoices:
+          type: array
+          description: |
+            Per-node resolutions retained until the next body edit. POST resolve-conflict
+            with the other choice to change a resolution immediately. Snapshot values
+            are never returned; conflictValues in the diff provides safe alternatives.
+          items:
+            type: object
+            required: [nodeId, choice]
+            properties:
+              nodeId:
+                type: string
+              choice:
+                type: string
+                enum: [live, proposed]
+              fields:
+                type: array
+                items:
+                  type: string
+              chooser:
+                type: string
+                enum: [ai, human]
         rejectedWhileDeployUnknown:
           type: boolean
           description: Rejected while a full-snapshot deploy could still land. Check live flows; late landing triggers an alert and audit entry.
@@ -2630,7 +2658,7 @@ components:
           type: string
           description: |
             Present when rejected, failed, withdrawn, or expired. Revision changes
-            keep open proposals pending or in conflict; they do not close them.
+            keep open proposals pending, with conflicts in `rebase.state`; they do not close them.
         resultRev:
           type: string
 
@@ -2743,7 +2771,7 @@ components:
         choice:
           type: string
           enum: [live, proposed, undo]
-          description: Undo restores the proposal before the latest choice for nodeId and rechecks against live. Available until the next body edit or choice; admin only. Nothing is deployed.
+          description: live/proposed applies immediately and may replace an earlier choice for this node. Undo restores this node before its latest choice and rechecks against live, preserving choices on other nodes; admin only. Nothing is deployed.
 
     ResolveProposalRequest:
       oneOf:

@@ -1075,7 +1075,7 @@ dialog h3 { margin: 0 0 0.4rem; }
 }
 .time-relative[title] { cursor: help; border-bottom: 1px dotted var(--line); }
 .status-pill.pending, .status-pill.approved { color: var(--accent); background: #e8f3ed; border: 1px solid #bddbcd; }
-.status-pill.conflict { color: #946000; background: #fff4d9; border: 1px solid #ecd298; }
+.status-pill.conflict, .rebase-chip.conflict { color: #946000; background: #fff4d9; border: 1px solid #ecd298; }
 .status-pill {
   display: inline-block;
   padding: 0.1rem 0.45rem;
@@ -1299,7 +1299,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .change-counts .moved { background: #f3f0fa; border-color: #d3cce6; color: #7a6fb0; }
 .change-counts .conflict { background: #fff7e8; border-color: #efd7aa; color: #b77913; }
 .status-pill.pending, .status-pill.approved { color: var(--accent); background: #e8f3ed; border: 1px solid #bddbcd; }
-.status-pill.conflict { color: #946000; background: #fff4d9; border: 1px solid #ecd298; }
+.status-pill.conflict, .rebase-chip.conflict { color: #946000; background: #fff4d9; border: 1px solid #ecd298; }
 .status-pill { border-radius: 20px; text-transform: capitalize; font-size: 11px; font-weight: 500; padding: 3px 9px; white-space: nowrap; }
 .rebase-chip { border: 1px solid #bddbcd; border-radius: 20px; padding: 3px 9px; font-size: 11px; color: var(--accent); background: #e8f3ed; white-space: nowrap; }
 #proposal-detail-page .proposal-detail { border: 0; border-radius: 0; background: transparent; margin: 0; padding: 0; }
@@ -1390,17 +1390,18 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .drawercontent .diff-section { margin-top: 0; }
 .chooserow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin: 10px 0; }
 .chooserow .conflict-option { min-width: 0; margin: 0; }
-.chooserow button { width: 100%; margin: 0; border: 1px solid #9db7ad; border-radius: 5px; color: var(--accent); background: var(--card); font-size: 12px; padding: 10px 2px; }
+.chooserow button.resolve-conflict-btn { width: 100%; margin: 0; border: 1px solid #9db7ad; border-radius: 5px; color: var(--accent); background: var(--card); font-size: 12px; font-weight: 400; padding: 10px 2px; }
 .drawer .conflict-base { margin-top: 8px; }
 .drawer .conflict-values pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .editor-merged-marker, .resolved-marker { display: inline-flex; align-items: center; gap: 3px; }
 .editor-merged-marker { color: #00a9c3; }
 .resolved-marker { color: var(--accent); }
 .conflict-choice { border-left: 3px solid var(--accent); }
-.conflict-values[data-chosen="live"] .shareddiff .diffrow > :last-child,
-.conflict-values[data-chosen="proposed"] .shareddiff .diffrow > :first-child { opacity: .4; }
-.conflict-values[data-chosen="live"] .del, .conflict-values[data-chosen="proposed"] .ins { font-weight: 700; }
-.conflict-values[data-chosen="live"] .unifiedline.ins, .conflict-values[data-chosen="proposed"] .unifiedline.del { opacity: .4; }
+.shareddiff[data-chosen="live"] .diffrow > :last-child,
+.shareddiff[data-chosen="proposed"] .diffrow > :first-child { opacity: .4; }
+.shareddiff .line.chosen-line, .unifiedline.chosen-line { font-weight: 700; }
+.unifiedline.rejected { opacity: .4; }
+.chooserow button.chosen { color: #fff; background: var(--accent); border-color: var(--accent); }
 @media (min-width: 851px) and (max-width: 1100px) {
   .dashboard-header { padding: 0 16px; gap: 10px; }
   .dashboard-header nav button { padding: 8px 6px; font-size: 13px; }

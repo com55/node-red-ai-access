@@ -19,6 +19,10 @@ and this project adheres to
 
 ### Changed
 
+- Keep conflicting proposals pending with `rebase.state: conflict`. Pending
+  filters/counts include conflicts; Conflict is a pending subset. Normalize the
+  deprecated stored `status: conflict` alias on read for API and MCP consumers.
+
 - Show Visual View node changes in a full-width drawer with aligned Split rows
   and field-level Split/Unified controls.
 - Use shared inline SVG status icons across proposal lists and Visual View.
@@ -26,6 +30,11 @@ and this project adheres to
   Existing proposal links (`#proposal=<id>`) continue to open the detail page.
 
 ### Fixed
+
+- Match the conflict drawer to the mockup: apply editor/proposed choices
+  immediately without confirmation or Re-check, retain per-node choices for
+  switching sides, and highlight chosen/rejected Split and Unified lines. Keep
+  conflict nodes amber and block approval until every conflict is resolved.
 
 - Stop Visual View move arrows at the outer edge of the highlight outline,
   keeping arrows visible when the outline landing has room for the tip.

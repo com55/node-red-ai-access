@@ -603,10 +603,20 @@ describe('proposal summaries and deploy controls', () => {
     expect(ui.renderCompactProposal({ ...p, status: 'approved' })).not.toContain('rebase-chip');
     for (const status of ['approved', 'rejected', 'failed', 'withdrawn', 'expired', 'superseded'])
       expect(ui.proposalMatchesFilter({ status }, 'resolved')).toBe(true);
-    expect(ui.proposalMatchesFilter({ status: 'conflict' }, 'pending')).toBe(false);
+    expect(ui.proposalMatchesFilter({ status: 'conflict' }, 'pending')).toBe(true);
     expect(ui.proposalMatchesFilter({ status: 'conflict' }, 'conflict')).toBe(true);
     expect(ui.proposalMatchesFilter({ status: 'pending' }, 'pending')).toBe(true);
     expect(ui.proposalMatchesFilter({ status: 'pending' }, 'all')).toBe(true);
+    for (const conflict of [
+      { status: 'pending', rebase: { state: 'conflict' } },
+      { status: 'conflict' },
+    ]) {
+      const markup = ui.renderCompactProposal({ ...p, ...conflict });
+      expect(markup).toContain('class="status-pill pending">pending</span>');
+      expect(markup).toContain('class="rebase-chip conflict">Conflict</span>');
+      expect(ui.proposalMatchesFilter(conflict, 'pending')).toBe(true);
+      expect(ui.proposalMatchesFilter(conflict, 'conflict')).toBe(true);
+    }
   });
 
   it.each(['#/proposals/p', '#proposal=p'])(
@@ -668,18 +678,18 @@ describe('proposal search pagination and cross-filter hints', () => {
   it.each([1, 2])('marks %i loaded Resolved matches as partial until pagination ends', count => {
     const { ui, list } = searchUi();
     const proposals = [
-      { id: 'c', title: 'needle', status: 'conflict' },
+      { id: 'p', title: 'needle', status: 'pending' },
       ...Array.from({ length: count }, (_, i) => ({
         id: 'r' + i,
         title: 'needle',
         status: 'approved',
       })),
     ];
-    ui.setSearch('pending', 'needle', proposals, true);
+    ui.setSearch('conflict', 'needle', proposals, true);
     ui.renderProposalsList();
     expect(list.innerHTML).toContain(count + '+ matches in Resolved');
-    expect(list.innerHTML).toContain('1 match in Conflict');
-    ui.setSearch('pending', 'needle', proposals, false);
+    expect(list.innerHTML).toContain('1 match in Pending');
+    ui.setSearch('conflict', 'needle', proposals, false);
     ui.renderProposalsList();
     expect(list.innerHTML).toContain(
       count + (count === 1 ? ' match' : ' matches') + ' in Resolved'
@@ -740,7 +750,7 @@ describe('proposal search pagination and cross-filter hints', () => {
       { id: 'r2', title: 'needle', status: 'rejected' },
     ];
     for (const [filter, label, count] of [
-      ['pending', 'Pending', 1],
+      ['pending', 'Pending', 2],
       ['conflict', 'Conflict', 1],
       ['resolved', 'Resolved', 2],
     ] as const) {
@@ -771,7 +781,7 @@ describe('proposal search pagination and cross-filter hints', () => {
       expect(ui.countSearchMatchesInFilter(filter)).toBe(count);
       // A missing current match exposes the labels and pluralization for every other filter.
       ui.setSearch(
-        filter === 'pending' ? 'conflict' : 'pending',
+        filter === 'resolved' ? 'pending' : 'resolved',
         'needle',
         proposals.filter(p => ui.proposalMatchesFilter(p, filter)),
         false
@@ -1285,6 +1295,20 @@ describe('Moved classification and review', () => {
     expect(viewport.innerHTML).toContain('selection-glow');
   });
 
+  it('gives conflicts precedence over property edits on the canvas and Changed-nodes list', () => {
+    const { ui, p, diff, rows, viewport } = mount({ func: 'AI code' });
+    const conflicting = {
+      ...diff,
+      rebase: { state: 'conflict', conflicts: [{ nodeId: 'move', fields: ['func'] }] },
+    };
+    ui.mountProposalVisual(p, conflicting);
+    expect(ui.visualGraph(p, conflicting).byId.move.kind).toBe('conflict');
+    expect(rows.innerHTML).toContain('class="visual-change-row conflict');
+    expect(rows.innerHTML).toContain('data-icon="conflict"');
+    expect(viewport.innerHTML).toContain('data-icon="conflict"');
+    expect(viewport.innerHTML).not.toContain('data-icon="modified"');
+  });
+
   it.each([false, true])(
     'keeps the editor ghost and SVG badge for a move with a property edit: %s',
     property => {
@@ -1293,18 +1317,12 @@ describe('Moved classification and review', () => {
         true
       );
       click('[data-visual-layout]', 'editor');
-      const kind = property ? 'modified' : 'moved';
+      const kind = 'conflict';
       expect(ui.visualGraph(p, diff).byId.move).toMatchObject({ kind, moved: true });
       expect(viewport.innerHTML).toContain('move-ghost');
       expect(viewport.innerHTML).toContain('stroke-dasharray="8,3" fill-opacity=".6"');
       expect(viewport.innerHTML).toMatch(
-        new RegExp(
-          '<circle[^>]*fill="' +
-            (property ? '#2f6fed' : '#7a6fb0') +
-            '"/><svg[^>]*data-icon="' +
-            kind +
-            '"'
-        )
+        new RegExp('<circle[^>]*fill="' + '#dc9419' + '"/><svg[^>]*data-icon="' + kind + '"')
       );
       expect(viewport.innerHTML).toContain('color="#fff"');
       expect(rows.innerHTML).toContain('data-icon="resolved"');
@@ -1313,9 +1331,9 @@ describe('Moved classification and review', () => {
       click('[data-visual-node]', 'move');
       if (property) {
         expect(diff.modified[0]?.changes.map(ch => ch.key)).toEqual(['func', 'x', 'y']);
-        expect(diffHost.innerHTML).toContain('MODIFIED NODE');
+        expect(diffHost.innerHTML).toContain('CONFLICT / FUNCTION');
         expect(diffHost.innerHTML).not.toContain('Modified nodes');
-        expect(diffHost.innerHTML).toContain('prop-change');
+        expect(diffHost.innerHTML).toContain('Resolution selected.');
         expect(diffHost.innerHTML).not.toContain('Moved nodes');
       } else expect(diffHost.innerHTML).not.toContain('prop-change');
     }
@@ -1483,7 +1501,7 @@ describe('Visual View node drawer', () => {
     expect(ui.getDiffMode()).toBe('split');
   });
 
-  it('uses conflict chrome and retains the existing choice API and Re-check', () => {
+  it('uses mockup conflict chrome and immediate choice controls without Re-check', () => {
     const ui = browserHelpers({}, [], () => ({ matches: true }));
     ui.setPermission(true);
     const rebase = {
@@ -1509,26 +1527,76 @@ describe('Visual View node drawer', () => {
     expect(html).toMatch(
       /class="chooserow">.*data-choice="live".*Use editor value.*data-choice="proposed".*Use proposed value/
     );
-    expect(html).toContain('recheck-btn');
+    expect(html).not.toContain('recheck-btn');
+    expect(html).not.toMatch(/Keep live|Other field changes|class="hint"/);
+    expect(html).toContain(
+      'This node was also edited in the editor. Field <code>func</code> changed on both sides.'
+    );
     expect(html).not.toContain('proposal-conflicts');
   });
 
-  it.each(['split', 'unified'])(
-    'retains chosen-side attributes for conflict styling in %s',
-    mode => {
-      const ui = browserHelpers();
-      ui.setDiffMode(mode);
-      const html = ui.renderConflictValues(
-        { nodeId: node.id },
-        { conflictValues: [{ nodeId: node.id, fields: [{ field: 'func', lines }] }] },
-        'proposed'
-      );
-      expect(html).toContain('class="conflict-values" data-chosen="proposed"');
-      expect(html).toContain(
-        mode === 'split' ? '<div class="diffhead">AI proposed</div>' : 'Editor (live) → AI proposed'
-      );
+  it.each([
+    ['split', 'live'],
+    ['split', 'proposed'],
+    ['unified', 'live'],
+    ['unified', 'proposed'],
+  ])('renders the chosen button and changed/rejected line styles in %s for %s', (mode, choice) => {
+    const ui = browserHelpers();
+    ui.setPermission(true);
+    ui.setDiffMode(mode);
+    const html = ui.renderVisualNodeDrawer(
+      { ...node, kind: 'conflict' },
+      {
+        id: 'p',
+        status: 'pending',
+        conflictChoices: [{ nodeId: node.id, fields: ['func', 'name<unsafe>'], choice }],
+        rebase: { state: 'merged', conflicts: [] },
+      },
+      {
+        ...diff,
+        rebase: { state: 'merged', conflicts: [] },
+        conflictValues: [{ nodeId: node.id, fields: [{ field: 'func', lines }] }],
+      }
+    );
+    const selected = choice === 'proposed' ? 'ins' : 'del';
+    const rejected = choice === 'proposed' ? 'del' : 'ins';
+    expect(html).toContain(selected + ' chosen-line');
+    expect(html).toContain('class="conflict-values" data-chosen="' + choice + '"');
+    if (mode === 'split') expect(html).toContain('class="shareddiff" data-chosen="' + choice + '"');
+    else expect(html).toContain(rejected + ' rejected');
+    expect(html).toContain('resolve-conflict-btn chosen');
+    expect(html).toContain(
+      'aria-pressed="true">✓ Using ' + (choice === 'live' ? 'editor' : 'proposed') + ' value'
+    );
+    expect(html).toContain('Use ' + (choice === 'live' ? 'proposed' : 'editor') + ' value');
+    expect(html).toContain('Resolution selected.');
+    expect(html).toContain(
+      'Fields <code>func</code>, <code>name&lt;unsafe&gt;</code> changed on both sides.'
+    );
+    expect(html).not.toMatch(/recheck-btn|Keep live|Undo \/|preview only/);
+  });
+
+  it('blocks Approve until the last conflict is resolved on a pending proposal', () => {
+    const ui = browserHelpers();
+    ui.setPermission(true);
+    const p = {
+      id: 'p',
+      status: 'pending',
+      rebase: { state: 'conflict', conflicts: [{ nodeId: 'one' }, { nodeId: 'two' }] },
+    };
+    const d = { ...diff, rebase: p.rebase };
+    for (const conflicts of [[{ nodeId: 'one' }, { nodeId: 'two' }], [{ nodeId: 'two' }]]) {
+      p.rebase.conflicts = conflicts;
+      ui.setDiff(p, d);
+      expect(ui.renderReviewActionRow(p, false)).toMatch(/class="action approve-btn"[^>]*disabled/);
     }
-  );
+    p.rebase = { state: 'merged', conflicts: [] };
+    d.rebase = p.rebase;
+    ui.setDiff(p, d);
+    expect(ui.renderReviewActionRow(p, false)).not.toMatch(
+      /class="action approve-btn"[^>]*disabled/
+    );
+  });
 
   it('keeps saved conflict values and chosen styling after the API returns an empty conflict list', () => {
     const ui = browserHelpers({}, [], () => ({ matches: true }));
@@ -1542,7 +1610,7 @@ describe('Visual View node drawer', () => {
       },
       { ...diff, conflictValues: [] }
     );
-    expect(html).toContain('CONFLICT / FUNCTION');
+    expect(html).toContain('CONFLICT / FUNC');
     expect(html).toContain('data-chosen="proposed"');
     expect(html).toContain('<div class="diffhead">AI proposed</div>');
     expect(html).not.toContain('After · proposed');

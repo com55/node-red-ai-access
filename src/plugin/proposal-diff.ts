@@ -683,6 +683,30 @@ export async function computeProposalDiff(
           : target(view.payload.flow, c.nodeId),
       })),
     }));
+    // Keep both alternatives available after resolution, including after a reload.
+    // Snapshots stay private; only the same redacted field values as an unresolved
+    // conflict are sent to readers.
+    for (const saved of rawProposal.conflictChoices ??
+      (rawProposal.conflictChoice ? [rawProposal.conflictChoice] : [])) {
+      if (!saved.undo || result.conflictValues.some(c => c.nodeId === saved.nodeId)) continue;
+      const originalBase = ai ? redactFlowData(saved.undo.baseFlow).value : saved.undo.baseFlow;
+      const originalFlow = ai ? redactFlowData(saved.undo.flow).value : saved.undo.flow;
+      result.conflictValues.push({
+        nodeId: saved.nodeId,
+        fields: (saved.fields?.length ? saved.fields : ['']).map(field => ({
+          field,
+          base: field
+            ? conflictFieldValue(target(originalBase, saved.nodeId), field)
+            : target(originalBase, saved.nodeId),
+          live: field
+            ? conflictFieldValue(target(currentTab, saved.nodeId), field)
+            : target(currentTab, saved.nodeId),
+          proposed: field
+            ? conflictFieldValue(target(originalFlow, saved.nodeId), field)
+            : target(originalFlow, saved.nodeId),
+        })),
+      });
+    }
     const deployTab = rebase.merged
       ? ai
         ? redactFlowData(rebase.merged).value

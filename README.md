@@ -15,9 +15,9 @@ Temporary, owner-approved Node-RED access for AI clients. Ships as a **Node-RED
 
 **Git mental model:** a proposal is like a pull request. Human approve = merge;
 reject = close; withdraw = the author closes their own PR. Revision changes
-auto-rebase open proposals. A `conflict` blocks approval until resolved. Open
-proposals expire after a configurable TTL (default 7 days). Every access link
-can see all proposals (`mine: true|false`).
+auto-rebase open proposals. A pending proposal with `rebase.state=conflict`
+blocks approval until resolved. Open proposals expire after a configurable TTL
+(default 7 days). Every access link can see all proposals (`mine: true|false`).
 
 Derived from
 [ziv-daniel/node-red-mcp](https://github.com/ziv-daniel/node-red-mcp).

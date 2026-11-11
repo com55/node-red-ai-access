@@ -181,7 +181,7 @@ describe('proposals / flows / logs HTTP API', () => {
     const detail = await request(app).get('/mcp/api/v1/proposals/' + submitted.body.id + '/diff');
     expect(detail.status).toBe(200);
     expect(item.changeCounts).toEqual({ added: 1, removed: 1, modified: 2, moved: 1, conflict: 1 });
-    expect(item.status).toBe('conflict');
+    expect(item).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     for (const kind of ['added', 'removed', 'modified', 'moved'])
       expect(item.changeCounts[kind]).toBe(detail.body.summary[kind]);
     expect(item).not.toHaveProperty('payload');

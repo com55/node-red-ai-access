@@ -23,6 +23,7 @@ export const proposalProcessBootId = randomBytes(16).toString('hex');
 
 export type ProposalStatus =
   | 'pending'
+  // Deprecated input only: normalized to pending + rebase.state=conflict.
   | 'conflict'
   | 'approved'
   | 'rejected'
@@ -34,6 +35,31 @@ export type ProposalStatus =
 /** Open = still awaiting a decision (`conflict` is pending with approve blocked). */
 export function isOpenProposalStatus(status: ProposalStatus): boolean {
   return status === 'pending' || status === 'conflict';
+}
+
+/** Conflict is an open proposal tag, never a separate lifecycle status. */
+export function proposalHasConflict(proposal: Pick<Proposal, 'status' | 'rebase'>): boolean {
+  return (
+    isOpenProposalStatus(proposal.status) &&
+    (proposal.status === 'conflict' || proposal.rebase?.state === 'conflict')
+  );
+}
+
+/** Accept legacy rows without requiring a disk migration. */
+export function normalizeProposalStatus<T extends Proposal>(proposal: T): T {
+  if (proposal.status !== 'conflict') return proposal;
+  return {
+    ...proposal,
+    status: 'pending',
+    rebase: {
+      rev: proposal.expectedRev,
+      conflicts: [],
+      liveChangedCount: 0,
+      checkedAt: '',
+      ...proposal.rebase,
+      state: 'conflict',
+    },
+  };
 }
 
 /** One stored rebase conflict (field paths only, including env names / credential keys; never values). */
@@ -103,6 +129,19 @@ export interface ProposalWarning {
   candidates?: string[];
 }
 
+export interface StoredConflictChoice {
+  nodeId: string;
+  fields?: string[] | undefined;
+  choice: 'live' | 'proposed';
+  chooser?: 'ai' | 'human' | undefined;
+  undo?: {
+    baseFlow: Partial<FlowTab>;
+    flow: Partial<FlowTab>;
+    warnings: ProposalWarning[];
+    aiConflictOverrides?: AiConflictOverride[];
+  };
+}
+
 export interface Proposal {
   id: string;
   type: ProposalType;
@@ -137,18 +176,10 @@ export interface Proposal {
   rebase?: ProposalRebaseInfo;
   /** AI resolutions that replace editor changes and still require reviewer acknowledgement. */
   aiConflictOverrides?: AiConflictOverride[];
-  /** Latest manual resolution, retained for admin undo until the next body edit. */
-  conflictChoice?: {
-    nodeId: string;
-    choice: 'live' | 'proposed';
-    chooser?: 'ai' | 'human';
-    undo?: {
-      baseFlow: Partial<FlowTab>;
-      flow: Partial<FlowTab>;
-      warnings: ProposalWarning[];
-      aiConflictOverrides?: AiConflictOverride[];
-    };
-  };
+  /** Latest manual resolution (compatibility alias of the last conflictChoices entry). */
+  conflictChoice?: StoredConflictChoice;
+  /** Per-node resolutions, retained until the next body edit so either side can be selected again. */
+  conflictChoices?: StoredConflictChoice[];
   /**
    * Short human title (≤80 chars). Set at submit (AI-supplied or auto-generated).
    * Optional on legacy proposals; API responses always resolve a title.
@@ -403,6 +434,7 @@ export class ProposalStore {
 
   /** Rebuild a proposal record so only validated fields are written to disk. */
   private toDiskRecord(proposal: Proposal): Proposal {
+    proposal = normalizeProposalStatus(proposal);
     const id = assertSafeProposalId(proposal.id);
     const expectedRev = assertSafeSegment(
       String(proposal.expectedRev).slice(0, 200),
@@ -476,27 +508,35 @@ export class ProposalStore {
     }
     const overrides = sanitizeAiOverrides(proposal.aiConflictOverrides);
     if (overrides && isOpenProposalStatus(record.status)) record.aiConflictOverrides = overrides;
-    const choice = proposal.conflictChoice;
-    if (
-      choice &&
-      isOpenProposalStatus(record.status) &&
-      (choice.choice === 'live' || choice.choice === 'proposed') &&
-      typeof choice.nodeId === 'string' &&
-      choice.undo
-    ) {
-      record.conflictChoice = {
-        nodeId: choice.nodeId.replace(/\0/g, '').slice(0, 200),
-        choice: choice.choice,
-        ...(choice.chooser === 'ai' || choice.chooser === 'human'
-          ? { chooser: choice.chooser }
-          : {}),
-        undo: {
-          baseFlow: sanitizeFlowTab(choice.undo.baseFlow),
-          flow: sanitizeFlowTab(choice.undo.flow),
-          warnings: sanitizeProposalWarnings(choice.undo.warnings) ?? [],
-          aiConflictOverrides: sanitizeAiOverrides(choice.undo.aiConflictOverrides) ?? [],
-        },
-      };
+    for (const choice of proposal.conflictChoices ??
+      (proposal.conflictChoice ? [proposal.conflictChoice] : [])) {
+      if (
+        choice &&
+        isOpenProposalStatus(record.status) &&
+        (choice.choice === 'live' || choice.choice === 'proposed') &&
+        typeof choice.nodeId === 'string' &&
+        choice.undo
+      ) {
+        const saved: StoredConflictChoice = {
+          nodeId: choice.nodeId.replace(/\0/g, '').slice(0, 200),
+          choice: choice.choice,
+          fields: choice.fields
+            ?.filter(f => typeof f === 'string')
+            .map(f => f.replace(/\0/g, '').slice(0, 200))
+            .slice(0, 100),
+          ...(choice.chooser === 'ai' || choice.chooser === 'human'
+            ? { chooser: choice.chooser }
+            : {}),
+          undo: {
+            baseFlow: sanitizeFlowTab(choice.undo.baseFlow),
+            flow: sanitizeFlowTab(choice.undo.flow),
+            warnings: sanitizeProposalWarnings(choice.undo.warnings) ?? [],
+            aiConflictOverrides: sanitizeAiOverrides(choice.undo.aiConflictOverrides) ?? [],
+          },
+        };
+        (record.conflictChoices ??= []).push(saved);
+        record.conflictChoice = saved;
+      }
     }
     const rebase = sanitizeRebaseInfo(proposal.rebase);
     if (rebase && isOpenProposalStatus(record.status)) {
@@ -574,6 +614,7 @@ export class ProposalStore {
   }
 
   private currentProcessProposal(proposal: Proposal): Proposal {
+    proposal = normalizeProposalStatus(proposal);
     if (proposal.deployPending?.bootId !== proposalProcessBootId) {
       delete proposal.deployPending;
     }
@@ -600,13 +641,18 @@ export class ProposalStore {
         continue;
       }
       try {
-        const proposal = JSON.parse(
-          readFileSync(resolveUnderDir(this.paths.proposals, base), 'utf8')
-        ) as Proposal;
+        const proposal = this.currentProcessProposal(
+          JSON.parse(readFileSync(resolveUnderDir(this.paths.proposals, base), 'utf8')) as Proposal
+        );
         if (filter?.linkId && proposalOwnerId(proposal.createdBy) !== filter.linkId) {
           continue;
         }
-        if (filter?.status && proposal.status !== filter.status) {
+        if (
+          filter?.status &&
+          !(filter.status === 'conflict'
+            ? proposalHasConflict(proposal)
+            : proposal.status === filter.status)
+        ) {
           continue;
         }
         if (filter?.flowId && proposal.payload.flowId !== filter.flowId) {
@@ -748,7 +794,7 @@ export class ProposalStore {
   }
 
   /**
-   * Store the latest rebase check and flip `pending` ↔ `conflict`.
+   * Store the latest rebase check; open proposals always stay `pending`.
    * No-op (no write) when nothing changed. Skips decided or in-flight records.
    */
   recordRebase(id: string, info: ProposalRebaseInfo): Proposal {
@@ -756,7 +802,7 @@ export class ProposalStore {
     if (!isOpenProposalStatus(proposal.status)) {
       return proposal;
     }
-    const nextStatus: ProposalStatus = info.state === 'conflict' ? 'conflict' : 'pending';
+    const nextStatus: ProposalStatus = 'pending';
     const prev = proposal.rebase;
     const same =
       proposal.status === nextStatus &&
@@ -790,6 +836,7 @@ export class ProposalStore {
       restoredSecrets?: { nodeId: string; property: string }[];
       warnings?: ProposalWarning[];
       conflictChoice?: Proposal['conflictChoice'];
+      conflictChoices?: StoredConflictChoice[];
       aiConflictOverrides?: AiConflictOverride[];
     }
   ): Proposal {
@@ -835,6 +882,8 @@ export class ProposalStore {
         .filter(override => override.fields.length > 0);
     if (overrides.length) proposal.aiConflictOverrides = overrides;
     else delete proposal.aiConflictOverrides;
+    if (update.conflictChoices) proposal.conflictChoices = update.conflictChoices;
+    else delete proposal.conflictChoices;
     if (update.conflictChoice) proposal.conflictChoice = update.conflictChoice;
     else delete proposal.conflictChoice;
     proposal.status = 'pending';

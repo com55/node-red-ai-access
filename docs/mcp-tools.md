@@ -45,7 +45,7 @@ Get detail for one installed node type: defaults (JSON), inputs/outputs (always 
 
 ## `get_proposal`
 
-Get any proposal by id (all tokens can read). Response includes mine:true|false and, for open proposals (pending or conflict), conflictingProposals when other open work touches the same flow. baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
+Get any proposal by id (all tokens can read). Response includes mine:true|false and, for pending proposals (including conflicts), conflictingProposals when other open work touches the same flow. baseRev aliases expectedRev; baseRevChanged is informational. rebase.state=clean|merged means mergeable; conflict blocks approval. Lean by default (no payload/baseFlow); pass include_payload=true for full bodies. Cite displayName + reviewUrl when talking to the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@ Alias of list_proposals. Prefer list_proposals. Lists proposals visible to this 
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter. |
 
 ## `list_node_types`
 
@@ -105,7 +105,7 @@ List proposals visible to this access link (all proposals by default). Each item
 | `limit` | no | integer | Page size (1–200). Omit to return all matches. |
 | `mine` | no | boolean | true: only proposals created by this access link; false: only other links’ proposals |
 | `offset` | no | integer | Skip this many filtered results (default 0) |
-| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). An empty array or empty string means no status filter. |
+| `status` | no | string \| string[] | Filter by proposal status: one value, an array, or a comma-separated string (pending, conflict, approved, rejected, failed, withdrawn, expired, superseded). pending includes conflicts; conflict selects the pending subset with rebase.state=conflict. Responses use status=pending, never the deprecated conflict status. An empty array or empty string means no status filter. |
 
 ## `resolve_proposal_conflict`
 
@@ -153,7 +153,7 @@ Submit a replace_flow proposal for owner approval (does not deploy). Preferred f
 
 ## `withdraw_proposal`
 
-Withdraw one of YOUR open (pending or conflict) proposals (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. Cite displayName + reviewUrl when telling the user.
+Withdraw one of YOUR pending proposals (including conflicts) (status becomes withdrawn, not rejected). Optional reason. Only the creating access link can withdraw via MCP; other tokens get 403. If it is lost, a full admin session can recover via POST /proposals/{id}/withdraw. Cite displayName + reviewUrl when telling the user.
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |

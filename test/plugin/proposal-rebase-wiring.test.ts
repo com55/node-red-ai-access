@@ -126,7 +126,11 @@ describe('proposal auto-rebase wiring', () => {
       settings: { userDir: dir, adminAuth: { type: 'credentials' } },
       httpAdmin: express(),
       auth: { needsPermission: () => (_req, _res, next) => next() },
-      plugins: { registerPlugin() {} },
+      plugins: {
+        registerPlugin() {
+          /* Registration is unused by this route test harness. */
+        },
+      },
       events: new EventEmitter(),
     };
     configureProposalTtl(() => 7);
@@ -210,7 +214,7 @@ describe('proposal auto-rebase wiring', () => {
       await expect(service.approve(p.id, { kind: 'admin' })).rejects.toMatchObject({
         code: 'proposal_conflict',
       });
-      expect(store.get(p.id).status).toBe('conflict');
+      expect(store.get(p.id)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
       const diff = await computeProposalDiff(
         redactProposalForAi(store.get(p.id)),
         aiRedactingAdapter(adapter),
@@ -325,7 +329,7 @@ describe('proposal auto-rebase wiring', () => {
     head.flows.find(n => n.id === 'n1')!.func = 'editor';
     const h = response();
     await recheckProposalHandler(store, adapter)(req({}, p.id), h.res);
-    expect(h.result.body.status).toBe('conflict');
+    expect(h.result.body).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     const withdrawn = withdrawMyProposal(store, audit, link, p.id, 'done');
     expect(withdrawn.status).toBe('withdrawn');
     await syncOpenProposals(store, adapter);
@@ -344,7 +348,7 @@ describe('proposal auto-rebase wiring', () => {
     head.rev = 'r2';
     head.flows.find(n => n.id === 'n1')!.func = 'editor';
     await syncOpenProposals(store, adapter);
-    expect(store.get(p.id).status).toBe('conflict');
+    expect(store.get(p.id)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     now += 3 * 86_400_000;
     expect((await syncOpenProposals(store, adapter)).expired).toBe(1);
     expect(store.get(p.id)).toMatchObject({
@@ -397,7 +401,7 @@ describe('proposal auto-rebase wiring', () => {
     await vi.advanceTimersByTimeAsync(499);
     expect(store.get(p.id).status).toBe('pending');
     await vi.advanceTimersByTimeAsync(1);
-    expect(store.get(p.id).status).toBe('conflict');
+    expect(store.get(p.id)).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
     emitter.emit('flows:started');
     (defs[0]!.onremove as () => void)();
     expect(emitter.listeners('flows:started').filter(fn => fn.name === 'trigger')).toHaveLength(0);
@@ -431,7 +435,10 @@ describe('proposal auto-rebase wiring', () => {
     head.rev = 'r2';
     head.flows.find(n => n.id === 'n1')!.func = 'editor';
     await syncOpenProposals(services.proposalStore, services.flowAdapter);
-    expect(services.proposalStore.get(p.id).status).toBe('conflict');
+    expect(services.proposalStore.get(p.id)).toMatchObject({
+      status: 'pending',
+      rebase: { state: 'conflict' },
+    });
     const server = createAiMcpServer(RED, services, req({}, '', link));
     const client = new Client({ name: 'rebase-test', version: '1' });
     const [ct, st] = InMemoryTransport.createLinkedPair();
