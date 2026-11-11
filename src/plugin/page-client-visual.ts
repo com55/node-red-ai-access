@@ -233,12 +233,13 @@ function pageClientVisualRenderScript(): string {
     var outline = n.kind ? visualStatusColors[n.kind] : '#999';
     var interactive = !ghost && n.kind;
     var selected = state.selected === n.id;
+    var ghostStyle = ghost ? ' stroke-dasharray="8,3" fill-opacity=".6"' : '';
     var svg = '<g class="visual-node' + (context ? ' context-node' : ' changed') + (ghost ? ' move-ghost' : '') + '"' +
       (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(n.kind + ': ' + n.name) + '"' : '') +
       ' transform="translate(' + (x - width / 2) + ',' + (y - height / 2) + ')">';
     if (interactive && selected) svg += '<rect class="selection-glow" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="3.75" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
-    if (n.type === 'inject' || right) svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + (ghost ? ' fill-opacity=".6"' : '') + '/></g>';
-    svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + (ghost ? ' stroke-dasharray="8,3" fill-opacity=".6"' : '') + '/>' +
+    if (n.type === 'inject' || right) svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"' + ghostStyle + '/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + ghostStyle + '/></g>';
+    svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + ghostStyle + '/>' +
       '<rect x="' + (right ? width - 30 : 0) + '" width="30" height="' + height + '" rx="5" fill="#000" opacity=".05"/>' +
       '<path d="M' + (right ? width - 30 : 30) + ' 1v' + (height - 2) + '" stroke="#000" opacity=".1"/>' +
       '<svg x="' + (right ? width - 30 : 0) + '" y="' + ((height - 30) / 2) + '" width="30" height="30" viewBox="0 0 40 60">' + visualIcon(n.type) + '</svg>' +
@@ -256,6 +257,7 @@ function pageClientVisualRenderScript(): string {
     return '<g class="' + (collapse ? 'visual-collapse' : 'visual-run') + '" role="button" tabindex="0" data-visual-run="' + esc(id) + '" aria-label="' + esc(label) + '" transform="translate(' + (x - 55) + ',' + (y - 15) + ')"><rect width="110" height="30" rx="15" fill="#f1f3f4" stroke="#999" stroke-dasharray="5,4"/><text x="55" y="15" text-anchor="middle" dominant-baseline="central" font-size="13" fill="#53616c">' + esc(label) + '</text></g>';
   }
   function visualMarkup(p, diff) {
+    var touchHint = window.matchMedia && window.matchMedia('(pointer: coarse), (max-width: 760px)').matches;
     var counts = Object.assign({}, diff.summary, { conflict: ((diff.rebase && diff.rebase.conflicts) || []).map(function (c) { return c.nodeId; }).filter(function (id, i, ids) { return ids.indexOf(id) === i; }).length });
     return '<div class="visual-summary"><div class="visual-detail-counts">' + ['added', 'removed', 'modified', 'moved', 'conflict'].filter(function (kind) { return counts[kind]; }).map(function (kind) { return '<span>' + counts[kind] + ' ' + kind + '</span>'; }).join('') + '</div>' + '<div class="visual-legend">' + ['added', 'removed', 'modified', 'moved', 'conflict'].map(function (kind) {
       return '<span><i style="background:' + visualStatusColors[kind] + '">' + statusIcon(kind) + '</i>' + kind + '</span>';
@@ -265,7 +267,7 @@ function pageClientVisualRenderScript(): string {
         return '<filter id="halo-' + kind + '" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="' + visualStatusColors[kind] + '" flood-opacity="1"/></filter>';
       }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
-      '<span class="visual-pan-hint">Drag to pan · Ctrl / ⌘ + scroll to zoom</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
+      '<span class="visual-pan-hint">Drag to pan' + (touchHint ? '' : ' · Ctrl / ⌘ + scroll to zoom') + '</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
       '<aside class="visual-changed-list"><div class="visual-list-head"><strong>Changed nodes <span class="visual-list-count"></span></strong></div><div class="visual-node-list"></div><p>Related nodes are shown only on the canvas</p></aside></div></section>';
   }
 `;

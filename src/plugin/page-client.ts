@@ -2717,7 +2717,7 @@ function pageClientScriptPartB2CardsList(): string {
   function renderChangeCounts(counts) {
     return '<span class="change-counts">' + ['added', 'removed', 'modified', 'moved', 'conflict'].map(function (kind) {
       var count = Number(counts && counts[kind]) || 0;
-      return count ? '<span class="' + kind + '" title="' + count + ' ' + kind + '">' + statusIcon(kind) + count + '</span>' : '';
+      return count ? '<span class="' + kind + '" title="' + count + ' ' + kind + '">' + statusIcon(kind) + '<span aria-hidden="true">' + count + '</span><span class="visually-hidden">' + count + ' ' + kind + '</span></span>' : '';
     }).join('') + '</span>';
   }
   function renderCompactProposal(p) {
@@ -2762,7 +2762,8 @@ function pageClientScriptPartB2CardsList(): string {
   function renderCrossTabSearchHint(otherFilter, otherCount) {
     if (!proposalsSearchQuery.trim() || otherCount <= 0) return '';
     var label = { pending: 'Pending', conflict: 'Conflict', resolved: 'Resolved' }[otherFilter];
-    var matchWord = otherCount === 1 ? '1 match' : otherCount + ' matches';
+    var partial = otherFilter === 'resolved' && decidedHasMore;
+    var matchWord = partial ? otherCount + '+ matches' : otherCount === 1 ? '1 match' : otherCount + ' matches';
     return '<p class="cross-tab-hint" role="status">' + esc(matchWord) + ' in ' + esc(label) +
       ' <button type="button" class="cross-tab-switch" data-filter="' + esc(otherFilter) + '">Switch to ' + esc(label) + '</button></p>';
   }

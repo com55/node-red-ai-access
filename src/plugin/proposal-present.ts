@@ -278,7 +278,7 @@ function classifyFlowChanges(
     const prev = before.get(id);
     if (prev) {
       const keys = changedNodeKeys(prev, node);
-      if (isMoveOnly(keys)) moved.push({ before: prev, after: node });
+      if (isMoveOnly(prev, node, keys)) moved.push({ before: prev, after: node });
       else if (keys.length > 0) modified.push({ before: prev, after: node });
     }
   }

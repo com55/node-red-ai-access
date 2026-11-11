@@ -2907,7 +2907,7 @@ components:
 
     ProposalDiffMovedNode:
       type: object
-      description: A node whose only changed fields are x and/or y.
+      description: A node whose only changed fields are x and/or y, with finite numeric coordinates on both sides and at least one coordinate differing.
       required: [id, type, before, after]
       properties:
         id:
@@ -3020,6 +3020,17 @@ components:
                         base: {}
                         live: {}
                         proposed: {}
+                        lines:
+                          type: array
+                          description: |
+                            Line diff from the live value to the proposed value, after
+                            redaction for AI callers. Strings are compared directly;
+                            other values use indented JSON, or "(not present)" when
+                            absent. Operations are equal, add (proposed), and remove
+                            (live). Large inputs may use whole-block entries whose
+                            text contains multiple lines.
+                          items:
+                            $ref: '#/components/schemas/ProposalDiffLine'
             liveChanges:
               $ref: '#/components/schemas/ProposalDiffSections'
             vsCurrent:

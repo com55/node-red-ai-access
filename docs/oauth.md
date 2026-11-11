@@ -9,8 +9,8 @@ at `/.well-known/oauth-authorization-server` and protected resource metadata at
 `/.well-known/oauth-protected-resource`. The issuer is `publicBaseUrl` and the
 resource indicator is `{publicBaseUrl}/mcp`. When `httpNodeRoot` is false,
 metadata is available under the admin `/mcp` path instead; the dashboard MCP
-OAuth tab displays this fallback. Route collisions disable the affected OAuth
-endpoints and appear in the sidebar and on the MCP OAuth tab.
+OAuth page displays this fallback. Route collisions disable the affected OAuth
+endpoints and appear in the sidebar and on the MCP OAuth page.
 
 Clients use authorization code with PKCE S256 and can request `read` or
 `propose`. Consent uses the Node-RED editor login. Access tokens last one hour

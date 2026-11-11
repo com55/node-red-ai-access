@@ -21,9 +21,20 @@ export function changedNodeKeys(before: FlowNode, after: FlowNode): string[] {
     .sort();
 }
 
-/** Classify only after computing all changed keys, including positions and wires. */
-export function isMoveOnly(keys: readonly string[]): boolean {
-  return keys.length > 0 && keys.every(key => key === 'x' || key === 'y');
+/** A move requires valid editor positions and no other changed fields. */
+export function isMoveOnly(
+  before: FlowNode,
+  after: FlowNode,
+  keys: readonly string[] = changedNodeKeys(before, after)
+): boolean {
+  return (
+    keys.length > 0 &&
+    keys.every(key => key === 'x' || key === 'y') &&
+    [before.x, before.y, after.x, after.y].every(
+      value => typeof value === 'number' && Number.isFinite(value)
+    ) &&
+    (before.x !== after.x || before.y !== after.y)
+  );
 }
 
 export function flowChangeCounts(before: Partial<FlowTab>, after: Partial<FlowTab>) {
@@ -33,12 +44,16 @@ export function flowChangeCounts(before: Partial<FlowTab>, after: Partial<FlowTa
     right = collect(after);
   const changed = [...right]
     .filter(([id]) => left.has(id))
-    .map(([id, node]) => changedNodeKeys(left.get(id)!, node));
+    .map(([id, node]) => {
+      const prev = left.get(id)!;
+      const keys = changedNodeKeys(prev, node);
+      return { keys, moved: isMoveOnly(prev, node, keys) };
+    });
   return {
     added: [...right.keys()].filter(id => !left.has(id)).length,
     removed: [...left.keys()].filter(id => !right.has(id)).length,
-    modified: changed.filter(keys => keys.length > 0 && !isMoveOnly(keys)).length,
-    moved: changed.filter(isMoveOnly).length,
+    modified: changed.filter(change => change.keys.length > 0 && !change.moved).length,
+    moved: changed.filter(change => change.moved).length,
   };
 }
 

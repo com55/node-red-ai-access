@@ -110,8 +110,8 @@ export interface MovedNodeDiff {
   id: string;
   type: string;
   name?: string;
-  before: { x: unknown; y: unknown };
-  after: { x: unknown; y: unknown };
+  before: { x: number | null; y: number | null };
+  after: { x: number | null; y: number | null };
 }
 
 export interface DiffSectionSummary {
@@ -501,14 +501,20 @@ export function buildDiffSections(
       continue;
     }
     const keys = changedNodeKeys(before, after);
-    if (isMoveOnly(keys)) {
+    if (isMoveOnly(before, after, keys)) {
       const name = nodeName(after) ?? nodeName(before);
       moved.push({
         id,
         type: after.type || before.type,
         ...(name !== undefined ? { name } : {}),
-        before: { x: before.x ?? null, y: before.y ?? null },
-        after: { x: after.x ?? null, y: after.y ?? null },
+        before: {
+          x: typeof before.x === 'number' ? before.x : null,
+          y: typeof before.y === 'number' ? before.y : null,
+        },
+        after: {
+          x: typeof after.x === 'number' ? after.x : null,
+          y: typeof after.y === 'number' ? after.y : null,
+        },
       });
       continue;
     }

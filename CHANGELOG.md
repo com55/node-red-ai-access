@@ -12,7 +12,6 @@ and this project adheres to
 
 - Distinguish Moved nodes in proposal counts, summaries, titles, and position
   diffs.
-
 - Review proposals in a dedicated Visual View with real flow nodes, related-node
   expansion, editor positions, change diffs, and a deploy-type approval menu.
 - Filter proposal summaries by Pending, Conflict, Resolved, or All, with shared
@@ -21,39 +20,33 @@ and this project adheres to
 ### Changed
 
 - Use shared inline SVG status icons across proposal lists and Visual View.
-
 - Replace dashboard sidebar navigation with a sticky header and mobile drawer.
   Existing proposal links (`#proposal=<id>`) continue to open the detail page.
 
 ### Fixed
 
+- Apply ghost styling to Visual View buttons, require finite numeric moves, and
+  clarify search counts, accessibility, touch hints, and review documentation.
 - Clarify the Moved status icon at badge size and draw purple move arrows
   between node edges, behind nodes, hiding arrows for overlapping bodies or tiny
   gaps.
-
 - Bound Visual View rendering and review diffs, restore complete proposal
   search, and fix review controls, navigation, and narrow-screen behavior.
-
 - Support Home and End keys in the Access tokens base URL segmented control,
   skipping disabled options (#129).
-
 - Stop dashboard Public URL polling when leaving Settings and offer Refresh when
   the background check outlasts polling (#129).
-
 - Cancel Public URL probes during plugin cleanup and ignore late settings writes
   after disposal, including when the plugin is re-registered (#129).
-
 - Return immediately after saving a Public URL while serialized background
   checks keep only the latest matching result. Refresh dashboard check results
   and OAuth warnings when checks finish, and match persistent warning text in
   the editor sidebar (#129).
-
 - Skip the Public URL probe when clearing the URL and clear persisted check
   metadata so stale failures are removed (#129).
 - Persist Public URL probe results only for the current validated settings
   origin, preserving saved failures and OAuth warnings when other URLs are
   checked (#129).
-
 - Use thin theme-accent focus rings only for keyboard focus on dashboard
   navigation, details summaries, and buttons.
 - Recover dashboard editor jumps when the last-focused editor tab has closed or

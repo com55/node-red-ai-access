@@ -15,10 +15,12 @@ export function pageClientIconsScript(): string {
   function statusIcon(kind, options) {
     options = options || {};
     var size = options.size || 14;
+    kind = kind || '';
+    var path = Object.prototype.hasOwnProperty.call(statusIconPaths, kind) ? statusIconPaths[kind] : '';
     return '<svg xmlns="http://www.w3.org/2000/svg" class="status-icon" data-icon="' + kind + '" viewBox="0 0 24 24" width="' + size + '" height="' + size + '"' +
       (options.x == null ? '' : ' x="' + options.x + '" y="' + options.y + '"') +
       ' aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"' +
-      (options.color ? ' color="' + options.color + '"' : '') + '>' + statusIconPaths[kind] + '</svg>';
+      (options.color ? ' color="' + options.color + '"' : '') + '>' + path + '</svg>';
   }
 `;
 }
