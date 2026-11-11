@@ -87,6 +87,21 @@ and this project adheres to
 - Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
   switches.
 
+## [0.2.0-beta.14] - 2026-11-11
+
+- Add a Visual View on the proposal detail page for reviewing flow changes on a
+  Node-RED-like canvas, with compact and editor-position layouts, related nodes,
+  and change diffs.
+- Approve proposals from a Deploy-style split button that chooses the deployment
+  type.
+- Distinguish Moved (position-only) nodes from Modified, with shared inline SVG
+  status icons and purple move arrows from the old-position ghost to the
+  highlight outline.
+- Draw input and output ports from the registered node type, so inject has no
+  input port and debug has no output port.
+- Split dashboard, REST, MCP, OAuth, and configuration documentation out of the
+  README.
+
 ## [0.2.0-beta.13] - 2026-11-10
 
 - Label the "Opened from dashboard" card action Go to flow for flow, tab and
