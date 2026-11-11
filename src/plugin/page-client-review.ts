@@ -178,14 +178,22 @@ export function pageClientReviewScript(): string {
   }
   function closeApproveMenus(restore) {
     document.querySelectorAll('.approve-wrap').forEach(function (wrap) {
-      var menu = wrap.querySelector('[role="menu"]'), toggle = wrap.querySelector('.approve-options');
-      if (!menu.hidden) { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); if (restore) toggle.focus(); }
+      closeApproveMenu(wrap, restore);
     });
+  }
+  function closeApproveMenu(wrap, restore) {
+    var menu = wrap.querySelector('[role="menu"]'), toggle = wrap.querySelector('.approve-options');
+    var wasOpen = !menu.hidden;
+    menu.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    if (restore && wasOpen && !toggle.disabled) toggle.focus();
   }
   function bindReviewControls(host) {
     host.querySelectorAll('.back-proposals').forEach(function (btn) { bindOnce(btn, 'click', backToProposals); });
     host.querySelectorAll('.approve-wrap').forEach(function (wrap) {
       var toggle = wrap.querySelector('.approve-options'), menu = wrap.querySelector('[role="menu"]');
+      toggle.disabled = !!wrap.querySelector('.approve-btn').disabled;
+      if (toggle.disabled) closeApproveMenu(wrap, false);
       function open() {
         if (toggle.disabled) return;
         menu.hidden = false;
@@ -195,6 +203,7 @@ export function pageClientReviewScript(): string {
       bindOnce(toggle, 'click', function () { if (menu.hidden) open(); else closeApproveMenus(true); });
       toggle.onkeydown = function (ev) { if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); open(); } };
       menu.onclick = function (ev) {
+        if (toggle.disabled) return;
         var item = ev.target.closest('[data-deploy]');
         if (!item) return;
         var id = wrap.querySelector('.approve-btn').getAttribute('data-id');

@@ -1149,6 +1149,112 @@ describe('proposal search pagination and cross-filter hints', () => {
 });
 
 describe('review action safety', () => {
+  it.each(['conflict', 'permission', 'no-op', 'loading'])(
+    'disables both Approve buttons for %s and enables both when ready',
+    reason => {
+      const ui = browserHelpers();
+      const p = { id: 'p', status: 'pending' };
+      const diff = { summary: { modified: 1 }, rebase: { state: 'clean' } };
+      ui.setPermission(reason !== 'permission');
+      ui.setDiff(
+        p,
+        reason === 'loading'
+          ? null
+          : reason === 'no-op'
+            ? { ...diff, vsCurrent: { summary: {} } }
+            : diff
+      );
+      const blocked = ui.renderReviewActionRow(p, reason === 'conflict');
+      for (const cls of ['action approve-btn', 'approve-options'])
+        expect(blocked).toMatch(new RegExp('class="' + cls + '"[^>]*disabled'));
+      ui.setPermission(true);
+      ui.setDiff(p, diff);
+      expect(ui.renderReviewActionRow(p, false)).not.toMatch(/ disabled/);
+      expect(pageStyles()).toMatch(/\.approve-split button:disabled\s*\{[^}]*opacity: \.45;/);
+    }
+  );
+
+  it('synchronizes the caret with Approve and closes an open menu when disabled', () => {
+    const approve = { disabled: true };
+    const attributes: Record<string, string> = { 'aria-expanded': 'true' };
+    const toggle = {
+      disabled: false,
+      addEventListener: vi.fn(),
+      getAttribute: (key: string) => attributes[key],
+      setAttribute: (key: string, value: string) => {
+        attributes[key] = value;
+      },
+      onkeydown: vi.fn(),
+    };
+    const focus = vi.fn();
+    const menu = {
+      hidden: false,
+      querySelector: () => ({ focus }),
+      onclick: vi.fn(),
+    };
+    const wrap = {
+      querySelector: (selector: string) =>
+        selector === '.approve-btn' ? approve : selector === '.approve-options' ? toggle : menu,
+    };
+    const ui = browserHelpers();
+    const host = {
+      querySelectorAll: (selector: string) => (selector === '.approve-wrap' ? [wrap] : []),
+    };
+    ui.bindReviewControls(host);
+    expect(toggle.disabled).toBe(true);
+    expect(menu.hidden).toBe(true);
+    expect(attributes['aria-expanded']).toBe('false');
+    toggle.onkeydown({ key: 'ArrowDown', preventDefault: vi.fn() });
+    menu.onclick({
+      target: {
+        closest: () => {
+          throw new Error('Disabled menu is interactive');
+        },
+      },
+    });
+    expect(menu.hidden).toBe(true);
+    expect(focus).not.toHaveBeenCalled();
+    approve.disabled = false;
+    ui.bindReviewControls(host);
+    expect(toggle.disabled).toBe(false);
+    toggle.onkeydown({ key: 'ArrowDown', preventDefault: vi.fn() });
+    expect(menu.hidden).toBe(false);
+    expect(attributes['aria-expanded']).toBe('true');
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
+  it('collapses summary, review notes and reason before the counts and workspace', () => {
+    const ui = browserHelpers();
+    const { p: flow, diff } = chain([2]);
+    const p = {
+      ...flow,
+      status: 'pending',
+      reason: 'Review the change carefully. '.repeat(100),
+      warnings: Array.from({ length: 20 }, (_, i) => ({
+        code: 'config_' + i,
+        error: 'Needs configuration',
+      })),
+    };
+    ui.setDiff(p, diff);
+    const html = ui.renderProposalCard(p);
+    const notes = html
+      .split('<details class="proposal-notes">')[1]
+      ?.split('<div class="proposal-visual-host"')[0];
+    expect(notes).toContain('<summary>Notes</summary>');
+    expect(notes).toContain('proposal-plain-summary');
+    expect(notes).toContain('proposal-review-notes');
+    expect(notes).toContain('Reason:');
+    expect(html.indexOf('class="proposal-actions"')).toBeLessThan(
+      html.indexOf('class="proposal-notes"')
+    );
+    expect(html.indexOf('class="proposal-notes"')).toBeLessThan(
+      html.indexOf('class="proposal-visual-host"')
+    );
+    expect(ui.visualMarkup(p, diff)).toMatch(
+      /<div class="visual-summary">[\s\S]*?<\/div><section class="visual-workspace"/
+    );
+  });
+
   it.each(['bogus', '', null])(
     'falls back to nodes for an invalid deploy default or selection: %s',
     async invalid => {

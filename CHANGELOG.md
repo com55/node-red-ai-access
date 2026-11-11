@@ -31,6 +31,8 @@ and this project adheres to
 
 ### Fixed
 
+- Fade and disable both Approve controls together, and collapse detail notes to
+  keep the Visual View canvas above the fold.
 - Match proposal list chrome and empty states to the approved design, preserve
   custom titles, and use the OAuth consent logo in the dashboard header.
 

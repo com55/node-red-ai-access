@@ -2615,15 +2615,15 @@ function pageClientScriptPartB2Cards(): string {
     // Show for any large delete — including stale — so owners see the risk.
     var deleteBanner = cached && !proposalHasNoNetChange(cached) ? renderDeleteBanner(cached) : '';
     // Card-level banner even before diff loads (warnings come from list API).
-    reason += p.deploymentAlert ? '<div role="alert" class="warning">' + esc(p.deploymentAlert) + '</div>' : '';
-    reason += p.rejectedWhileDeployUnknown ? '<div role="alert" class="warning">Rejected while deploy outcome unknown. An earlier deploy may still land.</div>' : '';
+    var alerts = p.deploymentAlert ? '<div role="alert" class="proposal-warnings">' + esc(p.deploymentAlert) + '</div>' : '';
+    alerts += p.rejectedWhileDeployUnknown ? '<div role="alert" class="proposal-warnings">Rejected while deploy outcome unknown. An earlier deploy may still land.</div>' : '';
     var deployBanner = p.deployPending
       ? '<div class="proposal-warnings" role="status"><p class="proposal-warnings-title">Deploy outcome unknown</p><p>' +
         esc(p.deployPending.queueReleased
           ? 'The approval queue was released. Check the live flow before approving again.'
           : p.deployPending.reason) + '</p><p>Proposal ' + esc(p.id) + ' / attempt ' + esc(p.deployPending.attemptId || '') + ' / tabs: ' + esc(p.flowId || p.payload.flowId) + '</p><button type="button" class="confirm-live-checked-btn" data-attempt-id="' + esc(p.deployPending.attemptId || '') + '" data-id="' + esc(p.id) + '"' + (!canApprove ? ' disabled' : '') + '>Confirm live checked</button></div>'
       : '';
-    var warnBanner = deployBanner + renderReviewWarnings(p, cached);
+    var warnBanner = renderReviewWarnings(p, cached);
     var stale = proposalIsStale(p);
     var actions = renderPendingActions(p, stale);
     var changes = '<div class="proposal-visual-host" data-visual-for="' + esc(p.id) + '">' +
@@ -2637,11 +2637,12 @@ function pageClientScriptPartB2Cards(): string {
       renderLandedAfterWithdraw(p) + renderRebaseChip(p, cached) + renderProposalMetaLine(p) +
       (createdBy ? '<span class="proposal-created-by">' + createdBy + '</span>' : '') + '</header>' +
       '<div class="proposal-actions">' + actions + '</div>' +
+      deleteBanner + deployBanner + alerts +
+      '<details class="proposal-notes"><summary>Notes</summary>' +
       '<p class="proposal-plain-summary" data-plain-for="' + esc(p.id) + '">' +
       (plain ? esc(plain) : '<span class="muted">Loading summary…</span>') + '</p>' +
-      deleteBanner +
       '<div class="proposal-review-notes">' + warnBanner + '</div>' +
-      reason +
+      reason + '</details>' +
       changes +
       renderProposalTech(p, cached) +
       '</article>';
@@ -2973,7 +2974,7 @@ function pageClientScriptPartB2Apply(): string {
       var actionHost = article.querySelector('.proposal-actions');
       if (actionHost) actionHost.innerHTML = renderPendingActions(p, proposalIsStale(p));
       var notes = article.querySelector('.proposal-review-notes');
-      if (notes && !p.deployPending) notes.innerHTML = renderReviewWarnings(p, diff);
+      if (notes) notes.innerHTML = renderReviewWarnings(p, diff);
       var chip = article.querySelector('.rebase-chip');
       if (chip) chip.outerHTML = renderRebaseChip(p, diff);
       bindProposalActions(article);
@@ -2990,14 +2991,13 @@ function pageClientScriptPartB2Apply(): string {
       if (existingBanner) {
         existingBanner.textContent = html;
       } else {
-        var anchor = article.querySelector('.proposal-plain-summary') ||
-          article.querySelector('.stale-item-row');
+        var anchor = article.querySelector('.proposal-notes');
         var banner = document.createElement('div');
         banner.className = 'delete-banner';
         banner.setAttribute('role', 'status');
         banner.textContent = html;
         if (anchor && anchor.parentNode) {
-          anchor.parentNode.insertBefore(banner, anchor.nextSibling);
+          anchor.parentNode.insertBefore(banner, anchor);
         } else {
           article.insertBefore(banner, article.firstChild);
         }

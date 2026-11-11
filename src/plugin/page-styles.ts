@@ -1324,6 +1324,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .approve-wrap { position: relative; }
 .approve-split { display: flex; }
 .approve-split button { background: #0a5c45; color: #fff; border-color: #0a5c45; gap: 8px; }
+.approve-split button:disabled { opacity: .45; cursor: not-allowed; }
 .approve-split button:hover:enabled { background: #084b39; }
 .approve-split .approve-btn { border-radius: 6px 0 0 6px; }
 .approve-split .approve-options { border-radius: 0 6px 6px 0; border-left: 1px solid #ffffff66; padding: 0 10px; }
@@ -1337,6 +1338,11 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 #approve-menu strong { display: block; font-size: 14px; margin-bottom: 4px; }
 #approve-menu small { display: block; color: #697580; font-size: 12px; line-height: 1.45; }
 .full-deploy-warn { flex-basis: 100%; text-align: right; color: #946000; font-size: 12px; }
+.proposal-notes { margin: 0 0 10px; font-size: 12px; }
+.proposal-notes > summary { cursor: pointer; color: var(--muted); }
+.proposal-notes[open] > summary { margin-bottom: 8px; }
+.proposal-detail > .proposal-warnings { padding: 7px 10px; font-size: 12px; }
+.proposal-detail > .proposal-warnings p { margin: 0 0 5px; overflow-wrap: anywhere; }
 .visual-eyebrow { text-transform: uppercase; font-size: 11px; letter-spacing: 1.5px; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
 .visual-detail-counts { display: flex; gap: 7px; }
 .visual-detail-counts span { background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 5px 9px; font-size: 12px; }
