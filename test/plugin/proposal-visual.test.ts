@@ -52,7 +52,7 @@ function browserHelpers(
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal,
+      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal, renderProposalCard,
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
@@ -647,6 +647,9 @@ describe('proposal summaries and deploy controls', () => {
         'nodes',
       ]);
       expect(html).toContain('aria-haspopup="menu"');
+      expect(html).toContain('class="approve-split"');
+      expect(html).toContain('>Reject</button>');
+      expect(html).not.toContain('proposal-history-notice');
       expect(html).not.toMatch(/class="action approve-btn"[^>]*disabled/);
       const approve = vi.fn();
       ui.setApprove(approve);
@@ -654,16 +657,50 @@ describe('proposal summaries and deploy controls', () => {
       expect(approve).not.toHaveBeenCalled();
       await ui.approveProposal('p');
       expect(approve).toHaveBeenCalledWith('p', 'flows');
-      for (const blocked of [
-        { ...p, status: 'conflict' },
-        { ...p, status: 'approved' },
-      ]) {
-        const blockedHtml = ui.renderReviewActionRow(blocked, blocked.status === 'conflict');
-        expect(blockedHtml).toMatch(/class="action approve-btn"[^>]*disabled/);
-        expect(blockedHtml).toMatch(/class="approve-options"[^>]*disabled/);
-      }
+      const blockedHtml = ui.renderReviewActionRow({ ...p, status: 'conflict' }, true);
+      expect(blockedHtml).toMatch(/class="action approve-btn"[^>]*disabled/);
+      expect(blockedHtml).toMatch(/class="approve-options"[^>]*disabled/);
+      expect(blockedHtml).toContain('>Reject</button>');
+      expect(blockedHtml).not.toContain('proposal-history-notice');
       ui.setPermission(false);
       expect(ui.renderReviewActionRow(p, false)).toMatch(/class="approve-options"[^>]*disabled/);
+    }
+  );
+
+  it.each(['approved', 'rejected', 'failed', 'withdrawn', 'expired', 'superseded'])(
+    'shows a history notice instead of decision controls and retains Visual View for %s',
+    status => {
+      const ui = browserHelpers();
+      const { p: flow, diff } = chain([2]);
+      const p = { ...flow, status };
+      ui.setPermission(true);
+      ui.setDefault('full');
+      ui.setDiff(p, diff);
+      for (const width of [1280, 375]) {
+        ui.setViewport(width);
+        const row = ui.renderReviewActionRow(p, false);
+        expect(row).toContain(
+          '<p class="proposal-history-notice">Historical record — may no longer match the live flow.</p>'
+        );
+        expect(row).toMatch(/back-proposals">← Proposals<\/button>.*proposal-history-notice/);
+        expect(row.match(/<button\b/g)).toHaveLength(1);
+        expect(row).not.toMatch(/Approve|Reject|approve-|reject-|full-deploy-warn|hidden/);
+        const card = ui.renderProposalCard(p);
+        expect(card).toContain(row);
+        expect(card).toContain('class="status-pill ' + status + '">' + status + '</span>');
+        expect(card).toContain('class="proposal-visual-host"');
+        const visual = ui.visualMarkup(p, diff);
+        for (const part of ['visual-canvas', 'visual-legend', 'Changed nodes', 'data-diff-for="p"'])
+          expect(visual).toContain(part);
+        const graph = ui.visualGraph(p, diff);
+        const drawer = ui.renderVisualNodeDrawer(
+          graph.nodes.find((n: any) => n.kind),
+          p,
+          diff
+        );
+        expect(drawer).toContain('class="drawer" aria-label="Node change details"');
+        expect(drawer).toContain('func');
+      }
     }
   );
 });
@@ -836,8 +873,9 @@ describe('review action safety', () => {
     const actions = {
       innerHTML: '',
       querySelectorAll: () => [],
-      querySelector: () => ({ focus: vi.fn() }),
+      querySelector: (selector: string) => (selector === '.back-proposals' ? back : null),
     };
+    const back = { focus: vi.fn() };
     const menu = { onclick: vi.fn(), querySelector: () => ({ focus: vi.fn() }) };
     const wrap = {
       querySelector: (selector: string) =>
@@ -850,8 +888,9 @@ describe('review action safety', () => {
       querySelectorAll: (selector: string) => (selector === '.approve-wrap' ? [wrap] : []),
     });
     menu.onclick({ target: { closest: () => ({ getAttribute: () => 'flows' }) } });
-    expect(actions.innerHTML).toMatch(/class="action approve-btn"[^>]*disabled/);
-    expect(actions.innerHTML).toMatch(/class="approve-options"[^>]*disabled/);
+    expect(actions.innerHTML).toContain('proposal-history-notice');
+    expect(actions.innerHTML).not.toMatch(/approve-|reject-/);
+    expect(back.focus).toHaveBeenCalledOnce();
   });
 
   it('keeps the deletion confirmation usable and starts the guard only after typed confirmation', async () => {

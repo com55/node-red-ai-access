@@ -31,6 +31,8 @@ and this project adheres to
 
 ### Fixed
 
+- Replace decided proposals' approval controls with a history notice while
+  retaining the full Visual View.
 - Match the conflict drawer to the mockup: apply editor/proposed choices
   immediately without confirmation or Re-check, retain per-node choices for
   switching sides, and highlight chosen/rejected Split and Unified lines. Keep

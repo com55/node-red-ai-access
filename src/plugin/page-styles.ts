@@ -1311,6 +1311,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .action-row .review-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-shrink: 0; }
 .action-row button { height: 37px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; padding: 0 13px; font: inherit; font-size: 13px; line-height: 1; margin: 0; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
 .action-row .back-proposals { color: var(--accent); background: var(--card); }
+.proposal-history-notice { flex: 1 1 180px; max-width: 420px; margin: 0 0 0 auto; color: var(--muted); font-size: 13px; line-height: 1.5; text-align: right; }
 .approve-wrap { position: relative; }
 .approve-split { display: flex; }
 .approve-split button { background: #0a5c45; color: #fff; border-color: #0a5c45; gap: 8px; }

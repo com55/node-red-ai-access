@@ -102,10 +102,12 @@ export function pageClientReviewScript(): string {
     return cachedProposals.filter(function (p) { return p.id === id; })[0] || proposalDetails[id];
   }
   function renderReviewActionRow(p, stale) {
+    var open = p.status === 'pending' || p.status === 'conflict';
+    if (!open) return '<div class="action-row"><button type="button" class="action secondary back-proposals">← Proposals</button>' +
+      '<p class="proposal-history-notice">Historical record — may no longer match the live flow.</p></div>';
     stale = stale || proposalIsStale(p);
     var type = proposalDeployType(p.id);
     var pending = !!proposalActionPending[p.id];
-    var open = p.status === 'pending' || p.status === 'conflict';
     var diff = proposalDiffCache[p.id];
     var disabled = pending || !canApprove || !open || stale || !diff || proposalHasNoNetChange(diff);
     var title = !canApprove ? 'Admin approval permission required' : !open ? 'Proposal already resolved' : stale ? 'Resolve conflicts before approving' : !diff ? 'Wait for the diff to load' : 'Deploy: ' + deployTypes.filter(function (item) { return item[0] === type; })[0][1];
@@ -145,7 +147,8 @@ export function pageClientReviewScript(): string {
         var p = proposalForReview(id);
         actions.innerHTML = renderReviewActionRow(p, proposalIsStale(p));
         bindProposalActions(actions);
-        actions.querySelector('.approve-options').focus();
+        var focusTarget = actions.querySelector('.approve-options') || actions.querySelector('.back-proposals');
+        if (focusTarget) focusTarget.focus();
       };
       menu.onkeydown = function (ev) {
         var items = Array.prototype.slice.call(menu.querySelectorAll('button')), index = items.indexOf(document.activeElement);
