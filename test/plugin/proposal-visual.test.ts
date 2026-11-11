@@ -9,19 +9,21 @@ import { buildDiffSections } from '../../src/plugin/proposal-diff.js';
 import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
 import type { Proposal } from '../../src/storage/proposals.js';
 
-function browserHelpers() {
+function browserHelpers(elements: Record<string, any> = {}, articles: any[] = []) {
   const context = {
     document: {
       getElementById: (id: string) =>
         id === 'mcp-root'
           ? { getAttribute: () => '{}' }
-          : {
+          : (elements[id] ?? {
               addEventListener: vi.fn(),
               setAttribute: vi.fn(),
+              removeAttribute: vi.fn(),
               querySelectorAll: () => [],
+              querySelector: () => null,
               getAttribute: () => null,
-            },
-      querySelectorAll: () => [],
+            }),
+      querySelectorAll: (selector: string) => (selector === '.proposal-detail' ? articles : []),
       addEventListener: vi.fn(),
     },
     window: { addEventListener: vi.fn() },
@@ -34,7 +36,15 @@ function browserHelpers() {
     globalThis.ui = {
       visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, renderCompactProposal,
       proposalMatchesFilter, renderChangeCounts, renderReviewActionRow, approveProposal,
-      settleSearchAfterAction,
+      settleSearchAfterAction, bindReviewControls, proposalForReview, doApproveProposal, rejectProposal,
+      renderProposalsList, renderDecidedLoadMore, bindCrossTabHint, countSearchMatchesInFilter,
+      setSearch: function (filter, query, proposals, more) { proposalsFilter = filter; proposalsSearchQuery = query; cachedProposals = proposals; decidedHasMore = more; },
+      setApi: function (fn) { api = fn; },
+      setDetails: function (p) { proposalDetails[p.id] = p; },
+      setAction: function (approve, reject) { doApproveProposalInner = approve; rejectProposalInner = reject; },
+      setupDialogs,
+      pendingCount: function () { return proposalActionsInFlight; },
+      getFilter: function () { return proposalsFilter; },
       setListState: function (filter, query, hash) { proposalsFilter = filter; proposalsSearchQuery = query; location.hash = hash; renderProposalsList = function () {}; },
       getListState: function () { return [proposalsFilter, proposalsSearchQuery]; },
       setPermission: function (v) { canApprove = v; },
@@ -175,6 +185,51 @@ describe('Visual View geometry', () => {
     runInNewContext(pageClientVisualGeometryScript(), context);
     expect(runInNewContext('visualPointerMoved({x:0,y:0}, {x:4,y:0})', context)).toBe(false);
     expect(runInNewContext('visualPointerMoved({x:0,y:0}, {x:3,y:3})', context)).toBe(true);
+  });
+
+  it.each([200000, 1, 2, -1, NaN, Infinity, -Infinity])(
+    'bounds rendered outputs for %s',
+    outputs => {
+      const ui = browserHelpers();
+      const p = { payload: { flow: { nodes: [{ id: 'n', type: 'inject', outputs }] } } };
+      const n = ui.visualGraph(p, {}).byId.n;
+      const visible = Number.isFinite(outputs) && outputs > 0 ? Math.min(32, outputs) : 0;
+      expect(n.outputs).toBe(visible);
+      expect(n.h).toBe(Math.max(30, visible * 15));
+      const html = ui.visualNodeSvg(n, {}, false);
+      expect(html.length).toBeLessThan(10000);
+      expect(html.match(/width="10" height="10" rx="3"/g) ?? []).toHaveLength(visible);
+      if (outputs > 32 && Number.isFinite(outputs)) expect(html).toContain('+199968</text>');
+      else expect(html).not.toMatch(/>\+\d+<\/text>/);
+    }
+  );
+
+  it('lets plain wheel events scroll and zooms only with Ctrl or Meta', () => {
+    const script = pageClientScript();
+    const handler = script.slice(
+      script.indexOf("    svg.addEventListener('wheel'"),
+      script.indexOf('    host.onclick =')
+    );
+    let wheel: (ev: any) => void = vi.fn();
+    const zoom = vi.fn(),
+      preventDefault = vi.fn();
+    runInNewContext(handler, {
+      svg: {
+        addEventListener: (_event: string, fn: typeof wheel) => {
+          wheel = fn;
+        },
+        getBoundingClientRect: () => ({ left: 10, top: 20 }),
+      },
+      zoom,
+    });
+    wheel({ preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(zoom).not.toHaveBeenCalled();
+    for (const modifier of ['ctrlKey', 'metaKey'])
+      wheel({ [modifier]: true, deltaY: -100, clientX: 50, clientY: 60, preventDefault });
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    expect(zoom).toHaveBeenCalledTimes(2);
+    expect(zoom).toHaveBeenLastCalledWith(Math.exp(0.1), 40, 40);
   });
 
   it('renders a moved ghost with real node appearance, solid ports and no interaction or change decorations', () => {
@@ -387,6 +442,290 @@ describe('proposal summaries and deploy controls', () => {
       }
       ui.setPermission(false);
       expect(ui.renderReviewActionRow(p, false)).toMatch(/class="approve-options"[^>]*disabled/);
+    }
+  );
+});
+
+describe('proposal search pagination and cross-filter hints', () => {
+  function searchUi() {
+    const list = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+    const ui = browserHelpers({ 'proposals-list': list });
+    return { ui, list };
+  }
+
+  it.each(['resolved', 'all'])(
+    'searches every decided page on %s and shows progress while loading',
+    async filter => {
+      const { ui, list } = searchUi();
+      ui.setSearch(filter, 'needle', [], true);
+      let finish: (data: unknown) => void = vi.fn();
+      const api = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finish = resolve;
+            })
+        )
+        .mockResolvedValueOnce({
+          proposals: [{ id: 'needle', status: 'approved' }],
+          hasMore: false,
+        });
+      ui.setApi(api);
+      ui.renderProposalsList();
+      expect(list.innerHTML).toContain('Searching all decided proposals…');
+      expect(list.innerHTML).not.toContain('id="decided-load-more"');
+      ui.renderProposalsList();
+      expect(api).toHaveBeenCalledTimes(1);
+      finish({ proposals: [{ id: 'other', status: 'rejected' }], hasMore: true });
+      await vi.waitFor(() => expect(list.innerHTML).toContain('data-id="needle"'));
+      expect(api.mock.calls.map(call => call[0])).toEqual([
+        expect.stringContaining('&offset=0'),
+        expect.stringContaining('&offset=1'),
+      ]);
+      expect(list.innerHTML).not.toContain('Searching all decided proposals…');
+    }
+  );
+
+  it.each(['resolved', 'all'])('keeps manual pagination when %s is not searching', filter => {
+    const { ui, list } = searchUi();
+    const api = vi.fn();
+    ui.setApi(api);
+    ui.setSearch(filter, '', [], true);
+    ui.renderProposalsList();
+    expect(list.innerHTML).toContain('id="decided-load-more"');
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it('shows other matching filters with their real ids and switches to each one', () => {
+    const { ui, list } = searchUi();
+    const proposals = [
+      { id: 'p', title: 'needle', status: 'pending' },
+      { id: 'c', title: 'needle', status: 'conflict' },
+      { id: 'r1', title: 'needle', status: 'approved' },
+      { id: 'r2', title: 'needle', status: 'rejected' },
+    ];
+    for (const [filter, label, count] of [
+      ['pending', 'Pending', 1],
+      ['conflict', 'Conflict', 1],
+      ['resolved', 'Resolved', 2],
+    ] as const) {
+      ui.setSearch(
+        filter,
+        'needle',
+        proposals.filter(p => !ui.proposalMatchesFilter(p, filter)),
+        false
+      );
+      ui.renderProposalsList();
+      expect(list.innerHTML).toContain('class="cross-tab-hint"');
+      expect(list.innerHTML).not.toContain('Switch to ' + label);
+      ui.setSearch('pending', 'needle', proposals, false);
+      let click: () => void = vi.fn();
+      ui.bindCrossTabHint({
+        querySelectorAll: () => [
+          {
+            getAttribute: (name: string) => (name === 'data-filter' ? filter : null),
+            setAttribute: vi.fn(),
+            addEventListener: (_event: string, fn: () => void) => {
+              click = fn;
+            },
+          },
+        ],
+      });
+      click();
+      expect(ui.getFilter()).toBe(filter);
+      expect(ui.countSearchMatchesInFilter(filter)).toBe(count);
+      // A missing current match exposes the labels and pluralization for every other filter.
+      ui.setSearch(
+        filter === 'pending' ? 'conflict' : 'pending',
+        'needle',
+        proposals.filter(p => ui.proposalMatchesFilter(p, filter)),
+        false
+      );
+      ui.renderProposalsList();
+      expect(list.innerHTML).toContain(`${count} ${count === 1 ? 'match' : 'matches'} in ${label}`);
+      expect(list.innerHTML).toContain(`data-filter="${filter}">Switch to ${label}`);
+      expect(list.innerHTML).not.toContain('Decided');
+    }
+    ui.setSearch('all', 'absent', proposals, false);
+    ui.renderProposalsList();
+    expect(list.innerHTML).not.toContain('cross-tab-hint');
+  });
+
+  it('stops failed search pagination without an immediate retry loop', async () => {
+    const { ui, list } = searchUi();
+    ui.setSearch('resolved', 'needle', [], true);
+    const api = vi.fn().mockRejectedValue(new Error('Offline'));
+    ui.setApi(api);
+    ui.renderProposalsList();
+    await vi.waitFor(() => expect(list.innerHTML).toContain('id="decided-load-more"'));
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('review action safety', () => {
+  it.each(['bogus', '', null])(
+    'falls back to nodes for an invalid deploy default or selection: %s',
+    async invalid => {
+      const ui = browserHelpers(),
+        p = { id: 'p', status: 'pending' };
+      ui.setPermission(true);
+      ui.setDiff(p, { summary: { modified: 1 } });
+      ui.setDefault(invalid);
+      expect(ui.renderReviewActionRow(p, false)).toContain('data-deploy="nodes" class="selected"');
+      ui.setDefault('flows');
+      ui.setDeploy('p', invalid);
+      expect(ui.renderReviewActionRow(p, false)).toContain('data-deploy="nodes" class="selected"');
+      const approve = vi.fn();
+      ui.setApprove(approve);
+      await ui.approveProposal('p');
+      expect(approve).toHaveBeenCalledWith('p', 'nodes');
+    }
+  );
+
+  it('uses current cached status when the deploy menu re-renders', () => {
+    const ui = browserHelpers(),
+      old = { id: 'p', status: 'pending' };
+    ui.setDetails(old);
+    ui.setPermission(true);
+    ui.setDiff({ ...old, status: 'approved' }, { summary: { modified: 1 } });
+    const actions = {
+      innerHTML: '',
+      querySelectorAll: () => [],
+      querySelector: () => ({ focus: vi.fn() }),
+    };
+    const menu = { onclick: vi.fn(), querySelector: () => ({ focus: vi.fn() }) };
+    const wrap = {
+      querySelector: (selector: string) =>
+        selector === '[role="menu"]'
+          ? menu
+          : { getAttribute: () => 'p', setAttribute: vi.fn(), addEventListener: vi.fn() },
+      closest: () => actions,
+    };
+    ui.bindReviewControls({
+      querySelectorAll: (selector: string) => (selector === '.approve-wrap' ? [wrap] : []),
+    });
+    menu.onclick({ target: { closest: () => ({ getAttribute: () => 'flows' }) } });
+    expect(actions.innerHTML).toMatch(/class="action approve-btn"[^>]*disabled/);
+    expect(actions.innerHTML).toMatch(/class="approve-options"[^>]*disabled/);
+  });
+
+  it('keeps the deletion confirmation usable and starts the guard only after typed confirmation', async () => {
+    let submit: (ev: any) => void = vi.fn();
+    const input = { value: '', addEventListener: vi.fn() };
+    const ui = browserHelpers({
+      'delete-confirm-input': input,
+      'delete-confirm-form': {
+        addEventListener: (_event: string, fn: typeof submit) => {
+          submit = fn;
+        },
+      },
+    });
+    const p = { id: 'p', status: 'pending' };
+    ui.setPermission(true);
+    ui.setDiff(p, { summary: { removed: 2, beforeNodeCount: 2, afterNodeCount: 0 } });
+    let finish: () => void = vi.fn();
+    const request = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve;
+        })
+    );
+    ui.setAction(request, request);
+    ui.setupDialogs();
+    await ui.approveProposal('p');
+    expect(ui.pendingCount()).toBe(0);
+    expect(ui.renderReviewActionRow(p, false)).not.toMatch(/ disabled/);
+    submit({ submitter: { value: 'confirm' } });
+    expect(request).not.toHaveBeenCalled();
+    await ui.approveProposal('p');
+    input.value = 'DELETE';
+    submit({ submitter: { value: 'confirm' } });
+    expect(ui.pendingCount()).toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    finish();
+    await vi.waitFor(() => expect(ui.pendingCount()).toBe(0));
+  });
+
+  it('releases the guard for deployment-outcome confirmation and guards the override request', async () => {
+    let confirm: (ev: any) => void = vi.fn();
+    const ui = browserHelpers({
+      'confirm-form': {
+        addEventListener: (_event: string, fn: typeof confirm) => {
+          confirm = fn;
+        },
+      },
+    });
+    const p = { id: 'p', status: 'pending' };
+    ui.setPermission(true);
+    ui.setDiff(p, { summary: { modified: 1 } });
+    ui.setupDialogs();
+    let fail: (err: unknown) => void = vi.fn();
+    const api = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        })
+    );
+    ui.setApi(api);
+    const pending = ui.doApproveProposal('p', 'nodes');
+    fail({ body: { code: 'deploy_outcome_unknown' } });
+    await pending;
+    expect(ui.pendingCount()).toBe(0);
+    expect(ui.renderReviewActionRow(p, false)).not.toMatch(/ disabled/);
+    let finish: () => void = vi.fn();
+    const override = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve;
+        })
+    );
+    ui.setAction(override, vi.fn());
+    confirm({ submitter: { value: 'confirm' } });
+    expect(override).toHaveBeenCalledWith('p', 'nodes', true);
+    expect(ui.pendingCount()).toBe(1);
+    await ui.doApproveProposal('p', 'nodes', true);
+    expect(override).toHaveBeenCalledTimes(1);
+    finish();
+    await vi.waitFor(() => expect(ui.pendingCount()).toBe(0));
+  });
+
+  it.each(['approve', 'reject'])(
+    'guards duplicate and opposing requests while %s is pending, then restores controls',
+    async action => {
+      const actions = { innerHTML: '', querySelectorAll: () => [] };
+      const article = { getAttribute: () => 'p', querySelector: () => actions };
+      const ui = browserHelpers({}, [article]),
+        p = { id: 'p', status: 'pending' };
+      ui.setPermission(true);
+      ui.setDiff(p, { summary: { modified: 1 } });
+      let finish: () => void = vi.fn();
+      const request = vi.fn(
+        () =>
+          new Promise<void>(resolve => {
+            finish = resolve;
+          })
+      );
+      ui.setAction(request, request);
+      const pending =
+        action === 'approve' ? ui.doApproveProposal('p', 'nodes') : ui.rejectProposal('p');
+      for (const cls of ['action approve-btn', 'approve-options', 'action secondary reject-btn'])
+        expect(actions.innerHTML).toMatch(new RegExp('class="' + cls + '"[^>]*disabled'));
+      await ui.doApproveProposal('p', 'nodes');
+      await ui.rejectProposal('p');
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(ui.pendingCount()).toBe(1);
+      finish();
+      await pending;
+      expect(ui.pendingCount()).toBe(0);
+      expect(actions.innerHTML).not.toMatch(/ disabled/);
+      ui.setAction(
+        () => Promise.reject(new Error('Offline')),
+        () => Promise.reject(new Error('Offline'))
+      );
+      await expect(ui.doApproveProposal('p', 'nodes')).rejects.toThrow('Offline');
+      expect(actions.innerHTML).not.toMatch(/ disabled/);
+      expect(ui.pendingCount()).toBe(0);
     }
   );
 });

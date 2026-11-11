@@ -576,6 +576,7 @@ function proposalsHarness() {
     'proposalFlowId',
     'loadProposals',
     'doApproveProposal',
+    'setProposalActionPending',
   ]
     .map(n => extractFn(src, n))
     .join('\n');
@@ -597,6 +598,7 @@ function proposalsHarness() {
     showFlash() {},
     updatePendingBadges() {},
     preserveUiState: (_c: unknown, fn: () => void) => fn(),
+    document: { querySelectorAll: () => [] },
     approveGate: null as null | { resolve: () => void },
     doApproveProposalInner: () =>
       new Promise<void>(resolve => {
@@ -604,7 +606,7 @@ function proposalsHarness() {
       }),
   };
   runInNewContext(
-    `var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0;
+    `var loaderGen = {}, lastRenderSig = {}, proposalActionsInFlight = 0, proposalActionPending = Object.create(null);
      var DECIDED_PAGE_SIZE = 20, DECIDED_STATUSES = 'approved', decidedLoaded = 0,
        decidedTotal = 0, decidedHasMore = false, cachedProposals = [], cachedFlowLabels = {};
      function renderProposalsList() { out.render(cachedProposals.map(function (p) { return p.id; })); }

@@ -22,6 +22,9 @@ and this project adheres to
 
 ### Fixed
 
+- Bound Visual View rendering and review diffs, restore complete proposal
+  search, and fix review controls, navigation, and narrow-screen behavior.
+
 - Support Home and End keys in the Access tokens base URL segmented control,
   skipping disabled options (#129).
 

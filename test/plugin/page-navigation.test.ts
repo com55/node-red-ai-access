@@ -55,6 +55,56 @@ describe('settings navigation', () => {
     );
   });
 
+  it('measures the sticky header initially and when its size changes', () => {
+    const script = pageClientScript();
+    const setup = script.slice(
+      script.indexOf('  function setupStickyNav()'),
+      script.indexOf('  function openProposalDetail(')
+    );
+    let height = 68;
+    const header = { getBoundingClientRect: () => ({ height }) };
+    const setProperty = vi.fn(),
+      observe = vi.fn();
+    const resize: Record<string, () => void> = {};
+    let observedResize: () => void = vi.fn();
+    runInNewContext(setup + '\nsetupStickyNav();', {
+      document: { querySelector: () => header, documentElement: { style: { setProperty } } },
+      window: {
+        addEventListener: (event: string, fn: () => void) => {
+          resize[event] = fn;
+        },
+      },
+      ResizeObserver: class {
+        constructor(fn: () => void) {
+          observedResize = fn;
+        }
+        observe = observe;
+      },
+    });
+    expect(setProperty).toHaveBeenLastCalledWith('--nav-height', '88px');
+    expect(observe).toHaveBeenCalledWith(header);
+    height = 80;
+    resize.resize();
+    expect(setProperty).toHaveBeenLastCalledWith('--nav-height', '100px');
+    height = 90;
+    observedResize();
+    expect(setProperty).toHaveBeenLastCalledWith('--nav-height', '110px');
+  });
+
+  it('hides both split controls on narrow screens and keeps shared visual styles in the base CSS', () => {
+    const html = renderMcpPage({ apiBase: '/mcp/api/v1' });
+    const media = [...html.matchAll(/@media \(max-width: 699px\) \{([^}]+}[^}]*})/g)];
+    expect(media).toHaveLength(2);
+    for (const match of media)
+      expect(match[1]).toContain('button[data-conflict-diff-mode="split"] { display: none; }');
+    for (const selector of [
+      '.visual-eyebrow {',
+      '.visual-detail-counts {',
+      '.visual-detail-counts span {',
+    ])
+      expect(html.split(selector)).toHaveLength(2);
+  });
+
   it('uses thin accent rings only for visible focus on dashboard controls', () => {
     const html = renderMcpPage({
       apiBase: '/mcp/api/v1',
@@ -130,7 +180,7 @@ describe('settings navigation', () => {
     }
   );
 
-  it.each(['#proposal=deep', '#/proposals/deep'])(
+  it.each(['#proposal=deep', '#proposal=deep&tab=review', '#/proposals/deep', '#/proposals/deep/'])(
     'keeps the detail URL persistent for %s',
     hash => {
       const script = pageClientScript();
@@ -253,7 +303,7 @@ describe('settings navigation', () => {
     runInNewContext(tabs + routes, context);
     expect(context.history.scrollRestoration).toBe('manual');
     buttons[1].click();
-    expect(focusHeading).not.toHaveBeenCalled();
+    expect(focusHeading).toHaveBeenCalledExactlyOnceWith('links', { preventScroll: true });
     expect(scrollTo).toHaveBeenCalledExactlyOnceWith(0, 0);
     flushAnimationFrames();
     expect(scrollY).toBe(0);

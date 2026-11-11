@@ -44,6 +44,7 @@ function pageClientScriptPartA(): string {
   function isLatestLoad(kind, gen) { return loaderGen[kind] === gen; }
   /** approve / reject requests in flight (auto-refresh waits for them). */
   var proposalActionsInFlight = 0;
+  var proposalActionPending = Object.create(null);
   var lastRenderSig = {};
   /** True when \`sig\` equals the last rendered signature for \`kind\` (and records it). */
   function sameAsLastRender(kind, sig) {
@@ -85,6 +86,7 @@ function pageClientScriptPartA(): string {
   var decidedLoaded = 0;
   var decidedTotal = 0;
   var decidedHasMore = false;
+  var decidedLoadingAll = false;
   var proposalDiffCache = {};
   var proposalConflictValues = {};
   var cachedLinksById = {};
@@ -796,7 +798,7 @@ function pageClientScriptPartATabs(): string {
 
   function readProposalHashIdFrom(hash) {
     try {
-      var m = String(hash || '').match(/^(?:#\\/proposals\\/([^/?#]+)|#proposal=([^&]+))$/);
+      var m = String(hash || '').match(/^(?:#\\/proposals\\/([^/?#]+)\\/?$|#proposal=([^&]+))/);
       if (!m) return '';
       return decodeURIComponent(m[1] || m[2] || '');
     } catch (e) {
@@ -876,7 +878,7 @@ function pageClientScriptPartATabs(): string {
       if (location.hash !== '#' + hashForTab(target)) {
         history.pushState(null, '', location.pathname + location.search + '#' + hashForTab(target));
       }
-      selectTab(target, { skipHash: true });
+      selectTab(target, { skipHash: true, focusHeading: true });
       closeDashboardMenu(false);
       loadTabData(target);
     });
@@ -2547,6 +2549,7 @@ function pageClientScriptPartB2(): string {
     });
     list.querySelectorAll('.reject-btn').forEach(function (btn) {
       bindOnce(btn, 'click', function () {
+        if (btn.disabled) return;
         openRejectDialog(btn.getAttribute('data-id'));
       });
     });
@@ -2735,6 +2738,19 @@ function pageClientScriptPartB2CardsList(): string {
     return cachedProposals.filter(function (p) { return proposalMatchesFilter(p, filter) && proposalMatchesSearch(p); }).length;
   }
 
+  function renderCrossTabSearchHint(otherFilter, otherCount) {
+    if (!proposalsSearchQuery.trim() || otherCount <= 0) return '';
+    var label = { pending: 'Pending', conflict: 'Conflict', resolved: 'Resolved' }[otherFilter];
+    var matchWord = otherCount === 1 ? '1 match' : otherCount + ' matches';
+    return '<p class="cross-tab-hint" role="status">' + esc(matchWord) + ' in ' + esc(label) +
+      ' <button type="button" class="cross-tab-switch" data-filter="' + esc(otherFilter) + '">Switch to ' + esc(label) + '</button></p>';
+  }
+  function bindCrossTabHint(list) {
+    list.querySelectorAll('.cross-tab-switch').forEach(function (btn) {
+      bindOnce(btn, 'click', function () { setProposalsFilter(btn.getAttribute('data-filter')); });
+    });
+  }
+
   function renderEmptyProposalsState(title, muted, extraHtml) {
     return '<div class="empty-state"><p class="empty-title">' + esc(title) + '</p>' +
       '<p class="muted">' + esc(muted) + '</p>' +
@@ -2750,7 +2766,7 @@ function pageClientScriptPartB2CardsList(): string {
     }).join('');
   }
 
-  function renderProposalsList() {
+  function renderProposalsList(skipSearchLoad) {
     var list = $('proposals-list');
     if (!list) return;
     var blockBanner = document.getElementById('deploy-unknown-blocks');
@@ -2775,6 +2791,7 @@ function pageClientScriptPartB2CardsList(): string {
     var hint = $('proposals-hint');
     if (hint) hint.hidden = !!detailId;
     if (detailId) { showProposalDetail(detailId); return; }
+    if (!skipSearchLoad && proposalsSearchQuery.trim() && (proposalsFilter === 'resolved' || proposalsFilter === 'all') && decidedHasMore) loadAllDecidedForSearch();
     var matched = cachedProposals.filter(function (p) {
       return proposalMatchesFilter(p, proposalsFilter) && proposalMatchesSearch(p);
     }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
@@ -2783,7 +2800,13 @@ function pageClientScriptPartB2CardsList(): string {
       proposalsSearchQuery.trim() ? 'No matching proposals' : 'No ' + (proposalsFilter === 'all' ? '' : proposalsFilter + ' ') + 'proposals',
       proposalsSearchQuery.trim() ? 'Try a different title or id, or clear the search.' : 'When proposals match this filter they will appear here.'
     );
+    if (!matched.length && proposalsFilter !== 'all') {
+      ['pending', 'conflict', 'resolved'].forEach(function (filter) {
+        if (filter !== proposalsFilter) list.innerHTML += renderCrossTabSearchHint(filter, countSearchMatchesInFilter(filter));
+      });
+    }
     if (proposalsFilter === 'resolved' || proposalsFilter === 'all') list.innerHTML += renderDecidedLoadMore();
+    bindCrossTabHint(list);
     bindDecidedLoadMore(list);
     bindProposalActions(list);
 
@@ -2864,7 +2887,23 @@ function pageClientScriptPartB2Focus(): string {
     decidedHasMore = !!(data && data.hasMore) && more.length > 0;
   }
 
+  /** Search covers every decided page, with one loader at a time. */
+  async function loadAllDecidedForSearch() {
+    if (decidedLoadingAll || !decidedHasMore) return;
+    decidedLoadingAll = true;
+    try {
+      while (decidedHasMore) await loadMoreDecided();
+    } catch (e) {
+      showFlash($('proposals-flash'), e.message || String(e), false);
+    } finally {
+      decidedLoadingAll = false;
+    }
+    // An error must not immediately start the same failed search again.
+    renderProposalsList(true);
+  }
+
   function renderDecidedLoadMore() {
+    if (decidedLoadingAll) return '<p class="muted decided-more" role="status">Searching all decided proposals…</p>';
     if (!decidedHasMore) return '';
     return '<div class="decided-more"><button type="button" class="action" id="decided-load-more">' +
       'Load more</button> <span class="muted">' + esc(String(decidedLoaded)) + ' of ' +
@@ -3193,7 +3232,7 @@ function pageClientScriptPartC(): string {
   }
 
   /**
-   * After approve/reject: keep search useful — switch to Decided if the card
+   * After approve/reject: keep search useful — switch to Resolved if the card
    * moved there, or clear an empty search with a short note.
    */
   function settleSearchAfterAction(actedId, actedStatus) {
@@ -3213,9 +3252,9 @@ function pageClientScriptPartC(): string {
       return;
     }
     if (status && status !== 'pending' && status !== 'conflict' && proposalsFilter === 'pending') {
-      var decidedMatches = countSearchMatchesInFilter('decided');
+      var decidedMatches = countSearchMatchesInFilter('resolved');
       if (decidedMatches > 0) {
-        setProposalsFilter('decided');
+        setProposalsFilter('resolved');
         var prior = flash && !flash.hidden ? String(flash.textContent || '').trim() : '';
         showFlash(
           flash,
@@ -3237,12 +3276,26 @@ function pageClientScriptPartC(): string {
     renderProposalsList();
   }
 
+  function setProposalActionPending(id, pending) {
+    if (pending) proposalActionPending[id] = true; else delete proposalActionPending[id];
+    document.querySelectorAll('.proposal-detail').forEach(function (article) {
+      if (article.getAttribute('data-id') !== id) return;
+      var actions = article.querySelector('.proposal-actions'), p = proposalForReview(id);
+      if (!actions || !p) return;
+      actions.innerHTML = renderReviewActionRow(p, proposalIsStale(p));
+      bindProposalActions(actions);
+    });
+  }
+
   async function doApproveProposal(id, deploymentType, overrideDeployOutcomeUnknown) {
+    if (proposalActionPending[id]) return;
+    setProposalActionPending(id, true);
     proposalActionsInFlight += 1;
     try {
       return await doApproveProposalInner(id, deploymentType, overrideDeployOutcomeUnknown);
     } finally {
       proposalActionsInFlight -= 1;
+      setProposalActionPending(id, false);
     }
   }
 
@@ -3327,7 +3380,8 @@ function pageClientScriptPartC(): string {
   }
 
   async function approveProposal(id) {
-    var deploymentType = proposalDeployTypes[id] || defaultDeploy;
+    if (proposalActionPending[id]) return;
+    var deploymentType = proposalDeployType(id);
     var diff = proposalDiffCache[id];
     var p = cachedProposals.filter(function (x) { return x.id === id; })[0];
     if ((p && p.status === 'conflict') || (diff && diff.rebase && diff.rebase.state === 'conflict')) {
@@ -3348,11 +3402,14 @@ function pageClientScriptPartC(): string {
   }
 
   async function rejectProposal(id, reasonOverride, options) {
+    if (proposalActionPending[id]) return;
+    setProposalActionPending(id, true);
     proposalActionsInFlight += 1;
     try {
       return await rejectProposalInner(id, reasonOverride, options);
     } finally {
       proposalActionsInFlight -= 1;
+      setProposalActionPending(id, false);
     }
   }
 
@@ -3649,6 +3706,7 @@ function pageClientScriptPartDBoot(): string {
       $('section-proposals').hidden = false;
       $('section-logs').hidden = false;
       setupDashboardMenu();
+      setupStickyNav();
       // Restore the section or persistent proposal detail route.
       var initialTab = initialTabFromHash(location.hash || '');
       selectTab(initialTab, { skipHash: !!readProposalHashId(), focusHeading: !!location.hash });

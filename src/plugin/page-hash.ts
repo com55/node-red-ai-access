@@ -35,7 +35,7 @@ export function tabFromHash(hash: string): McpTabId | '' {
 /** Read canonical detail or compatibility proposal id (empty when absent/invalid). */
 export function readProposalHashId(hash: string): string {
   try {
-    const m = /^(?:#\/proposals\/([^/?#]+)|#proposal=([^&]+))$/.exec(String(hash || ''));
+    const m = /^(?:#\/proposals\/([^/?#]+)\/?$|#proposal=([^&]+))/.exec(String(hash || ''));
     if (!m) return '';
     return decodeURIComponent(m[1] ?? m[2] ?? '');
   } catch {

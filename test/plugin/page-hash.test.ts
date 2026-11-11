@@ -44,6 +44,10 @@ describe('readProposalHashId', () => {
     expect(readProposalHashId('#/proposals/')).toBe('');
     expect(readProposalHashId('#/proposals/a/extra')).toBe('');
     expect(readProposalHashId('#proposal=prop-1')).toBe('prop-1');
+    expect(readProposalHashId('#proposal=prop-1&tab=review')).toBe('prop-1');
+    expect(readProposalHashId('#proposal=')).toBe('');
+    expect(readProposalHashId('#proposal=&tab=review')).toBe('');
+    expect(readProposalHashId('#/proposals/prop-1/')).toBe('prop-1');
     expect(readProposalHashId('#proposal=a%2Fb')).toBe('a/b');
     expect(readProposalHashId('#proposals')).toBe('');
     expect(readProposalHashId('#status')).toBe('');

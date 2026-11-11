@@ -667,7 +667,7 @@ export async function computeProposalDiff(
           : target(deployTab, c.nodeId),
       })),
     }));
-    // Use the same bounded server line diff for competing, already-redacted values.
+    // Diff competing, already-redacted values; large inputs use whole-block replacement.
     for (const entry of result.conflictValues) {
       for (const field of entry.fields) {
         const text = (value: unknown) =>

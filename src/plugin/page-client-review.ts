@@ -28,6 +28,17 @@ export function pageClientReviewScript(): string {
       if (window.innerWidth > 850) closeDashboardMenu(false);
     });
   }
+  function setupStickyNav() {
+    var header = document.querySelector('.dashboard-header');
+    if (!header) return;
+    function measure() {
+      var height = header.getBoundingClientRect().height;
+      if (height > 0) document.documentElement.style.setProperty('--nav-height', (height + 20) + 'px');
+    }
+    window.addEventListener('resize', measure);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(measure).observe(header);
+    measure();
+  }
   function openProposalDetail(id) {
     proposalListScroll = window.scrollY || 0;
     location.hash = '/proposals/' + encodeURIComponent(id);
@@ -83,14 +94,22 @@ export function pageClientReviewScript(): string {
       '<path d="M19 21h10v5H19z" fill="' + (type === 'full' ? '#fff' : 'none') + '" stroke="#fff" opacity="' + (type === 'full' ? '1' : '.6') + '"/>' +
       '<path d="M11.5 15.5h2l4-5h2" fill="none" stroke="#fff" stroke-width="1.5"/></svg>';
   }
+  function proposalDeployType(id) {
+    var type = Object.prototype.hasOwnProperty.call(proposalDeployTypes, id) ? proposalDeployTypes[id] : defaultDeploy;
+    return ['nodes', 'flows', 'full'].indexOf(type) >= 0 ? type : 'nodes';
+  }
+  function proposalForReview(id) {
+    return cachedProposals.filter(function (p) { return p.id === id; })[0] || proposalDetails[id];
+  }
   function renderReviewActionRow(p, stale) {
-    var type = proposalDeployTypes[p.id] || defaultDeploy;
+    var type = proposalDeployType(p.id);
+    var pending = !!proposalActionPending[p.id];
     var open = p.status === 'pending' || p.status === 'conflict';
     var diff = proposalDiffCache[p.id];
-    var disabled = !canApprove || !open || stale || !diff || proposalHasNoNetChange(diff);
+    var disabled = pending || !canApprove || !open || stale || !diff || proposalHasNoNetChange(diff);
     var title = !canApprove ? 'Admin approval permission required' : !open ? 'Proposal already resolved' : stale ? 'Resolve conflicts before approving' : !diff ? 'Wait for the diff to load' : 'Deploy: ' + deployTypes.filter(function (item) { return item[0] === type; })[0][1];
     return '<div class="action-row"><button type="button" class="action secondary back-proposals">← Proposals</button>' +
-      '<div class="review-actions"><button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) + '"' + (!canApprove || !open ? ' disabled' : '') + '>Reject</button>' +
+      '<div class="review-actions"><button type="button" class="action secondary reject-btn" data-id="' + esc(p.id) + '"' + (pending || !canApprove || !open ? ' disabled' : '') + '>Reject</button>' +
       '<div class="approve-wrap"><div class="approve-split"><button type="button" class="action approve-btn" data-id="' + esc(p.id) + '" title="' + esc(title) + '"' + (disabled ? ' disabled' : '') + '>' + deployTypeIcon(type, false) + 'Approve</button>' +
       '<button type="button" class="approve-options" aria-label="Choose deploy type" aria-haspopup="menu" aria-expanded="false" aria-controls="approve-menu"' + (disabled ? ' disabled' : '') + '>▾</button></div>' +
       '<div id="approve-menu" role="menu" aria-label="Deploy type" hidden>' + deployTypes.map(function (item) {
@@ -119,9 +138,11 @@ export function pageClientReviewScript(): string {
         var item = ev.target.closest('[data-deploy]');
         if (!item) return;
         var id = wrap.querySelector('.approve-btn').getAttribute('data-id');
+        if (proposalActionPending[id]) return;
         proposalDeployTypes[id] = item.getAttribute('data-deploy');
         var actions = wrap.closest('.proposal-actions');
-        actions.innerHTML = renderReviewActionRow(proposalDetails[id], proposalIsStale(proposalDetails[id]));
+        var p = proposalForReview(id);
+        actions.innerHTML = renderReviewActionRow(p, proposalIsStale(p));
         bindProposalActions(actions);
         actions.querySelector('.approve-options').focus();
       };

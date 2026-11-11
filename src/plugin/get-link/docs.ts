@@ -174,7 +174,7 @@ when it does not name the flow), \`storedTitle\` (the title as saved: your title
 \` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
 \`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
-Host is known), and \`reviewPath\` (relative \`/ai-access#proposal=<id>\`).
+Host is known), and \`reviewPath\` (relative \`/ai-access#/proposals/<id>\`).
 \`createdAt\` is ISO-8601. **Always tell the user about the proposal using
 \`displayName\` + \`reviewUrl\` — not the raw id.**
 

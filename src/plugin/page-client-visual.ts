@@ -86,9 +86,11 @@ function pageClientVisualGraphScript(): string {
       var raw = after[id] || before[id], old = before[id], meta = visualTypeMetadata[raw.type] || {};
       var name = String(raw.name || raw.label || raw.type || 'node');
       var outputs = typeof raw.outputs === 'number' ? raw.outputs : Array.isArray(raw.wires) ? raw.wires.length : Number(meta.outputs) || 0;
+      outputs = isFinite(outputs) && outputs > 0 ? Math.floor(outputs) : 0;
+      var renderedOutputs = Math.min(32, outputs);
       var width = Math.max(100, Math.ceil((name.length * 7.5 + 55) / 20) * 20);
       return { id: id, raw: raw, old: old, name: name, type: raw.type, kind: kinds[id] || '', entry: entries[id],
-        w: width, h: Math.max(30, outputs * 15), outputs: outputs,
+        w: width, h: Math.max(30, renderedOutputs * 15), outputs: renderedOutputs, hiddenOutputs: outputs - renderedOutputs,
         input: typeof meta.inputs === 'number' ? meta.inputs > 0 : ['inject', 'comment', 'http in', 'mqtt in', 'link in', 'catch', 'status', 'complete'].indexOf(raw.type) < 0,
         editorMerged: !!(live[id] && old && JSON.stringify(live[id]) !== JSON.stringify(old)),
         color: /^#[0-9a-f]{3,8}$/i.test(meta.color || '') ? meta.color : (Object.prototype.hasOwnProperty.call(visualColors, raw.type) ? visualColors[raw.type] : '#d6dadd'),
@@ -230,6 +232,7 @@ function pageClientVisualRenderScript(): string {
     function port(px, py) { return '<rect x="' + px + '" y="' + py + '" width="10" height="10" rx="3" fill="#d9d9d9" stroke="#999" fill-opacity="1" stroke-dasharray="none"/>'; }
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
+    if (n.hiddenOutputs) svg += '<text x="' + (width - 10) + '" y="' + (height - 4) + '" text-anchor="end" font-size="11" fill="#333">+' + esc(n.hiddenOutputs) + '</text>';
     if (!ghost && n.kind) svg += '<rect class="change-outline" x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + (selected ? 3.75 : 2) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
     if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/><text x="' + (width - 2) + '" y="-6" dominant-baseline="central" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">' + visualBadges[n.kind] + '</text>';
     return svg + '</g>';
@@ -373,6 +376,7 @@ function pageClientVisualEventsScript(): string {
     });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (event) { svg.addEventListener(event, function () { drag = null; }); });
     svg.addEventListener('wheel', function (ev) {
+      if (!ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault(); var rect = svg.getBoundingClientRect(); zoom(Math.exp(-ev.deltaY * .001), ev.clientX - rect.left, ev.clientY - rect.top);
     }, { passive: false });
     host.onclick = function (ev) {
