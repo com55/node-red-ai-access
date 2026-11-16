@@ -484,6 +484,8 @@ function pageStylesPartD(): string {
   overflow: hidden;
   background: var(--soft);
 }
+/* Keep the ring inside the segmented group's rounded overflow clip. */
+.settings-layout .diff-mode-toggle button:focus-visible { outline-offset: -3px; border-radius: inherit; }
 .diff-mode-toggle button {
   border: 0;
   background: transparent;
@@ -730,7 +732,9 @@ function pageStylesPartG(): string {
   flex-wrap: nowrap;
   overflow-x: auto;
   gap: 0.4rem;
-  margin: 0 0 0.75rem;
+  /* Reserve the 2px outline + 2px offset and rounding room without moving content. */
+  padding: 5px;
+  margin: -5px -5px calc(0.75rem - 5px);
   align-items: center;
 }
 .proposals-search {
@@ -1275,7 +1279,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 #section-proposals h1 { margin: 0 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; line-height: 1.2; }
 #section-proposals .list-intro p { margin: 0; color: #6b7986; font-size: 13px; }
 #section-proposals .list-sort { flex-shrink: 0; text-align: right; }
-#proposals-filters { margin: 0 0 18px; gap: 8px; flex-wrap: wrap; }
+#proposals-filters { margin: -5px -5px 13px; gap: 8px; flex-wrap: wrap; }
 #proposals-filters .filter-chip { border-radius: 22px; padding: 8px 14px; font-size: 13px; background: var(--card); }
 #proposals-filters .filter-chip[aria-pressed="true"] { background: #e8f2ee; border-color: #a9ccbb; color: var(--accent); font-weight: 650; }
 #proposals-filters .filter-chip span { margin-left: 8px; opacity: .7; }
@@ -1367,6 +1371,8 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .context-node svg { filter: grayscale(1); }
 .visual-layout { position: absolute; right: 14px; top: 12px; display: flex; }
 .visual-layout button, .visual-tools button, .visual-show-all { background: var(--card); border: 1px solid var(--line); font: inherit; font-size: 12px; padding: 5px 9px; cursor: pointer; border-radius: 5px; }
+/* Paint the outer ring over adjacent toolbar buttons. */
+.visual-layout button:focus-visible, .visual-tools button:focus-visible { position: relative; z-index: 1; }
 .visual-layout button:first-child { border-radius: 5px 0 0 5px; }
 .visual-layout button:last-child { border-radius: 0 5px 5px 0; border-left: 0; }
 .visual-layout button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }

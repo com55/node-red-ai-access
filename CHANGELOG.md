@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Keep keyboard focus rings visible on proposal filter chips, Split/Unified
+  controls, and canvas toolbar buttons without shifting their layout.
 - Hide programmatic dashboard heading focus outlines after tab switches while
   preserving screen-reader announcements and keyboard focus rings on controls.
 - Restrict line-diff panes to code fields and long text; keep short properties
