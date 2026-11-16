@@ -20,7 +20,7 @@ function dashboard() {
               getAttribute: () => null,
               setAttribute: vi.fn(),
             }),
-      querySelector: () => null,
+      querySelector: (selector: string) => elements.get(selector) ?? null,
       querySelectorAll: () => [],
       addEventListener: vi.fn(),
     },
@@ -35,11 +35,18 @@ function dashboard() {
     globalThis.dashboard = {
       renderDeployUnknownBlocks: typeof renderDeployUnknownBlocks === 'function' ? renderDeployUnknownBlocks : undefined, proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
       renderConflictPanel, updateProposalConflict, updatePendingBadges, showFlash, authGateStatus, bindProposalActions, renderPendingActions, renderRebaseChip, countPendingBuckets, renderProposalCard,
+      loadProposalDiff, fetchProposalDiff,
       setElement: function (id, el) { elements.set(id, el); },
       setProposals: function (value) { cachedProposals = value; proposalDiffCache = {}; },
       setConfirm: function (fn) { openConfirmDialog = fn; },
       setCanApprove: function (value) { canApprove = value; },
-      setReload: function (reload, diff) { loadProposals = reload; loadProposalDiff = diff; },
+      setReload: function (reload, diff) { loadProposals = reload; if (diff) loadProposalDiff = diff; },
+      setDiffReview: function (proposal, mount) {
+        location.hash = '#/proposals/' + proposal.id;
+        proposalDetails[proposal.id] = proposal;
+        mountProposalVisual = mount;
+      },
+      cachedDiff: function (id) { return proposalDiffCache[id]; },
       setProposal: function (proposal, diff) {
         cachedProposals = [proposal];
         proposalDiffCache[proposal.id] = diff;
@@ -391,6 +398,86 @@ describe('dashboard rebase controls', () => {
     expect(reload).toHaveBeenCalledOnce();
     expect(diff).toHaveBeenCalledWith('p');
   });
+
+  it.each(['before fresh', 'after fresh', 'with an error after fresh'])(
+    'ignores a pre-choice diff that settles %s and starts a fresh request',
+    async order => {
+      const ui = dashboard();
+      const proposal = {
+        id: 'p',
+        status: 'pending',
+        rebase: {
+          state: 'conflict',
+          conflicts: [{ nodeId: 'n', kind: 'node_changed_both', choices: ['proposed'] }],
+        },
+      };
+      const staleDiff = {
+        summary: { added: 0, removed: 0, modified: 1 },
+        modified: [],
+        rebase: proposal.rebase,
+      };
+      const freshDiff = {
+        summary: { added: 0, removed: 0, modified: 0 },
+        modified: [],
+        rebase: { state: 'clean', conflicts: [] },
+      };
+      let resolveStale!: (value: unknown) => void;
+      let rejectStale!: (reason: Error) => void;
+      let resolveFresh!: (value: unknown) => void;
+      const stale = new Promise((resolve, reject) => {
+        resolveStale = resolve;
+        rejectStale = reject;
+      });
+      const fresh = new Promise(resolve => {
+        resolveFresh = resolve;
+      });
+      let diffRequests = 0;
+      const api = vi.fn((path: string) => {
+        if (path === '/proposals/p/diff') return ++diffRequests === 1 ? stale : fresh;
+        if (path === '/proposals/p/resolve-conflict') return Promise.resolve({});
+        throw new Error('Unexpected request: ' + path);
+      });
+      const mount = vi.fn();
+      const host = { innerHTML: 'Original diff', querySelectorAll: () => [] };
+      ui.setElement('.proposal-diff[data-diff-for="p"]', host);
+      ui.setProposal(proposal, staleDiff);
+      ui.setDiffReview(proposal, mount);
+      ui.setReload(vi.fn());
+      ui.setToast(vi.fn());
+      ui.setApi(api);
+
+      const oldLoad = ui.loadProposalDiff('p');
+      expect(diffRequests).toBe(1);
+      const choice = ui.updateProposalConflict('p', 'n', 'proposed');
+      await vi.waitFor(() => expect(diffRequests).toBe(2));
+      expect(ui.cachedDiff('p')).toBeUndefined();
+      expect(ui.fetchProposalDiff('p')).toBe(fresh);
+      if (order === 'before fresh') {
+        resolveStale(staleDiff);
+        await oldLoad;
+        expect(ui.cachedDiff('p')).toBeUndefined();
+        expect(host.innerHTML).toBe('Original diff');
+        expect(mount).not.toHaveBeenCalled();
+        // Completion of invalidated work must not clear the newer load.
+        expect(ui.fetchProposalDiff('p')).toBe(fresh);
+        expect(diffRequests).toBe(2);
+      }
+      resolveFresh(freshDiff);
+      await choice;
+      const freshHtml = host.innerHTML;
+      if (order === 'after fresh') resolveStale(staleDiff);
+      if (order === 'with an error after fresh') rejectStale(new Error('Stale request failed'));
+      await oldLoad;
+
+      expect(ui.cachedDiff('p')).toBe(freshDiff);
+      expect(proposal.rebase.state).toBe('clean');
+      expect(ui.renderConflictPanel(proposal, freshDiff)).toBe('');
+      expect(host.innerHTML).toBe(freshHtml);
+      expect(host.innerHTML).not.toContain('Could not load changes');
+      expect(mount).toHaveBeenCalledExactlyOnceWith(proposal, freshDiff);
+      expect(diffRequests).toBe(2);
+    }
+  );
 });
 
 describe('proposal status presentation', () => {

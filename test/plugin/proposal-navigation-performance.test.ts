@@ -83,14 +83,16 @@ function harness() {
       `
       aiOn = true;
       api = testApi; renderProposalCard = testCard; mountProposalVisual = testMount;
+      showToast = function () {};
       applyStatus = function () {}; loadLogs = function () {};
       globalThis.out = {
-        loadProposals, renderProposalsList, showProposalDetail, loadProposalDiff,
+        loadProposals, renderProposalsList, showProposalDetail, loadProposalDiff, updateProposalConflict,
         selectTab, openProposalDetail, backToProposals, routeFromLocation,
         setRows: function (rows) { cachedProposals = rows; proposalsLoaded = true; },
         setState: function (id, state) { visualStates[id] = state; },
         state: function (id) { return visualStates[id]; },
-        details: function (id) { return proposalDetails[id]; }
+        details: function (id) { return proposalDetails[id]; },
+        cachedDiff: function (id) { return proposalDiffCache[id]; }
       };
       `
     ) + '\nglobalThis.out;',
@@ -367,6 +369,43 @@ describe('proposal navigation and refresh performance', () => {
     await old;
     expect(h.out.details('p').title).toBe('Fresh');
     expect(h.card).toHaveBeenCalledTimes(1);
+  });
+
+  it('a conflict choice supersedes an active full-detail load even when the list is unchanged', async () => {
+    const h = harness();
+    h.respond(data);
+    h.location.hash = '#/proposals/p';
+    await h.out.loadProposals();
+    await h.out.showProposalDetail('p');
+    let resolveOld!: (value: unknown) => void;
+    const oldDiff = new Promise(resolve => {
+      resolveOld = resolve;
+    });
+    const freshDiff = { ...diff(), rebase: { state: 'clean', conflicts: [] } };
+    let diffRequests = 0;
+    h.respond(path => {
+      if (path.endsWith('/diff')) return ++diffRequests === 1 ? oldDiff : freshDiff;
+      if (path.includes('include=payload')) return { ...proposal(), title: 'Stale detail' };
+      return data(path);
+    });
+    const old = h.out.showProposalDetail('p', { refresh: true });
+    expect(diffRequests).toBe(1);
+    const choice = h.out.updateProposalConflict('p', 'n', 'proposed');
+    await vi.waitFor(() => expect(diffRequests).toBe(2));
+    await choice;
+    expect(h.out.cachedDiff('p')).toBe(freshDiff);
+    expect(h.mount).toHaveBeenLastCalledWith(h.out.details('p'), freshDiff);
+
+    resolveOld({
+      ...diff(),
+      rebase: { state: 'conflict', conflicts: [{ nodeId: 'n' }] },
+    });
+    await old;
+    expect(h.out.cachedDiff('p')).toBe(freshDiff);
+    expect(h.out.details('p').title).toBe('Update flow');
+    expect(h.card).toHaveBeenCalledTimes(1);
+    expect(h.mount).toHaveBeenCalledTimes(2);
+    expect(diffRequests).toBe(2);
   });
 
   it('refreshes changed detail exactly once and keeps the visual state object', async () => {

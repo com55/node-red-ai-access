@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Ignore stale in-flight proposal diffs after saving conflict choices so the
+  conflict panel and Visual View keep the fresh resolution.
 - Safely render primitive Visual View node labels and use default labels for
   malformed fields so proposal details remain reviewable.
 - Keep keyboard focus rings visible on proposal filter chips, Split/Unified

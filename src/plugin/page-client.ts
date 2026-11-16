@@ -36,6 +36,7 @@ ${pageClientIconsScript()}
   var proposalsLoaded = false;
   var proposalListSignatures = Object.create(null);
   var proposalDiffLoads = Object.create(null);
+  var proposalDiffGen = Object.create(null);
   var proposalListRenderSig = '';
   var proposalListPainted = false;
   var proposalListNeedsRender = false;
@@ -2411,7 +2412,7 @@ function pageClientScriptPartBDiffView2(): string {
       var result = await api('/proposals/' + encodeURIComponent(id) + '/resolve-conflict', {
         method: 'POST', body: JSON.stringify({ nodeId: nodeId, choice: choice })
       });
-      delete proposalDiffCache[id];
+      invalidateProposalDiff(id);
       await loadProposals();
       await loadProposalDiff(id);
       var current = cachedProposals.filter(function (p) { return p.id === id; })[0];
@@ -3047,6 +3048,19 @@ function pageClientScriptPartB2Apply(): string {
     updatePendingBadges();
   }
 
+  function invalidateProposalDiff(id) {
+    delete proposalDiffCache[id];
+    delete proposalDiffLoads[id];
+    proposalDiffGen[id] = (proposalDiffGen[id] || 0) + 1;
+    // A full detail load shares the diff request. Let the post-action load
+    // start fresh, and prevent the old detail from mounting its stale diff.
+    if (detailLoadId === id) {
+      ++detailLoadGen;
+      detailLoadId = '';
+      detailLoadPromise = null;
+    }
+  }
+
   function fetchProposalDiff(id) {
     if (proposalDiffLoads[id]) return proposalDiffLoads[id];
     var work = api('/proposals/' + encodeURIComponent(id) + '/diff');
@@ -3065,8 +3079,9 @@ function pageClientScriptPartB2Apply(): string {
     var host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
     try {
       var gen = detailLoadGen;
+      var diffGen = proposalDiffGen[id] || 0;
       var diff = await fetchProposalDiff(id);
-      if (readProposalHashId() !== id || gen !== detailLoadGen) return;
+      if (readProposalHashId() !== id || gen !== detailLoadGen || diffGen !== (proposalDiffGen[id] || 0)) return;
       applyDiffToProposalCard(id, diff);
       host = document.querySelector('.proposal-diff[data-diff-for="' + id + '"]');
       if (host) {
@@ -3082,7 +3097,7 @@ function pageClientScriptPartB2Apply(): string {
         applyLogFilter();
       }
     } catch (e) {
-      if (readProposalHashId() !== id || gen !== detailLoadGen) return;
+      if (readProposalHashId() !== id || gen !== detailLoadGen || diffGen !== (proposalDiffGen[id] || 0)) return;
       if (host) {
         host.innerHTML = '<p class="muted" role="alert">Could not load changes: ' +
           esc(e.message || String(e)) + '</p>';
