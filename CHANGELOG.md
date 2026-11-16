@@ -128,6 +128,12 @@ and this project adheres to
 - Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
   switches.
 
+## [0.2.0-beta.16] - 2026-11-17
+
+- Draw Visual View Editor positions from the live editor coordinates. Existing
+  nodes keep their current x/y, and newly added nodes shift with a wired
+  neighbour so they no longer overlap the live layout.
+
 ## [0.2.0-beta.15] - 2026-11-16
 
 - Align the Visual View with the approved mockup: full-width change drawer, Keep
