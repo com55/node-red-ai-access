@@ -125,6 +125,20 @@ and this project adheres to
 - Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
   switches.
 
+## [0.2.0-beta.15] - 2026-11-16
+
+- Align the Visual View with the approved mockup: full-width change drawer, Keep
+  live / Use AI proposed conflict choices, Pending proposals with a Conflict
+  tag, decided-proposal history notice, list chrome, and Node-RED palette icons
+  and editor sizing.
+- Speed up proposal list and detail navigation, keep Visual View state when
+  returning to the tab, and ignore stale in-flight diffs after a conflict choice
+  is saved.
+- Safely render Visual View node labels when fields are non-strings (for example
+  a numeric http in url) so the detail page stays reviewable.
+- Hide programmatic heading focus outlines after tab switches, and keep keyboard
+  focus rings on filter chips and toolbar controls fully visible.
+
 ## [0.2.0-beta.14] - 2026-11-11
 
 - Add a Visual View on the proposal detail page for reviewing flow changes on a
