@@ -476,6 +476,317 @@ describe('Visual View palette icons and editor sizing', () => {
   });
 });
 
+describe('Visual View live editor positions', () => {
+  function rewire() {
+    const baseFlow = {
+      nodes: [
+        {
+          id: 'beta8_mcp_trial_inject',
+          type: 'inject',
+          name: 'Old inject',
+          x: 170,
+          y: 120,
+          wires: [['beta8_mcp_trial_function']],
+        },
+        {
+          id: 'beta8_mcp_trial_function',
+          type: 'function',
+          name: 'Old function',
+          func: 'return msg;',
+          x: 430,
+          y: 120,
+          wires: [['beta8_mcp_trial_debug']],
+        },
+        { id: 'beta8_mcp_trial_debug', type: 'debug', name: 'Old debug', x: 690, y: 120 },
+        { id: 'df19c7e4b5bef165', type: 'comment', x: 320, y: 60 },
+      ],
+    };
+    const flow = {
+      nodes: [
+        ...baseFlow.nodes.map(n =>
+          n.type === 'function' ? { ...n, wires: [['visual14_rewire_debug']] } : { ...n }
+        ),
+        { id: 'visual14_rewire_debug', type: 'debug', x: 720, y: 210 },
+      ],
+    };
+    const visualLiveFlow = {
+      nodes: baseFlow.nodes.map(n => ({
+        ...n,
+        name: 'Live ' + n.type,
+        x: n.type === 'function' ? 450 : n.type === 'debug' ? 760 : n.x,
+        y: n.type === 'comment' ? 60 : 190,
+      })),
+    };
+    return { baseFlow, visualLiveFlow, payload: { flow } };
+  }
+
+  it('draws the stale rewire in the live frame while retaining proposed wires and code', () => {
+    const ui = browserHelpers(),
+      p = rewire();
+    const graph = ui.visualGraph(p, buildDiffSections(p.payload.flow, p.baseFlow));
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toEqual([
+      ['beta8_mcp_trial_inject', 170, 190],
+      ['beta8_mcp_trial_function', 450, 190],
+      ['visual14_rewire_debug', 740, 280],
+      ['beta8_mcp_trial_debug', 760, 190],
+    ]);
+    expect(graph.byId.beta8_mcp_trial_function).toMatchObject({
+      x: 450,
+      y: 190,
+      kind: 'modified',
+      raw: { x: 430, y: 120, func: 'return msg;', wires: [['visual14_rewire_debug']] },
+    });
+    expect(graph.edges).toContainEqual({
+      from: 'beta8_mcp_trial_function',
+      to: 'visual14_rewire_debug',
+      port: 0,
+      kind: 'added',
+    });
+    expect(p.payload.flow.nodes.at(-1)).toMatchObject({ x: 720, y: 210 });
+  });
+
+  it.each(['modified', 'moved', 'conflict'])(
+    'uses live coordinates for a deliberately moved %s node',
+    kind => {
+      const ui = browserHelpers();
+      const original = { id: 'a', type: 'function', x: 10, y: 20, func: 'base' };
+      const baseFlow = { nodes: [original] };
+      const flow = {
+        nodes: [
+          { ...original, x: 900, y: 800, ...(kind === 'modified' ? { func: 'proposed' } : {}) },
+        ],
+      };
+      const p = {
+        baseFlow,
+        visualLiveFlow: { nodes: [{ ...original, x: 0, y: -30, func: 'live' }] },
+        payload: { flow },
+        ...(kind === 'conflict' ? { conflictChoices: [{ nodeId: 'a', choice: 'proposed' }] } : {}),
+      };
+      const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+      expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toEqual([
+        ['a', 0, -30],
+      ]);
+      expect(graph.byId.a).toMatchObject({ kind, old: original, raw: flow.nodes[0], moved: true });
+    }
+  );
+
+  it.each([false, true])(
+    'chooses the nearest proposed wired neighbour with outgoing=%s',
+    outgoing => {
+      const ui = browserHelpers();
+      const baseFlow = {
+        nodes: [
+          { id: 'a', type: 'function', x: 0, y: 0 },
+          { id: 'b', type: 'function', x: 1000, y: 0 },
+        ],
+      };
+      // Proposed centres make b closer; base centres would choose a.
+      const flow = {
+        nodes: [
+          { ...baseFlow.nodes[0], x: 1500, wires: outgoing ? [] : [['new']] },
+          { ...baseFlow.nodes[1], x: 110, wires: outgoing ? [] : [['new']] },
+          { id: 'new', type: 'function', x: 100, y: 10, wires: outgoing ? [['a', 'b']] : [] },
+        ],
+      };
+      const p = {
+        baseFlow,
+        payload: { flow },
+        visualLiveFlow: {
+          nodes: [
+            { ...baseFlow.nodes[0], x: 20, y: 30 },
+            { ...baseFlow.nodes[1], x: 1200, y: 90 },
+          ],
+        },
+      };
+      const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+      ui.visualVisible(graph, { ...viewState(), layout: 'editor' });
+      expect(graph.byId.new).toMatchObject({ x: 300, y: 100, px: 300, py: 100 });
+    }
+  );
+
+  it('falls back to base centres when a wired neighbour has no proposed centre', () => {
+    const ui = browserHelpers();
+    const baseFlow = { nodes: [{ id: 'a', type: 'function', x: 10, y: 20 }] };
+    const flow = {
+      nodes: [
+        { id: 'a', type: 'function', wires: [['new']] },
+        { id: 'new', type: 'debug', x: 100, y: 200 },
+      ],
+    };
+    const p = {
+      baseFlow,
+      payload: { flow },
+      visualLiveFlow: { nodes: [{ ...baseFlow.nodes[0], x: 40, y: 70 }] },
+    };
+    const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toContainEqual([
+      'new',
+      130,
+      250,
+    ]);
+  });
+
+  it('uses independent flow medians for an addition without a wired neighbour', () => {
+    const ui = browserHelpers();
+    const baseFlow = {
+      nodes: [
+        { id: 'a', type: 'function', x: 10, y: 20 },
+        { id: 'b', type: 'function', x: 30, y: 40 },
+        { id: 'c', type: 'function', x: 50, y: 60 },
+        { id: 'd', type: 'function', x: 70, y: 80 },
+      ],
+    };
+    const flow = { nodes: [...baseFlow.nodes, { id: 'new', type: 'debug', x: 100, y: 200 }] };
+    const p = {
+      baseFlow,
+      payload: { flow },
+      visualLiveFlow: {
+        nodes: [
+          { ...baseFlow.nodes[0], x: 20, y: 120 },
+          { ...baseFlow.nodes[1], x: 60, y: 60 },
+          { ...baseFlow.nodes[2], x: 1050, y: 100 },
+          { ...baseFlow.nodes[3], x: '90', y: NaN },
+        ],
+      },
+    };
+    const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toEqual([
+      ['new', 130, 240],
+    ]);
+  });
+
+  it('uses live minus proposed medians when baseFlow is missing, before the live overlay', () => {
+    const ui = browserHelpers();
+    const flow = {
+      nodes: [
+        { id: 'a', type: 'function', x: 10, y: 20, wires: [['new']] },
+        { id: 'b', type: 'function', x: 30, y: 40 },
+        { id: 'new', type: 'debug', x: 100, y: 200 },
+      ],
+    };
+    const visualLiveFlow = {
+      nodes: [
+        { ...flow.nodes[0], x: 30, y: 60 },
+        { ...flow.nodes[1], x: 70, y: 120 },
+      ],
+    };
+    const graph = ui.visualGraph({ payload: { flow }, visualLiveFlow }, { added: [flow.nodes[2]] });
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toContainEqual([
+      'new',
+      130,
+      260,
+    ]);
+  });
+
+  it('checks live coordinates and neighbour offsets independently per axis', () => {
+    const ui = browserHelpers();
+    const baseFlow = {
+      nodes: [
+        { id: 'a', type: 'function', x: 10, y: 20 },
+        { id: 'b', type: 'function', x: 30, y: 40 },
+      ],
+    };
+    const flow = {
+      nodes: [
+        { ...baseFlow.nodes[0], x: 900, y: 800, wires: [['new']] },
+        baseFlow.nodes[1],
+        { id: 'new', type: 'debug', x: 100, y: 200 },
+      ],
+    };
+    const p = {
+      baseFlow,
+      payload: { flow },
+      visualLiveFlow: {
+        nodes: [
+          { ...baseFlow.nodes[0], x: 0, y: '70' },
+          { ...baseFlow.nodes[1], x: Infinity, y: 100 },
+        ],
+      },
+    };
+    const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+    const visible = ui.visualVisible(graph, { ...viewState(), layout: 'editor' });
+    expect(centres(visible)).toContainEqual(['a', 0, 800]);
+    expect(centres(visible)).toContainEqual(['new', 90, 260]);
+  });
+
+  it('translates proposed nodes absent from live even when they also occur in base', () => {
+    const ui = browserHelpers();
+    const baseFlow = {
+      nodes: [
+        { id: 'a', type: 'function', x: 10, y: 20 },
+        { id: 'restored', type: 'debug', x: 100, y: 200 },
+      ],
+    };
+    const flow = {
+      nodes: [
+        { ...baseFlow.nodes[0], wires: [['restored']] },
+        { ...baseFlow.nodes[1], name: 'Restored' },
+      ],
+    };
+    const p = {
+      baseFlow,
+      payload: { flow },
+      visualLiveFlow: { nodes: [{ ...baseFlow.nodes[0], x: 30, y: 60 }] },
+    };
+    const graph = ui.visualGraph(p, buildDiffSections(flow, baseFlow));
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toContainEqual([
+      'restored',
+      120,
+      240,
+    ]);
+  });
+
+  it('keeps removed nodes at base positions and uses zero when no offset is available', () => {
+    const ui = browserHelpers();
+    const baseFlow = { nodes: [{ id: 'old', type: 'debug', x: -10, y: 0 }] };
+    const flow = { nodes: [{ id: 'new', type: 'debug', x: 100, y: 200 }] };
+    const graph = ui.visualGraph(
+      { baseFlow, payload: { flow }, visualLiveFlow: { nodes: [] } },
+      buildDiffSections(flow, baseFlow)
+    );
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toEqual([
+      ['old', -10, 0],
+      ['new', 100, 200],
+    ]);
+  });
+
+  it('keeps raw proposal centres when visualLiveFlow is absent', () => {
+    const ui = browserHelpers(),
+      { visualLiveFlow: _live, ...p } = rewire();
+    const graph = ui.visualGraph(p, buildDiffSections(p.payload.flow, p.baseFlow));
+    expect(centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }))).toEqual([
+      ['beta8_mcp_trial_inject', 170, 120],
+      ['beta8_mcp_trial_function', 430, 120],
+      ['beta8_mcp_trial_debug', 690, 120],
+      ['visual14_rewire_debug', 720, 210],
+    ]);
+  });
+
+  it('keeps compact ranks and lanes even when translation changes the editor ordering', () => {
+    const ui = browserHelpers(),
+      p = rewire();
+    // Translation moves the addition past the original debug in editor mode.
+    p.visualLiveFlow.nodes[1]!.x = 630;
+    const graph = ui.visualGraph(p, buildDiffSections(p.payload.flow, p.baseFlow));
+    const editor = centres(ui.visualVisible(graph, { ...viewState(), layout: 'editor' }));
+    expect(editor).toContainEqual(['visual14_rewire_debug', 920, 280]);
+    const compact = ui.visualVisible(graph, viewState());
+    expect(compact.byId.beta8_mcp_trial_inject.px).toBe(80);
+    expect(compact.byId.beta8_mcp_trial_inject.py).toBe(110);
+    expect(compact.byId.beta8_mcp_trial_function.py).toBe(110);
+    expect(compact.byId.visual14_rewire_debug.py).toBe(110);
+    expect(compact.byId.beta8_mcp_trial_debug.py).toBe(195);
+    expect(compact.byId.visual14_rewire_debug.px).toBe(compact.byId.beta8_mcp_trial_debug.px);
+    expect(compact.byId.beta8_mcp_trial_function.px).toBeGreaterThan(
+      compact.byId.beta8_mcp_trial_inject.px
+    );
+    expect(compact.byId.visual14_rewire_debug.px).toBeGreaterThan(
+      compact.byId.beta8_mcp_trial_function.px
+    );
+    expect(centres(compact)).not.toEqual(editor);
+  });
+});
+
 describe('Visual View geometry', () => {
   const moveGeometry = runInNewContext(pageClientVisualGeometryScript() + '\nvisualMoveGeometry;');
 
@@ -1662,7 +1973,10 @@ describe('Moved classification and review', () => {
       title: 'Update flow',
       status: 'pending',
       baseFlow: { nodes: [original, ...extra] },
-      visualLiveFlow: { nodes: [{ ...original, func: 'editor change' }] },
+      // These rendering cases exercise arrows from base to a live destination.
+      visualLiveFlow: {
+        nodes: [{ ...original, x: patch.x ?? 300, y: patch.y ?? 240, func: 'editor change' }],
+      },
       payload: {
         flowId: 'tab',
         flow: {

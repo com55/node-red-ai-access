@@ -186,8 +186,49 @@ function pageClientVisualGraphScript(): string {
     }
     return Math.max(0, Math.floor(value));
   }
+  function visualFinite(value) { return typeof value === 'number' && isFinite(value); }
+  function visualMedian(values) {
+    values.sort(function (a, b) { return a - b; });
+    var middle = Math.floor(values.length / 2);
+    return values.length ? values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2 : 0;
+  }
+  function visualEditorPositions(base, proposed, live) {
+    var reference = base || proposed, offsets = {}, neighbours = Object.create(null);
+    ['x', 'y'].forEach(function (axis) {
+      var values = [];
+      Object.keys(reference).forEach(function (id) {
+        if (live[id] && visualFinite(live[id][axis]) && visualFinite(reference[id][axis])) values.push(live[id][axis] - reference[id][axis]);
+      });
+      offsets[axis] = visualMedian(values);
+    });
+    Object.keys(proposed).forEach(function (id) { neighbours[id] = []; });
+    Object.keys(proposed).forEach(function (id) {
+      (proposed[id].wires || []).forEach(function (targets) { (targets || []).forEach(function (target) {
+        if (neighbours[target]) { neighbours[id].push(target); neighbours[target].push(id); }
+      }); });
+    });
+    function centre(id, axis) {
+      return proposed[id] && visualFinite(proposed[id][axis]) ? proposed[id][axis] : base && base[id] && base[id][axis];
+    }
+    return function (id, axis, fallback) {
+      if (live[id]) return visualFinite(live[id][axis]) ? live[id][axis] : fallback;
+      // Removed nodes retain their base centre. Only proposed additions are translated.
+      if (!proposed[id]) return fallback;
+      var offset = offsets[axis], nearest = Infinity;
+      if (base) (neighbours[id] || []).forEach(function (other) {
+        if (!base[other] || !live[other] || !visualFinite(base[other][axis]) || !visualFinite(live[other][axis])) return;
+        var x = centre(id, 'x'), y = centre(id, 'y'), ox = centre(other, 'x'), oy = centre(other, 'y');
+        if (![x, y, ox, oy].every(visualFinite)) return;
+        var distance = Math.pow(x - ox, 2) + Math.pow(y - oy, 2);
+        if (distance < nearest) { nearest = distance; offset = live[other][axis] - base[other][axis]; }
+      });
+      return fallback + offset;
+    };
+  }
   function visualGraph(p, diff) {
     var before = visualCollect(p.baseFlow || p.visualLiveFlow), after = visualCollect(p.payload && p.payload.flow), live = visualCollect(p.visualLiveFlow), kinds = Object.create(null), entries = Object.create(null);
+    // Capture proposal centres and wires before the unchanged-live overlay below.
+    var editorPosition = p.visualLiveFlow ? visualEditorPositions(p.baseFlow ? visualCollect(p.baseFlow) : null, Object.assign(Object.create(null), after), live) : null;
     ['added', 'removed', 'modified', 'moved'].forEach(function (kind) {
       (diff[kind] || []).forEach(function (n) { kinds[n.id] = kind; entries[n.id] = n; });
     });
@@ -211,13 +252,15 @@ function pageClientVisualGraphScript(): string {
       if (editor) {
         try { icon = editor.red.utils.getNodeIcon(editor.definition, editor.node); align = editor.definition.align; } catch (e) {}
       } else if (raw.type === 'link out' && raw.mode === 'return' && icon === 'link-out.svg') icon = 'link-return.svg';
+      var x = visualFinite(raw.x) ? raw.x : 100 + index * 180, y = visualFinite(raw.y) ? raw.y : 100;
       return { id: id, raw: raw, old: old, name: name, type: raw.type, kind: kinds[id] || '', entry: entries[id],
         w: width, h: Math.max(30, renderedOutputs * 15), outputs: renderedOutputs, hiddenOutputs: outputs - renderedOutputs,
         input: input, icon: icon, module: meta.module, align: align,
         editorMerged: !!(live[id] && old && JSON.stringify(live[id]) !== JSON.stringify(old)),
         color: /^#[0-9a-f]{3,8}$/i.test(meta.color || '') ? meta.color : (Object.prototype.hasOwnProperty.call(visualColors, raw.type) ? visualColors[raw.type] : '#d6dadd'),
-        x: typeof raw.x === 'number' && isFinite(raw.x) ? raw.x : 100 + index * 180,
-        y: typeof raw.y === 'number' && isFinite(raw.y) ? raw.y : 100,
+        compactX: x, compactY: y,
+        x: editorPosition ? editorPosition(id, 'x', x) : x,
+        y: editorPosition ? editorPosition(id, 'y', y) : y,
         moved: !!(kinds[id] && old && (old.x !== raw.x || old.y !== raw.y) && (typeof old.x === 'number' && typeof old.y === 'number')) };
     });
     var byId = Object.create(null);
@@ -286,10 +329,12 @@ function pageClientVisualGraphScript(): string {
       if (state.expanded[run.id] || state.layout === 'editor') return;
       run.ids.forEach(function (id) { replacement[id] = run.id; });
       var first = graph.byId[run.ids[0]];
-      nodes.push({ id: run.id, name: '… ' + run.ids.length + ' nodes', run: run, w: 110, h: 30, x: first.x, y: first.y, outputs: 1 });
+      nodes.push({ id: run.id, name: '… ' + run.ids.length + ' nodes', run: run, w: 110, h: 30, x: first.x, y: first.y, compactX: first.compactX, compactY: first.compactY, outputs: 1 });
     });
     graph.nodes.forEach(function (n) { if (!replacement[n.id]) nodes.push(n); });
-    nodes.sort(function (a, b) { return a.x - b.x || a.y - b.y || a.id.localeCompare(b.id); });
+    nodes.sort(function (a, b) {
+      return (state.layout === 'editor' ? a.x - b.x || a.y - b.y : a.compactX - b.compactX || a.compactY - b.compactY) || a.id.localeCompare(b.id);
+    });
     nodes.forEach(function (n) { byId[n.id] = n; });
     var edges = [], seen = Object.create(null);
     graph.edges.forEach(function (e) {

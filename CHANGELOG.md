@@ -35,6 +35,9 @@ and this project adheres to
 
 ### Fixed
 
+- Draw Visual View Editor positions from live node coordinates and translate
+  added nodes into the live frame without changing Compact layout.
+
 - Ignore stale in-flight proposal diffs after saving conflict choices so the
   conflict panel and Visual View keep the fresh resolution.
 - Safely render primitive Visual View node labels and use default labels for
