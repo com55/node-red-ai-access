@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Restrict line-diff panes to code fields and long text; keep short properties
+  and conflicts in their existing compact rendering.
 - Fade and disable both Approve controls together, and collapse detail notes to
   keep the Visual View canvas above the fold.
 - Match proposal list chrome and empty states to the approved design, preserve

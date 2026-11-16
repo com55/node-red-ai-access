@@ -1,6 +1,6 @@
 /** Inline client script for the /ai-access dashboard (editor localStorage Bearer). */
 
-import { DIFF_SPLIT_MIN_PX, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
+import { DIFF_SPLIT_MIN_PX, LINE_DIFF_CODE_KEYS, PRESENCE_SHORT_TEXT_MAX } from './diff-ui.js';
 import { editorSignInHelpers } from './editor-signin-script.js';
 import { pageClientIconsScript } from './page-client-icons.js';
 import { pageClientReviewScript } from './page-client-review.js';
@@ -1951,6 +1951,7 @@ function pageClientScriptPartBDiff(): string {
   var DIFF_MODE_KEY = 'ai-access-diff-mode';
   var DIFF_SPLIT_MIN_PX = ${DIFF_SPLIT_MIN_PX};
   var PRESENCE_SHORT_TEXT_MAX = ${PRESENCE_SHORT_TEXT_MAX};
+  var LINE_DIFF_CODE_KEYS = ${JSON.stringify(LINE_DIFF_CODE_KEYS)};
   function defaultDiffModeFromViewport() {
     // Side-by-side on wide screens; unified only below the narrow breakpoint.
     if (typeof window === 'undefined' || !window.matchMedia) return 'unified';
@@ -2153,6 +2154,21 @@ function pageClientScriptPartBDiffPresence(): string {
 
 function pageClientScriptPartBDiffView(): string {
   return `
+  function isLongTextProperty(key, before, after) {
+    return LINE_DIFF_CODE_KEYS.indexOf(key) >= 0 ||
+      [before, after].some(function (value) {
+        return typeof value === 'string' && isCollapsiblePresenceText(value);
+      });
+  }
+
+  function textChangeValue(ch, side) {
+    if (ch[side] !== undefined) return ch[side];
+    // Summary responses omit full values; recover short text from the line data.
+    return (ch.lines || []).filter(function (line) {
+      return line.op !== (side === 'before' ? 'add' : 'remove');
+    }).map(function (line) { return line.text; }).join('\\n');
+  }
+
   function textChangeLineCount(ch) {
     return (ch.lines || []).length;
   }
@@ -2179,8 +2195,10 @@ function pageClientScriptPartBDiffView(): string {
 
   function renderPropertyChange(ch, mode, conflict, choice) {
     var labelHtml = fieldLabelHtml(ch.key);
+    var before = ch.kind === 'text' ? textChangeValue(ch, 'before') : ch.before;
+    var after = ch.kind === 'text' ? textChangeValue(ch, 'after') : ch.after;
     // Keep line-diff panes separate from the short/scalar property markup below.
-    if (ch.kind === 'text') {
+    if (ch.kind === 'text' && isLongTextProperty(ch.key, before, after)) {
       var body = mode === 'split' ? renderSplitTextDiff(ch, conflict, choice) : renderUnifiedTextDiff(ch, conflict, choice);
       var added = (ch.lines || []).filter(function (line) { return line.op === 'add'; }).length;
       var summary = '<div class="fieldsummary"><span>Field <code>' + esc(ch.key) + '</code> · ' +
@@ -2196,15 +2214,15 @@ function pageClientScriptPartBDiffView(): string {
       return '<div class="prop-change">' + labelHtml +
         '<div class="prop-change-scalar split">' +
         '<div class="scalar-side"><span class="side-label">Before</span>' +
-        '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code></div>' +
+        '<code class="diff-before" title="before">' + esc(JSON.stringify(before)) + '</code></div>' +
         '<span class="scalar-arrow" aria-hidden="true">→</span>' +
         '<div class="scalar-side"><span class="side-label">After</span>' +
-        '<code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>' +
+        '<code class="diff-after" title="after">' + esc(JSON.stringify(after)) + '</code></div>' +
         '</div></div>';
     }
       return '<div class="prop-change">' + labelHtml + ': ' +
-      '<code class="diff-before" title="before">' + esc(JSON.stringify(ch.before)) + '</code>' +
-      ' → <code class="diff-after" title="after">' + esc(JSON.stringify(ch.after)) + '</code></div>';
+      '<code class="diff-before" title="before">' + esc(JSON.stringify(before)) + '</code>' +
+      ' → <code class="diff-after" title="after">' + esc(JSON.stringify(after)) + '</code></div>';
   }
 `;
 }
@@ -2325,7 +2343,8 @@ function pageClientScriptPartBDiffView2(): string {
     if (!entry) return '<p class="muted">Loading before and after values…</p>';
     var mode = getDiffMode();
     return entry.fields.map(function (v) {
-      var body = v.lines ? renderPropertyChange({ key: v.field || 'Node', kind: 'text', lines: v.lines }, mode, true, choice) :
+      var body = v.lines && isLongTextProperty(v.field, v.live, v.proposed) ?
+        renderPropertyChange({ key: v.field || 'Node', kind: 'text', before: v.live, after: v.proposed, lines: v.lines }, mode, true, choice) :
         '<div class="fieldsummary"><span>Field <code>' + esc(v.field || 'Node') + '</code> · changed on both sides</span></div>' +
         '<dl><div><dt>Editor (live)</dt><dd><pre>' + esc(conflictValueText(v.live)) + '</pre></dd></div>' +
         '<div><dt>AI proposed</dt><dd><pre>' + esc(conflictValueText(v.proposed)) + '</pre></dd></div></dl>';

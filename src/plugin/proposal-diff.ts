@@ -11,6 +11,7 @@ import type { FlowAdapter, FlowNode, FlowTab } from '../runtime/types.js';
 import { conflictFieldValue } from '../storage/field-value.js';
 import { isOpenProposalStatus, type Proposal } from '../storage/proposals.js';
 
+import { isLongTextProperty } from './diff-ui.js';
 import { diffLines, type LineDiffEntry } from './line-diff.js';
 import { changedNodeKeys, isMoveOnly } from './proposal-changes.js';
 import { nodeTypeText } from './proposal-present.js';
@@ -399,7 +400,10 @@ function compareNodes(before: FlowNode, after: FlowNode, keys: string[]): Proper
     }
     const leftText = asText(left);
     const rightText = asText(right);
-    if (TEXT_PROPERTY_KEYS.has(key) && (leftText !== null || rightText !== null)) {
+    if (
+      (TEXT_PROPERTY_KEYS.has(key) || isLongTextProperty(key, left, right)) &&
+      (leftText !== null || rightText !== null)
+    ) {
       const beforeText = leftText ?? '';
       const afterText = rightText ?? '';
       changes.push({
@@ -727,6 +731,7 @@ export async function computeProposalDiff(
     // Diff competing, already-redacted values; large inputs use whole-block replacement.
     for (const entry of result.conflictValues) {
       for (const field of entry.fields) {
+        if (!isLongTextProperty(field.field, field.live, field.proposed)) continue;
         const text = (value: unknown) =>
           typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '(not present)');
         field.lines = diffLines(text(field.live), text(field.proposed));

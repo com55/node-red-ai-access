@@ -32,11 +32,11 @@ counts with the detail page. Conflicting proposals remain **Pending** with a
 include them. API responses use `status: pending` and `rebase.state: conflict`;
 legacy stored `status: conflict` rows are normalized to that shape on read.
 
-Select an amber Conflict node to review the under-canvas drawer. Compare
-**Editor (live)** and **AI proposed** in Split or Unified, then choose **Keep
-live** or **Use AI proposed**. Choices apply immediately to the proposal and
-automatically recheck live changes. The chosen button turns green and reads **✓
-Keeping live** or **✓ Using AI proposed**. Changed lines on that side become
+Select an amber Conflict node to review the under-canvas drawer. Compare **LIVE
+(IN EDITOR)** and **AI PROPOSED** in Split or Unified for long text, then choose
+**Keep live** or **Use AI proposed**. Choices apply immediately to the proposal
+and automatically recheck live changes. The chosen button turns green and reads
+**✓ Keeping live** or **✓ Using AI proposed**. Changed lines on that side become
 bold and the other side fades. Select the other button to change your choice,
 including after reloading. Approval stays disabled until every conflict is
 resolved. Nothing deploys until approval.

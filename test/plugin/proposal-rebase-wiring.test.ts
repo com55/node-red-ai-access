@@ -17,6 +17,7 @@ import {
 } from '../../src/plugin/ai-ops.js';
 import { mapErrorForChannel } from '../../src/plugin/channel-errors.js';
 import registerPlugin, { registerRoutes } from '../../src/plugin/index.js';
+import { diffLines } from '../../src/plugin/line-diff.js';
 import { createAiMcpServer } from '../../src/plugin/mcp-rpc.js';
 import { computeProposalDiff } from '../../src/plugin/proposal-diff.js';
 import { presentProposalForApi } from '../../src/plugin/proposal-present.js';
@@ -201,6 +202,58 @@ describe('proposal auto-rebase wiring', () => {
     await service.approve(p.id, { kind: 'admin' }, { mergedHash: diff.rebase!.mergedHash! });
     expect(head.flows.some(n => n.id === 'editor')).toBe(true);
   });
+
+  it.each([
+    { field: 'name', live: 'Editor', proposed: 'AI', pane: false },
+    { field: 'format', live: 'html', proposed: 'text', pane: false },
+    { field: 'syntax', live: 'mustache', proposed: 'plain', pane: false },
+    { field: 'repeat', live: 1, proposed: 2, pane: false },
+    { field: 'custom', live: 'x'.repeat(120), proposed: 'short', pane: false },
+    { field: 'custom', live: 'x'.repeat(121), proposed: 'short', pane: true },
+    { field: 'custom', live: 'short', proposed: 'two\nlines', pane: true },
+    { field: 'func', live: 'live();', proposed: 'ai();', pane: true },
+    { field: 'func', live: 'live();\nreturn msg;', proposed: 'ai();\nreturn msg;', pane: true },
+    { field: 'template', live: '<p>Live</p>', proposed: '<p>AI</p>', pane: true },
+    { field: 'code', live: 'live();', proposed: 'ai();', pane: true },
+  ])(
+    'only attaches conflict lines for long text: $field ($pane)',
+    async ({ field, live, proposed, pane }) => {
+      const flow = clone(base);
+      flow.nodes![0]![field] = proposed;
+      const p = await submitReplaceFlowProposal(
+        store,
+        audit,
+        link,
+        { type: 'replace_flow', expectedRev: 'r1', payload: { flowId: 'tab1', flow } },
+        adapter
+      );
+      head.rev = 'r2';
+      head.flows.find(n => n.id === 'n1')![field] = live;
+      const diff = await computeProposalDiff(store.get(p.id), adapter);
+      expect(diff.rebase?.state).toBe('conflict');
+      const value = diff
+        .conflictValues!.find(n => n.nodeId === 'n1')!
+        .fields.find(v => v.field === field)!;
+      expect(value).toMatchObject({ field, live, proposed });
+      if (pane) expect(value.lines).toEqual(diffLines(String(live), String(proposed)));
+      else expect(value).not.toHaveProperty('lines');
+
+      if (field === 'name') {
+        for (const choice of ['live', 'proposed']) {
+          const h = response();
+          await resolveProposalConflictHandler(
+            store,
+            audit,
+            adapter
+          )(req({ nodeId: 'n1', choice }, p.id), h.res);
+          expect(h.result.statusCode).toBe(200);
+          const resolved = await computeProposalDiff(store.get(p.id), adapter);
+          expect(resolved.conflictValues![0]!.fields[0]).toMatchObject({ field, live, proposed });
+          expect(resolved.conflictValues![0]!.fields[0]).not.toHaveProperty('lines');
+        }
+      }
+    }
+  );
 
   it.each(['live', 'proposed'] as const)(
     'reports conflict safely and resolves a manual %s choice',

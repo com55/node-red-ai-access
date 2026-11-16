@@ -2,6 +2,9 @@ import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { applyDiffFormat } from '../../src/plugin/diff-format.js';
+import { PRESENCE_SHORT_TEXT_MAX } from '../../src/plugin/diff-ui.js';
+import { diffLines } from '../../src/plugin/line-diff.js';
 import { pageClientVisualGeometryScript } from '../../src/plugin/page-client-visual.js';
 import { pageClientScript } from '../../src/plugin/page-client.js';
 import { pageStyles } from '../../src/plugin/page-styles.js';
@@ -2080,6 +2083,138 @@ describe('Visual View node drawer', () => {
     }
   });
 
+  it.each(['split', 'unified'])(
+    'keeps short text changes compact in %s, including summaries',
+    mode => {
+      const ui = browserHelpers();
+      for (const key of ['format', 'syntax', 'info', 'payload', 'text']) {
+        const before = 'x'.repeat(PRESENCE_SHORT_TEXT_MAX);
+        const after = '<new>';
+        const sections = buildDiffSections(
+          { nodes: [{ id: 'n', type: 'template', [key]: after }] },
+          { nodes: [{ id: 'n', type: 'template', [key]: before }] }
+        );
+        expect(sections.modified[0]!.changes[0]!.kind).toBe('text');
+        for (const format of ['full', 'summary'] as const) {
+          const formatted = applyDiffFormat(
+            {
+              ...sections,
+              proposalId: 'p',
+              flowId: 'tab',
+              expectedRev: 'r1',
+              baseRev: 'r1',
+              currentRev: 'r1',
+              baseRevChanged: false,
+              compareAgainst: 'base',
+            },
+            format
+          );
+          const html = ui.renderPropertyChange(formatted.modified[0]!.changes[0], mode);
+          expect(html).not.toMatch(
+            /shareddiff|unified|diffhead|diffscroll|fieldsummary|diffmodes|data-diff-mode/
+          );
+          expect(html).not.toMatch(/BEFORE|AFTER \(PROPOSED\)|LIVE \(IN EDITOR\)|AI PROPOSED/);
+          expect(html).toContain('&quot;' + before + '&quot;');
+          expect(html).toContain('&quot;&lt;new&gt;&quot;');
+          if (mode === 'split') expect(html).toContain('class="prop-change-scalar split"');
+          else expect(html).toContain('</code> → <code class="diff-after"');
+        }
+      }
+    }
+  );
+
+  it.each(['split', 'unified'])('uses panes for code and either long text value in %s', mode => {
+    const ui = browserHelpers();
+    const long = 'x'.repeat(PRESENCE_SHORT_TEXT_MAX + 1);
+    const cases: [string, string, string][] = [
+      ['func', 'old', 'new'],
+      ['template', 'old', 'new'],
+      ['code', 'old', 'new'],
+      ['format', long, 'new'],
+      ['syntax', 'old', long],
+      ['custom', 'old\nline', 'new'],
+      ['custom', 'old', 'new\nline'],
+    ];
+    for (const [key, before, after] of cases) {
+      const sections = buildDiffSections(
+        { nodes: [{ id: 'n', type: 'function', [key]: after }] },
+        { nodes: [{ id: 'n', type: 'function', [key]: before }] }
+      );
+      const ch = sections.modified[0]!.changes[0]!;
+      expect(ch.kind).toBe('text');
+      const html = ui.renderPropertyChange(ch, mode);
+      expect(html).toContain(mode === 'split' ? 'class="shareddiff"' : 'class="unified"');
+      expect(html).toContain(
+        mode === 'split' ? '>BEFORE</div>' : '>BEFORE → AFTER (PROPOSED)</div>'
+      );
+      expect(html).toContain('<b>-</b>');
+      expect(html).toContain('<b>+</b>');
+    }
+  });
+
+  it.each(['split', 'unified'])('keeps short conflicts in the existing markup in %s', mode => {
+    const ui = browserHelpers();
+    ui.setPermission(true);
+    ui.setDiffMode(mode);
+    const cases: [string, unknown, unknown][] = [
+      ['name', 'Old', '<New>'],
+      ['topic', 'a', 'b'],
+      ['format', 'text', 'html'],
+      ['syntax', 'plain', 'mustache'],
+      ['repeat', 1, 2],
+      ['once', false, true],
+      ['custom', 'x'.repeat(PRESENCE_SHORT_TEXT_MAX), 'new'],
+      ['wires', [['a']], [['b']]],
+    ];
+    for (const [field, live, proposed] of cases) {
+      const rebase = {
+        state: 'conflict',
+        conflicts: [
+          {
+            nodeId: node.id,
+            fields: [field],
+            kind: 'node_changed_both',
+            choices: ['live', 'proposed'],
+          },
+        ],
+      };
+      // Also defend against old/cached payloads containing lines for short fields.
+      for (const withLines of [false, true]) {
+        const html = ui.renderVisualNodeDrawer(
+          { ...node, kind: 'conflict' },
+          { id: 'p', rebase },
+          {
+            rebase,
+            conflictValues: [
+              {
+                nodeId: node.id,
+                fields: [
+                  {
+                    field,
+                    live,
+                    proposed,
+                    ...(withLines
+                      ? { lines: diffLines(JSON.stringify(live), JSON.stringify(proposed)) }
+                      : {}),
+                  },
+                ],
+              },
+            ],
+          }
+        );
+        expect(html).not.toMatch(
+          /shareddiff|unified|diffhead|diffscroll|diffmodes|data-conflict-diff-mode/
+        );
+        expect(html).not.toMatch(/LIVE \(IN EDITOR\)|AI PROPOSED/);
+        expect(html).toContain('<dt>Editor (live)</dt>');
+        expect(html).toContain('<dt>AI proposed</dt>');
+        expect(html).toContain('>Keep live</button>');
+        expect(html).toContain('>Use AI proposed</button>');
+        if (field === 'name') expect(html).toContain('&lt;New&gt;');
+      }
+    }
+  });
+
   it('uses one pane border, a continuous divider, sticky headers and plain fillers', () => {
     const css = pageStyles();
     expect(css).toMatch(/\.shareddiff, \.unified\s*\{[^}]*border: 1px solid var\(--line\)/);
@@ -2195,6 +2330,8 @@ describe('Visual View node drawer', () => {
         : '<div class="diffhead">LIVE (IN EDITOR) → AI PROPOSED</div>'
     );
     expect(html).toContain(selected + ' chosen-line');
+    expect(html).toContain('<b>-</b>');
+    expect(html).toContain('<b>+</b>');
     expect(html).toContain('class="conflict-values" data-chosen="' + choice + '"');
     if (mode === 'split') expect(html).toContain('class="shareddiff" data-chosen="' + choice + '"');
     else expect(html).toContain(rejected + ' rejected');
