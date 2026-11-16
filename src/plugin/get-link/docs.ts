@@ -169,9 +169,9 @@ same either way.
 - Use this path token as a REST or MCP Bearer (wrong kind — need separate tokens).
 
 A human reviews proposals on the Node-RED \`/mcp\` page and approves or rejects.
-Submit responses include \`title\` (display title; \` in <flow>\` is appended
-when it does not name the flow), \`storedTitle\` (the title as saved: your title without the
-\` in <flow>\` suffix, or the auto-generated title, which may already name the flow),
+Submit responses include \`title\` (the proposal's display title),
+\`storedTitle\` (the title as saved: the submitted title, or the auto-generated title
+when none was given),
 \`flowLabel\`, \`displayName\` (\`title ·\` **server-local**
 datetime with offset, e.g. \`16 Oct 01:35 +00:00\`), \`reviewUrl\` (absolute when
 Host is known), and \`reviewPath\` (relative \`/ai-access#/proposals/<id>\`).

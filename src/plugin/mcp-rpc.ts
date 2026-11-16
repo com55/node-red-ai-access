@@ -453,8 +453,8 @@ function registerProposalTools(
         'Unknown palette types return 400 unknown_node_type with nearest matches — call list_node_types / ' +
         'search_palette and ask the user to install via Manage palette (never auto-install). ' +
         'Returns a lean proposal (id, status, title, storedTitle, flowLabel, displayName, reviewUrl, changeSummary, …) by default; ' +
-        'title may gain " in <flow>"; storedTitle is the title as saved (your title without that suffix, ' +
-        'or the auto-generated title, which may already name the flow). ' +
+        "title is the proposal's display title; storedTitle is the title as saved (the submitted title, " +
+        'or the auto-generated title when none was given). ' +
         'Pass include_payload=true to include payload and baseFlow. ' +
         'When telling the user about the proposal, cite displayName and reviewUrl — not the raw id. ' +
         'Humans approve on the /ai-access dashboard (reviewUrl opens its persistent detail page).',
