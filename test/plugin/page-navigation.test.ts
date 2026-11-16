@@ -53,10 +53,18 @@ describe('settings navigation', () => {
     expect(html).not.toContain('grid-template-columns: 220px');
     expect(html).toContain('.dashboard-header { position: sticky; top: 0;');
     expect(html).toContain('@media (max-width: 850px)');
-    expect(html).toContain('section.panel h2:focus { outline: none; }');
-    expect(html).toContain(
-      'section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+  });
+
+  it('suppresses programmatic heading focus outlines even when focus is visible', () => {
+    const html = renderMcpPage({ apiBase: '/mcp/api/v1' });
+    const css = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+    expect(css).toMatch(
+      /h1\[tabindex="-1"\]:focus,\s*h2\[tabindex="-1"\]:focus\s*\{\s*outline: none;\s*\}/
     );
+    // A more specific heading rule must not restore a ring for keyboard-driven navigation.
+    expect(css).not.toMatch(/h[12][^{}]*:focus-visible/);
+    expect(html).toContain('<h1 tabindex="-1">Proposals</h1>');
+    expect(html).toContain('<h2 tabindex="-1">Settings</h2>');
   });
 
   it('renders proposal list chrome with an intro, counted filters, search and a list card', () => {
@@ -146,8 +154,6 @@ describe('settings navigation', () => {
     );
     // The ID-copy button must not override the shared pointer-focus reset.
     expect(html).not.toMatch(/button\.id-copy:focus\s*\{[^}]*outline:/);
-    expect(html).toContain('section.panel h2:focus { outline: none; }');
-    expect(html).not.toMatch(/section\.panel > h2:focus\s*\{[^}]*outline:\s*(?!none)[0-9]/);
   });
 
   it('keeps form rows and filters left-aligned with responsive token fields', () => {

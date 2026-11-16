@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Hide programmatic dashboard heading focus outlines after tab switches while
+  preserving screen-reader announcements and keyboard focus rings on controls.
 - Restrict line-diff panes to code fields and long text; keep short properties
   and conflicts in their existing compact rendering.
 - Fade and disable both Approve controls together, and collapse detail notes to

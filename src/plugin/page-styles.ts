@@ -151,8 +151,11 @@ section.panel h2 {
   margin: 0 0 0.75rem;
   font-size: 1.65rem;
 }
-section.panel h2:focus { outline: none; }
-section.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Tab navigation focuses these headings for screen-reader announcements. */
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus {
+  outline: none;
+}
 .panel-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
 section.panel .panel-header h2 { margin: 0; }
 .segmented-control { display: inline-flex; margin-left: auto; }
@@ -1270,8 +1273,6 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 #section-proposals .list-eyebrow { font-size: 11px; letter-spacing: 1.5px; color: #617384; font-weight: 700; margin-bottom: 8px; }
 #section-proposals .list-intro { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 23px; }
 #section-proposals h1 { margin: 0 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; line-height: 1.2; }
-#section-proposals h1:focus { outline: none; }
-#section-proposals h1:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #section-proposals .list-intro p { margin: 0; color: #6b7986; font-size: 13px; }
 #section-proposals .list-sort { flex-shrink: 0; text-align: right; }
 #proposals-filters { margin: 0 0 18px; gap: 8px; flex-wrap: wrap; }
