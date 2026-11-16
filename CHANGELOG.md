@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Safely render primitive Visual View node labels and use default labels for
+  malformed fields so proposal details remain reviewable.
 - Keep keyboard focus rings visible on proposal filter chips, Split/Unified
   controls, and canvas toolbar buttons without shifting their layout.
 - Hide programmatic dashboard heading focus outlines after tab switches while

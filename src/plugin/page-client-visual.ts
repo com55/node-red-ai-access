@@ -124,18 +124,32 @@ function pageClientVisualGraphScript(): string {
     } catch (e) {}
     return null;
   }
+  function visualSafeText(value) {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : '';
+  }
   function visualNodeLabel(raw, editor) {
     if (editor) {
       try { return editor.red.utils.getNodeLabel(editor.node, raw.type); } catch (e) {}
     }
-    var suffix = raw.type === 'inject' ? (raw.repeat && raw.repeat != 0 || raw.crontab ? '\\t↻' : raw.once ? ' ¹' : '') : raw.type === 'debug' && (raw.console === true || raw.console === 'true') ? '\\t⇲' : '';
-    if (raw.name) return String(raw.name) + suffix;
-    if (raw.label) return String(raw.label);
-    if (raw.type === 'debug') return (raw.targetType === 'jsonata' ? 'JSONata' : raw.complete === true || raw.complete === 'true' ? 'msg' : 'msg.' + (!raw.complete || raw.complete === 'false' ? 'payload' : raw.complete)) + suffix;
-    if (raw.type === 'http response') return 'http' + (raw.statusCode ? ' (' + raw.statusCode + ')' : '');
-    if (raw.type === 'http in') return raw.url ? '[' + (raw.method || 'get') + '] ' + (raw.url.charAt(0) === '/' ? raw.url : '/' + raw.url) : 'http';
+    var repeat = visualSafeText(raw.repeat || ''), crontab = visualSafeText(raw.crontab || ''), once = visualSafeText(raw.once || '');
+    var suffix = raw.type === 'inject' ? (repeat && repeat != 0 || crontab ? '\\t↻' : once ? ' ¹' : '') : raw.type === 'debug' && (raw.console === true || raw.console === 'true') ? '\\t⇲' : '';
+    var name = visualSafeText(raw.name), label = visualSafeText(raw.label);
+    if (name) return name + suffix;
+    if (label) return label;
+    if (raw.type === 'debug') {
+      var complete = visualSafeText(raw.complete || '');
+      return (raw.targetType === 'jsonata' ? 'JSONata' : complete === 'true' ? 'msg' : 'msg.' + (!complete || complete === 'false' ? 'payload' : complete)) + suffix;
+    }
+    if (raw.type === 'http response') {
+      var statusCode = visualSafeText(raw.statusCode);
+      return 'http' + (statusCode ? ' (' + statusCode + ')' : '');
+    }
+    if (raw.type === 'http in') {
+      var url = visualSafeText(raw.url), method = visualSafeText(raw.method) || 'get';
+      return url ? '[' + method + '] ' + (url.charAt(0) === '/' ? url : '/' + url) : 'http';
+    }
     if (raw.type === 'inject') {
-      var payload = String(raw.payload || ''), topic = String(raw.topic || ''), payloadType = raw.payloadType || 'str';
+      var payload = visualSafeText(raw.payload), topic = visualSafeText(raw.topic), payloadType = visualSafeText(raw.payloadType) || 'str';
       if (['string', 'str', 'num', 'bool', 'json'].indexOf(payloadType) >= 0) {
         if (topic && topic.length + payload.length <= 32) return topic + ':' + payload + suffix;
         return (payload && payload.length < 24 ? payload : 'inject') + suffix;
@@ -145,15 +159,19 @@ function pageClientVisualGraphScript(): string {
       return 'inject' + suffix;
     }
     if (raw.type === 'change') {
-      var rule = raw.rules && raw.rules.length === 1 ? raw.rules[0] : !raw.rules ? { t: raw.action || 'delete', p: raw.property, pt: 'msg' } : null;
-      if (rule) return ({ set: 'set', change: 'change', move: 'move', delete: 'delete' }[rule.t] || 'change') + ' ' + (rule.pt || 'msg') + '.' + (rule.p || 'payload');
-      return raw.rules ? 'change: ' + raw.rules.length + ' rules' : 'change';
+      var rules = Array.isArray(raw.rules) ? raw.rules : null;
+      var rule = rules && rules.length === 1 ? rules[0] : !raw.rules ? { t: visualSafeText(raw.action) || 'delete', p: raw.property, pt: 'msg' } : null;
+      if (rule && typeof rule === 'object' && !Array.isArray(rule)) {
+        var action = visualSafeText(rule.t);
+        return (['set', 'change', 'move', 'delete'].indexOf(action) >= 0 ? action : 'change') + ' ' + (visualSafeText(rule.pt) || 'msg') + '.' + (visualSafeText(rule.p) || 'payload');
+      }
+      return rules && rules.length !== 1 ? 'change: ' + rules.length + ' rules' : 'change';
     }
     if (raw.type === 'link in') return 'link in';
     if (raw.type === 'link out') return raw.mode === 'return' ? 'link return' : 'link out';
-    if (raw.type === 'catch') return 'catch: ' + (raw.scope === 'group' ? 'group' : Array.isArray(raw.scope) ? raw.scope.length : raw.uncaught ? 'uncaught' : 'all');
+    if (raw.type === 'catch') return 'catch: ' + (raw.scope === 'group' ? 'group' : Array.isArray(raw.scope) ? raw.scope.length : visualSafeText(raw.uncaught || '') ? 'uncaught' : 'all');
     if (raw.type === 'complete') return 'complete: ' + (Array.isArray(raw.scope) ? raw.scope.length : 0);
-    return String(raw.type || 'node');
+    return visualSafeText(raw.type) || 'node';
   }
   function visualCollect(flow) {
     var result = Object.create(null);

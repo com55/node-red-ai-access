@@ -302,10 +302,39 @@ describe('Visual View palette icons and editor sizing', () => {
   it.each([
     [{ type: 'debug', complete: 'true' }, 'msg'],
     [{ type: 'debug', complete: 'topic' }, 'msg.topic'],
+    [{ type: 'debug', complete: true, console: true }, 'msg\t⇲'],
+    [{ type: 'debug', complete: false }, 'msg.payload'],
+    [{ type: 'debug', complete: 123 }, 'msg.123'],
+    [{ type: 'debug', targetType: 'jsonata' }, 'JSONata'],
     [{ type: 'debug' }, 'msg.payload'],
     [{ type: 'inject', payloadType: 'date' }, 'timestamp'],
     [{ type: 'inject', name: 'Every 5s', repeat: '5' }, 'Every 5s\t↻'],
+    [{ type: 'inject', name: 'Once', once: true }, 'Once ¹'],
+    [{ type: 'inject', payload: 'hello', topic: 'greeting' }, 'greeting:hello'],
+    [{ type: 'inject', payload: 123 }, '123'],
+    [{ type: 'inject', payload: false }, 'false'],
+    [{ type: 'inject', payloadType: 'flow', payload: 'count' }, 'flow.count'],
+    [{ type: 'inject', payloadType: 'date', topic: 'tick' }, 'tick:timestamp'],
     [{ type: 'http response', statusCode: 201 }, 'http (201)'],
+    [{ type: 'http in', url: 123 }, '[get] /123'],
+    [{ type: 'http in', url: false }, '[get] /false'],
+    [{ type: 'http in', url: 0 }, '[get] /0'],
+    [{ type: 'http in', url: '' }, 'http'],
+    [{ type: 'http in' }, 'http'],
+    [{ type: 'http in', url: '/x', method: 'post' }, '[post] /x'],
+    [{ type: 'function', name: 123 }, '123'],
+    [{ type: 'function', label: true }, 'true'],
+    [{ type: 'function', name: {}, label: 'Label' }, 'Label'],
+    [{ type: 'change', rules: [{ t: 'set', pt: 'flow', p: 'count' }] }, 'set flow.count'],
+    [{ type: 'change', action: 'move', property: 'topic' }, 'move msg.topic'],
+    [{ type: 'change', rules: [{}, {}] }, 'change: 2 rules'],
+    [{ type: 'change', rules: [{ t: '__proto__' }] }, 'change msg.payload'],
+    [{ type: 'link in' }, 'link in'],
+    [{ type: 'link out', mode: 'return' }, 'link return'],
+    [{ type: 'catch', scope: 'group' }, 'catch: group'],
+    [{ type: 'catch', scope: ['a', 'b'] }, 'catch: 2'],
+    [{ type: 'catch', uncaught: true }, 'catch: uncaught'],
+    [{ type: 'complete', scope: ['a'] }, 'complete: 1'],
   ])('sizes the editor label for %j', (raw, name) => {
     const ui = browserHelpers();
     const n = graphNode(ui, raw);
@@ -313,6 +342,87 @@ describe('Visual View palette icons and editor sizing', () => {
     expect(n.w).toBe(
       Math.max(100, 20 * Math.ceil((ui.visualTextWidth(name) + 50 + (n.input ? 7 : 0)) / 20))
     );
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    ['name', { type: 'function' }, 'function'],
+    ['label', { type: 'function' }, 'function'],
+    ['complete', { type: 'debug' }, 'msg.payload'],
+    ['targetType', { type: 'debug' }, 'msg.payload'],
+    ['console', { type: 'debug' }, 'msg.payload'],
+    ['statusCode', { type: 'http response' }, 'http'],
+    ['url', { type: 'http in' }, 'http'],
+    ['method', { type: 'http in', url: '/x' }, '[get] /x'],
+    ['payload', { type: 'inject' }, 'inject'],
+    ['topic', { type: 'inject', payload: 'hello' }, 'hello'],
+    ['payloadType', { type: 'inject' }, 'inject'],
+    ['topic', { type: 'inject', payloadType: 'date' }, 'timestamp'],
+    ['payload', { type: 'inject', payloadType: 'flow' }, 'flow.'],
+    ['repeat', { type: 'inject' }, 'inject'],
+    ['crontab', { type: 'inject' }, 'inject'],
+    ['once', { type: 'inject' }, 'inject'],
+    ['rules', { type: 'change' }, 'change'],
+    ['action', { type: 'change' }, 'delete msg.payload'],
+    ['property', { type: 'change' }, 'delete msg.payload'],
+    ['name', { type: 'link in' }, 'link in'],
+    ['label', { type: 'link in' }, 'link in'],
+    ['mode', { type: 'link out' }, 'link out'],
+    ['name', { type: 'catch' }, 'catch: all'],
+    ['scope', { type: 'catch' }, 'catch: all'],
+    ['uncaught', { type: 'catch' }, 'catch: all'],
+    ['name', { type: 'complete' }, 'complete: 0'],
+    ['scope', { type: 'complete' }, 'complete: 0'],
+  ])('falls back safely for non-primitive %s on %j', (field, raw, name) => {
+    const ui = browserHelpers();
+    const invalidValues = [
+      { path: '/x' },
+      { length: { count: 1 } },
+      { length: 1, 0: { t: 'set', p: 'topic' } },
+      Object.create(null),
+      {
+        toString() {
+          throw new Error('Must not coerce objects');
+        },
+      },
+      () => 'unexpected',
+      Symbol('unexpected'),
+      123n,
+    ];
+    // Scope arrays are valid node-id collections; every other field rejects arrays.
+    if (field !== 'scope') invalidValues.push(['unexpected']);
+    for (const value of invalidValues) {
+      const n = graphNode(ui, { ...raw, [field]: value });
+      expect(n.name).toBe(name);
+      expect(n.name).not.toContain('[object Object]');
+    }
+  });
+
+  it.each([null, undefined, false, 123, 'rule', [], [{}]])(
+    'falls back safely for a malformed change rule %j',
+    rule => {
+      const n = graphNode(browserHelpers(), { type: 'change', rules: [rule] });
+      expect(n.name).toBe('change');
+    }
+  );
+
+  it.each(['t', 'pt', 'p'])('uses defaults for non-primitive change rule %s', field => {
+    const ui = browserHelpers();
+    for (const value of [{ unexpected: true }, ['unexpected'], Object.create(null)]) {
+      const n = graphNode(ui, { type: 'change', rules: [{ [field]: value }] });
+      expect(n.name).toBe('change msg.payload');
+      expect(n.name).not.toContain('[object Object]');
+    }
+  });
+
+  it('uses safe local labels when the live editor label throws', () => {
+    const getNodeLabel = vi.fn(() => {
+      throw new Error('Malformed editor node');
+    });
+    const red = { nodes: { getType: () => ({}) }, utils: { getNodeLabel } };
+    const ui = browserHelpers({}, [], undefined, undefined, { red });
+    expect(graphNode(ui, { type: 'http in', url: 123 }).name).toBe('[get] /123');
+    expect(graphNode(ui, { type: 'debug', complete: {} }).name).toBe('msg.payload');
+    expect(getNodeLabel).toHaveBeenCalledTimes(2);
   });
 
   it('reads live editor labels, icons and alignment when the registry is available', () => {
