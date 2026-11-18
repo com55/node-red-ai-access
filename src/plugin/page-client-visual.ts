@@ -2,6 +2,14 @@
 export function pageClientVisualGeometryScript(): string {
   return `
 
+  function visualFitView(boxes, w, h) {
+    var minX = Math.min.apply(null, boxes.map(function (b) { return b.x - b.w / 2; })) - 35;
+    var maxX = Math.max.apply(null, boxes.map(function (b) { return b.x + b.w / 2; })) + 35;
+    var minY = Math.min.apply(null, boxes.map(function (b) { return b.y - b.h / 2; })) - 55;
+    var k = Math.min(1.2, (w - 24) / (maxX - minX));
+    return { k: k, x: w / 2 - (minX + maxX) / 2 * k, y: -minY * k };
+  }
+
   // Node-RED editor path-shaping constants, independent of displayed node sizes.
   var lineCurveScale = 0.75, node_width = 100, node_height = 30;
     function visualLinkPath(origX,origY, destX, destY, sc, hasStatus) {
@@ -699,14 +707,8 @@ function pageClientVisualInteractionScript(): string {
       var boxes = visible.nodes.map(function (n) { return { x: n.px, y: n.py, w: n.w, h: n.h }; });
       if (state.layout === 'editor') graph.nodes.forEach(function (n) { if (n.moved) boxes.push({ x: n.old.x, y: n.old.y, w: n.w, h: n.h }); });
       if (!boxes.length) return;
-      var minX = Math.min.apply(null, boxes.map(function (b) { return b.x - b.w / 2; })) - 35;
-      var maxX = Math.max.apply(null, boxes.map(function (b) { return b.x + b.w / 2; })) + 35;
-      var minY = Math.min.apply(null, boxes.map(function (b) { return b.y - b.h / 2; })) - 55;
-      var maxY = Math.max.apply(null, boxes.map(function (b) { return b.y + b.h / 2; })) + 65;
       var w = wrap.clientWidth || 600, h = wrap.clientHeight || 350;
-      state.view.k = Math.min(1.2, (w - 24) / (maxX - minX), (h - 65) / (maxY - minY));
-      state.view.x = w / 2 - (minX + maxX) / 2 * state.view.k;
-      state.view.y = (h - 30) / 2 - (minY + maxY) / 2 * state.view.k;
+      state.view = visualFitView(boxes, w, h);
       state.fitted = true;
       transform();
     }

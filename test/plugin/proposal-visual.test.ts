@@ -788,6 +788,47 @@ describe('Visual View live editor positions', () => {
   });
 });
 
+describe('Visual View fit geometry', () => {
+  const fit = runInNewContext(pageClientVisualGeometryScript() + '\nvisualFitView;');
+
+  it('fits a tall flow by width, centered horizontally and aligned to its padded top', () => {
+    const boxes = [
+      { x: 100, y: 100, w: 100, h: 40 },
+      { x: 800, y: 1580, w: 100, h: 40 },
+    ];
+    const w = 900,
+      h = 420;
+    const minX = 15,
+      maxX = 885,
+      minY = 25,
+      maxY = 1665;
+    const view = fit(boxes, w, h);
+    expect(view.k).toBeCloseTo(Math.min(1.2, (w - 24) / (maxX - minX)));
+    expect(view.k).toBeGreaterThan(
+      Math.min(1.2, (w - 24) / (maxX - minX), (h - 65) / (maxY - minY))
+    );
+    expect(view.x).toBeCloseTo(w / 2 - ((minX + maxX) / 2) * view.k);
+    expect(view.y + minY * view.k).toBeCloseTo(0);
+    expect(view.y).not.toBeCloseTo((h - 30) / 2 - ((minY + maxY) / 2) * view.k);
+  });
+
+  it('caps zoom for a narrow flow', () => {
+    const view = fit([{ x: 200, y: 100, w: 100, h: 40 }], 900, 420);
+    expect(view.k).toBe(1.2);
+    expect(view.x).toBeCloseTo(900 / 2 - 200 * 1.2);
+    expect(view.y).toBeCloseTo(-25 * 1.2);
+  });
+
+  it('fits a tall flow to mobile width and still caps zoom for narrow content', () => {
+    const boxes = [{ x: 150, y: 100, w: 300, h: 1500 }];
+    const view = fit(boxes, 350, 600);
+    expect(view.k).toBeCloseTo((350 - 24) / 370);
+    expect(view.x).toBeCloseTo(350 / 2 - 150 * view.k);
+    expect(view.y + (100 - 750 - 55) * view.k).toBeCloseTo(0);
+    expect(fit([{ x: 0, y: 0, w: 100, h: 1500 }], 350, 600).k).toBe(1.2);
+  });
+});
+
 describe('Node-RED link geometry', () => {
   const geometry = runInNewContext(
     pageClientVisualGeometryScript() + '\n({ visualLinkPath, visualLinkPathMidpoint });'

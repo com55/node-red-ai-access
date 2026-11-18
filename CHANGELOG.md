@@ -35,6 +35,8 @@ and this project adheres to
 
 ### Fixed
 
+- Fit Visual View flows to the canvas width and start at the top for readable
+  tall flows.
 - Route Visual View wires like the Node-RED editor and mark removed wires at
   their midpoint.
 
