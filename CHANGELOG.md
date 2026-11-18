@@ -40,6 +40,8 @@ and this project adheres to
 
 ### Fixed
 
+- Animate the canvas to a node selected in the Visual View Changed nodes list.
+
 - Keep a Compact rewire's original target above the newly wired node.
 - Centre Compact merge and fan-out nodes within their branches’ vertical band.
 - Keep independent Visual View Compact flows in separate vertical bands.

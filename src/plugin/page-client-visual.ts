@@ -2,6 +2,13 @@
 export function pageClientVisualGeometryScript(): string {
   return `
 
+  function visualFocusTarget(node, w, h) {
+    var k = Math.min(1.5, (w - 80) / (node.w + 30), (h - 110) / (node.h + 30));
+    return { k: k, x: w / 2 - node.px * k, y: (h - 35) / 2 - node.py * k };
+  }
+
+  function visualEaseOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
   function visualFitView(boxes, w, h, topInset) {
     if (topInset === undefined) topInset = 48;
     var minX = Math.min.apply(null, boxes.map(function (b) { return b.x - b.w / 2; })) - 35;
@@ -774,6 +781,7 @@ function pageClientVisualInteractionScript(): string {
       state = visualStates[p.id] = { layout: layout, expanded: Object.create(null), positions: Object.create(null), displacements: Object.create(null), anchors: Object.create(null), view: { x: 0, y: 0, k: 1 }, selected: '', fitted: false };
     }
     if (state.resizeObserver) state.resizeObserver.disconnect();
+    if (state.focusAnimation != null) { cancelAnimationFrame(state.focusAnimation); state.focusAnimation = null; }
     host.innerHTML = visualMarkup(p, diff);
     var graph = visualGraph(p, diff), visible;
     var svg = host.querySelector('.visual-canvas'), viewport = host.querySelector('.visual-viewport'), wrap = host.querySelector('.visual-canvas-wrap');
@@ -819,7 +827,23 @@ function pageClientVisualInteractionScript(): string {
       }).join('') || '<p class="muted">Only flow settings changed.</p>';
       transform();
     }
+    function cancelFocus() {
+      if (state.focusAnimation != null) { cancelAnimationFrame(state.focusAnimation); state.focusAnimation = null; }
+    }
+    function focusNode(n) {
+      cancelFocus();
+      var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7);
+      var start = { x: state.view.x, y: state.view.y, k: state.view.k }, target = visualFocusTarget(n, w, h), began = performance.now();
+      function step(now) {
+        var t = Math.min(1, (now - began) / 300), ease = visualEaseOutCubic(t);
+        ['x', 'y', 'k'].forEach(function (key) { state.view[key] = start[key] + (target[key] - start[key]) * ease; });
+        transform();
+        state.focusAnimation = t < 1 ? requestAnimationFrame(step) : null;
+      }
+      state.focusAnimation = requestAnimationFrame(step);
+    }
     function fit() {
+      cancelFocus();
       var boxes = visible.nodes.map(function (n) { return { x: n.px, y: n.py, w: n.w, h: n.h }; });
       boxes = boxes.concat(visualGroupBoxes(visible, graph.groups));
       if (state.layout === 'editor') graph.nodes.forEach(function (n) { if (n.moved) boxes.push({ x: n.old.x, y: n.old.y, w: n.w, h: n.h }); });
@@ -830,6 +854,7 @@ function pageClientVisualInteractionScript(): string {
       transform();
     }
     function zoom(factor, x, y) {
+      cancelFocus();
       var old = state.view.k, next = Math.max(.08, Math.min(3, old * factor));
       state.view.x = x - (x - state.view.x) * next / old;
       state.view.y = y - (y - state.view.y) * next / old;
@@ -864,11 +889,14 @@ function pageClientVisualInteractionScript(): string {
         bindDetails(details);
       }
     }
-    function selectNode(id, bringIntoView) {
+    function selectNode(id, bringIntoView, animateFocus) {
       var n = graph.byId[id];
       if (!n || !n.kind) return;
       state.selected = id; state.showAll = false; paint();
-      if (bringIntoView) {
+      if (animateFocus) {
+        focusNode(visible.byId[id] || n);
+      } else if (bringIntoView) {
+        n = visible.byId[id] || n;
         var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7), k = state.view.k;
         var x = n.px * k + state.view.x, y = n.py * k + state.view.y;
         // Leave nodes that are comfortably visible in place; centre clipped or distant nodes.
@@ -894,6 +922,7 @@ function pageClientVisualEventsScript(): string {
     var drag = null, suppressClick = false;
     svg.addEventListener('pointerdown', function (ev) {
       if (ev.button && ev.button !== 0) return;
+      cancelFocus();
       suppressClick = false;
       drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: state.view.x, vy: state.view.y };
       // Keep real clicks targeted at the node; capture after the drag threshold.
@@ -921,7 +950,7 @@ function pageClientVisualEventsScript(): string {
       var run = ev.target.closest('[data-visual-run]');
       if (run) { toggleRun(run.getAttribute('data-visual-run')); return; }
       var node = ev.target.closest('[data-visual-node]');
-      if (node) { selectNode(node.getAttribute('data-visual-node'), true); return; }
+      if (node) { selectNode(node.getAttribute('data-visual-node'), true, !!ev.target.closest('.visual-node-list')); return; }
       var layout = ev.target.closest('[data-visual-layout]');
       if (layout) {
         var selectedNode = state.selected && visible.byId[state.selected];

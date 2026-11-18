@@ -1104,6 +1104,34 @@ describe('Visual View live editor positions', () => {
   });
 });
 
+describe('Visual View focus geometry', () => {
+  const { visualFocusTarget, visualEaseOutCubic } = runInNewContext(
+    pageClientVisualGeometryScript() + '\n({ visualFocusTarget, visualEaseOutCubic });'
+  );
+
+  it('matches the mockup target at capped and constrained zoom levels', () => {
+    const node = { px: 200, py: 150, w: 120, h: 30 };
+    for (const [w, h] of [
+      [800, 400],
+      [200, 160],
+    ]) {
+      const k = Math.min(1.5, (w - 80) / (node.w + 30), (h - 110) / (node.h + 30));
+      const target = visualFocusTarget(node, w, h);
+      expect(target.k).toBe(k);
+      expect(target.x).toBe(w / 2 - node.px * k);
+      expect(target.y).toBe((h - 35) / 2 - node.py * k);
+    }
+    expect(visualFocusTarget(node, 800, 400).k).toBe(1.5);
+    expect(visualFocusTarget(node, 200, 160).k).toBeLessThan(1.5);
+  });
+
+  it('eases from zero to one with the mockup cubic curve', () => {
+    expect(visualEaseOutCubic(0)).toBe(0);
+    expect(visualEaseOutCubic(1)).toBe(1);
+    expect(visualEaseOutCubic(0.5)).toBe(1 - Math.pow(0.5, 3));
+  });
+});
+
 describe('Visual View fit geometry', () => {
   const fit = runInNewContext(pageClientVisualGeometryScript() + '\nvisualFitView;');
 
