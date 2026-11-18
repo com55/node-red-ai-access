@@ -35,6 +35,7 @@ and this project adheres to
 
 ### Fixed
 
+- Keep a Compact rewire's original target above the newly wired node.
 - Centre Compact merge and fan-out nodes within their branches’ vertical band.
 - Keep independent Visual View Compact flows in separate vertical bands.
 - Fit Visual View flows to the canvas width and start at the top for readable

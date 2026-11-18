@@ -485,7 +485,8 @@ function pageClientVisualGraphScript(): string {
       forward[e.from].push(e); parents[e.to] += 1;
     });
     component.forEach(function (n) {
-      forward[n.id].sort(function (a, b) { return a.port - b.port || liveOrder(byId[a.to], byId[b.to]); });
+      function kindOrder(e) { return e.kind === 'removed' ? 0 : e.kind === 'added' ? 2 : 1; }
+      forward[n.id].sort(function (a, b) { return kindOrder(a) - kindOrder(b) || a.port - b.port || liveOrder(byId[a.to], byId[b.to]); });
     });
     function visit(id, path) {
       var next = path.concat(id);

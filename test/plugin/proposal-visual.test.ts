@@ -980,9 +980,10 @@ describe('Visual View live editor positions', () => {
     const compact = ui.visualVisible(graph, viewState());
     expect(compact.byId.beta8_mcp_trial_inject.px).toBe(80);
     const debugRows = [
-      compact.byId.visual14_rewire_debug.py,
       compact.byId.beta8_mcp_trial_debug.py,
+      compact.byId.visual14_rewire_debug.py,
     ];
+    expect(debugRows[0]).toBeLessThan(debugRows[1]);
     expect(Math.abs(debugRows[0] - debugRows[1])).toBeGreaterThanOrEqual(85);
     expect(compact.byId.beta8_mcp_trial_inject.py).toBe((debugRows[0] + debugRows[1]) / 2);
     expect(compact.byId.beta8_mcp_trial_function.py).toBe(compact.byId.beta8_mcp_trial_inject.py);
@@ -994,6 +995,18 @@ describe('Visual View live editor positions', () => {
       compact.byId.beta8_mcp_trial_function.px
     );
     expect(centres(compact)).not.toEqual(editor);
+  });
+
+  it('puts the original rewire target above a new target with a smaller proposed y', () => {
+    const ui = browserHelpers(),
+      p = rewire();
+    p.payload.flow.nodes.find(n => n.id === 'visual14_rewire_debug')!.y = 20;
+    const graph = ui.visualGraph(p, buildDiffSections(p.payload.flow, p.baseFlow));
+    const compact = ui.visualVisible(graph, viewState());
+    const original = compact.byId.beta8_mcp_trial_debug;
+    const added = compact.byId.visual14_rewire_debug;
+    expect(original.py).toBeLessThan(added.py);
+    expect(compact.byId.beta8_mcp_trial_function.py).toBe((original.py + added.py) / 2);
   });
 });
 
