@@ -492,26 +492,68 @@ function pageClientVisualGraphScript(): string {
       if (from === to || seen[key]) return;
       seen[key] = true; edges.push({ from: from, to: to, port: e.port, kind: e.kind });
     });
-    // Stable compact ranks with a bounded cycle fallback. Branches get separate lanes.
-    var rank = Object.create(null), indegree = Object.create(null), queue = [];
-    nodes.forEach(function (n) { rank[n.id] = 0; indegree[n.id] = 0; });
-    edges.forEach(function (e) { indegree[e.to] += 1; });
-    nodes.forEach(function (n) { if (!indegree[n.id]) queue.push(n.id); });
-    for (var i = 0; i < queue.length; i += 1) edges.forEach(function (e) {
-      if (e.from !== queue[i]) return;
-      rank[e.to] = Math.max(rank[e.to], rank[e.from] + 1);
-      indegree[e.to] -= 1;
-      if (!indegree[e.to]) queue.push(e.to);
-    });
-    var widths = Object.create(null), offsets = [80], lanes = Object.create(null);
-    nodes.forEach(function (n) { widths[rank[n.id]] = Math.max(widths[rank[n.id]] || 0, n.w); });
-    for (var r = 1; r <= nodes.length; r += 1) offsets[r] = offsets[r - 1] + (widths[r - 1] || 100) / 2 + 65 + (widths[r] || 100) / 2;
-    nodes.forEach(function (n) {
-      var pos = state.positions[n.id], level = rank[n.id];
-      lanes[level] = (lanes[level] || 0) + 1;
-      n.px = state.layout === 'editor' ? n.x : pos ? pos.x : offsets[level];
-      n.py = state.layout === 'editor' ? n.y : pos ? pos.y : 110 + (lanes[level] - 1) * 85;
-    });
+    if (state.layout === 'editor') {
+      nodes.forEach(function (n) { n.px = n.x; n.py = n.y; });
+    } else {
+      var adjacent = Object.create(null), outgoing = Object.create(null), incoming = Object.create(null);
+      nodes.forEach(function (n) { adjacent[n.id] = []; outgoing[n.id] = []; incoming[n.id] = 0; });
+      edges.forEach(function (e) {
+        adjacent[e.from].push(e.to); adjacent[e.to].push(e.from);
+        outgoing[e.from].push(e.to); incoming[e.to] += 1;
+      });
+      function liveOrder(a, b) { return a.y - b.y || a.x - b.x || a.id.localeCompare(b.id); }
+      var visited = Object.create(null), components = [];
+      nodes.forEach(function (n) {
+        if (visited[n.id]) return;
+        var ids = [n.id], component = [];
+        visited[n.id] = true;
+        for (var i = 0; i < ids.length; i += 1) {
+          component.push(byId[ids[i]]);
+          adjacent[ids[i]].forEach(function (id) { if (!visited[id]) { visited[id] = true; ids.push(id); } });
+        }
+        component.sort(liveOrder);
+        components.push(component);
+      });
+      components.sort(function (a, b) {
+        var ay = Math.min.apply(null, a.map(function (n) { return n.y; })), by = Math.min.apply(null, b.map(function (n) { return n.y; }));
+        var ax = Math.min.apply(null, a.map(function (n) { return n.x; })), bx = Math.min.apply(null, b.map(function (n) { return n.x; }));
+        var aid = a.map(function (n) { return n.id; }).sort()[0], bid = b.map(function (n) { return n.id; }).sort()[0];
+        return ay - by || ax - bx || aid.localeCompare(bid);
+      });
+      var top = 110;
+      components.forEach(function (component) {
+        var rank = Object.create(null), degree = Object.create(null), queue = [], widths = Object.create(null), offsets = [80];
+        component.forEach(function (n) { rank[n.id] = 0; degree[n.id] = incoming[n.id]; if (!degree[n.id]) queue.push(n.id); });
+        for (var i = 0; i < queue.length; i += 1) outgoing[queue[i]].forEach(function (id) {
+          rank[id] = Math.max(rank[id], rank[queue[i]] + 1);
+          degree[id] -= 1; if (!degree[id]) queue.push(id);
+        });
+        // Longest source-to-sink path; edge order resolves equal-length choices.
+        var length = Object.create(null), next = Object.create(null);
+        for (var j = queue.length - 1; j >= 0; j -= 1) {
+          var id = queue[j]; length[id] = 1;
+          outgoing[id].forEach(function (target) {
+            if (length[target] && length[target] + 1 > length[id]) { length[id] = length[target] + 1; next[id] = target; }
+          });
+        }
+        var sources = component.filter(function (n) { return !incoming[n.id]; });
+        var start = sources[0] || component[0];
+        sources.forEach(function (n) { if ((length[n.id] || 0) > (length[start.id] || 0)) start = n; });
+        var spine = Object.create(null), cursor = start && start.id;
+        while (cursor && !spine[cursor]) { spine[cursor] = true; cursor = next[cursor]; }
+        component.forEach(function (n) { widths[rank[n.id]] = Math.max(widths[rank[n.id]] || 0, n.w); });
+        for (var r = 1; r <= component.length; r += 1) offsets[r] = offsets[r - 1] + (widths[r - 1] || 100) / 2 + 65 + (widths[r] || 100) / 2;
+        var lanes = Object.create(null), maxLane = 0;
+        component.forEach(function (n) {
+          var level = rank[n.id], lane = 0, pos = state.positions[n.id];
+          if (!spine[n.id]) { lanes[level] = (lanes[level] || 0) + 1; lane = lanes[level]; }
+          maxLane = Math.max(maxLane, lane);
+          n.px = pos ? pos.x : offsets[level];
+          n.py = pos ? pos.y : top + lane * 85;
+        });
+        top += (maxLane + 1) * 85;
+      });
+    }
     return { nodes: nodes, edges: edges, byId: byId };
   }
 `;

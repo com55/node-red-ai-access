@@ -763,6 +763,83 @@ describe('Visual View live editor positions', () => {
     ]);
   });
 
+  it('stacks disjoint chains in live vertical order without sharing rows', () => {
+    const ui = browserHelpers();
+    const nodes = [300, 100, 200].flatMap((y, chain) =>
+      Array.from({ length: 3 }, (_, i) => ({
+        id: `${chain}-${i}`,
+        type: 'function',
+        x: 100 + i * 150,
+        y,
+        wires: i < 2 ? [[`${chain}-${i + 1}`]] : [],
+      }))
+    );
+    const flow = { nodes };
+    const graph = ui.visualGraph({ payload: { flow } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const rows = [0, 1, 2].map(chain => [0, 1, 2].map(i => visible.byId[`${chain}-${i}`].py));
+    expect(rows).toEqual([
+      [280, 280, 280],
+      [110, 110, 110],
+      [195, 195, 195],
+    ]);
+    expect(new Set(rows.map(row => row[0])).size).toBe(3);
+  });
+
+  it('keeps the VR trigger, marker and debug together on their own row', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'vr1', name: 'VR · manual trigger', x: 100, y: 200, wires: [['vr2']] },
+      { id: 'vr2', name: 'VR · set marker', x: 250, y: 200, wires: [['vr3']] },
+      { id: 'vr3', name: 'VR · debug output', x: 400, y: 200, wires: [] },
+      { id: 'other1', name: 'Other', x: 100, y: 100, wires: [['other2']] },
+      { id: 'other2', name: 'Other debug', x: 400, y: 100, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const row = visible.byId.vr1.py;
+    expect(visible.byId.vr2.py).toBe(row);
+    expect(visible.byId.vr3.py).toBe(row);
+    expect(
+      visible.nodes
+        .filter((n: any) => n.py === row)
+        .map((n: any) => n.id)
+        .sort()
+    ).toEqual(['vr1', 'vr2', 'vr3']);
+  });
+
+  it('keeps merging HTTP branches in one band with the continuation on the spine', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      ...[100, 160, 220].flatMap((y, i) => [
+        { id: `source${i}`, x: 100, y, wires: [[`branch${i}`]] },
+        { id: `branch${i}`, x: 250, y, wires: [['builder']] },
+      ]),
+      {
+        id: 'builder',
+        name: 'HTTP · shared response builder',
+        x: 400,
+        y: 100,
+        wires: [['response']],
+      },
+      { id: 'response', name: 'HTTP · response (HTML)', x: 550, y: 100, wires: [] },
+      { id: 'next', x: 100, y: 400, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const mainRow = visible.byId.builder.py;
+    expect(visible.byId.response.py).toBe(mainRow);
+    expect(visible.byId.source0.py).toBe(mainRow);
+    for (const id of ['source1', 'branch1', 'source2', 'branch2']) {
+      expect(visible.byId[id].py).toBeGreaterThan(mainRow);
+    }
+    const componentRows = nodes.filter(n => n.id !== 'next').map(n => visible.byId[n.id].py);
+    expect(Math.max(...componentRows)).toBeLessThan(visible.byId.next.py);
+    expect(
+      visible.nodes.filter((n: any) => n.py >= mainRow && n.py <= Math.max(...componentRows))
+    ).toHaveLength(8);
+  });
+
   it('keeps compact ranks and lanes even when translation changes the editor ordering', () => {
     const ui = browserHelpers(),
       p = rewire();

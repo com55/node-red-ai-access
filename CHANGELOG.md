@@ -35,6 +35,7 @@ and this project adheres to
 
 ### Fixed
 
+- Keep independent Visual View Compact flows in separate vertical bands.
 - Fit Visual View flows to the canvas width and start at the top for readable
   tall flows.
 - Route Visual View wires like the Node-RED editor and mark removed wires at
