@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -784,6 +785,37 @@ describe('Visual View live editor positions', () => {
       compact.byId.beta8_mcp_trial_function.px
     );
     expect(centres(compact)).not.toEqual(editor);
+  });
+});
+
+describe('Node-RED link geometry', () => {
+  const geometry = runInNewContext(
+    pageClientVisualGeometryScript() + '\n({ visualLinkPath, visualLinkPathMidpoint });'
+  );
+  const reference = runInNewContext(
+    'var lineCurveScale = 0.75, node_width = 100, node_height = 30;\n' +
+      readFileSync('test/plugin/fixtures/nr4-generate-link-path.txt', 'utf8') +
+      '\ngenerateLinkPath;'
+  );
+
+  it.each([
+    [100, 120, 400, 180, 1, false],
+    [100, 120, 130, 135, 1, false],
+    [520, 190, 260, 194, 1, false],
+    [520, 190, 260, 194, 1, true],
+    [520, 190, 260, 80, 1, false],
+    [520, 80, 260, 190, 1, true],
+    [520, 190, 690, 80, 1, false],
+  ])('matches the editor path for %s,%s to %s,%s', (...args) => {
+    expect(geometry.visualLinkPath(...args)).toBe(reference(...args));
+  });
+
+  it('finds the midpoint by path length on forward and shallow loop paths', () => {
+    const forward = geometry.visualLinkPath(0, 0, 200, 0, 1, false);
+    const loop = geometry.visualLinkPath(200, 0, 0, 0, 1, false);
+    expect(geometry.visualLinkPathMidpoint(forward).x).toBeCloseTo(100, 3);
+    expect(geometry.visualLinkPathMidpoint(loop).x).toBeCloseTo(100, 3);
+    expect(geometry.visualLinkPathMidpoint(loop).y).toBeCloseTo(25, 3);
   });
 });
 
@@ -2219,6 +2251,56 @@ describe('Moved classification and review', () => {
     expect(Number(tip[2])).toBe(120);
     expect(html.includes('class="selection-glow"')).toBe(selected);
   });
+
+  it.each(['editor', 'compact'])(
+    'marks only removed wires at the path midpoint in %s layout',
+    layout => {
+      const { ui, viewport, click } = mount();
+      const source = {
+        id: 'source',
+        type: 'function',
+        name: 'Create test message [3/3]',
+        x: 450,
+        y: 190,
+        wires: [['target']],
+      };
+      const target = {
+        id: 'target',
+        type: 'debug',
+        name: 'Visual multi · main output',
+        x: 180,
+        y: 80,
+        wires: [],
+      };
+      const added = { id: 'added', type: 'debug', name: 'New debug', x: 750, y: 190, wires: [] };
+      const before = { nodes: [source, target] };
+      const after = { nodes: [{ ...source, wires: [['added']] }, target, added] };
+      const p = { id: 'p', baseFlow: before, visualLiveFlow: before, payload: { flow: after } };
+      const sections = buildDiffSections(after, before);
+      ui.mountProposalVisual(p, { ...sections, rebase: { state: 'clean' }, vsCurrent: sections });
+      click('[data-visual-layout]', layout);
+      const html = viewport.innerHTML;
+      const removed =
+        /<path d="([^"]+)" fill="none" stroke="#c65353" stroke-width="3" stroke-dasharray="7,5"\/>/.exec(
+          html
+        );
+      expect(removed).not.toBeNull();
+      expect(html).toContain('stroke="#2a9d4a" stroke-width="3"');
+      expect(html.match(/class="visual-removed-wire-mark"/g)).toHaveLength(1);
+      const mark =
+        /<g class="visual-removed-wire-mark" pointer-events="none" transform="translate\(([^,]+),([^)]+)\)"><circle r="6" fill="#fff"\/><path d="M-3 -3 L3 3 M3 -3 L-3 3" fill="none" stroke="#c65353" stroke-width="2"\/><\/g>/.exec(
+          html
+        );
+      expect(mark).not.toBeNull();
+      const midpoint = runInNewContext(
+        pageClientVisualGeometryScript() + '\nvisualLinkPathMidpoint;'
+      )(removed![1]);
+      expect(Number(mark![1])).toBe(midpoint.x);
+      expect(Number(mark![2])).toBe(midpoint.y);
+      expect(html.indexOf(mark![0])).toBeGreaterThan(html.indexOf(removed![0]));
+      expect(html.indexOf(mark![0])).toBeLessThan(html.indexOf('class="visual-node'));
+    }
+  );
 
   it('paints every ghost before every arrow, then wires and live nodes', () => {
     const { viewport, click } = mount({ wires: [['second']] }, false, true);

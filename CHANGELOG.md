@@ -35,6 +35,9 @@ and this project adheres to
 
 ### Fixed
 
+- Route Visual View wires like the Node-RED editor and mark removed wires at
+  their midpoint.
+
 - Draw Visual View Editor positions from live node coordinates and translate
   added nodes into the live frame without changing Compact layout.
 

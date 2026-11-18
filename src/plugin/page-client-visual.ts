@@ -2,6 +2,148 @@
 export function pageClientVisualGeometryScript(): string {
   return `
 
+  // Node-RED editor path-shaping constants, independent of displayed node sizes.
+  var lineCurveScale = 0.75, node_width = 100, node_height = 30;
+    function visualLinkPath(origX,origY, destX, destY, sc, hasStatus) {
+        var dy = destY-origY;
+        var dx = destX-origX;
+        var delta = Math.sqrt(dy*dy+dx*dx);
+        var scale = lineCurveScale;
+        var scaleY = 0;
+        if (dx*sc > 0) {
+            if (delta < node_width) {
+                scale = 0.75-0.75*((node_width-delta)/node_width);
+            }
+        } else {
+            scale = 0.4-0.2*(Math.max(0,(node_width-Math.min(Math.abs(dx),Math.abs(dy)))/node_width));
+        }
+        if (dx*sc > 0) {
+            var cp = [
+                [(origX+sc*(node_width*scale)), (origY+scaleY*node_height)],
+                [(destX-sc*(scale)*node_width), (destY-scaleY*node_height)]
+            ]
+            return \`M \${origX} \${origY} C \${cp[0][0]} \${cp[0][1]} \${cp[1][0]} \${cp[1][1]} \${destX} \${destY}\`
+        } else {
+            var topX, topY, bottomX, bottomY
+            var cp
+            var midX = Math.floor(destX-dx/2);
+            var midY = Math.floor(destY-dy/2);
+            if (Math.abs(dy) < 10) {
+                bottomY = Math.max(origY, destY) + (hasStatus?35:25)
+                var startCurveHeight = bottomY - origY
+                var endCurveHeight = bottomY - destY
+                cp = [
+                    [ origX + sc*15 , origY ],
+                    [ origX + sc*25 , origY + 5 ],
+                    [ origX + sc*25 , origY + startCurveHeight/2 ],
+
+                    [ origX + sc*25 , origY + startCurveHeight - 5 ],
+                    [ origX + sc*15 , origY + startCurveHeight ],
+                    [ origX , origY + startCurveHeight ],
+
+                    [ destX - sc*15, origY + startCurveHeight ],
+                    [ destX - sc*25, origY + startCurveHeight - 5 ],
+                    [ destX - sc*25, destY + endCurveHeight/2 ],
+
+                    [ destX - sc*25, destY + 5 ],
+                    [ destX - sc*15, destY ],
+                    [ destX, destY ],
+                ]
+
+                return "M "+origX+" "+origY+
+                    " C "+
+                    cp[0][0]+" "+cp[0][1]+" "+
+                    cp[1][0]+" "+cp[1][1]+" "+
+                    cp[2][0]+" "+cp[2][1]+" "+
+                    " C " +
+                    cp[3][0]+" "+cp[3][1]+" "+
+                    cp[4][0]+" "+cp[4][1]+" "+
+                    cp[5][0]+" "+cp[5][1]+" "+
+                    " h "+dx+
+                    " C "+
+                    cp[6][0]+" "+cp[6][1]+" "+
+                    cp[7][0]+" "+cp[7][1]+" "+
+                    cp[8][0]+" "+cp[8][1]+" "+
+                    " C " +
+                    cp[9][0]+" "+cp[9][1]+" "+
+                    cp[10][0]+" "+cp[10][1]+" "+
+                    cp[11][0]+" "+cp[11][1]+" "
+            } else {
+                var cp_height = node_height/2;
+                var y1 = (destY + midY)/2
+                topX = origX + sc*node_width*scale;
+                topY = dy>0?Math.min(y1 - dy/2 , origY+cp_height):Math.max(y1 - dy/2 , origY-cp_height);
+                bottomX = destX - sc*node_width*scale;
+                bottomY = dy>0?Math.max(y1, destY-cp_height):Math.min(y1, destY+cp_height);
+                var x1 = (origX+topX)/2;
+                var scy = dy>0?1:-1;
+                cp = [
+                    [x1,origY],
+                    [topX,dy>0?Math.max(origY, topY-cp_height):Math.min(origY, topY+cp_height)],
+                    [x1,dy>0?Math.min(midY, topY+cp_height):Math.max(midY, topY-cp_height)],
+                    [bottomX,dy>0?Math.max(midY, bottomY-cp_height):Math.min(midY, bottomY+cp_height)],
+                    [(destX+bottomX)/2,destY]
+                ];
+                if (cp[2][1] === topY+scy*cp_height) {
+                    if (Math.abs(dy) < cp_height*10) {
+                        cp[1][1] = topY-scy*cp_height/2;
+                        cp[3][1] = bottomY-scy*cp_height/2;
+                    }
+                    cp[2][0] = topX;
+                }
+                return "M "+origX+" "+origY+
+                    " C "+
+                    cp[0][0]+" "+cp[0][1]+" "+
+                    cp[1][0]+" "+cp[1][1]+" "+
+                    topX+" "+topY+
+                    " S "+
+                    cp[2][0]+" "+cp[2][1]+" "+
+                    midX+" "+midY+
+                " S "+
+                    cp[3][0]+" "+cp[3][1]+" "+
+                    bottomX+" "+bottomY+
+                    " S "+
+                        cp[4][0]+" "+cp[4][1]+" "+
+                        destX+" "+destY
+
+            }
+        }
+    }
+
+  // Flatten the emitted cubic segments adaptively, then walk half their length.
+  function visualLinkPathMidpoint(d) {
+    var tokens = d.match(/[MCS h]|[-+]?(?:\\d*\\.)?\\d+(?:e[-+]?\\d+)?/gi).filter(function (t) { return t !== ' '; });
+    var i = 0, current = { x: 0, y: 0 }, previous = null, points = [], total = 0;
+    function distance(a, b) { var x = b.x - a.x, y = b.y - a.y; return Math.sqrt(x*x + y*y); }
+    function add(p) { if (points.length) total += distance(points[points.length - 1], p); points.push(p); }
+    function middle(a, b) { return { x: (a.x+b.x)/2, y: (a.y+b.y)/2 }; }
+    function flatten(a, b, c, end, depth) {
+      if (depth >= 18 || distance(a,b) + distance(b,c) + distance(c,end) - distance(a,end) < 0.0001) { add(end); return; }
+      var ab = middle(a,b), bc = middle(b,c), ce = middle(c,end), abc = middle(ab,bc), bce = middle(bc,ce), m = middle(abc,bce);
+      flatten(a,ab,abc,m,depth+1); flatten(m,bce,ce,end,depth+1);
+    }
+    function point() { return { x: Number(tokens[i++]), y: Number(tokens[i++]) }; }
+    while (i < tokens.length) {
+      var command = tokens[i++], a, b, end;
+      if (command === 'M') { current = point(); add(current); previous = null; }
+      else if (command === 'h') { current = { x: current.x + Number(tokens[i++]), y: current.y }; add(current); previous = null; }
+      else {
+        a = command === 'S' ? (previous ? { x: 2*current.x-previous.x, y: 2*current.y-previous.y } : current) : point();
+        b = point(); end = point(); flatten(current, a, b, end, 0); current = end; previous = b;
+      }
+    }
+    var target = total / 2, travelled = 0;
+    for (var j = 1; j < points.length; j++) {
+      var length = distance(points[j-1], points[j]);
+      if (travelled + length >= target && length) {
+        var ratio = (target - travelled) / length;
+        return { x: points[j-1].x + (points[j].x-points[j-1].x)*ratio, y: points[j-1].y + (points[j].y-points[j-1].y)*ratio };
+      }
+      travelled += length;
+    }
+    return current;
+  }
+
   var visualMeasureContext;
   // Arial-compatible advances and kerning (2048 units/em, Liberation Sans).
   // Used only without Canvas, including Node tests; browsers measure the actual font.
@@ -530,8 +672,12 @@ function pageClientVisualInteractionScript(): string {
       }
       visible.edges.forEach(function (e) {
         var from = visible.byId[e.from], to = visible.byId[e.to], x = from.px + from.w / 2, y = from.py + (e.port - ((from.outputs || 1) - 1) / 2) * 13, end = to.px - to.w / 2;
-        var curve = Math.max(45, Math.abs(end - x) * .55);
-        html += '<path d="M' + x + ' ' + y + 'C' + (x + curve) + ' ' + y + ',' + (end - curve) + ' ' + to.py + ',' + end + ' ' + to.py + '" fill="none" stroke="' + (visualStatusColors[e.kind] || '#999') + '" stroke-width="3"' + (e.kind === 'removed' ? ' stroke-dasharray="7,5"' : '') + '/>';
+        var d = visualLinkPath(x, y, end, to.py, 1, false);
+        html += '<path d="' + d + '" fill="none" stroke="' + (visualStatusColors[e.kind] || '#999') + '" stroke-width="3"' + (e.kind === 'removed' ? ' stroke-dasharray="7,5"' : '') + '/>';
+        if (e.kind === 'removed') {
+          var midpoint = visualLinkPathMidpoint(d);
+          html += '<g class="visual-removed-wire-mark" pointer-events="none" transform="translate(' + midpoint.x + ',' + midpoint.y + ')"><circle r="6" fill="#fff"/><path d="M-3 -3 L3 3 M3 -3 L-3 3" fill="none" stroke="#c65353" stroke-width="2"/></g>';
+        }
       });
       visible.nodes.forEach(function (n) { html += n.run ? visualPill(n.id, n.name, n.px, n.py, false) : visualNodeSvg(n, state, false); });
       if (state.layout === 'compact') graph.runs.forEach(function (run) {
