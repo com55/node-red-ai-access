@@ -2288,7 +2288,7 @@ describe('Moved classification and review', () => {
       expect(html).toContain('stroke="#2a9d4a" stroke-width="3"');
       expect(html.match(/class="visual-removed-wire-mark"/g)).toHaveLength(1);
       const mark =
-        /<g class="visual-removed-wire-mark" pointer-events="none" transform="translate\(([^,]+),([^)]+)\)"><circle r="6" fill="#fff"\/><path d="M-3 -3 L3 3 M3 -3 L-3 3" fill="none" stroke="#c65353" stroke-width="2"\/><\/g>/.exec(
+        /<g class="visual-removed-wire-mark" pointer-events="none" transform="translate\(([^,]+),([^)]+)\)"><circle r="8" fill="#fff"\/><path d="M-4 -4 L4 4 M4 -4 L-4 4" fill="none" stroke="#c65353" stroke-width="2\.5"\/><\/g>/.exec(
           html
         );
       expect(mark).not.toBeNull();

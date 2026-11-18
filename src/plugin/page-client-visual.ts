@@ -676,7 +676,7 @@ function pageClientVisualInteractionScript(): string {
         html += '<path d="' + d + '" fill="none" stroke="' + (visualStatusColors[e.kind] || '#999') + '" stroke-width="3"' + (e.kind === 'removed' ? ' stroke-dasharray="7,5"' : '') + '/>';
         if (e.kind === 'removed') {
           var midpoint = visualLinkPathMidpoint(d);
-          html += '<g class="visual-removed-wire-mark" pointer-events="none" transform="translate(' + midpoint.x + ',' + midpoint.y + ')"><circle r="6" fill="#fff"/><path d="M-3 -3 L3 3 M3 -3 L-3 3" fill="none" stroke="#c65353" stroke-width="2"/></g>';
+          html += '<g class="visual-removed-wire-mark" pointer-events="none" transform="translate(' + midpoint.x + ',' + midpoint.y + ')"><circle r="8" fill="#fff"/><path d="M-4 -4 L4 4 M4 -4 L-4 4" fill="none" stroke="#c65353" stroke-width="2.5"/></g>';
         }
       });
       visible.nodes.forEach(function (n) { html += n.run ? visualPill(n.id, n.name, n.px, n.py, false) : visualNodeSvg(n, state, false); });
