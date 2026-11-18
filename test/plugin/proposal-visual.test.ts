@@ -763,6 +763,60 @@ describe('Visual View live editor positions', () => {
     ]);
   });
 
+  it('keeps a loop and the corresponding acyclic chain on one compact row', () => {
+    const ui = browserHelpers();
+    const positions = [false, true].map(loop => {
+      const nodes = [
+        { id: 'kick', name: 'Kick off', type: 'inject', x: 100, y: 100, wires: [['work']] },
+        { id: 'work', name: 'Do work', type: 'function', x: 250, y: 100, wires: [['switch']] },
+        {
+          id: 'switch',
+          name: 'Need another pass?',
+          type: 'switch',
+          x: 400,
+          y: 100,
+          wires: [['finished'], loop ? ['work'] : []],
+        },
+        { id: 'finished', name: 'Finished', type: 'debug', x: 550, y: 100, wires: [] },
+      ];
+      const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+      const visible = ui.visualVisible(graph, viewState());
+      return ['kick', 'work', 'switch', 'finished'].map(id => [
+        visible.byId[id].px,
+        visible.byId[id].py,
+      ]);
+    });
+    expect(positions[1]).toEqual(positions[0]);
+    expect(positions[1]!.map(position => position[1])).toEqual([110, 110, 110, 110]);
+    for (let i = 1; i < positions[1]!.length; i++) {
+      expect(positions[1]![i]![0]).toBeGreaterThan(positions[1]![i - 1]![0]);
+    }
+  });
+
+  it('keeps a loop on one compact row when its sink is above the chain', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'kick', name: 'Kick off', type: 'inject', x: 160, y: 200, wires: [['work']] },
+      { id: 'work', name: 'Do work', type: 'function', x: 400, y: 200, wires: [['switch']] },
+      {
+        id: 'switch',
+        name: 'Need another pass?',
+        type: 'switch',
+        x: 640,
+        y: 200,
+        wires: [['finished'], ['work']],
+      },
+      { id: 'finished', name: 'Finished', type: 'debug', x: 900, y: 140, wires: [] },
+    ];
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const positions = ['kick', 'work', 'switch', 'finished'].map(id => visible.byId[id]);
+    expect(positions.map(node => node.py)).toEqual([110, 110, 110, 110]);
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i].px).toBeGreaterThan(positions[i - 1].px);
+    }
+  });
+
   it('stacks disjoint chains in live vertical order without sharing rows', () => {
     const ui = browserHelpers();
     const nodes = [300, 100, 200].flatMap((y, chain) =>
@@ -827,17 +881,92 @@ describe('Visual View live editor positions', () => {
     ].map(n => ({ ...n, type: 'function' }));
     const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
     const visible = ui.visualVisible(graph, viewState());
-    const mainRow = visible.byId.builder.py;
-    expect(visible.byId.response.py).toBe(mainRow);
-    expect(visible.byId.source0.py).toBe(mainRow);
-    for (const id of ['source1', 'branch1', 'source2', 'branch2']) {
-      expect(visible.byId[id].py).toBeGreaterThan(mainRow);
-    }
+    const rows = [0, 1, 2].map(i => visible.byId[`source${i}`].py);
+    expect(rows).toEqual([110, 195, 280]);
+    rows.forEach((row, i) => expect(visible.byId[`branch${i}`].py).toBe(row));
+    expect(visible.byId.builder.py).toBe((rows[0]! + rows[2]!) / 2);
+    expect(visible.byId.response.py).toBe(visible.byId.builder.py);
     const componentRows = nodes.filter(n => n.id !== 'next').map(n => visible.byId[n.id].py);
     expect(Math.max(...componentRows)).toBeLessThan(visible.byId.next.py);
-    expect(
-      visible.nodes.filter((n: any) => n.py >= mainRow && n.py <= Math.max(...componentRows))
-    ).toHaveLength(8);
+    expect(visible.nodes.filter((n: any) => n.py < visible.byId.next.py)).toHaveLength(8);
+  });
+
+  it.each([2, 3, 5])('centres a %i-to-one merge and its continuation', count => {
+    const ui = browserHelpers();
+    const nodes = [
+      ...Array.from({ length: count }, (_, i) => [
+        { id: `source${i}`, x: 100, y: 100 + i * 60, wires: [[`branch${i}`]] },
+        { id: `branch${i}`, x: 250, y: 100 + i * 60, wires: [['merge']] },
+      ]).flat(),
+      { id: 'merge', x: 400, y: 100, wires: [['end']] },
+      { id: 'end', x: 550, y: 100, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const rows = Array.from({ length: count }, (_, i) => 110 + i * 85);
+    rows.forEach((y, i) => {
+      expect(visible.byId[`source${i}`].py).toBe(y);
+      expect(visible.byId[`branch${i}`].py).toBe(y);
+    });
+    expect(visible.byId.merge.py).toBe((rows[0]! + rows[count - 1]!) / 2);
+    expect(visible.byId.end.py).toBe(visible.byId.merge.py);
+  });
+
+  it('centres a fan-out and its upstream in port order', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'up', x: 100, y: 100, wires: [['split']] },
+      { id: 'split', x: 250, y: 100, wires: [['a'], ['b'], ['c']] },
+      { id: 'a', x: 400, y: 300, wires: [] },
+      { id: 'b', x: 400, y: 100, wires: [] },
+      { id: 'c', x: 400, y: 200, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    expect(['a', 'b', 'c'].map(id => visible.byId[id].py)).toEqual([110, 195, 280]);
+    expect(visible.byId.split.py).toBe(195);
+    expect(visible.byId.up.py).toBe(195);
+  });
+
+  it('centres both ends of a diamond between its sides', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'split', x: 100, y: 100, wires: [['a', 'b']] },
+      { id: 'a', x: 250, y: 100, wires: [['sink']] },
+      { id: 'b', x: 250, y: 200, wires: [['sink']] },
+      { id: 'sink', x: 400, y: 100, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    expect([visible.byId.a.py, visible.byId.b.py]).toEqual([110, 195]);
+    expect(visible.byId.split.py).toBe(152.5);
+    expect(visible.byId.sink.py).toBe(152.5);
+  });
+
+  it('keeps a nested diamond in a contiguous centred outer branch', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'outer', x: 100, y: 100, wires: [['inner', 'other']] },
+      { id: 'inner', x: 250, y: 100, wires: [['a', 'b']] },
+      { id: 'other', x: 250, y: 300, wires: [['end']] },
+      { id: 'a', x: 400, y: 100, wires: [['join']] },
+      { id: 'b', x: 400, y: 200, wires: [['join']] },
+      { id: 'join', x: 550, y: 100, wires: [['end']] },
+      { id: 'end', x: 700, y: 100, wires: [] },
+    ].map(n => ({ ...n, type: 'function' }));
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    const y = (id: string) => visible.byId[id].py;
+    expect([y('a'), y('b'), y('other')]).toEqual([110, 195, 280]);
+    expect(y('inner')).toBe((y('a') + y('b')) / 2);
+    expect(y('join')).toBe(y('inner'));
+    expect(y('outer')).toBe((y('a') + y('other')) / 2);
+    expect(y('end')).toBe(y('outer'));
+    for (const a of visible.nodes)
+      for (const b of visible.nodes) {
+        if (a.id !== b.id && a.px === b.px)
+          expect(Math.abs(a.py - b.py)).toBeGreaterThanOrEqual(85);
+      }
   });
 
   it('keeps compact ranks and lanes even when translation changes the editor ordering', () => {
@@ -850,10 +979,13 @@ describe('Visual View live editor positions', () => {
     expect(editor).toContainEqual(['visual14_rewire_debug', 920, 280]);
     const compact = ui.visualVisible(graph, viewState());
     expect(compact.byId.beta8_mcp_trial_inject.px).toBe(80);
-    expect(compact.byId.beta8_mcp_trial_inject.py).toBe(110);
-    expect(compact.byId.beta8_mcp_trial_function.py).toBe(110);
-    expect(compact.byId.visual14_rewire_debug.py).toBe(110);
-    expect(compact.byId.beta8_mcp_trial_debug.py).toBe(195);
+    const debugRows = [
+      compact.byId.visual14_rewire_debug.py,
+      compact.byId.beta8_mcp_trial_debug.py,
+    ];
+    expect(Math.abs(debugRows[0] - debugRows[1])).toBeGreaterThanOrEqual(85);
+    expect(compact.byId.beta8_mcp_trial_inject.py).toBe((debugRows[0] + debugRows[1]) / 2);
+    expect(compact.byId.beta8_mcp_trial_function.py).toBe(compact.byId.beta8_mcp_trial_inject.py);
     expect(compact.byId.visual14_rewire_debug.px).toBe(compact.byId.beta8_mcp_trial_debug.px);
     expect(compact.byId.beta8_mcp_trial_function.px).toBeGreaterThan(
       compact.byId.beta8_mcp_trial_inject.px

@@ -473,6 +473,48 @@ function pageClientVisualGraphScript(): string {
     });
     return { nodes: nodes, byId: byId, edges: edges, runs: runs };
   }
+  // Give each ordered source-to-sink path a row. A node spanning several paths
+  // sits midway between its first and last row, including nested diamonds.
+  function visualCompactLanes(component, edges, rank, queue, byId, liveOrder) {
+    var forward = Object.create(null), parents = Object.create(null), finished = Object.create(null);
+    var bounds = Object.create(null), lanes = Object.create(null), row = 0;
+    component.forEach(function (n) { forward[n.id] = []; parents[n.id] = 0; });
+    queue.forEach(function (id) { finished[id] = true; });
+    edges.forEach(function (e) {
+      if (!forward[e.from] || !forward[e.to] || !finished[e.from] || !finished[e.to] || rank[e.to] <= rank[e.from]) return;
+      forward[e.from].push(e); parents[e.to] += 1;
+    });
+    component.forEach(function (n) {
+      forward[n.id].sort(function (a, b) { return a.port - b.port || liveOrder(byId[a.to], byId[b.to]); });
+    });
+    function visit(id, path) {
+      var next = path.concat(id);
+      if (forward[id].length && row < 4096) {
+        forward[id].forEach(function (e) { visit(e.to, next); });
+      } else {
+        next.forEach(function (item) {
+          if (!bounds[item]) bounds[item] = [row, row];
+          bounds[item][1] = row;
+        });
+        row += 1;
+      }
+    }
+    component.filter(function (n) { return !parents[n.id]; }).forEach(function (n) { visit(n.id, []); });
+    // A path limit prevents exponential work in heavily cross-connected flows.
+    component.forEach(function (n) { if (!bounds[n.id]) visit(n.id, []); });
+    component.forEach(function (n) { lanes[n.id] = (bounds[n.id][0] + bounds[n.id][1]) / 2; });
+    // Cross-connected paths can have coincident centres at one rank. Pack those
+    // nodes in their existing order without allowing their boxes to overlap.
+    var levels = Object.create(null);
+    component.forEach(function (n) { (levels[rank[n.id]] = levels[rank[n.id]] || []).push(n); });
+    Object.keys(levels).forEach(function (level) {
+      levels[level].sort(function (a, b) { return lanes[a.id] - lanes[b.id] || liveOrder(a, b); });
+      levels[level].forEach(function (n, i, nodes) {
+        if (i) lanes[n.id] = Math.max(lanes[n.id], lanes[nodes[i - 1].id] + 1);
+      });
+    });
+    return lanes;
+  }
   function visualVisible(graph, state) {
     var replacement = Object.create(null), nodes = [], byId = Object.create(null);
     graph.runs.forEach(function (run) {
@@ -522,36 +564,32 @@ function pageClientVisualGraphScript(): string {
       });
       var top = 110;
       components.forEach(function (component) {
-        var rank = Object.create(null), degree = Object.create(null), queue = [], widths = Object.create(null), offsets = [80];
-        component.forEach(function (n) { rank[n.id] = 0; degree[n.id] = incoming[n.id]; if (!degree[n.id]) queue.push(n.id); });
-        for (var i = 0; i < queue.length; i += 1) outgoing[queue[i]].forEach(function (id) {
-          rank[id] = Math.max(rank[id], rank[queue[i]] + 1);
-          degree[id] -= 1; if (!degree[id]) queue.push(id);
-        });
-        // Longest source-to-sink path; edge order resolves equal-length choices.
-        var length = Object.create(null), next = Object.create(null);
-        for (var j = queue.length - 1; j >= 0; j -= 1) {
-          var id = queue[j]; length[id] = 1;
-          outgoing[id].forEach(function (target) {
-            if (length[target] && length[target] + 1 > length[id]) { length[id] = length[target] + 1; next[id] = target; }
+        var rank = Object.create(null), degree = Object.create(null), queued = Object.create(null), queue = [], widths = Object.create(null), offsets = [80];
+        function enqueue(id) { queued[id] = true; queue.push(id); }
+        component.forEach(function (n) { rank[n.id] = 0; degree[n.id] = incoming[n.id]; if (!degree[n.id]) enqueue(n.id); });
+        for (var i = 0; i < component.length; i += 1) {
+          if (i === queue.length) {
+            var remaining = component.filter(function (n) { return !queued[n.id]; });
+            remaining.sort(function (a, b) { return rank[b.id] - rank[a.id] || liveOrder(a, b); });
+            enqueue(remaining[0].id);
+          }
+          outgoing[queue[i]].forEach(function (id) {
+            if (queued[id]) return;
+            rank[id] = Math.max(rank[id], rank[queue[i]] + 1);
+            degree[id] -= 1; if (!degree[id]) enqueue(id);
           });
         }
-        var sources = component.filter(function (n) { return !incoming[n.id]; });
-        var start = sources[0] || component[0];
-        sources.forEach(function (n) { if ((length[n.id] || 0) > (length[start.id] || 0)) start = n; });
-        var spine = Object.create(null), cursor = start && start.id;
-        while (cursor && !spine[cursor]) { spine[cursor] = true; cursor = next[cursor]; }
         component.forEach(function (n) { widths[rank[n.id]] = Math.max(widths[rank[n.id]] || 0, n.w); });
         for (var r = 1; r <= component.length; r += 1) offsets[r] = offsets[r - 1] + (widths[r - 1] || 100) / 2 + 65 + (widths[r] || 100) / 2;
-        var lanes = Object.create(null), maxLane = 0;
+        var lane = visualCompactLanes(component, edges, rank, queue, byId, liveOrder);
+        var values = component.map(function (n) { return lane[n.id]; });
+        var minLane = Math.min.apply(null, values), maxLane = Math.max.apply(null, values);
         component.forEach(function (n) {
-          var level = rank[n.id], lane = 0, pos = state.positions[n.id];
-          if (!spine[n.id]) { lanes[level] = (lanes[level] || 0) + 1; lane = lanes[level]; }
-          maxLane = Math.max(maxLane, lane);
-          n.px = pos ? pos.x : offsets[level];
-          n.py = pos ? pos.y : top + lane * 85;
+          var pos = state.positions[n.id];
+          n.px = pos ? pos.x : offsets[rank[n.id]];
+          n.py = pos ? pos.y : top + (lane[n.id] - minLane) * 85;
         });
-        top += (maxLane + 1) * 85;
+        top += (maxLane - minLane + 1) * 85;
       });
     }
     return { nodes: nodes, edges: edges, byId: byId };
