@@ -912,6 +912,28 @@ describe('Visual View live editor positions', () => {
     expect(new Set(rows.map(row => row[0])).size).toBe(3);
   });
 
+  it('keeps linked link out and link in chains in separate compact bands', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'inject', type: 'inject', x: 100, y: 100, wires: [['before']] },
+      { id: 'before', type: 'function', x: 250, y: 100, wires: [['out']] },
+      { id: 'out', type: 'link out', x: 400, y: 100, wires: [], links: ['in'] },
+      { id: 'in', type: 'link in', x: 100, y: 200, wires: [['after']], links: ['out'] },
+      { id: 'after', type: 'function', x: 250, y: 200, wires: [['debug']] },
+      { id: 'debug', type: 'debug', x: 400, y: 200, wires: [] },
+    ];
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const visible = ui.visualVisible(graph, viewState());
+    for (const edges of [graph.edges, visible.edges]) {
+      expect(edges).not.toContainEqual(expect.objectContaining({ from: 'out', to: 'in' }));
+    }
+    const firstRows = ['inject', 'before', 'out'].map(id => visible.byId[id].py);
+    const secondRows = ['in', 'after', 'debug'].map(id => visible.byId[id].py);
+    expect(new Set(firstRows).size).toBe(1);
+    expect(new Set(secondRows).size).toBe(1);
+    expect(firstRows.every(row => !secondRows.includes(row))).toBe(true);
+  });
+
   it('keeps the VR trigger, marker and debug together on their own row', () => {
     const ui = browserHelpers();
     const nodes = [

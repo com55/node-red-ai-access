@@ -21,6 +21,8 @@ and this project adheres to
 
 ### Changed
 
+- Keep Visual View link in/out pairs as separate chains without drawing a
+  virtual link wire.
 - Size the Visual View canvas to 70% of the viewport height.
 - Restore pane borders, uppercase headers, and line gutters for long-text Split
   and Unified diffs while keeping aligned rows and short-property rendering.
