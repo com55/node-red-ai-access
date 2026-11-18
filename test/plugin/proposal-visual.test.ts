@@ -61,7 +61,7 @@ function browserHelpers(
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
+      visualGraph, visualVisible, visualGroupBoxes, visualGroupMarkup, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
@@ -123,6 +123,78 @@ function viewState() {
 }
 
 const centres = (visible: any) => visible.nodes.map((n: any) => [n.id, n.px, n.py]);
+
+describe('Visual View groups', () => {
+  it('draws styled boxes around members in Compact and Editor positions without a group band', () => {
+    const ui = browserHelpers();
+    const first = { id: 'a', type: 'inject', x: 100, y: 120, wires: [['b']] };
+    const second = { id: 'b', type: 'function', x: 300, y: 120, wires: [], func: 'old' };
+    const group = {
+      id: 'g',
+      type: 'group',
+      name: 'Example',
+      nodes: ['a', 'b'],
+      style: { stroke: '#123456', fill: '#abcdef', 'fill-opacity': 0, color: '#654321' },
+    };
+    const baseFlow = { nodes: [group, first, second] };
+    const flow = { nodes: [group, first, { ...second, func: 'new' }] };
+    const visualLiveFlow = {
+      nodes: [group, { ...first, x: 150, y: 220 }, { ...second, x: 350, y: 220 }],
+    };
+    const graph = ui.visualGraph(
+      { baseFlow, payload: { flow }, visualLiveFlow },
+      { modified: [{ id: 'b' }, { id: 'g' }] }
+    );
+    const compact = ui.visualVisible(graph, viewState());
+    expect(compact.nodes.map((n: any) => n.type)).not.toContain('group');
+    expect(compact.nodes.map((n: any) => n.py)).toEqual([110, 110]);
+    const box = ui.visualGroupBoxes(compact, graph.groups)[0];
+    for (const node of compact.nodes) {
+      expect(box.x - box.w / 2).toBeLessThan(node.px - node.w / 2);
+      expect(box.x + box.w / 2).toBeGreaterThan(node.px + node.w / 2);
+      expect(box.y - box.h / 2).toBeLessThan(node.py - node.h / 2);
+      expect(box.y + box.h / 2).toBeGreaterThan(node.py + node.h / 2);
+    }
+    const markup = ui.visualGroupMarkup(box);
+    expect(markup).toContain('stroke="#123456"');
+    expect(markup).toContain('fill="#abcdef"');
+    expect(markup).toContain('fill-opacity="0"');
+    expect(markup).toContain('fill="#654321"');
+    expect(markup).toContain('pointer-events="none"');
+    const editor = ui.visualVisible(graph, { ...viewState(), layout: 'editor' });
+    expect(centres(editor)).toEqual([
+      ['a', 150, 220],
+      ['b', 350, 220],
+    ]);
+    const editorBox = ui.visualGroupBoxes(editor, graph.groups)[0];
+    for (const node of editor.nodes) {
+      expect(editorBox.x - editorBox.w / 2).toBeLessThan(node.px - node.w / 2);
+      expect(editorBox.x + editorBox.w / 2).toBeGreaterThan(node.px + node.w / 2);
+      expect(editorBox.y - editorBox.h / 2).toBeLessThan(node.py - node.h / 2);
+      expect(editorBox.y + editorBox.h / 2).toBeGreaterThan(node.py + node.h / 2);
+    }
+  });
+
+  it('discovers nested and removed groups and omits groups without visible members', () => {
+    const ui = browserHelpers();
+    const node = { id: 'a', type: 'function', x: 100, y: 100, wires: [] };
+    const inner = { id: 'inner', type: 'group', nodes: ['a'] };
+    const outer = { id: 'outer', type: 'group', nodes: ['inner'] };
+    const empty = { id: 'empty', type: 'group', nodes: ['missing'] };
+    const graph = ui.visualGraph(
+      {
+        baseFlow: { nodes: [node, inner] },
+        visualLiveFlow: { nodes: [node, inner, outer, empty] },
+        payload: { flow: { nodes: [node] } },
+      },
+      { modified: [{ id: 'a' }] }
+    );
+    const boxes = ui.visualGroupBoxes(ui.visualVisible(graph, viewState()), graph.groups);
+    expect(boxes.map((box: any) => box.group.id).sort()).toEqual(['inner', 'outer']);
+    expect(ui.visualGroupMarkup(boxes[0])).toContain('rx="4" ry="4"');
+    expect(ui.visualGroupMarkup(boxes[0])).toContain('stroke="#a4a4a4"');
+  });
+});
 
 describe('Visual View palette icons and editor sizing', () => {
   function graphNode(ui: any, raw: Record<string, unknown>) {

@@ -395,7 +395,8 @@ function pageClientVisualGraphScript(): string {
       }
     });
     var ids = Object.keys(after).concat(Object.keys(before).filter(function (id) { return !after[id]; }));
-    var nodes = ids.map(function (id, index) {
+    var groups = ids.map(function (id) { return after[id] || before[id]; }).filter(function (raw) { return raw.type === 'group'; });
+    var nodes = ids.filter(function (id) { return (after[id] || before[id]).type !== 'group'; }).map(function (id, index) {
       var raw = after[id] || before[id], old = before[id], meta = visualTypeMetadata[raw.type] || {};
       var editor = visualEditorType(raw), name = visualNodeLabel(raw, editor);
       var outputs = visualPortCount(raw, meta, 'outputs');
@@ -475,7 +476,7 @@ function pageClientVisualGraphScript(): string {
         runs.push({ id: 'run-' + first, ids: ids, left: incoming[ids[0]].length > 0, right: outgoing[ids[ids.length - 1]].length > 0 });
       }
     });
-    return { nodes: nodes, byId: byId, edges: edges, runs: runs };
+    return { nodes: nodes, byId: byId, edges: edges, runs: runs, groups: groups };
   }
   // Give each ordered source-to-sink path a row. A node spanning several paths
   // sits midway between its first and last row, including nested diamonds.
@@ -604,6 +605,36 @@ function pageClientVisualGraphScript(): string {
 
 function pageClientVisualRenderScript(): string {
   return `
+  function visualGroupBoxes(visible, groups) {
+    var byId = Object.create(null);
+    groups.forEach(function (group) { byId[group.id] = group; });
+    return groups.map(function (group) {
+      var members = Object.create(null), visited = Object.create(null);
+      function collect(item) {
+        if (visited[item.id]) return;
+        visited[item.id] = true;
+        (Array.isArray(item.nodes) ? item.nodes : []).forEach(function (id) {
+          if (byId[id]) collect(byId[id]); else members[id] = true;
+        });
+      }
+      collect(group);
+      var nodes = visible.nodes.filter(function (node) {
+        return members[node.id] || (node.run && node.run.ids.some(function (id) { return members[id]; }));
+      });
+      if (!nodes.length) return null;
+      var left = Math.min.apply(null, nodes.map(function (n) { return n.px - n.w / 2; })) - 18;
+      var right = Math.max.apply(null, nodes.map(function (n) { return n.px + n.w / 2; })) + 18;
+      var top = Math.min.apply(null, nodes.map(function (n) { return n.py - n.h / 2; })) - (group.name ? 32 : 18);
+      var bottom = Math.max.apply(null, nodes.map(function (n) { return n.py + n.h / 2; })) + 18;
+      return { group: group, x: (left + right) / 2, y: (top + bottom) / 2, w: right - left, h: bottom - top };
+    }).filter(function (box) { return box; });
+  }
+  function visualGroupMarkup(box) {
+    var group = box.group, style = group.style || {}, left = box.x - box.w / 2, top = box.y - box.h / 2;
+    var opacity = style['fill-opacity'] == null ? 0.5 : style['fill-opacity'];
+    return '<g class="visual-group" pointer-events="none"><rect x="' + left + '" y="' + top + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4" stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '"/>' +
+      (group.name ? '<text x="' + (left + 8) + '" y="' + (top + 18) + '" fill="' + esc(style.color || '#555') + '">' + esc(group.name) + '</text>' : '') + '</g>';
+  }
   function visualIcon(type) {
     var paths = {
       inject: '<path d="M18 5v12H7v9h15v-7l6 11-6 12v-8H7v9h11v12l14-25z" fill="#fff"/>',
@@ -752,7 +783,7 @@ function pageClientVisualInteractionScript(): string {
     }
     function paint() {
       visible = visualVisible(graph, state);
-      var html = '';
+      var html = visualGroupBoxes(visible, graph.groups).map(visualGroupMarkup).join('');
       if (state.layout === 'editor') {
         graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
         graph.nodes.forEach(function (n) {
@@ -790,6 +821,7 @@ function pageClientVisualInteractionScript(): string {
     }
     function fit() {
       var boxes = visible.nodes.map(function (n) { return { x: n.px, y: n.py, w: n.w, h: n.h }; });
+      boxes = boxes.concat(visualGroupBoxes(visible, graph.groups));
       if (state.layout === 'editor') graph.nodes.forEach(function (n) { if (n.moved) boxes.push({ x: n.old.x, y: n.old.y, w: n.w, h: n.h }); });
       if (!boxes.length) return;
       var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7);

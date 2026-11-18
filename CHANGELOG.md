@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Added
 
+- Draw Node-RED groups around their visible members in Visual View.
+
 - Distinguish Moved nodes in proposal counts, summaries, titles, and position
   diffs.
 - Review proposals in a dedicated Visual View with real flow nodes, related-node
