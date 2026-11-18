@@ -40,6 +40,7 @@ and this project adheres to
 
 ### Fixed
 
+- Show changed groups in Visual View with selectable highlights and diffs.
 - Animate the canvas to a node selected in the Visual View Changed nodes list.
 
 - Keep a Compact rewire's original target above the newly wired node.

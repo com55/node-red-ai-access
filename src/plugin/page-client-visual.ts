@@ -402,7 +402,9 @@ function pageClientVisualGraphScript(): string {
       }
     });
     var ids = Object.keys(after).concat(Object.keys(before).filter(function (id) { return !after[id]; }));
-    var groups = ids.map(function (id) { return after[id] || before[id]; }).filter(function (raw) { return raw.type === 'group'; });
+    var groups = ids.map(function (id) { return after[id] || before[id]; }).filter(function (raw) { return raw.type === 'group'; }).map(function (raw) {
+      return Object.assign({}, raw, { kind: kinds[raw.id] || '', entry: entries[raw.id] });
+    });
     var nodes = ids.filter(function (id) { return (after[id] || before[id]).type !== 'group'; }).map(function (id, index) {
       var raw = after[id] || before[id], old = before[id], meta = visualTypeMetadata[raw.type] || {};
       var editor = visualEditorType(raw), name = visualNodeLabel(raw, editor);
@@ -452,12 +454,23 @@ function pageClientVisualGraphScript(): string {
     });
     // Show connected related nodes, omitting unrelated unchanged components.
     var related = Object.create(null), queue = nodes.filter(function (n) { return n.kind; }).map(function (n) { return n.id; });
+    var groupById = Object.create(null), visitedGroups = Object.create(null);
+    groups.forEach(function (group) { groupById[group.id] = group; });
+    function includeMembers(group) {
+      if (visitedGroups[group.id]) return;
+      visitedGroups[group.id] = true;
+      (Array.isArray(group.nodes) ? group.nodes : []).forEach(function (id) {
+        if (groupById[id]) includeMembers(groupById[id]);
+        else if (byId[id] && queue.indexOf(id) < 0) queue.push(id);
+      });
+    }
+    groups.filter(function (group) { return group.kind; }).forEach(includeMembers);
     queue.forEach(function (id) { related[id] = true; });
     for (var q = 0; q < queue.length; q += 1) edges.forEach(function (e) {
       var next = e.from === queue[q] ? e.to : e.to === queue[q] ? e.from : '';
       if (next && !related[next]) { related[next] = true; queue.push(next); }
     });
-    if (queue.length) { nodes = nodes.filter(function (n) { return related[n.id]; }); edges = edges.filter(function (e) { return related[e.from] && related[e.to]; }); }
+    if (queue.length || groups.some(function (group) { return group.kind; })) { nodes = nodes.filter(function (n) { return related[n.id]; }); edges = edges.filter(function (e) { return related[e.from] && related[e.to]; }); }
     var incoming = Object.create(null), outgoing = Object.create(null);
     nodes.forEach(function (n) { incoming[n.id] = []; outgoing[n.id] = []; });
     edges.forEach(function (e) {
@@ -483,6 +496,7 @@ function pageClientVisualGraphScript(): string {
         runs.push({ id: 'run-' + first, ids: ids, left: incoming[ids[0]].length > 0, right: outgoing[ids[ids.length - 1]].length > 0 });
       }
     });
+    groups.forEach(function (group) { byId[group.id] = group; });
     return { nodes: nodes, byId: byId, edges: edges, runs: runs, groups: groups };
   }
   // Give each ordered source-to-sink path a row. A node spanning several paths
@@ -636,11 +650,20 @@ function pageClientVisualRenderScript(): string {
       return { group: group, x: (left + right) / 2, y: (top + bottom) / 2, w: right - left, h: bottom - top };
     }).filter(function (box) { return box; });
   }
-  function visualGroupMarkup(box) {
+  function visualGroupFocusNode(box) { return box && { px: box.x, py: box.y, w: box.w, h: box.h }; }
+  function visualChangedItems(graph) {
+    return graph.nodes.filter(function (n) { return n.kind; }).concat(graph.groups.filter(function (group) { return group.kind; }).sort(function (a, b) { return (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id); }));
+  }
+  function visualGroupMarkup(box, state) {
     var group = box.group, style = group.style || {}, left = box.x - box.w / 2, top = box.y - box.h / 2;
     var opacity = style['fill-opacity'] == null ? 0.5 : style['fill-opacity'];
-    return '<g class="visual-group" pointer-events="none"><rect x="' + left + '" y="' + top + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4" stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '"/>' +
-      (group.name ? '<text x="' + (left + 8) + '" y="' + (top + 18) + '" fill="' + esc(style.color || '#555') + '">' + esc(group.name) + '</text>' : '') + '</g>';
+    var selected = state && state.selected === group.id, color = visualStatusColors[group.kind], rect = ' x="' + left + '" y="' + top + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4"';
+    var svg = '<g class="visual-group"' + (group.kind ? ' role="button" tabindex="0" data-visual-node="' + esc(group.id) + '" aria-label="' + esc(group.kind + ': ' + (group.name || group.id)) + '"' : ' pointer-events="none"') + '><rect' + rect + ' stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '" pointer-events="none"/>';
+    if (group.kind && selected) svg += '<rect class="selection-glow"' + rect + ' fill="none" stroke="' + color + '" stroke-width="' + visualOutlineStrokeWidth(true) + '" filter="url(#halo-' + group.kind + ')" pointer-events="none"/>';
+    if (group.kind) svg += '<rect class="change-outline"' + rect + ' fill="none" stroke="' + color + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '"' + (group.kind === 'removed' || group.kind === 'conflict' ? ' stroke-dasharray="6,4"' : '') + ' pointer-events="stroke"/>';
+    if (group.name) svg += '<text x="' + (left + 8) + '" y="' + (top + 18) + '" fill="' + esc(style.color || '#555') + '"' + (group.kind ? ' pointer-events="visiblePainted"' : '') + '>' + esc(group.name) + '</text>';
+    if (group.kind) svg += '<circle cx="' + (left + box.w - 2) + '" cy="' + top + '" r="8" fill="' + color + '" pointer-events="none"/>' + statusIcon(group.kind, { x: left + box.w - 8, y: top - 6, size: 12, color: '#fff' });
+    return svg + '</g>';
   }
   function visualIcon(type) {
     var paths = {
@@ -739,12 +762,12 @@ function pageClientVisualRenderScript(): string {
     var conflict = n.kind === 'conflict' || (resolved && savedValues.some(function (entry) { return entry.nodeId === n.id; }));
     var fields = ((diff.rebase && diff.rebase.conflicts) || p.rebase && p.rebase.conflicts || []).filter(function (c) { return c.nodeId === n.id; }).map(function (c) { return (c.fields || []).join(' / '); }).join(' / ');
     if (!fields && resolved) fields = savedValues.filter(function (entry) { return entry.nodeId === n.id; }).map(function (entry) { return entry.fields.map(function (v) { return v.field; }).filter(Boolean).join(' / '); }).join(' / ');
-    var eyebrow = conflict ? 'CONFLICT / ' + (fields || n.type || 'node').toUpperCase() : (n.kind || 'modified').toUpperCase() + ' NODE';
+    var eyebrow = conflict ? 'CONFLICT / ' + (fields || n.type || 'node').toUpperCase() : (n.kind || 'modified').toUpperCase() + (n.type === 'group' ? ' GROUP' : ' NODE');
     var conflictBody = renderConflictPanel(p, diff, n.id);
     var body = (diff.baseSnapshotMissing ? '<p class="muted">No starting snapshot was saved with this proposal, so changes are compared with the live flow.</p>' : '') +
       (conflict ? conflictBody : renderDiffSections(selectedDiff, getDiffMode(), 'Nothing changes.', true));
     if (!conflict && conflictBody) body = conflictBody + body;
-    if (n.kind === 'added' || n.kind === 'removed') body = '<div class="drawer-notice">This node will be ' + (n.kind === 'added' ? 'added.' : 'deleted.') + '</div>' + body;
+    if (n.kind === 'added' || n.kind === 'removed') body = '<div class="drawer-notice">This ' + (n.type === 'group' ? 'group' : 'node') + ' will be ' + (n.kind === 'added' ? 'added.' : 'deleted.') + '</div>' + body;
     if (n.kind !== 'added') body += '<div class="drawer-editor-link">' + editorJumpLink('node', n.id, 'Show in editor', 'editor-jump-small') + '</div>';
     body += '<button type="button" class="visual-show-all">Show all changes</button>';
     return visualDrawer(eyebrow, n.name, (n.type || 'node') + ' · ' + n.id, body);
@@ -791,7 +814,7 @@ function pageClientVisualInteractionScript(): string {
     }
     function paint() {
       visible = visualVisible(graph, state);
-      var html = visualGroupBoxes(visible, graph.groups).map(visualGroupMarkup).join('');
+      var html = visualGroupBoxes(visible, graph.groups).map(function (box) { return visualGroupMarkup(box, state); }).join('');
       if (state.layout === 'editor') {
         graph.nodes.forEach(function (n) { if (n.moved) html += visualNodeSvg(n, state, true); });
         graph.nodes.forEach(function (n) {
@@ -819,11 +842,11 @@ function pageClientVisualInteractionScript(): string {
       });
       viewport.innerHTML = html;
       host.querySelectorAll('[data-visual-layout]').forEach(function (btn) { btn.setAttribute('aria-pressed', btn.getAttribute('data-visual-layout') === state.layout ? 'true' : 'false'); });
-      var changed = graph.nodes.filter(function (n) { return n.kind; });
+      var changed = visualChangedItems(graph);
       host.querySelector('.visual-list-count').textContent = '(' + changed.length + ')';
       host.querySelector('.visual-node-list').innerHTML = changed.map(function (n) {
         var resolved = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).some(function (entry) { return entry.nodeId === n.id; }) && !((diff.rebase && diff.rebase.conflicts) || []).some(function (c) { return c.nodeId === n.id; });
-        return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + statusIcon(n.kind) + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' node') + '</span><span class="visual-node-arrow">↗</span></button>';
+        return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + statusIcon(n.kind) + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' ' + (n.type === 'group' ? 'group' : 'node')) + '</span><span class="visual-node-arrow">↗</span></button>';
       }).join('') || '<p class="muted">Only flow settings changed.</p>';
       transform();
     }
@@ -893,16 +916,17 @@ function pageClientVisualInteractionScript(): string {
       var n = graph.byId[id];
       if (!n || !n.kind) return;
       state.selected = id; state.showAll = false; paint();
-      if (animateFocus) {
-        focusNode(visible.byId[id] || n);
-      } else if (bringIntoView) {
-        n = visible.byId[id] || n;
+      var target = n.type === 'group' ? visualGroupFocusNode(visualGroupBoxes(visible, graph.groups).find(function (box) { return box.group.id === id; })) : visible.byId[id] || n;
+      if (animateFocus && target) {
+        focusNode(target);
+      } else if (bringIntoView && target) {
+        var focused = target;
         var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7), k = state.view.k;
-        var x = n.px * k + state.view.x, y = n.py * k + state.view.y;
+        var x = focused.px * k + state.view.x, y = focused.py * k + state.view.y;
         // Leave nodes that are comfortably visible in place; centre clipped or distant nodes.
-        if (x - n.w * k / 2 < 48 || x + n.w * k / 2 > w - 48 || y - n.h * k / 2 < 48 || y + n.h * k / 2 > h - 48) {
-          state.view.x = w / 2 - n.px * k;
-          state.view.y = h / 2 - n.py * k;
+        if (x - focused.w * k / 2 < 48 || x + focused.w * k / 2 > w - 48 || y - focused.h * k / 2 < 48 || y + focused.h * k / 2 > h - 48) {
+          state.view.x = w / 2 - focused.px * k;
+          state.view.y = h / 2 - focused.py * k;
           transform();
         }
       }

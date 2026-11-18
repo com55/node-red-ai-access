@@ -61,7 +61,7 @@ function browserHelpers(
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualGroupBoxes, visualGroupMarkup, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
+      visualGraph, visualVisible, visualGroupBoxes, visualGroupMarkup, visualGroupFocusNode, visualChangedItems, visualFocusTarget, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
@@ -161,6 +161,9 @@ describe('Visual View groups', () => {
     expect(markup).toContain('fill-opacity="0"');
     expect(markup).toContain('fill="#654321"');
     expect(markup).toContain('pointer-events="none"');
+    expect(markup).toContain('stroke="#2f6fed"');
+    expect(markup).toContain('data-visual-node="g"');
+    expect(markup).toContain('pointer-events="stroke"');
     const editor = ui.visualVisible(graph, { ...viewState(), layout: 'editor' });
     expect(centres(editor)).toEqual([
       ['a', 150, 220],
@@ -193,6 +196,78 @@ describe('Visual View groups', () => {
     expect(boxes.map((box: any) => box.group.id).sort()).toEqual(['inner', 'outer']);
     expect(ui.visualGroupMarkup(boxes[0])).toContain('rx="4" ry="4"');
     expect(ui.visualGroupMarkup(boxes[0])).toContain('stroke="#a4a4a4"');
+    expect(ui.visualGroupMarkup(boxes[0])).not.toContain('data-visual-node');
+    expect(ui.visualGroupMarkup(boxes[0])).not.toContain('<circle');
+  });
+
+  it('retains nested members of a renamed group and lists and focuses the group', () => {
+    const ui = browserHelpers();
+    const node = { id: 'a', type: 'function', x: 100, y: 100, wires: [] };
+    const inner = { id: 'inner', type: 'group', nodes: ['a'] };
+    const old = { id: 'g', type: 'group', name: 'Old', nodes: ['inner'] };
+    const renamed = { ...old, name: 'New' };
+    const entry = { id: 'g', changes: [{ key: 'name', before: 'Old', after: 'New' }] };
+    const graph = ui.visualGraph(
+      {
+        baseFlow: { nodes: [node, inner, old] },
+        payload: { flow: { nodes: [node, inner, renamed] } },
+      },
+      { modified: [entry] }
+    );
+    expect(graph.byId.g).toMatchObject({ kind: 'modified', entry, name: 'New' });
+    expect(graph.groups.find((g: any) => g.id === 'g')).toBe(graph.byId.g);
+    expect(graph.nodes.map((n: any) => n.id)).toEqual(['a']);
+    expect(graph.nodes[0].kind).toBe('');
+    const box = ui
+      .visualGroupBoxes(ui.visualVisible(graph, viewState()), graph.groups)
+      .find((b: any) => b.group.id === 'g');
+    expect(box).toBeTruthy();
+    const markup = ui.visualGroupMarkup(box, { selected: 'g' });
+    expect(markup).toContain('#2f6fed');
+    expect(markup).toContain('<circle');
+    expect(markup).toContain('data-visual-node="g"');
+    expect(markup).toContain('url(#halo-modified)');
+    expect(ui.visualChangedItems(graph).map((n: any) => n.id)).toEqual(['g']);
+    const target = ui.visualGroupFocusNode(box);
+    expect(target).toMatchObject({ px: box.x, py: box.y, w: box.w, h: box.h });
+    expect(Object.values(ui.visualFocusTarget(target, 800, 400)).every(Number.isFinite)).toBe(true);
+    expect(ui.renderVisualNodeDrawer(graph.byId.g, { id: 'p' }, { modified: [entry] })).toContain(
+      'MODIFIED GROUP'
+    );
+  });
+
+  it.each([
+    ['added', '#2a9d4a', false],
+    ['removed', '#c65353', true],
+    ['conflict', '#dc9419', true],
+    ['moved', '#7a6fb0', false],
+  ])('highlights %s groups', (kind, color, dashed) => {
+    const ui = browserHelpers();
+    const markup = ui.visualGroupMarkup({
+      group: { id: 'g', name: 'Group', kind },
+      x: 100,
+      y: 100,
+      w: 150,
+      h: 80,
+    });
+    expect(markup).toContain(color);
+    expect(markup).toContain('<circle');
+    expect(markup).toContain('data-visual-node="g"');
+    expect(markup.includes('stroke-dasharray="6,4"')).toBe(dashed);
+  });
+
+  it('appends changed groups in name and id order after changed nodes', () => {
+    const ui = browserHelpers();
+    const nodes = [
+      { id: 'z', type: 'group', name: 'Beta', nodes: ['n'] },
+      { id: 'b', type: 'group', name: 'Alpha', nodes: ['n'] },
+      { id: 'a', type: 'group', name: 'Alpha', nodes: ['n'] },
+      { id: 'n', type: 'function', x: 100, y: 100, wires: [] },
+    ];
+    const graph = ui.visualGraph({ payload: { flow: { nodes } } }, { added: nodes });
+    const items = ui.visualChangedItems(graph);
+    expect(items.map((n: any) => n.id)).toEqual(['n', 'a', 'b', 'z']);
+    expect(items.length).toBe(4);
   });
 });
 
