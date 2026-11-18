@@ -19,6 +19,7 @@ and this project adheres to
 
 ### Changed
 
+- Size the Visual View canvas to 70% of the viewport height.
 - Restore pane borders, uppercase headers, and line gutters for long-text Split
   and Unified diffs while keeping aligned rows and short-property rendering.
 - Rename conflict choices to “Keep live” and “Use AI proposed”, with “✓ Keeping

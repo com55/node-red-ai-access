@@ -792,7 +792,7 @@ function pageClientVisualInteractionScript(): string {
       var boxes = visible.nodes.map(function (n) { return { x: n.px, y: n.py, w: n.w, h: n.h }; });
       if (state.layout === 'editor') graph.nodes.forEach(function (n) { if (n.moved) boxes.push({ x: n.old.x, y: n.old.y, w: n.w, h: n.h }); });
       if (!boxes.length) return;
-      var w = wrap.clientWidth || 600, h = wrap.clientHeight || 350;
+      var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7);
       state.view = visualFitView(boxes, w, h);
       state.fitted = true;
       transform();
@@ -837,7 +837,7 @@ function pageClientVisualInteractionScript(): string {
       if (!n || !n.kind) return;
       state.selected = id; state.showAll = false; paint();
       if (bringIntoView) {
-        var w = wrap.clientWidth || 600, h = wrap.clientHeight || 350, k = state.view.k;
+        var w = wrap.clientWidth || 600, h = wrap.clientHeight || Math.round((typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 500) * 0.7), k = state.view.k;
         var x = n.px * k + state.view.x, y = n.py * k + state.view.y;
         // Leave nodes that are comfortably visible in place; centre clipped or distant nodes.
         if (x - n.w * k / 2 < 48 || x + n.w * k / 2 > w - 48 || y - n.h * k / 2 < 48 || y + n.h * k / 2 > h - 48) {

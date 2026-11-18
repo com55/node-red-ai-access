@@ -1360,7 +1360,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
 .visual-workhead { height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 17px; border-bottom: 1px solid #dce3e8; font-size: 13px; }
 .visual-workhead strong span { font-weight: 400; margin-left: 10px; }
 .visual-workhead > span { color: #6b7986; font-size: 12px; }
-.visual-body { display: flex; height: 350px; }
+.visual-body { display: flex; height: 70vh; }
 .visual-canvas-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; }
 .visual-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
 .visual-canvas:active { cursor: grabbing; }
@@ -1450,7 +1450,7 @@ main { max-width: 1600px; padding: 25px 30px 50px; }
   #proposals-filters .filter-chip { padding: 7px 10px; font-size: 12px; }
   .visual-summary { flex-direction: column; align-items: flex-start; }
   .visual-body { height: auto; flex-direction: column; }
-  .visual-canvas-wrap { height: 350px; flex: none; }
+  .visual-canvas-wrap { height: 70vh; flex: none; }
   .visual-changed-list { border-left: 0; border-top: 1px solid var(--line); width: 100%; max-height: 280px; }
   .visual-node-list { max-height: 215px; }
   .proposal-card-head .proposal-heading { font-size: 21px; }
