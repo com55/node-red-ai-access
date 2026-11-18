@@ -38,8 +38,8 @@ and this project adheres to
 - Keep a Compact rewire's original target above the newly wired node.
 - Centre Compact merge and fan-out nodes within their branches’ vertical band.
 - Keep independent Visual View Compact flows in separate vertical bands.
-- Fit Visual View flows to the canvas width and start at the top for readable
-  tall flows.
+- Fit Visual View flows to the canvas width, centering vertically when they fit
+  and top-aligning below the layout toggle when they do not.
 - Route Visual View wires like the Node-RED editor and mark removed wires at
   their midpoint.
 

@@ -1022,23 +1022,32 @@ describe('Visual View fit geometry', () => {
       h = 420;
     const minX = 15,
       maxX = 885,
-      minY = 25,
-      maxY = 1665;
+      minY = 72,
+      maxY = 1608;
     const view = fit(boxes, w, h);
     expect(view.k).toBeCloseTo(Math.min(1.2, (w - 24) / (maxX - minX)));
     expect(view.k).toBeGreaterThan(
       Math.min(1.2, (w - 24) / (maxX - minX), (h - 65) / (maxY - minY))
     );
     expect(view.x).toBeCloseTo(w / 2 - ((minX + maxX) / 2) * view.k);
-    expect(view.y + minY * view.k).toBeCloseTo(0);
+    expect(view.y + minY * view.k).toBeCloseTo(48);
     expect(view.y).not.toBeCloseTo((h - 30) / 2 - ((minY + maxY) / 2) * view.k);
   });
 
-  it('caps zoom for a narrow flow', () => {
+  it('centres a short narrow flow and caps zoom', () => {
     const view = fit([{ x: 200, y: 100, w: 100, h: 40 }], 900, 420);
     expect(view.k).toBe(1.2);
     expect(view.x).toBeCloseTo(900 / 2 - 200 * 1.2);
-    expect(view.y).toBeCloseTo(-25 * 1.2);
+    expect(view.y + 100 * view.k).toBeCloseTo(420 / 2);
+  });
+
+  it('clamps a nearly fitting flow below the toggle', () => {
+    const view = fit([{ x: 200, y: 200, w: 100, h: 274 }], 900, 420);
+    const minY = 200 - 274 / 2 - 8;
+    expect((420 - (274 + 16) * view.k) / 2).toBeLessThan(48);
+    expect(view.y + minY * view.k).toBeCloseTo(48);
+    const custom = fit([{ x: 200, y: 200, w: 100, h: 274 }], 900, 420, 60);
+    expect(custom.y + minY * custom.k).toBeCloseTo(60);
   });
 
   it('fits a tall flow to mobile width and still caps zoom for narrow content', () => {
@@ -1046,7 +1055,7 @@ describe('Visual View fit geometry', () => {
     const view = fit(boxes, 350, 600);
     expect(view.k).toBeCloseTo((350 - 24) / 370);
     expect(view.x).toBeCloseTo(350 / 2 - 150 * view.k);
-    expect(view.y + (100 - 750 - 55) * view.k).toBeCloseTo(0);
+    expect(view.y + (100 - 750 - 8) * view.k).toBeCloseTo(48);
     expect(fit([{ x: 0, y: 0, w: 100, h: 1500 }], 350, 600).k).toBe(1.2);
   });
 });

@@ -2,12 +2,16 @@
 export function pageClientVisualGeometryScript(): string {
   return `
 
-  function visualFitView(boxes, w, h) {
+  function visualFitView(boxes, w, h, topInset) {
+    if (topInset === undefined) topInset = 48;
     var minX = Math.min.apply(null, boxes.map(function (b) { return b.x - b.w / 2; })) - 35;
     var maxX = Math.max.apply(null, boxes.map(function (b) { return b.x + b.w / 2; })) + 35;
-    var minY = Math.min.apply(null, boxes.map(function (b) { return b.y - b.h / 2; })) - 55;
+    var minY = Math.min.apply(null, boxes.map(function (b) { return b.y - b.h / 2; })) - 8;
+    var maxY = Math.max.apply(null, boxes.map(function (b) { return b.y + b.h / 2; })) + 8;
     var k = Math.min(1.2, (w - 24) / (maxX - minX));
-    return { k: k, x: w / 2 - (minX + maxX) / 2 * k, y: -minY * k };
+    var scaledHeight = (maxY - minY) * k;
+    var top = scaledHeight + topInset + 20 <= h ? Math.max(topInset, (h - scaledHeight) / 2) : topInset;
+    return { k: k, x: w / 2 - (minX + maxX) / 2 * k, y: top - minY * k };
   }
 
   // Node-RED editor path-shaping constants, independent of displayed node sizes.
