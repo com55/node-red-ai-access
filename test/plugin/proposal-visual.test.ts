@@ -1903,7 +1903,7 @@ describe('proposal summaries and deploy controls', () => {
         expect(card).toContain('class="status-pill ' + status + '">' + status + '</span>');
         expect(card).toContain('class="proposal-visual-host"');
         const visual = ui.visualMarkup(p, diff);
-        for (const part of ['visual-canvas', 'visual-legend', 'Changed nodes', 'data-diff-for="p"'])
+        for (const part of ['visual-canvas', 'visual-legend', 'Changed items', 'data-diff-for="p"'])
           expect(visual).toContain(part);
         const graph = ui.visualGraph(p, diff);
         const drawer = ui.renderVisualNodeDrawer(

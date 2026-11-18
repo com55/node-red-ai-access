@@ -21,6 +21,8 @@ and this project adheres to
 
 ### Changed
 
+- Rename the Visual View list heading to “Changed items (n)”; the count includes
+  groups.
 - Keep Visual View link in/out pairs as separate chains without drawing a
   virtual link wire.
 - Size the Visual View canvas to 70% of the viewport height.
@@ -41,7 +43,7 @@ and this project adheres to
 ### Fixed
 
 - Show changed groups in Visual View with selectable highlights and diffs.
-- Animate the canvas to a node selected in the Visual View Changed nodes list.
+- Animate the canvas to a node selected in the Visual View Changed items list.
 
 - Keep a Compact rewire's original target above the newly wired node.
 - Centre Compact merge and fan-out nodes within their branches’ vertical band.
@@ -69,7 +71,7 @@ and this project adheres to
 - Match proposal list chrome and empty states to the approved design, preserve
   custom titles, and use the OAuth consent logo in the dashboard header.
 
-- Bring selected Changed nodes into view and align each row's type and name.
+- Bring selected Changed items into view and align each row's type and name.
 - Use registered Node-RED palette icons and editor text sizing on the Visual
   View canvas, preserving node centres in Editor positions mode.
 - Show cached proposal lists immediately, coalesce review loads, and refresh
