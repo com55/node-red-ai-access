@@ -21,6 +21,9 @@ and this project adheres to
 
 ### Changed
 
+- Use the same toggle switch as “Enable MCP OAuth” for the editor sidebar’s
+  “Enable AI Access features” and local-only allow-without controls.
+
 - Keep dashed amber outlines on conflict items and place Visual View badges at
   the Node-RED editor changed-node indicator's top-right inset.
 - Show badges for every applicable Visual View change kind, including modified

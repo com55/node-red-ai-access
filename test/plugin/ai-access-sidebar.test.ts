@@ -222,6 +222,7 @@ function createFakeJQuery() {
       const byId = registry.get(input.replace(/^#/, ''));
       return wrap(byId ? [byId] : []);
     }
+    if (input && typeof input === 'object' && 'handlers' in input) return wrap([input as El]);
     return wrap([]);
   }
 
@@ -368,18 +369,19 @@ describe('ai-access-sidebar.js served tab', () => {
     ]) {
       expect(js, moved).not.toContain(`id="${moved}"`);
     }
-    expect(js).toContain('id="ai-access-enabled"');
-    expect(js).toContain(
-      'id="ai-access-oauth-enabled" type="checkbox" role="switch" aria-checked="false"'
-    );
+    for (const id of ['ai-access-enabled', 'ai-access-allow-without', 'ai-access-oauth-enabled']) {
+      expect(js).toContain(
+        `id="${id}" class="ai-access-switch" type="checkbox" role="switch" aria-checked="false"`
+      );
+    }
     expect(js).toContain('for="ai-access-oauth-enabled"');
     expect(js).toContain('id="ai-access-oauth-route-warning"');
     expect(js).toContain('id="ai-access-open-mcp"');
   });
 
-  it('uses a theme link color for the checked OAuth switch track', () => {
+  it('uses a theme link color for the checked shared switch track', () => {
     const js = renderEditorSidebarJs();
-    const checkedStyle = /#ai-access-oauth-enabled:checked \{([^}]+)\}/.exec(js)?.[1];
+    const checkedStyle = /\.ai-access-switch:checked \{([^}]+)\}/.exec(js)?.[1];
     expect(checkedStyle).toBeDefined();
     expect(checkedStyle).toContain('background: var(--red-ui-text-color-link, #4682b4)');
     expect(checkedStyle).toContain('border-color: var(--red-ui-text-color-link, #4682b4)');
@@ -516,10 +518,13 @@ describe('ai-access-sidebar.js served tab', () => {
         expect($('#ai-access-oauth-enabled').elements[0]!.attrs['aria-checked']).toBe('true');
         const click = vi.fn();
         Object.assign($('#ai-access-oauth-enabled').elements[0]!, { click });
-        $('#ai-access-oauth-enabled').elements[0]!.handlers.keydown![0]!({
-          key: 'Enter',
-          preventDefault: vi.fn(),
-        });
+        $('#ai-access-oauth-enabled').elements[0]!.handlers.keydown![0]!.call(
+          $('#ai-access-oauth-enabled').elements[0],
+          {
+            key: 'Enter',
+            preventDefault: vi.fn(),
+          }
+        );
         expect(click).not.toHaveBeenCalled();
         expect($('#ai-access-oauth-lock').elements[0]!.props.visible).toBe(true);
         expect($('#ai-access-readonly-note').elements[0]!.props.visible).toBe(!canEdit);
@@ -549,6 +554,50 @@ describe('ai-access-sidebar.js served tab', () => {
       }
     }
   );
+
+  it('syncs switch state on load and change and supports Enter on every switch', async () => {
+    vi.useFakeTimers();
+    try {
+      const data = {
+        canEdit: true,
+        adminAuthEnabled: false,
+        settings: { enabled: false, allowWithoutAdminAuth: true, oauth: { enabled: false } },
+        sources: {},
+      };
+      const fetcher = vi.fn(async (url: string) => ({
+        ok: true,
+        text: async () => JSON.stringify(url.endsWith('/oauth/status') ? { details: [] } : data),
+      }));
+      const { $, load } = runSidebar(fetcher);
+      load();
+      await vi.advanceTimersByTimeAsync(0);
+      expect($('#ai-access-adminauth-row').elements[0]!.props.visible).toBe(false);
+      expect($('#ai-access-local-row').elements[0]!.props.visible).toBe(true);
+      for (const [id, initial] of [
+        ['ai-access-enabled', false],
+        ['ai-access-allow-without', true],
+        ['ai-access-oauth-enabled', false],
+      ] as const) {
+        const control = $(`#${id}`).elements[0]!;
+        expect(control.attrs['aria-checked']).toBe(String(initial));
+        control.props.checked = !initial;
+        control.handlers.change![1]!.call(control);
+        expect(control.attrs['aria-checked']).toBe(String(!initial));
+        const click = vi.fn();
+        Object.assign(control, { click });
+        const preventDefault = vi.fn();
+        control.handlers.keydown![0]!.call(control, { key: 'Enter', preventDefault });
+        expect(preventDefault).toHaveBeenCalledOnce();
+        expect(click).toHaveBeenCalledOnce();
+        control.handlers.keydown![0]!.call(control, { key: 'Enter', repeat: true, preventDefault });
+        control.props.disabled = true;
+        control.handlers.keydown![0]!.call(control, { key: 'Enter', preventDefault });
+        expect(click).toHaveBeenCalledOnce();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('shows escaped OAuth route conflicts with reveal links and confirms an insecure Public URL', async () => {
     vi.useFakeTimers();
@@ -628,13 +677,13 @@ describe('ai-access-sidebar.js served tab', () => {
       const oauthSwitch = $('#ai-access-oauth-enabled').elements[0]!;
       const click = vi.fn(() => {
         oauthSwitch.props.checked = !oauthSwitch.props.checked;
-        oauthSwitch.handlers.change!.forEach(handler => handler());
+        oauthSwitch.handlers.change!.forEach(handler => handler.call(oauthSwitch));
       });
       Object.assign(oauthSwitch, { click });
       const preventDefault = vi.fn();
-      oauthSwitch.handlers.keydown![0]!({ key: ' ', preventDefault });
+      oauthSwitch.handlers.keydown![0]!.call(oauthSwitch, { key: ' ', preventDefault });
       expect(preventDefault).not.toHaveBeenCalled();
-      oauthSwitch.handlers.keydown![0]!({ key: 'Enter', preventDefault });
+      oauthSwitch.handlers.keydown![0]!.call(oauthSwitch, { key: 'Enter', preventDefault });
       expect(click).toHaveBeenCalledOnce();
       expect(oauthSwitch.attrs['aria-checked']).toBe('true');
       await vi.advanceTimersByTimeAsync(0);

@@ -20,7 +20,7 @@ function editorSidebarStyles(): string {
   box-sizing: border-box;
 }
 
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled {
+#red-ui-sidebar-ai-access .ai-access-switch {
   appearance: none;
   box-sizing: border-box;
   display: inline-block;
@@ -34,7 +34,7 @@ function editorSidebarStyles(): string {
   cursor: pointer;
   vertical-align: middle;
 }
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled::before {
+#red-ui-sidebar-ai-access .ai-access-switch::before {
   content: '';
   position: absolute;
   top: 0.15rem;
@@ -44,10 +44,10 @@ function editorSidebarStyles(): string {
   border-radius: 50%;
   background: var(--red-ui-primary-background, #fff);
 }
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled:checked { background: var(--red-ui-text-color-link, #4682b4); border-color: var(--red-ui-text-color-link, #4682b4); }
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled:checked::before { left: calc(100% - 1.05rem); }
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled:focus-visible { outline: 2px solid var(--red-ui-form-input-border-selected-color, #4682b4); outline-offset: 3px; }
-#red-ui-sidebar-ai-access #ai-access-oauth-enabled:disabled { opacity: 0.5; cursor: not-allowed; }
+#red-ui-sidebar-ai-access .ai-access-switch:checked { background: var(--red-ui-text-color-link, #4682b4); border-color: var(--red-ui-text-color-link, #4682b4); }
+#red-ui-sidebar-ai-access .ai-access-switch:checked::before { left: calc(100% - 1.05rem); }
+#red-ui-sidebar-ai-access .ai-access-switch:focus-visible { outline: 2px solid var(--red-ui-form-input-border-selected-color, #4682b4); outline-offset: 3px; }
+#red-ui-sidebar-ai-access .ai-access-switch:disabled { opacity: 0.5; cursor: not-allowed; }
 
 #red-ui-sidebar-ai-access .red-ui-sidebar-header {
   text-align: left;
@@ -349,8 +349,10 @@ function editorSidebarScriptPartA(): string {
       var readonly = !CAN_EDIT;
 
       $('#ai-access-enabled').prop('checked', s.enabled !== false)
+        .attr('aria-checked', String(s.enabled !== false))
         .prop('disabled', readonly || sources.enabled === 'settings.js');
       $('#ai-access-allow-without').prop('checked', !!s.allowWithoutAdminAuth)
+        .attr('aria-checked', String(!!s.allowWithoutAdminAuth))
         .prop('disabled', readonly || sources.allowWithoutAdminAuth === 'settings.js');
       $('#ai-access-adminauth-row').toggle(ADMIN_AUTH);
       $('#ai-access-local-row').toggle(!ADMIN_AUTH);
@@ -544,7 +546,7 @@ function editorSidebarScriptPartB(): string {
 
       // (1) Enable AI Access features (with adminAuth) / local-only opt-in (without).
       row = $('<div class="red-ui-settings-row" id="ai-access-adminauth-row"></div>').appendTo(body);
-      $('<input id="ai-access-enabled" type="checkbox">').appendTo(row);
+      $('<input id="ai-access-enabled" class="ai-access-switch" type="checkbox" role="switch" aria-checked="false">').appendTo(row);
       $('<label for="ai-access-enabled"></label>')
         .html(
           '<p>Enable AI Access features</p>When off, access tokens, proposals, and AI tools are disabled.'
@@ -556,7 +558,7 @@ function editorSidebarScriptPartB(): string {
       row = $(
         '<div class="red-ui-settings-row" id="ai-access-local-row" style="display:none;"></div>'
       ).appendTo(body);
-      $('<input id="ai-access-allow-without" type="checkbox">').appendTo(row);
+      $('<input id="ai-access-allow-without" class="ai-access-switch" type="checkbox" role="switch" aria-checked="false">').appendTo(row);
       $('<label for="ai-access-allow-without"></label>')
         .html(
           '<p>Enable AI Access features without adminAuth (local-only)</p>Not for production. Anyone who can reach the editor admin port can use AI features.'
@@ -567,7 +569,7 @@ function editorSidebarScriptPartB(): string {
 
       // (2) Enable MCP OAuth.
       row = $('<div class="red-ui-settings-row"></div>').appendTo(body);
-      $('<input id="ai-access-oauth-enabled" type="checkbox" role="switch" aria-checked="false">').appendTo(row);
+      $('<input id="ai-access-oauth-enabled" class="ai-access-switch" type="checkbox" role="switch" aria-checked="false">').appendTo(row);
       $('<label for="ai-access-oauth-enabled"></label>')
         .html('<p>Enable MCP OAuth</p>MCP clients (ChatGPT, Claude, …) sign in at &lt;Public URL&gt;/mcp.')
         .appendTo(row);
@@ -583,12 +585,12 @@ function editorSidebarScriptPartB(): string {
         saveSettings
       );
 
-      $('#ai-access-oauth-enabled').on('change', function () {
-        $('#ai-access-oauth-enabled').attr('aria-checked', String($('#ai-access-oauth-enabled').is(':checked')));
+      content.find('#ai-access-enabled, #ai-access-allow-without, #ai-access-oauth-enabled').on('change', function () {
+        $(this).attr('aria-checked', String($(this).is(':checked')));
       }).on('keydown', function (ev) {
         if (ev.key !== 'Enter') return;
         ev.preventDefault();
-        var control = $('#ai-access-oauth-enabled');
+        var control = $(this);
         if (!control.prop('disabled') && !ev.repeat) control[0].click();
       });
 
