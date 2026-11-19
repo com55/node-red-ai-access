@@ -21,6 +21,10 @@ and this project adheres to
 
 ### Changed
 
+- Show badges for every applicable Visual View change kind, including modified
+  and moved together, with a kind-coloured glow only on the selected item and no
+  highlight outline.
+
 - Rename the Visual View list heading to “Changed items (n)”; the count includes
   groups.
 - Keep Visual View link in/out pairs as separate chains without drawing a

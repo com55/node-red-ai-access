@@ -246,13 +246,11 @@ export function pageClientVisualGeometryScript(): string {
   function visualPointerMoved(start, point) {
     return Math.pow(point.x - start.x, 2) + Math.pow(point.y - start.y, 2) > 16;
   }
-  var visualOutlineOffset = 4;
-  function visualOutlineStrokeWidth(selected) { return selected ? 3.75 : 2; }
-  function visualMoveOutlinePad(selected) { return visualOutlineOffset + visualOutlineStrokeWidth(selected) / 2; }
+  function visualMoveOutlinePad(selected) { return selected ? 5.875 : 5; }
   function visualMoveGeometry(old, next, width, height, pad) {
     pad = pad == null ? visualMoveOutlinePad(false) : pad;
     var dx = next.x - old.x, dy = next.y - old.y;
-    // The ghost body must clear the destination outline before an arrow can fit.
+    // The ghost body must clear the destination glow before an arrow can fit.
     if (Math.abs(dx) <= width + pad && Math.abs(dy) <= height + pad) return null;
     var distance = Math.sqrt(dx * dx + dy * dy);
     var ghostScale = Math.min(dx ? width / 2 / Math.abs(dx) : Infinity, dy ? height / 2 / Math.abs(dy) : Infinity);
@@ -661,15 +659,38 @@ function pageClientVisualRenderScript(): string {
   function visualChangedItems(graph) {
     return graph.nodes.filter(function (n) { return n.kind; }).concat(graph.groups.filter(function (group) { return group.kind; }).sort(function (a, b) { return (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id); }));
   }
+  function visualItemKinds(n) {
+    var kinds = [];
+    if (n.kind === 'added' || n.kind === 'removed') kinds.push(n.kind);
+    if (n.kind === 'modified' || (n.entry && (n.entry.changes || []).some(function (change) { return change.key !== 'x' && change.key !== 'y'; }))) kinds.push('modified');
+    if (n.moved || n.kind === 'moved') kinds.push('moved');
+    if (n.kind === 'conflict') kinds.push('conflict');
+    return kinds.length ? kinds : n.kind ? [n.kind] : [];
+  }
+  function visualListBadges(n) {
+    return '<span class="visual-kind-badges">' + visualItemKinds(n).map(function (kind) {
+      return '<i title="' + esc(kind) + '" aria-label="' + esc(kind) + '" style="background:' + visualStatusColors[kind] + '">' + statusIcon(kind) + '</i>';
+    }).join('') + '</span>';
+  }
+  function visualCanvasBadges(n, right, y) {
+    var kinds = visualItemKinds(n);
+    return kinds.map(function (kind, index) {
+      var x = right - (kinds.length - index - 1) * 18;
+      return '<g pointer-events="none"><title>' + esc(kind) + '</title><circle cx="' + x + '" cy="' + y + '" r="8" fill="' + visualStatusColors[kind] + '"/>' + statusIcon(kind, { x: x - 6, y: y - 6, size: 12, color: '#fff' }) + '</g>';
+    }).join('');
+  }
+  function visualGlow(rect, kind) {
+    return '<rect class="selection-glow"' + rect + ' fill="#fff" filter="url(#halo-' + kind + '-selected)" pointer-events="none"/>';
+  }
   function visualGroupMarkup(box, state) {
     var group = box.group, style = group.style || {}, left = box.x - box.w / 2, top = box.y - box.h / 2;
     var opacity = style['fill-opacity'] == null ? 0.5 : style['fill-opacity'];
-    var selected = state && state.selected === group.id, color = visualStatusColors[group.kind], rect = ' x="' + left + '" y="' + top + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4"';
-    var svg = '<g class="visual-group"' + (group.kind ? ' role="button" tabindex="0" data-visual-node="' + esc(group.id) + '" aria-label="' + esc(group.kind + ': ' + (group.name || group.id)) + '"' : ' pointer-events="none"') + '><rect' + rect + ' stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '" pointer-events="none"/>';
-    if (group.kind && selected) svg += '<rect class="selection-glow"' + rect + ' fill="none" stroke="' + color + '" stroke-width="' + visualOutlineStrokeWidth(true) + '" filter="url(#halo-' + group.kind + ')" pointer-events="none"/>';
-    if (group.kind) svg += '<rect class="change-outline"' + rect + ' fill="none" stroke="' + color + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '"' + (group.kind === 'removed' || group.kind === 'conflict' ? ' stroke-dasharray="6,4"' : '') + ' pointer-events="stroke"/>';
+    var selected = state && state.selected === group.id, rect = ' x="' + left + '" y="' + top + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4"';
+    var svg = '<g class="visual-group"' + (group.kind ? ' role="button" tabindex="0" data-visual-node="' + esc(group.id) + '" aria-label="' + esc(visualItemKinds(group).join(', ') + ': ' + (group.name || group.id)) + '"' : ' pointer-events="none"') + '>';
+    if (group.kind && selected) svg += visualGlow(rect, group.kind);
+    svg += '<rect' + rect + ' stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '" pointer-events="' + (group.kind ? 'stroke' : 'none') + '"/>';
     if (group.name) svg += '<text x="' + (left + 8) + '" y="' + (top + 18) + '" fill="' + esc(style.color || '#555') + '"' + (group.kind ? ' pointer-events="visiblePainted"' : '') + '>' + esc(group.name) + '</text>';
-    if (group.kind) svg += '<circle cx="' + (left + box.w - 2) + '" cy="' + top + '" r="8" fill="' + color + '" pointer-events="none"/>' + statusIcon(group.kind, { x: left + box.w - 8, y: top - 6, size: 12, color: '#fff' });
+    if (group.kind) svg += visualCanvasBadges(group, left + box.w - 2, top);
     return svg + '</g>';
   }
   function visualIcon(type) {
@@ -724,14 +745,13 @@ function pageClientVisualRenderScript(): string {
     var ghost = !!oldPosition, context = !n.kind, right = n.align === 'right' || !n.align && n.type === 'debug', width = n.w, height = n.h;
     var color = ghost || !context ? n.color : '#d6dadd';
     var x = ghost ? Number(n.old.x) : n.px, y = ghost ? Number(n.old.y) : n.py;
-    var outline = n.kind ? visualStatusColors[n.kind] : '#999';
     var interactive = !ghost && n.kind;
     var selected = state.selected === n.id;
     var ghostStyle = ghost ? ' stroke-dasharray="8,3" fill-opacity=".6"' : '';
     var svg = '<g class="visual-node' + (context ? ' context-node' : ' changed') + (ghost ? ' move-ghost' : '') + '"' +
-      (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(n.kind + ': ' + n.name) + '"' : '') +
+      (ghost ? ' pointer-events="none"' : interactive ? ' role="button" tabindex="0" data-visual-node="' + esc(n.id) + '" aria-label="' + esc(visualItemKinds(n).join(', ') + ': ' + n.name) + '"' : '') +
       ' transform="translate(' + (x - width / 2) + ',' + (y - height / 2) + ')">';
-    if (interactive && selected) svg += '<rect class="selection-glow" x="' + -visualOutlineOffset + '" y="' + -visualOutlineOffset + '" width="' + (width + 2 * visualOutlineOffset) + '" height="' + (height + 2 * visualOutlineOffset) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '" filter="url(#halo-' + n.kind + ')" pointer-events="none"/>';
+    if (interactive && selected) svg += visualGlow(' x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7"', n.kind);
     if (n.type === 'inject' || n.type === 'debug') svg += '<g transform="translate(' + (right ? width - 6 : -25) + ',2)"><rect width="32" height="26" rx="5" fill="#eee" stroke="#999"' + ghostStyle + '/><rect x="' + (right ? 11 : 5) + '" y="4" width="16" height="18" rx="4" fill="' + color + '" stroke="#999"' + ghostStyle + '/></g>';
     svg += '<rect class="node-body" width="' + width + '" height="' + height + '" rx="5" fill="' + color + '" stroke="#999"' + ghostStyle + '/>' +
       '<rect x="' + (right ? width - 30 : 0) + '" width="30" height="' + height + '" rx="5" fill="#000" opacity=".05"/>' +
@@ -743,8 +763,7 @@ function pageClientVisualRenderScript(): string {
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
     if (n.hiddenOutputs) svg += '<text x="' + (width - 10) + '" y="' + (height - 4) + '" text-anchor="end" font-size="11" fill="#333">+' + esc(n.hiddenOutputs) + '</text>';
-    if (!ghost && n.kind) svg += '<rect class="change-outline" x="' + -visualOutlineOffset + '" y="' + -visualOutlineOffset + '" width="' + (width + 2 * visualOutlineOffset) + '" height="' + (height + 2 * visualOutlineOffset) + '" rx="7" fill="none" stroke="' + outline + '" stroke-width="' + visualOutlineStrokeWidth(selected) + '"' + (!selected && (n.kind === 'conflict' || n.kind === 'removed') ? ' stroke-dasharray="6,4"' : '') + '/>';
-    if (!ghost && n.kind) svg += '<circle cx="' + (width - 2) + '" cy="-6" r="8" fill="' + outline + '"/>' + statusIcon(n.kind, { x: width - 8, y: -12, size: 12, color: '#fff' });
+    if (!ghost && n.kind) svg += visualCanvasBadges(n, width - 2, -6);
     return svg + '</g>';
   }
   function visualPill(id, label, x, y, collapse) {
@@ -790,7 +809,7 @@ function pageClientVisualRenderScript(): string {
     }).join('') + '<span><i class="context-dot"></i>Related nodes</span><span><i class="editor-merged-dot">' + statusIcon('editor-merged') + '</i>Editor-merged</span></div></div>' +
       '<section class="visual-workspace" aria-label="Visual View"><div class="visual-workhead"><strong>Flow preview <span>/ ' + esc(flowLabelOf(p)) + '</span></strong><span>Changed items + related nodes</span></div>' +
       '<div class="visual-body"><div class="visual-canvas-wrap"><svg class="visual-canvas" aria-label="Node-RED proposal flow"><defs>' + ['conflict', 'modified', 'moved', 'added', 'removed'].map(function (kind) {
-        return '<filter id="halo-' + kind + '" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="' + visualStatusColors[kind] + '" flood-opacity="1"/></filter>';
+        return '<filter id="halo-' + kind + '-selected" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/><feFlood flood-color="' + visualStatusColors[kind] + '" flood-opacity="0.8"/><feComposite in2="blur" operator="in"/></filter>';
       }).join('') + '<pattern id="visual-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#eee"/></pattern></defs><rect width="100%" height="100%" fill="url(#visual-grid)"/><g class="visual-viewport"></g></svg>' +
       '<div class="visual-layout" role="group" aria-label="Layout mode"><button type="button" data-visual-layout="compact">Compact</button><button type="button" data-visual-layout="editor">Editor positions</button></div><div class="visual-canvas-note">READ-ONLY PREVIEW<br>Proposed flow · changes highlighted</div>' +
       '<span class="visual-pan-hint">Drag to pan' + (touchHint ? '' : ' · Ctrl / ⌘ + scroll to zoom') + '</span><div class="visual-tools"><span class="visual-zoom"></span><button type="button" data-visual-zoom="out" aria-label="Zoom out">−</button><button type="button" data-visual-zoom="in" aria-label="Zoom in">+</button><button type="button" data-visual-zoom="fit">⌗ Fit</button></div></div>' +
@@ -853,7 +872,7 @@ function pageClientVisualInteractionScript(): string {
       host.querySelector('.visual-list-count').textContent = '(' + changed.length + ')';
       host.querySelector('.visual-node-list').innerHTML = changed.map(function (n) {
         var resolved = (p.conflictChoices || (p.conflictChoice ? [p.conflictChoice] : [])).some(function (entry) { return entry.nodeId === n.id; }) && !((diff.rebase && diff.rebase.conflicts) || []).some(function (c) { return c.nodeId === n.id; });
-        return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '"><i style="background:' + visualStatusColors[n.kind] + '">' + statusIcon(n.kind) + '</i><span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' ' + (n.type === 'group' ? 'group' : 'node')) + '</span><span class="visual-node-arrow">↗</span></button>';
+        return '<button type="button" class="visual-change-row ' + n.kind + (state.selected === n.id ? ' selected' : '') + '" data-visual-node="' + esc(n.id) + '">' + visualListBadges(n) + '<span class="visual-node-type">' + esc(n.type) + '</span><strong>' + esc(n.name) + '</strong><span class="visual-node-summary">' + (resolved ? '<b class="resolved-marker">' + statusIcon('resolved') + ' Resolved · </b>' : '') + (n.editorMerged ? '<span class="editor-merged-marker" title="Also changed in the editor">' + statusIcon('editor-merged') + ' </span>' : '') + esc(n.entry && (n.entry.changes || []).map(function (ch) { return ch.key; }).join(' · ') || n.kind + ' ' + (n.type === 'group' ? 'group' : 'node')) + '</span><span class="visual-node-arrow">↗</span></button>';
       }).join('') || '<p class="muted">Only flow settings changed.</p>';
       transform();
     }
@@ -950,6 +969,29 @@ function pageClientVisualEventsScript(): string {
     // SVG image load/error events do not bubble; capture before the first paint.
     svg.addEventListener('load', visualIconEvent, true);
     svg.addEventListener('error', visualIconEvent, true);
+    svg.addEventListener('focusin', function (ev) {
+      var target = ev.target.closest('g[data-visual-node]');
+      if (!target || !target.matches(':focus-visible') || target.querySelector('.selection-glow')) return;
+      var n = graph.byId[target.getAttribute('data-visual-node')];
+      if (!n || !n.kind) return;
+      var rect;
+      if (n.type === 'group') {
+        var box = visualGroupBoxes(visible, graph.groups).find(function (item) { return item.group.id === n.id; });
+        if (!box) return;
+        rect = ' x="' + (box.x - box.w / 2) + '" y="' + (box.y - box.h / 2) + '" width="' + box.w + '" height="' + box.h + '" rx="4" ry="4"';
+      } else {
+        var node = visible.byId[n.id];
+        if (!node) return;
+        rect = ' x="-4" y="-4" width="' + (node.w + 8) + '" height="' + (node.h + 8) + '" rx="7"';
+      }
+      target.insertAdjacentHTML('afterbegin', visualGlow(rect, n.kind));
+    });
+    svg.addEventListener('focusout', function (ev) {
+      var target = ev.target.closest('g[data-visual-node]');
+      if (!target || target.getAttribute('data-visual-node') === state.selected) return;
+      var glow = target.querySelector('.selection-glow');
+      if (glow) glow.remove();
+    });
     var drag = null, suppressClick = false;
     svg.addEventListener('pointerdown', function (ev) {
       if (ev.button && ev.button !== 0) return;

@@ -61,7 +61,7 @@ function browserHelpers(
       '  boot();',
       `
     globalThis.ui = {
-      visualGraph, visualVisible, visualGroupBoxes, visualGroupMarkup, visualGroupFocusNode, visualChangedItems, visualFocusTarget, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
+      visualGraph, visualVisible, visualGroupBoxes, visualGroupMarkup, visualGroupFocusNode, visualChangedItems, visualItemKinds, visualListBadges, visualFocusTarget, visualToggleRun, visualNodeSvg, visualMarkup, visualTextWidth, visualIconEvent, visualIconUrls, renderCompactProposal, renderProposalCard,
       mountProposalVisual, statusIcon, renderHumanDiff, renderVisualNodeDrawer, renderPropertyChange, renderConflictValues, visualDetailsEscape, getDiffMode, setDiffMode,
       setConflictValues: function (id, values) { proposalConflictValues[id] = values; },
       setHash: function (hash) { location.hash = hash; },
@@ -161,7 +161,9 @@ describe('Visual View groups', () => {
     expect(markup).toContain('fill-opacity="0"');
     expect(markup).toContain('fill="#654321"');
     expect(markup).toContain('pointer-events="none"');
-    expect(markup).toContain('stroke="#2f6fed"');
+    expect(markup).not.toMatch(/selection-glow|change-glow|filter="url\(#halo-/);
+    expect(markup).toContain('fill="#2f6fed"');
+    expect(markup).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
     expect(markup).toContain('data-visual-node="g"');
     expect(markup).toContain('pointer-events="stroke"');
     const editor = ui.visualVisible(graph, { ...viewState(), layout: 'editor' });
@@ -198,6 +200,7 @@ describe('Visual View groups', () => {
     expect(ui.visualGroupMarkup(boxes[0])).toContain('stroke="#a4a4a4"');
     expect(ui.visualGroupMarkup(boxes[0])).not.toContain('data-visual-node');
     expect(ui.visualGroupMarkup(boxes[0])).not.toContain('<circle');
+    expect(ui.visualGroupMarkup(boxes[0])).not.toMatch(/glow|filter=/);
   });
 
   it('retains nested members of a renamed group and lists and focuses the group', () => {
@@ -226,7 +229,10 @@ describe('Visual View groups', () => {
     expect(markup).toContain('#2f6fed');
     expect(markup).toContain('<circle');
     expect(markup).toContain('data-visual-node="g"');
-    expect(markup).toContain('url(#halo-modified)');
+    expect(markup).toContain('url(#halo-modified-selected)');
+    expect(markup).toContain('stroke="#a4a4a4"');
+    expect(markup).toContain('pointer-events="stroke"');
+    expect(markup).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
     expect(ui.visualChangedItems(graph).map((n: any) => n.id)).toEqual(['g']);
     const target = ui.visualGroupFocusNode(box);
     expect(target).toMatchObject({ px: box.x, py: box.y, w: box.w, h: box.h });
@@ -237,11 +243,11 @@ describe('Visual View groups', () => {
   });
 
   it.each([
-    ['added', '#2a9d4a', false],
-    ['removed', '#c65353', true],
-    ['conflict', '#dc9419', true],
-    ['moved', '#7a6fb0', false],
-  ])('highlights %s groups', (kind, color, dashed) => {
+    ['added', '#2a9d4a'],
+    ['removed', '#c65353'],
+    ['conflict', '#dc9419'],
+    ['moved', '#7a6fb0'],
+  ])('highlights %s groups', (kind, color) => {
     const ui = browserHelpers();
     const markup = ui.visualGroupMarkup({
       group: { id: 'g', name: 'Group', kind },
@@ -253,7 +259,9 @@ describe('Visual View groups', () => {
     expect(markup).toContain(color);
     expect(markup).toContain('<circle');
     expect(markup).toContain('data-visual-node="g"');
-    expect(markup.includes('stroke-dasharray="6,4"')).toBe(dashed);
+    expect(markup).not.toMatch(/selection-glow|change-glow|filter="url\(#halo-/);
+    expect(markup).toContain('pointer-events="stroke"');
+    expect(markup).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
   });
 
   it('appends changed groups in name and id order after changed nodes', () => {
@@ -1657,6 +1665,52 @@ describe('Visual View geometry', () => {
   });
 });
 
+describe('visual change badges', () => {
+  it('derives ordered kinds independently of primary classification', () => {
+    const ui = browserHelpers();
+    const kinds = (item: any) => Array.from(ui.visualItemKinds(item));
+    expect(kinds({ kind: 'modified' })).toEqual(['modified']);
+    expect(kinds({ kind: 'moved' })).toEqual(['moved']);
+    expect(
+      kinds({ kind: 'modified', moved: true, entry: { changes: [{ key: 'name' }, { key: 'x' }] } })
+    ).toEqual(['modified', 'moved']);
+    expect(kinds({ kind: 'added' })).toEqual(['added']);
+    expect(kinds({ kind: 'removed' })).toEqual(['removed']);
+    expect(kinds({ kind: 'conflict', moved: true, entry: { changes: [{ key: 'name' }] } })).toEqual(
+      ['modified', 'moved', 'conflict']
+    );
+    expect(kinds({ kind: 'conflict', entry: { changes: [{ key: 'x' }] } })).toEqual(['conflict']);
+    expect(
+      kinds({ type: 'group', kind: 'modified', entry: { changes: [{ key: 'name' }] } })
+    ).toEqual(['modified']);
+  });
+
+  it('renders modified and moved badges in order on canvas and in the list', () => {
+    const ui = browserHelpers(),
+      { p, diff } = chain([4]);
+    const n = {
+      ...ui.visualGraph(p, diff).byId.n4,
+      kind: 'modified',
+      moved: true,
+      name: 'Prepare',
+    };
+    const canvas = ui.visualNodeSvg(n, {}, false);
+    expect(canvas.match(/<circle cx=/g)).toHaveLength(2);
+    expect(Array.from(canvas.matchAll(/data-icon="([^"]+)"/g), (m: any) => m[1])).toEqual([
+      'modified',
+      'moved',
+    ]);
+    expect(canvas).toContain('aria-label="modified, moved: Prepare"');
+    const badges = ui.visualListBadges(n);
+    expect(Array.from(badges.matchAll(/data-icon="([^"]+)"/g), (m: any) => m[1])).toEqual([
+      'modified',
+      'moved',
+    ]);
+    expect(badges).toContain('title="modified"');
+    expect(badges).toContain('aria-label="moved"');
+  });
+});
+
 describe('selected node halos', () => {
   const colors = {
     conflict: '#dc9419',
@@ -1666,62 +1720,48 @@ describe('selected node halos', () => {
     removed: '#c65353',
   };
 
-  it('defines all five halo filters with the approved bounds, color and strength', () => {
+  it('defines selected source-alpha-only filters in each kind color', () => {
     const ui = browserHelpers(),
       { p, diff } = chain([4]);
-    const html = ui.visualMarkup(p, diff);
-    const defs = html.match(/<defs>([\s\S]*?)<\/defs>/)![1]!;
+    const defs = ui.visualMarkup(p, diff).match(/<defs>([\s\S]*?)<\/defs>/)![1]!;
     expect(defs.match(/<filter /g)).toHaveLength(5);
     for (const [kind, color] of Object.entries(colors)) {
-      expect(defs).toContain(
-        `<filter id="halo-${kind}" x="-50%" y="-150%" width="200%" height="400%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="${color}" flood-opacity="1"/></filter>`
-      );
-    }
-  });
-
-  it.each(Object.keys(colors))(
-    'layers the selected %s glow behind the node and its crisp outline above it',
-    kind => {
-      const ui = browserHelpers(),
-        { p, diff } = chain([4]);
-      const n = {
-        ...ui.visualGraph(p, diff).byId.n4,
-        kind,
-        type: 'inject',
-        input: true,
-        outputs: 1,
-      };
-      const html = ui.visualNodeSvg(n, { selected: n.id }, false);
-      const glow = html.match(/<rect class="selection-glow"[^>]*\/>/)![0];
-      const outline = html.match(/<rect class="change-outline"[^>]*\/>/)![0];
-      expect(html.indexOf(glow)).toBe(html.indexOf('>') + 1);
-      expect(html.indexOf(glow)).toBeLessThan(html.indexOf('class="node-body"'));
-      expect(glow).toContain(`filter="url(#halo-${kind})"`);
-      expect(glow).toContain('pointer-events="none"');
-      for (const attr of ['x', 'y', 'width', 'height', 'rx', 'stroke', 'stroke-width']) {
-        expect(glow.match(new RegExp(` ${attr}="[^"]*"`))![0]).toBe(
-          outline.match(new RegExp(` ${attr}="[^"]*"`))![0]
+      for (const [suffix, strength] of [['-selected', 8]]) {
+        expect(defs).toContain(
+          `<filter id="halo-${kind}${suffix}" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur in="SourceAlpha" stdDeviation="${strength}" result="blur"/><feFlood flood-color="${color}" flood-opacity="0.8"/><feComposite in2="blur" operator="in"/></filter>`
         );
       }
-      expect(outline).toContain('stroke-width="3.75"');
-      expect(outline).not.toMatch(/filter=|stroke-dasharray=/);
-      expect(html.match(/ filter=/g)).toHaveLength(1);
-      expect(html.indexOf(outline)).toBeGreaterThan(html.lastIndexOf('stroke-dasharray="none"'));
-      expect(html.indexOf(outline)).toBeGreaterThan(html.indexOf('</text>'));
-      expect(html.indexOf(outline)).toBeLessThan(html.indexOf('<circle'));
-
-      const unselected = ui.visualNodeSvg(n, {}, false);
-      expect(unselected).not.toMatch(/selection-glow|filter=/);
-      const unselectedOutline = unselected.match(/<rect class="change-outline"[^>]*\/>/)![0];
-      expect(unselectedOutline.includes('stroke-dasharray="6,4"')).toBe(
-        kind === 'conflict' || kind === 'removed'
-      );
-      expect(unselectedOutline).not.toContain('filter=');
-      expect(ui.visualNodeSvg({ ...n, kind: null }, { selected: n.id }, false)).not.toMatch(
-        /selection-glow|change-outline|filter=/
-      );
     }
-  );
+    expect(defs).not.toMatch(/feDropShadow|feMerge/);
+  });
+
+  it.each(Object.keys(colors))('layers the %s glow behind the node', kind => {
+    const ui = browserHelpers(),
+      { p, diff } = chain([4]);
+    const n = { ...ui.visualGraph(p, diff).byId.n4, kind, type: 'inject', input: true, outputs: 1 };
+    for (const selected of [false, true]) {
+      const html = ui.visualNodeSvg(n, selected ? { selected: n.id } : {}, false);
+      if (selected) {
+        const glow = html.match(/<rect class="selection-glow"[^>]*\/>/)![0];
+        expect(html.indexOf(glow)).toBe(html.indexOf('>') + 1);
+        expect(html.indexOf(glow)).toBeLessThan(html.indexOf('class="node-body"'));
+        expect(glow).toContain(`filter="url(#halo-${kind}-selected)"`);
+        expect(glow).toContain('pointer-events="none"');
+        expect(glow).not.toContain('stroke=');
+      } else {
+        expect(html).not.toMatch(/selection-glow|change-glow|filter="url\(#halo-/);
+      }
+      expect(html).toContain('stroke="#999"');
+      expect(html).toContain('<circle');
+      expect(html).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
+    }
+    expect(ui.visualNodeSvg({ ...n, kind: null }, { selected: n.id }, false)).not.toMatch(
+      /glow|change-outline|filter=/
+    );
+    expect(ui.visualNodeSvg({ ...n, old: { x: 0, y: 0 } }, { selected: n.id }, true)).not.toMatch(
+      /glow|change-outline|filter=/
+    );
+  });
 });
 
 describe('proposal summaries and deploy controls', () => {
@@ -2709,7 +2749,7 @@ describe('Moved classification and review', () => {
     const css = pageStyles();
     const rule = (selector: string) => css.slice(css.indexOf(selector + ' {')).split('}')[0];
     expect(rule('.visual-change-row')).toContain(
-      'grid-template-columns: 18px 58px minmax(0,1fr) auto'
+      'grid-template-columns: max-content 58px minmax(0,1fr) auto'
     );
     expect(rule('.visual-node-type')).toMatch(/grid-column: 2; grid-row: 1;/);
     expect(rule('.visual-change-row strong')).toMatch(/grid-column: 3; grid-row: 1;/);
@@ -2748,8 +2788,8 @@ describe('Moved classification and review', () => {
     if (selected) click('[data-visual-node]', 'move');
     const html = viewport.innerHTML;
     const tip = /class="move-arrowhead" d="M([^ ]+) ([^L]+)L/.exec(html)!;
-    const outline = /<rect class="change-outline"[^>]*>/.exec(html)![0];
-    const width = Number(/width="([^"]+)"/.exec(outline)![1]) - 8;
+    const body = /<rect class="node-body"[^>]*>/.exec(html)![0];
+    const width = Number(/width="([^"]+)"/.exec(body)![1]);
     const pad = selected ? 5.875 : 5;
     expect(600 - Number(tip[1])).toBe(width / 2 + pad);
     expect(600 - Number(tip[1])).toBeGreaterThan(width / 2);
@@ -2899,7 +2939,8 @@ describe('Moved classification and review', () => {
     expect(rows.innerHTML).toContain('class="visual-change-row conflict');
     expect(rows.innerHTML).toContain('data-icon="conflict"');
     expect(viewport.innerHTML).toContain('data-icon="conflict"');
-    expect(viewport.innerHTML).not.toContain('data-icon="modified"');
+    expect(viewport.innerHTML).toContain('data-icon="modified"');
+    expect(viewport.innerHTML).toContain('data-icon="moved"');
   });
 
   it.each([false, true])(
