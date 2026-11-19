@@ -2,9 +2,13 @@
 export function pageClientVisualGeometryScript(): string {
   return `
 
-  function visualFocusTarget(node, w, h) {
-    var k = Math.min(1.5, (w - 80) / (node.w + 30), (h - 110) / (node.h + 30));
-    return { k: k, x: w / 2 - node.px * k, y: (h - 35) / 2 - node.py * k };
+  function visualFocusTarget(node, w, h, topInset) {
+    if (topInset === undefined) topInset = 48;
+    var k = node.w > 0 && isFinite(node.w) ? 0.6 * w / node.w : 1;
+    k = isFinite(k) ? Math.max(0.08, Math.min(3, k)) : 1;
+    var scaledHeight = node.h * k;
+    var top = scaledHeight + topInset + 20 <= h ? Math.max(topInset, (h - scaledHeight) / 2) : topInset;
+    return { k: k, x: w / 2 - node.px * k, y: top - (node.py - node.h / 2) * k };
   }
 
   function visualEaseOutCubic(t) { return 1 - Math.pow(1 - t, 3); }

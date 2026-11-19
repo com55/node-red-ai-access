@@ -42,6 +42,8 @@ and this project adheres to
 
 ### Fixed
 
+- Focus Visual View items at 60% of the canvas width, centering or top-aligning
+  like Fit.
 - Show changed groups in Visual View with selectable highlights and diffs.
 - Animate the canvas to a node selected in the Visual View Changed items list.
 

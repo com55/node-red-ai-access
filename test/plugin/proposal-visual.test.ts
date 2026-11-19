@@ -1184,20 +1184,48 @@ describe('Visual View focus geometry', () => {
     pageClientVisualGeometryScript() + '\n({ visualFocusTarget, visualEaseOutCubic });'
   );
 
-  it('matches the mockup target at capped and constrained zoom levels', () => {
+  it('centres a node using 60% of the canvas width', () => {
     const node = { px: 200, py: 150, w: 120, h: 30 };
-    for (const [w, h] of [
-      [800, 400],
-      [200, 160],
-    ]) {
-      const k = Math.min(1.5, (w - 80) / (node.w + 30), (h - 110) / (node.h + 30));
-      const target = visualFocusTarget(node, w, h);
-      expect(target.k).toBe(k);
-      expect(target.x).toBe(w / 2 - node.px * k);
-      expect(target.y).toBe((h - 35) / 2 - node.py * k);
+    const w = 500,
+      h = 630,
+      k = (0.6 * w) / node.w;
+    const target = visualFocusTarget(node, w, h);
+    const top = Math.max(48, (h - k * node.h) / 2);
+    expect(target.k).toBe(k);
+    expect(target.x).toBe(w / 2 - node.px * k);
+    expect(target.y).toBe(top - (node.py - node.h / 2) * k);
+  });
+
+  it('centres a wide group at 60% of the canvas width', () => {
+    const group = { px: 400, py: 200, w: 700, h: 80 };
+    const w = 800,
+      h = 630,
+      k = (0.6 * w) / group.w;
+    const target = visualFocusTarget(group, w, h);
+    expect(target.k).toBe(k);
+    expect(target.x).toBe(w / 2 - group.px * k);
+    expect(target.y).toBe(Math.max(48, (h - k * group.h) / 2) - (group.py - group.h / 2) * k);
+  });
+
+  it('top-aligns tall objects below the toggle, including a custom inset', () => {
+    const node = { px: 200, py: 300, w: 200, h: 500 };
+    const target = visualFocusTarget(node, 800, 400);
+    expect(target.k).toBe((0.6 * 800) / node.w);
+    expect(target.y + (node.py - node.h / 2) * target.k).toBe(48);
+    const custom = visualFocusTarget(node, 800, 400, 72);
+    expect(custom.y + (node.py - node.h / 2) * custom.k).toBe(72);
+  });
+
+  it('clamps zoom and handles invalid widths', () => {
+    const node = { px: 200, py: 150, w: 1, h: 30 };
+    expect(visualFocusTarget(node, 800, 630).k).toBe(3);
+    expect(visualFocusTarget({ ...node, w: 100000 }, 800, 630).k).toBe(0.08);
+    for (const width of [0, -1, NaN, Infinity]) {
+      const k = visualFocusTarget({ ...node, w: width }, 800, 630).k;
+      expect(Number.isFinite(k)).toBe(true);
+      expect(k).toBeGreaterThanOrEqual(0.08);
+      expect(k).toBeLessThanOrEqual(3);
     }
-    expect(visualFocusTarget(node, 800, 400).k).toBe(1.5);
-    expect(visualFocusTarget(node, 200, 160).k).toBeLessThan(1.5);
   });
 
   it('eases from zero to one with the mockup cubic curve', () => {
