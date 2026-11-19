@@ -10,8 +10,6 @@ and this project adheres to
 
 ### Added
 
-- Draw Node-RED groups around their visible members in Visual View.
-
 - Distinguish Moved nodes in proposal counts, summaries, titles, and position
   diffs.
 - Review proposals in a dedicated Visual View with real flow nodes, related-node
@@ -21,19 +19,6 @@ and this project adheres to
 
 ### Changed
 
-- Use the same toggle switch as “Enable MCP OAuth” for the editor sidebar’s
-  “Enable AI Access features” and local-only allow-without controls.
-
-- Keep dashed amber outlines on conflict items and place Visual View badges at
-  the Node-RED editor changed-node indicator's top-right inset.
-- Show badges for every applicable Visual View change kind, including modified
-  and moved together, with a kind-coloured glow only on the selected item.
-
-- Rename the Visual View list heading to “Changed items (n)”; the count includes
-  groups.
-- Keep Visual View link in/out pairs as separate chains without drawing a
-  virtual link wire.
-- Size the Visual View canvas to 70% of the viewport height.
 - Restore pane borders, uppercase headers, and line gutters for long-text Split
   and Unified diffs while keeping aligned rows and short-property rendering.
 - Rename conflict choices to “Keep live” and “Use AI proposed”, with “✓ Keeping
@@ -49,19 +34,6 @@ and this project adheres to
   Existing proposal links (`#proposal=<id>`) continue to open the detail page.
 
 ### Fixed
-
-- Focus Visual View items at up to 60% of the canvas width, fitting their height
-  as well and centering them in the available area so they are fully visible.
-- Show changed groups in Visual View with selectable highlights and diffs.
-- Animate the canvas to a node selected in the Visual View Changed items list.
-
-- Keep a Compact rewire's original target above the newly wired node.
-- Centre Compact merge and fan-out nodes within their branches’ vertical band.
-- Keep independent Visual View Compact flows in separate vertical bands.
-- Fit Visual View flows to the canvas width, centering vertically when they fit
-  and top-aligning below the layout toggle when they do not.
-- Route Visual View wires like the Node-RED editor and mark removed wires at
-  their midpoint.
 
 - Draw Visual View Editor positions from live node coordinates and translate
   added nodes into the live frame without changing Compact layout.
@@ -155,6 +127,29 @@ and this project adheres to
 
 - Make the dashboard and editor sidebar MCP OAuth controls accessible toggle
   switches.
+
+## [0.2.0-beta.17] - 2026-11-19
+
+- Draw Visual View wires with Node-RED link paths and mark removed wires with a
+  larger midpoint ✕.
+- Fit Visual View to the canvas width, centre the flow vertically when it fits,
+  and top-align just below the layout toggle when it does not. The canvas is 70%
+  of the viewport height.
+- Keep independent Compact chains in their own vertical bands, centre merges and
+  fan-outs in the branch (Align Middle), and keep a rewire's original
+  disconnected target above the newly wired node.
+- Draw Node-RED groups around their members in both layouts, list added,
+  removed, modified, and conflict groups in “Changed items (n)”, and keep link
+  in/out pairs as separate chains without a virtual wire.
+- Animate the canvas to a Changed items selection, zooming the item to 60% of
+  the canvas width or until its full height fits, and centering it in the
+  available area.
+- Replace highlight outlines with kind-coloured corner badges (an item can show
+  more than one, such as modified and moved). A glow appears only on the
+  selected item. Conflict items keep the dashed amber outline, and badges sit at
+  the same top-right inset as the editor's changed-node indicator.
+- Use the same toggle switch as “Enable MCP OAuth” for “Enable AI Access
+  features” and the local-only allow-without control in the editor sidebar.
 
 ## [0.2.0-beta.16] - 2026-11-17
 
