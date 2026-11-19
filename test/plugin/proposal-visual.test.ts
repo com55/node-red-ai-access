@@ -1190,7 +1190,7 @@ describe('Visual View focus geometry', () => {
       h = 630,
       k = (0.6 * w) / node.w;
     const target = visualFocusTarget(node, w, h);
-    const top = Math.max(48, (h - k * node.h) / 2);
+    const top = 48 + Math.max(0, (h - 48 - 48 - k * node.h) / 2);
     expect(target.k).toBe(k);
     expect(target.x).toBe(w / 2 - node.px * k);
     expect(target.y).toBe(top - (node.py - node.h / 2) * k);
@@ -1204,27 +1204,35 @@ describe('Visual View focus geometry', () => {
     const target = visualFocusTarget(group, w, h);
     expect(target.k).toBe(k);
     expect(target.x).toBe(w / 2 - group.px * k);
-    expect(target.y).toBe(Math.max(48, (h - k * group.h) / 2) - (group.py - group.h / 2) * k);
+    const top = target.y + (group.py - group.h / 2) * k;
+    expect(top).toBeCloseTo(48 + (h - 48 - 48 - k * group.h) / 2);
+    expect(top).toBeGreaterThanOrEqual(48);
+    expect(top + group.h * k).toBeLessThanOrEqual(h - 48);
   });
 
-  it('top-aligns tall objects below the toggle, including a custom inset', () => {
+  it('fits tall objects between the insets, including a custom top inset', () => {
     const node = { px: 200, py: 300, w: 200, h: 500 };
     const target = visualFocusTarget(node, 800, 400);
-    expect(target.k).toBe((0.6 * 800) / node.w);
-    expect(target.y + (node.py - node.h / 2) * target.k).toBe(48);
+    expect(target.k).toBe((400 - 48 - 48) / node.h);
+    const top = target.y + (node.py - node.h / 2) * target.k;
+    expect(top).toBeCloseTo(48);
+    expect(top + node.h * target.k).toBeCloseTo(400 - 48);
     const custom = visualFocusTarget(node, 800, 400, 72);
-    expect(custom.y + (node.py - node.h / 2) * custom.k).toBe(72);
+    expect(custom.k).toBe((400 - 72 - 48) / node.h);
+    expect(custom.y + (node.py - node.h / 2) * custom.k).toBeCloseTo(72);
   });
 
-  it('clamps zoom and handles invalid widths', () => {
+  it('clamps zoom and handles invalid dimensions', () => {
     const node = { px: 200, py: 150, w: 1, h: 30 };
     expect(visualFocusTarget(node, 800, 630).k).toBe(3);
     expect(visualFocusTarget({ ...node, w: 100000 }, 800, 630).k).toBe(0.08);
-    for (const width of [0, -1, NaN, Infinity]) {
-      const k = visualFocusTarget({ ...node, w: width }, 800, 630).k;
-      expect(Number.isFinite(k)).toBe(true);
-      expect(k).toBeGreaterThanOrEqual(0.08);
-      expect(k).toBeLessThanOrEqual(3);
+    for (const size of [0, -1, NaN, Infinity]) {
+      for (const dimensions of [{ w: size }, { h: size }, { w: size, h: size }]) {
+        const target = visualFocusTarget({ ...node, ...dimensions }, 800, 630);
+        expect(Object.values(target).every(Number.isFinite)).toBe(true);
+        expect(target.k).toBeGreaterThanOrEqual(0.08);
+        expect(target.k).toBeLessThanOrEqual(3);
+      }
     }
   });
 
