@@ -261,7 +261,21 @@ describe('Visual View groups', () => {
     expect(markup).toContain('data-visual-node="g"');
     expect(markup).not.toMatch(/selection-glow|change-glow|filter="url\(#halo-/);
     expect(markup).toContain('pointer-events="stroke"');
-    expect(markup).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
+    expect(markup).toContain('cx="167" cy="57" r="8"');
+    if (kind === 'conflict') {
+      const outline =
+        '<rect class="change-outline" x="25" y="60" width="150" height="80" rx="4" ry="4" fill="none" stroke="#dc9419" stroke-width="2" stroke-dasharray="6,4" pointer-events="none"/>';
+      expect(markup).toContain(outline);
+      const selected = ui.visualGroupMarkup(
+        { group: { id: 'g', name: 'Group', kind }, x: 100, y: 100, w: 150, h: 80 },
+        { selected: 'g' }
+      );
+      expect(selected).toContain(outline);
+      expect(selected).toContain('url(#halo-conflict-selected)');
+      expect(selected).toContain('pointer-events="stroke"');
+    } else {
+      expect(markup).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
+    }
   });
 
   it('appends changed groups in name and id order after changed nodes', () => {
@@ -1696,6 +1710,8 @@ describe('visual change badges', () => {
     };
     const canvas = ui.visualNodeSvg(n, {}, false);
     expect(canvas.match(/<circle cx=/g)).toHaveLength(2);
+    expect(canvas).toContain(`cx="${n.w - 26}" cy="-3" r="8"`);
+    expect(canvas).toContain(`cx="${n.w - 8}" cy="-3" r="8"`);
     expect(Array.from(canvas.matchAll(/data-icon="([^"]+)"/g), (m: any) => m[1])).toEqual([
       'modified',
       'moved',
@@ -1753,7 +1769,14 @@ describe('selected node halos', () => {
       }
       expect(html).toContain('stroke="#999"');
       expect(html).toContain('<circle');
-      expect(html).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
+      expect(html).toContain(`cx="${n.w - 8}" cy="-3" r="8"`);
+      if (kind === 'conflict') {
+        expect(html).toContain(
+          `<rect class="change-outline" x="-4" y="-4" width="${n.w + 8}" height="${n.h + 8}" rx="7" fill="none" stroke="#dc9419" stroke-width="2" stroke-dasharray="6,4" pointer-events="none"/>`
+        );
+      } else {
+        expect(html).not.toMatch(/change-outline|stroke-dasharray="6,4"/);
+      }
     }
     expect(ui.visualNodeSvg({ ...n, kind: null }, { selected: n.id }, false)).not.toMatch(
       /glow|change-outline|filter=/

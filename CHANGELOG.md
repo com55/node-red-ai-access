@@ -21,9 +21,10 @@ and this project adheres to
 
 ### Changed
 
+- Keep dashed amber outlines on conflict items and place Visual View badges at
+  the Node-RED editor changed-node indicator's top-right inset.
 - Show badges for every applicable Visual View change kind, including modified
-  and moved together, with a kind-coloured glow only on the selected item and no
-  highlight outline.
+  and moved together, with a kind-coloured glow only on the selected item.
 
 - Rename the Visual View list heading to “Changed items (n)”; the count includes
   groups.

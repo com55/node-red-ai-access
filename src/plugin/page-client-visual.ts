@@ -672,15 +672,19 @@ function pageClientVisualRenderScript(): string {
       return '<i title="' + esc(kind) + '" aria-label="' + esc(kind) + '" style="background:' + visualStatusColors[kind] + '">' + statusIcon(kind) + '</i>';
     }).join('') + '</span>';
   }
-  function visualCanvasBadges(n, right, y) {
+  function visualCanvasBadges(n, right, top) {
     var kinds = visualItemKinds(n);
+    var y = top - 3;
     return kinds.map(function (kind, index) {
-      var x = right - (kinds.length - index - 1) * 18;
+      var x = right - 8 - (kinds.length - index - 1) * 18;
       return '<g pointer-events="none"><title>' + esc(kind) + '</title><circle cx="' + x + '" cy="' + y + '" r="8" fill="' + visualStatusColors[kind] + '"/>' + statusIcon(kind, { x: x - 6, y: y - 6, size: 12, color: '#fff' }) + '</g>';
     }).join('');
   }
   function visualGlow(rect, kind) {
     return '<rect class="selection-glow"' + rect + ' fill="#fff" filter="url(#halo-' + kind + '-selected)" pointer-events="none"/>';
+  }
+  function visualConflictOutline(rect) {
+    return '<rect class="change-outline"' + rect + ' fill="none" stroke="' + visualStatusColors.conflict + '" stroke-width="2" stroke-dasharray="6,4" pointer-events="none"/>';
   }
   function visualGroupMarkup(box, state) {
     var group = box.group, style = group.style || {}, left = box.x - box.w / 2, top = box.y - box.h / 2;
@@ -689,8 +693,9 @@ function pageClientVisualRenderScript(): string {
     var svg = '<g class="visual-group"' + (group.kind ? ' role="button" tabindex="0" data-visual-node="' + esc(group.id) + '" aria-label="' + esc(visualItemKinds(group).join(', ') + ': ' + (group.name || group.id)) + '"' : ' pointer-events="none"') + '>';
     if (group.kind && selected) svg += visualGlow(rect, group.kind);
     svg += '<rect' + rect + ' stroke="' + esc(style.stroke || '#a4a4a4') + '" fill="' + esc(style.fill || '#ffffff') + '" fill-opacity="' + esc(opacity) + '" pointer-events="' + (group.kind ? 'stroke' : 'none') + '"/>';
+    if (group.kind === 'conflict') svg += visualConflictOutline(rect);
     if (group.name) svg += '<text x="' + (left + 8) + '" y="' + (top + 18) + '" fill="' + esc(style.color || '#555') + '"' + (group.kind ? ' pointer-events="visiblePainted"' : '') + '>' + esc(group.name) + '</text>';
-    if (group.kind) svg += visualCanvasBadges(group, left + box.w - 2, top);
+    if (group.kind) svg += visualCanvasBadges(group, left + box.w, top);
     return svg + '</g>';
   }
   function visualIcon(type) {
@@ -763,7 +768,8 @@ function pageClientVisualRenderScript(): string {
     if (n.input) svg += port(-5, height / 2 - 5);
     for (var i = 0; i < n.outputs; i += 1) svg += port(width - 5, height / 2 - (n.outputs - 1) * 6.5 + i * 13 - 5);
     if (n.hiddenOutputs) svg += '<text x="' + (width - 10) + '" y="' + (height - 4) + '" text-anchor="end" font-size="11" fill="#333">+' + esc(n.hiddenOutputs) + '</text>';
-    if (!ghost && n.kind) svg += visualCanvasBadges(n, width - 2, -6);
+    if (interactive && n.kind === 'conflict') svg += visualConflictOutline(' x="-4" y="-4" width="' + (width + 8) + '" height="' + (height + 8) + '" rx="7"');
+    if (!ghost && n.kind) svg += visualCanvasBadges(n, width, 0);
     return svg + '</g>';
   }
   function visualPill(id, label, x, y, collapse) {
