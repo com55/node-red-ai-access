@@ -15,6 +15,7 @@ import {
   ProposalConflictError,
   isOpenProposalStatus,
   proposalOwnerId,
+  proposalHasConflict,
   type Proposal,
   type ProposalDecisionBy,
   type ProposalStatus,
@@ -52,8 +53,18 @@ import {
   type PresentProposalApiOptions,
   type PresentProposalOptions,
 } from './proposal-present.js';
-import { applyConflictChoice } from './proposal-rebase.js';
-import { rebaseOpenProposalsWith, syncOneProposal, syncOpenProposals } from './proposal-sync.js';
+import {
+  applyConflictChoice,
+  conflictTargetSnapshot,
+  restoreConflictTarget,
+} from './proposal-rebase.js';
+import {
+  rebaseInfoFrom,
+  rebaseProposal,
+  rebaseOpenProposalsWith,
+  syncOneProposal,
+  syncOpenProposals,
+} from './proposal-sync.js';
 import {
   aiRedactingAdapter,
   rawFlowAdapter,
@@ -130,7 +141,6 @@ export interface ListProposalsPage {
 const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
   'pending',
   'conflict',
-  'conflict',
   'approved',
   'rejected',
   'failed',
@@ -141,10 +151,20 @@ const PROPOSAL_STATUSES: ReadonlySet<string> = new Set([
 
 /** True when no status filter is set or `status` is one of the requested values. */
 export function matchesStatusFilter(
-  status: ProposalStatus,
+  proposal: Pick<Proposal, 'status' | 'rebase'>,
   wanted: readonly ProposalStatus[] | undefined
 ): boolean {
-  return !wanted || wanted.length === 0 || wanted.includes(status);
+  return (
+    !wanted ||
+    wanted.length === 0 ||
+    wanted.some(status =>
+      status === 'conflict'
+        ? proposalHasConflict(proposal)
+        : status === 'pending'
+          ? isOpenProposalStatus(proposal.status)
+          : proposal.status === status
+    )
+  );
 }
 
 export function isProposalStatus(value: unknown): value is ProposalStatus {
@@ -364,7 +384,7 @@ export function listAccessibleProposals(
   const listed = store
     .list(storeFilter)
     .filter(p => filter.mine !== false || !isMineProposal(p, accessLink))
-    .filter(p => matchesStatusFilter(p.status, filter.status));
+    .filter(p => matchesStatusFilter(p, filter.status));
   const presented = listed.map(p => ({
     ...presentProposal(redactProposalForAi(p), presentOptions),
     mine: isMineProposal(p, accessLink),
@@ -1100,8 +1120,39 @@ export async function resolveConflictChoice(
     throw new ProposalNotPendingError(id, proposal.status);
   }
   // Re-check first so the choice applies to the conflicts as they are now.
-  const checked = syncOneProposal(store, proposal, live).proposal;
-  const conflict = checked.rebase?.conflicts.find(c => c.nodeId === nodeId);
+  const latest = syncOneProposal(store, proposal, live).proposal;
+  let source = latest;
+  const saved = (
+    proposal.conflictChoices ?? (proposal.conflictChoice ? [proposal.conflictChoice] : [])
+  ).find(entry => entry.nodeId === nodeId);
+  // Restore only this node's original alternatives in memory. Other resolved nodes
+  // stay intact, and validation/secret alignment still runs against current live data.
+  if (saved?.undo) {
+    source = {
+      ...latest,
+      baseFlow: restoreConflictTarget(
+        latest.baseFlow ?? {},
+        saved.undo.baseFlow,
+        proposal.payload.flowId,
+        nodeId
+      ),
+      payload: {
+        ...latest.payload,
+        flow: restoreConflictTarget(
+          latest.payload.flow,
+          saved.undo.flow,
+          proposal.payload.flowId,
+          nodeId
+        ),
+      },
+    };
+  }
+  const checked = { ...source, rebase: rebaseInfoFrom(rebaseProposal(source, live)) };
+  const conflict =
+    checked.rebase.conflicts.find(c => c.nodeId === nodeId) ??
+    (saved
+      ? { nodeId, fields: saved.fields, choices: ['live', 'proposed'], kind: 'saved_choice' }
+      : undefined);
   if (!conflict) {
     throw new AiOpsValidationError(
       'No current conflict for that node (it may already be resolved). Reload the proposal.',
@@ -1127,24 +1178,32 @@ export async function resolveConflictChoice(
     });
   } catch (error) {
     if (error instanceof SecretAlignmentConflictError) {
-      throw new ProposalConflictError(id, checked.rebase?.conflicts ?? []);
+      throw new ProposalConflictError(id, checked.rebase.conflicts);
     }
     throw new AiOpsValidationError('This conflict cannot be resolved by hand.', 'invalid_choice');
   }
+  const conflictChoice: NonNullable<Proposal['conflictChoice']> = {
+    nodeId,
+    fields: conflict.fields,
+    choice,
+    chooser: actor.kind === 'admin' ? 'human' : 'ai',
+    undo: {
+      baseFlow: conflictTargetSnapshot(checked.baseFlow ?? {}, checked.payload.flowId, nodeId),
+      flow: conflictTargetSnapshot(checked.payload.flow, checked.payload.flowId, nodeId),
+      warnings: checked.warnings ?? [],
+      aiConflictOverrides: checked.aiConflictOverrides ?? [],
+    },
+  };
   const updated = store.updateBody(id, {
     baseFlow: sanitizeFlowTab(next.base),
     flow: sanitizeFlowTab(next.proposed),
-    conflictChoice: {
-      nodeId,
-      choice,
-      chooser: actor.kind === 'admin' ? 'human' : 'ai',
-      undo: {
-        baseFlow: checked.baseFlow ?? {},
-        flow: checked.payload.flow,
-        warnings: checked.warnings ?? [],
-        aiConflictOverrides: checked.aiConflictOverrides ?? [],
-      },
-    },
+    conflictChoice,
+    conflictChoices: [
+      ...(
+        proposal.conflictChoices ?? (proposal.conflictChoice ? [proposal.conflictChoice] : [])
+      ).filter(entry => entry.nodeId !== nodeId),
+      conflictChoice,
+    ],
     aiConflictOverrides: [
       ...(checked.aiConflictOverrides ?? []).filter(c => c.nodeId !== nodeId),
       ...(actor.kind !== 'admin' && choice === 'proposed'

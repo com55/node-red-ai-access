@@ -816,6 +816,14 @@ export function redactProposalForAi<P extends Proposal>(
       ...(proposal.conflictChoice.chooser ? { chooser: proposal.conflictChoice.chooser } : {}),
     };
   }
+  if (proposal.conflictChoices) {
+    out.conflictChoices = proposal.conflictChoices.map(({ nodeId, choice, fields, chooser }) => ({
+      nodeId,
+      choice,
+      fields,
+      chooser,
+    }));
+  }
   if (proposal.baseFlow !== undefined) {
     out.baseFlow = redactFlowData(proposal.baseFlow, patterns).value;
   }

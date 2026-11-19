@@ -258,7 +258,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
     'proposal_not_pending',
     409,
     'Action needs an open proposal',
-    'Only pending or conflict proposals can withdraw / decide'
+    'Only pending proposals (including conflicts) can withdraw / decide'
   ),
   e(
     'proposal_not_owned',
@@ -442,7 +442,7 @@ export const ERROR_REGISTRY: readonly ErrorCodeSpec[] = [
   e(
     'conflict',
     200,
-    'Status: open proposal has conflicting editor changes; approval blocked',
+    'Deprecated status alias: use status=pending with rebase.state=conflict; approval blocked',
     'Read the current flow and resolve the proposal',
     ALL,
     'status'
@@ -552,7 +552,7 @@ export function renderGetLinkErrorTable(): string {
     '',
     '**Proposal statuses.** Open proposals are closed automatically: ' +
       '`expired` after the configured TTL (default 7 days). Revision changes auto-rebase open proposals; ' +
-      '`conflict` blocks approval until resolved. Legacy closed proposals stay closed. ' +
+      '`rebase.state=conflict` blocks approval until resolved; status stays `pending`. The legacy `conflict` status is accepted on read. Legacy closed proposals stay closed. ' +
       'Submit, get, and list responses include `autoClosedCount` when that request ' +
       'auto-closed proposals (omitted when zero).',
     '',

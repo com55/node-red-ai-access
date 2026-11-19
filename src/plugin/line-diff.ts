@@ -38,6 +38,15 @@ export function diffLines(before: string, after: string): LineDiffEntry[] {
   const n = a.length;
   const m = b.length;
 
+  // Bound the quadratic LCS work; preserve large values as whole blocks.
+  if (n > 2000 || m > 2000 || n * m > 1_000_000) {
+    if (before === after) return [{ op: 'equal', text: before }];
+    return [
+      ...(before ? [{ op: 'remove' as const, text: before }] : []),
+      ...(after ? [{ op: 'add' as const, text: after }] : []),
+    ];
+  }
+
   const dp: number[][] = [];
   for (let i = 0; i <= n; i += 1) {
     const row: number[] = [];

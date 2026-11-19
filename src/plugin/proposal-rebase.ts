@@ -745,6 +745,40 @@ export function applyConflictChoice(input: {
   return { base, proposed, warnings };
 }
 
+/** Save only the selected node/settings, rather than duplicating the entire flow per choice. */
+export function conflictTargetSnapshot(
+  tab: Partial<FlowTab>,
+  flowId: string,
+  nodeId: string
+): Partial<FlowTab> {
+  return restoreConflictTarget(
+    { id: flowId, type: 'tab', nodes: [], configs: [] },
+    tab,
+    flowId,
+    nodeId
+  );
+}
+
+/** Restore one resolution's alternatives without undoing choices on other nodes. */
+export function restoreConflictTarget(
+  current: Partial<FlowTab>,
+  original: Partial<FlowTab>,
+  flowId: string,
+  nodeId: string
+): Partial<FlowTab> {
+  const restored = clone(current);
+  if (nodeId === flowId) {
+    for (const key of TAB_FIELDS) {
+      delete restored[key];
+      if (original[key] !== undefined) Object.assign(restored, { [key]: clone(original[key]) });
+    }
+  } else {
+    const node = mapTab(original).get(nodeId);
+    setNode(restored, nodeId, node ? clone(node) : undefined);
+  }
+  return restored;
+}
+
 function setNode(
   tab: Partial<FlowTab>,
   id: string,

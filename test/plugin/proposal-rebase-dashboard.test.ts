@@ -20,7 +20,7 @@ function dashboard() {
               getAttribute: () => null,
               setAttribute: vi.fn(),
             }),
-      querySelector: () => null,
+      querySelector: (selector: string) => elements.get(selector) ?? null,
       querySelectorAll: () => [],
       addEventListener: vi.fn(),
     },
@@ -35,11 +35,18 @@ function dashboard() {
     globalThis.dashboard = {
       renderDeployUnknownBlocks: typeof renderDeployUnknownBlocks === 'function' ? renderDeployUnknownBlocks : undefined, proposalIsStale, approveProposal, doApproveProposal, renderHumanDiff,
       renderConflictPanel, updateProposalConflict, updatePendingBadges, showFlash, authGateStatus, bindProposalActions, renderPendingActions, renderRebaseChip, countPendingBuckets, renderProposalCard,
+      loadProposalDiff, fetchProposalDiff,
       setElement: function (id, el) { elements.set(id, el); },
       setProposals: function (value) { cachedProposals = value; proposalDiffCache = {}; },
       setConfirm: function (fn) { openConfirmDialog = fn; },
       setCanApprove: function (value) { canApprove = value; },
-      setReload: function (reload, diff) { loadProposals = reload; loadProposalDiff = diff; },
+      setReload: function (reload, diff) { loadProposals = reload; if (diff) loadProposalDiff = diff; },
+      setDiffReview: function (proposal, mount) {
+        location.hash = '#/proposals/' + proposal.id;
+        proposalDetails[proposal.id] = proposal;
+        mountProposalVisual = mount;
+      },
+      cachedDiff: function (id) { return proposalDiffCache[id]; },
       setProposal: function (proposal, diff) {
         cachedProposals = [proposal];
         proposalDiffCache[proposal.id] = diff;
@@ -55,6 +62,15 @@ function dashboard() {
 }
 
 describe('dashboard auto-rebase review', () => {
+  it('omits conflict controls from proposals without conflicts or saved choices', () => {
+    expect(
+      dashboard().renderConflictPanel({
+        id: 'p',
+        status: 'pending',
+        rebase: { state: 'clean', conflicts: [] },
+      })
+    ).toBe('');
+  });
   it('shows block identity, affected tabs and the confirmation action', () => {
     const ui = dashboard();
     const html = ui.renderDeployUnknownBlocks([
@@ -241,7 +257,7 @@ describe('dashboard rebase controls', () => {
       liveChanges: { summary: { tabChanges: ['label'] } },
       vsCurrent: {},
     });
-    expect(html).toContain('Proposed change (vs base)');
+    expect(html).toContain('Proposal vs base');
     expect(html).toContain('Changed in editor since submit');
     expect(html).toContain('Flow settings changed: label');
     expect(html).toContain('Will deploy (vs live)');
@@ -357,12 +373,14 @@ describe('dashboard rebase controls', () => {
       },
     });
     expect(html).toContain('&lt;img src=x&gt;');
-    expect(html).toContain('The editor and proposal changed the same fields');
+    expect(html).toContain(
+      'This node was also edited in the editor. Field <code>func</code> changed on both sides.'
+    );
     expect(html).not.toContain('node_changed_both');
     expect(html).not.toContain('<script>');
     expect(html).toContain('Keep live');
-    expect(html).not.toContain('Use proposed');
-    expect(html).toContain('Re-check');
+    expect(html).not.toContain('Use AI proposed');
+    expect(html).not.toContain('recheck-btn');
   });
 
   it('posts a conflict choice and reloads the proposal and diff', async () => {
@@ -380,6 +398,86 @@ describe('dashboard rebase controls', () => {
     expect(reload).toHaveBeenCalledOnce();
     expect(diff).toHaveBeenCalledWith('p');
   });
+
+  it.each(['before fresh', 'after fresh', 'with an error after fresh'])(
+    'ignores a pre-choice diff that settles %s and starts a fresh request',
+    async order => {
+      const ui = dashboard();
+      const proposal = {
+        id: 'p',
+        status: 'pending',
+        rebase: {
+          state: 'conflict',
+          conflicts: [{ nodeId: 'n', kind: 'node_changed_both', choices: ['proposed'] }],
+        },
+      };
+      const staleDiff = {
+        summary: { added: 0, removed: 0, modified: 1 },
+        modified: [],
+        rebase: proposal.rebase,
+      };
+      const freshDiff = {
+        summary: { added: 0, removed: 0, modified: 0 },
+        modified: [],
+        rebase: { state: 'clean', conflicts: [] },
+      };
+      let resolveStale!: (value: unknown) => void;
+      let rejectStale!: (reason: Error) => void;
+      let resolveFresh!: (value: unknown) => void;
+      const stale = new Promise((resolve, reject) => {
+        resolveStale = resolve;
+        rejectStale = reject;
+      });
+      const fresh = new Promise(resolve => {
+        resolveFresh = resolve;
+      });
+      let diffRequests = 0;
+      const api = vi.fn((path: string) => {
+        if (path === '/proposals/p/diff') return ++diffRequests === 1 ? stale : fresh;
+        if (path === '/proposals/p/resolve-conflict') return Promise.resolve({});
+        throw new Error('Unexpected request: ' + path);
+      });
+      const mount = vi.fn();
+      const host = { innerHTML: 'Original diff', querySelectorAll: () => [] };
+      ui.setElement('.proposal-diff[data-diff-for="p"]', host);
+      ui.setProposal(proposal, staleDiff);
+      ui.setDiffReview(proposal, mount);
+      ui.setReload(vi.fn());
+      ui.setToast(vi.fn());
+      ui.setApi(api);
+
+      const oldLoad = ui.loadProposalDiff('p');
+      expect(diffRequests).toBe(1);
+      const choice = ui.updateProposalConflict('p', 'n', 'proposed');
+      await vi.waitFor(() => expect(diffRequests).toBe(2));
+      expect(ui.cachedDiff('p')).toBeUndefined();
+      expect(ui.fetchProposalDiff('p')).toBe(fresh);
+      if (order === 'before fresh') {
+        resolveStale(staleDiff);
+        await oldLoad;
+        expect(ui.cachedDiff('p')).toBeUndefined();
+        expect(host.innerHTML).toBe('Original diff');
+        expect(mount).not.toHaveBeenCalled();
+        // Completion of invalidated work must not clear the newer load.
+        expect(ui.fetchProposalDiff('p')).toBe(fresh);
+        expect(diffRequests).toBe(2);
+      }
+      resolveFresh(freshDiff);
+      await choice;
+      const freshHtml = host.innerHTML;
+      if (order === 'after fresh') resolveStale(staleDiff);
+      if (order === 'with an error after fresh') rejectStale(new Error('Stale request failed'));
+      await oldLoad;
+
+      expect(ui.cachedDiff('p')).toBe(freshDiff);
+      expect(proposal.rebase.state).toBe('clean');
+      expect(ui.renderConflictPanel(proposal, freshDiff)).toBe('');
+      expect(host.innerHTML).toBe(freshHtml);
+      expect(host.innerHTML).not.toContain('Could not load changes');
+      expect(mount).toHaveBeenCalledExactlyOnceWith(proposal, freshDiff);
+      expect(diffRequests).toBe(2);
+    }
+  );
 });
 
 describe('proposal status presentation', () => {
@@ -390,14 +488,14 @@ describe('proposal status presentation', () => {
     ui.setProposal(p, { rebase: p.rebase });
     expect(ui.countPendingBuckets()).toMatchObject({ pending: 1, decided: 0 });
     expect(ui.renderPendingActions(p, true)).toContain(
-      'disabled title="Resolve conflicts before approving"'
+      'title="Resolve conflicts before approving" disabled'
     );
   });
 
   it('shows the live change count on rebased pending proposals', () => {
     const ui = dashboard();
     const p = { id: 'p', status: 'pending', rebase: { state: 'merged', liveChangedCount: 3 } };
-    expect(ui.renderRebaseChip(p)).toContain('Rebased · 3 live changes');
+    expect(ui.renderRebaseChip(p)).toContain('Rebase: merged · 3 live changes');
     expect(ui.renderRebaseChip(p)).not.toContain(' hidden');
   });
 
@@ -439,9 +537,10 @@ describe('proposal UX details', () => {
     ui.setProposal(p, diff);
     const html = ui.renderProposalCard(p);
     expect(html).toContain('Nothing changes in the live flow.');
-    expect(html).not.toContain('approve-btn');
+    expect(html).toMatch(/class="action approve-btn"[^>]*disabled/);
+    expect(html).toMatch(/class="approve-options"[^>]*disabled/);
     expect(html).not.toContain('Security review');
-    expect(html).toContain('Reject to close');
+    expect(html).toContain('>Reject</button>');
     const approve = vi.fn();
     ui.setApprove(approve);
     ui.setToast(vi.fn());
@@ -458,7 +557,8 @@ describe('proposal UX details', () => {
       liveChanges: empty,
       vsCurrent: changes,
     });
-    expect(html).toContain('Proposed change</h3>');
+    expect(html).toContain('Flow settings changed: label');
+    expect(html).not.toContain('Proposed change');
     expect(html).not.toContain('vs base');
     expect(html).not.toContain('vs live');
     expect(html).not.toContain('Changed in editor since submit');
@@ -479,7 +579,7 @@ describe('proposal UX details', () => {
         tabProperties: [{ key: 'label', kind: 'scalar', before: 'live', after: 'proposed' }],
       },
     });
-    expect(html).toContain('Proposed change (vs base)');
+    expect(html).toContain('Proposal vs base');
     expect(html).toContain('Will deploy (vs live)');
     expect(html).toContain('base');
     expect(html).toContain('live');
@@ -539,13 +639,11 @@ describe('proposal UX details', () => {
       }
     );
     for (const text of [
-      'Main · Main',
-      'tab',
-      'same flow settings',
-      'Base (before submission)',
-      'Live (in editor)',
-      'Proposed (by AI)',
-      'before',
+      'Main',
+      'This node was also edited in the editor.',
+      'changed on both sides',
+      'Editor (live)',
+      'AI proposed',
       'editor',
       '&lt;script&gt;after&lt;/script&gt;',
       'MODE',
@@ -591,24 +689,35 @@ describe('proposal UX details', () => {
     ).not.toContain('AI chose its own value');
   });
 
-  it('shows the chosen state and a real undo/change control after resolution', () => {
+  it('updates the chosen labels when switching from live to proposed', () => {
     const ui = dashboard();
     ui.setCanApprove(true);
-    const html = ui.renderConflictPanel({
+    const proposal = {
       id: 'p',
       conflictChoice: { nodeId: 'n', choice: 'live' },
       rebase: { state: 'clean' },
-    });
-    expect(html).toContain('Chosen: Keep live');
-    expect(html).toContain('Undo / change choice');
-    expect(html).toContain('data-choice="undo"');
+    };
+    let html = ui.renderConflictPanel(proposal);
+    expect(html).toContain('Resolution selected.');
+    expect(html).toContain('data-choice="live" aria-pressed="true">✓ Keeping live</button>');
+    expect(html).toContain('data-choice="proposed" aria-pressed="false">Use AI proposed</button>');
+    expect(html).toContain('resolve-conflict-btn chosen');
+    expect(html).not.toContain('data-choice="undo"');
+    proposal.conflictChoice.choice = 'proposed';
+    html = ui.renderConflictPanel(proposal);
+    expect(html).toContain('data-choice="live" aria-pressed="false">Keep live</button>');
+    expect(html).toContain(
+      'data-choice="proposed" aria-pressed="true">✓ Using AI proposed</button>'
+    );
+    expect(html).toContain('resolve-conflict-btn chosen');
+    expect(html).not.toContain('data-choice="undo"');
   });
 
-  it('requires confirmation before sending a conflict choice', () => {
+  it('applies a conflict choice immediately without opening a confirmation dialog', async () => {
     const ui = dashboard();
     const api = vi.fn();
     const confirm = vi.fn();
-    let click: (() => void) | undefined;
+    let click: (() => Promise<void>) | undefined;
     const attrs: Record<string, string> = {
       'data-id': 'p',
       'data-node-id': 'n',
@@ -619,29 +728,29 @@ describe('proposal UX details', () => {
       setAttribute: (k: string, v: string) => {
         attrs[k] = v;
       },
-      addEventListener: (_event: string, fn: () => void) => {
+      addEventListener: (_event: string, fn: () => Promise<void>) => {
         click = fn;
       },
     };
+    Object.assign(button, { removeAttribute: vi.fn() });
     ui.setApi(api);
     ui.setConfirm(confirm);
     ui.bindProposalActions({
       querySelectorAll: (selector: string) =>
         selector.includes('resolve-conflict-btn') ? [button] : [],
     });
-    click?.();
-    expect(api).not.toHaveBeenCalled();
-    expect(confirm).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'Use proposed values?',
-        confirmLabel: 'Confirm choice',
-        onConfirm: expect.any(Function),
-      })
-    );
+    ui.setReload(vi.fn(), vi.fn());
+    ui.setToast(vi.fn());
+    await click?.();
+    expect(api).toHaveBeenCalledWith('/proposals/p/resolve-conflict', {
+      method: 'POST',
+      body: JSON.stringify({ nodeId: 'n', choice: 'proposed' }),
+    });
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it.each([true, false])(
-    'shows a spinner during recheck and the result (conflicting=%s)',
+    'shows a spinner while saving a choice and the result (conflicting=%s)',
     async conflict => {
       const ui = dashboard();
       let finish: ((value: unknown) => void) | undefined;
@@ -659,13 +768,13 @@ describe('proposal UX details', () => {
       const toast = vi.fn();
       ui.setToast(toast);
       const button = {
-        textContent: 'Re-check',
+        textContent: 'Use AI proposed',
         innerHTML: '',
         disabled: false,
         setAttribute: vi.fn(),
         removeAttribute: vi.fn(),
       };
-      const work = ui.updateProposalConflict('p', null, null, button);
+      const work = ui.updateProposalConflict('p', 'n', 'proposed', button);
       expect(button.disabled).toBe(true);
       expect(button.innerHTML).toContain('spinner');
       finish?.({});
@@ -678,7 +787,7 @@ describe('proposal UX details', () => {
     }
   );
 
-  it('uses the same total on the pending filter, dashboard and badge while keeping the conflict breakdown', () => {
+  it('includes conflicts in both Pending and Conflict filter counts while the dashboard badge counts all open work', () => {
     const ui = dashboard();
     ui.setProposals([
       { id: 'a', status: 'pending' },
@@ -689,7 +798,9 @@ describe('proposal UX details', () => {
       'proposals-pending-badge',
       'filter-pending-count',
       'dash-pending',
-      'filter-decided-count',
+      'filter-resolved-count',
+      'filter-conflict-count',
+      'filter-all-count',
     ].map(id => {
       const el = { textContent: '', title: '', hidden: true };
       ui.setElement(id, el);
@@ -699,6 +810,8 @@ describe('proposal UX details', () => {
     expect(elements.slice(0, 3).map(el => el.textContent)).toEqual(['2', '2', '2']);
     expect(elements[0]?.title).toBe('1 to review · 1 conflict');
     expect(elements[3]?.textContent).toBe('1');
+    expect(elements[4]?.textContent).toBe('1');
+    expect(elements[5]?.textContent).toBe('3');
   });
 
   it('marks errors as alerts without changing the sign-in button', () => {

@@ -45,8 +45,10 @@ use them. Proposal create/list/get responses include `title`, `displayName`
 (`title ·` **server-local** datetime with explicit offset, e.g.
 `16 Oct 01:35 +00:00`), `reviewUrl` (absolute URL using the request
 Host/protocol — `X-Forwarded-*` only when Express `trust proxy` is set), and
-`reviewPath` (relative `/ai-access#proposal=<id>`). `createdAt` remains
-ISO-8601. The `/ai-access` dashboard renders times in the browser's local
+`reviewPath` (relative `/ai-access#/proposals/<id>`). `createdAt` remains
+ISO-8601. Review links open a persistent proposal detail page; legacy
+`#proposal=<id>` links still work. The list accepts `#proposals` and
+`#/proposals`. The `/ai-access` dashboard renders times in the browser's local
 timezone. AI clients should refer to proposals by `displayName` + `reviewUrl`,
 not the raw id. For access-link callers, `get_status` reports `permission: null`
 and `caller.kind: "access-link"` (expected — AI tokens are not admin sessions).
@@ -111,6 +113,14 @@ credentials merge by key (including nested keys). Duplicate env names use an
 atomic array comparison and retain the existing ambiguity warning. Deletion
 versus modification, id collisions, dangling references, and unsafe redacted
 placeholders still block approval.
+
+Proposal counts distinguish Added, Removed, Modified, Moved, and Conflict.
+Position-only (`x`/`y`) changes count as Moved (`changeCounts.moved`); wire or
+property changes count as Modified, retaining position changes in their diff.
+Move-only proposals remain approvable. Visual View shows moves in purple with
+old-position ghosts in Editor positions mode and a coordinate diff on selection.
+Status icons share one inline SVG set across the canvas, legend, lists, and
+review markers.
 
 Proposal responses and diffs expose `baseRev` (an alias of `expectedRev`).
 `baseRevChanged` replaces `baseRevStale`: it only reports that the base revision

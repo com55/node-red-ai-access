@@ -387,14 +387,14 @@ function settingsPartSave(): string {
   function setCheckResult(state, text) {
     var el = $('set-check-result');
     el.className = 'check-result' + (state ? ' is-' + state : '');
-    el.textContent = text || '';
+    el.innerHTML = (state === 'ok' ? statusIcon('resolved') + ' ' : state === 'fail' ? statusIcon('deploy-pending') + ' ' : '') + esc(text || '');
     el.hidden = !text;
     el.setAttribute('role', state === 'fail' ? 'alert' : 'status');
   }
 
   function renderPublicUrlCheck(r) {
     if (r.pending) { setCheckResult('pending', 'Checking…'); return; }
-    setCheckResult(r.ok ? 'ok' : 'fail', (r.ok ? '✓ Reachable: ' : '✗ Failed: ') +
+    setCheckResult(r.ok ? 'ok' : 'fail', (r.ok ? 'Reachable: ' : 'Failed: ') +
       (r.message || r.error || (r.ok ? 'Public URL is reachable.' : 'Public URL check failed.')) +
       (r.status ? ' (HTTP ' + r.status + ')' : ''));
   }
@@ -409,7 +409,7 @@ function settingsPartSave(): string {
       renderPublicUrlCheck(r);
     } catch (e) {
       await loadSettings();
-      setCheckResult('fail', '✗ ' + (e.message || String(e)));
+      setCheckResult('fail', e.message || String(e));
     }
   }
 

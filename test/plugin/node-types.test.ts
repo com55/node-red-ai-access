@@ -2,7 +2,8 @@
  * Node-types discovery, palette search (recommend-only), and unknown_node_type validation.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,6 +23,7 @@ import {
   nearestNodeTypes,
   paletteMatchScore,
   parseRegisterTypeFromHtml,
+  RedNodeTypesAdapter,
   resetCatalogueCache,
   searchPalette,
   type CatalogueFetcher,
@@ -35,6 +37,7 @@ const SAMPLE_HTML = `
   RED.nodes.registerType('inject',{
     category: 'input',
     color: '#a6bbcf',
+    icon: 'inject.svg',
     defaults: {
       name: {value:""},
       topic: {value:""},
@@ -224,6 +227,7 @@ describe('node-types helpers', () => {
     const detail = await getNodeTypeDetail(adapter, 'inject');
     expect(detail.type).toBe('inject');
     expect(detail.category).toBe('input');
+    expect(detail.icon).toBe('inject.svg');
     expect(detail.inputs).toBe(0);
     expect(detail.outputs).toBe(1);
     expect(detail.requiredConfigNodeTypes).toEqual(['mqtt-broker']);
@@ -235,6 +239,7 @@ describe('node-types helpers', () => {
 
     const noHelp = await getNodeTypeDetail(adapter, 'inject', { includeHelp: false });
     expect(noHelp.help).toBeUndefined();
+    expect(noHelp.icon).toBe('inject.svg');
 
     await expect(getNodeTypeDetail(adapter, 'Debug')).rejects.toMatchObject({
       code: 'node_type_not_found',
@@ -260,6 +265,7 @@ describe('node-types helpers', () => {
     inputs:0,
     outputs:1
   });
+
 </script>`;
     const parsed = parseRegisterTypeFromHtml(html, 'inject');
     expect(parsed?.defaults?.props).toEqual(
@@ -269,6 +275,101 @@ describe('node-types helpers', () => {
     );
     expect(parsed?.defaults?.rules).toEqual(expect.objectContaining({ value: [] }));
   });
+
+  it.each([
+    ['inject', 'common/20-inject.html', 'inject.svg', undefined],
+    ['function', 'function/10-function.html', 'function.svg', undefined],
+    ['debug', 'common/21-debug.html', 'debug.svg', 'right'],
+    ['change', 'function/15-change.html', 'swap.svg', undefined],
+    ['switch', 'function/10-switch.html', 'switch.svg', undefined],
+    ['http in', 'network/21-httpin.html', 'white-globe.svg', undefined],
+    ['http response', 'network/21-httpin.html', 'white-globe.svg', 'right'],
+    ['link in', 'common/60-link.html', 'link-out.svg', undefined],
+    ['link out', 'common/60-link.html', 'link-out.svg', 'right'],
+    ['catch', 'common/25-catch.html', 'alert.svg', undefined],
+    ['complete', 'common/24-complete.html', 'alert.svg', undefined],
+    ['comment', 'common/90-comment.html', 'comment.svg', undefined],
+  ])('reads the installed %s palette icon', async (type, file, icon, align) => {
+    const require = createRequire(import.meta.url);
+    const html = readFileSync(require.resolve('@node-red/nodes/core/' + file), 'utf8');
+    const adapter = createStaticNodeTypesAdapter([type], { configs: { [type]: html } });
+    const detail = await getNodeTypeDetail(adapter, type, { includeHelp: false });
+    expect(detail.icon).toBe(icon);
+    expect(detail.align).toBe(align);
+  });
+
+  it('reads only registered icon/align properties and preserves module-qualified and FA icons', () => {
+    for (const icon of [
+      '@example/nodes/custom.svg',
+      'node-red/function.svg',
+      'font-awesome/fa-bolt',
+    ]) {
+      expect(
+        parseRegisterTypeFromHtml(`RED.nodes.registerType('custom', {
+          defaults: { icon: { value: 'not-the-icon.svg' }, nested: { icon: 'wrong.svg' } },
+          onpaletteadd: function() { var x = { icon: 'also-wrong.svg' }; },
+          icon: '${icon}', align: 'right'
+        });`)
+      ).toMatchObject({ icon, align: 'right' });
+    }
+    expect(
+      parseRegisterTypeFromHtml(`RED.nodes.registerType('custom', {
+        oneditprepare: function() { var opts = { icon: 'nested.svg' }; }
+      });`)
+    ).not.toHaveProperty('icon');
+    expect(
+      parseRegisterTypeFromHtml(`RED.nodes.registerType('custom', {
+        icon: function() { throw new Error('never execute palette HTML'); }
+      });`)
+    ).not.toHaveProperty('icon');
+  });
+
+  it('prefers an available in-process registered icon and tolerates registry failure', async () => {
+    const nodes = {
+      getNodeList: () => [{ id: 'node-red/inject', module: 'node-red', types: ['inject'] }],
+      getNodeConfig: () => SAMPLE_HTML,
+      getType: vi.fn(() => ({ icon: 'node-red/inject.svg', align: 'right' })),
+    };
+    const adapter = new RedNodeTypesAdapter(nodes);
+    expect(await getNodeTypeDetail(adapter, 'inject')).toMatchObject({
+      icon: 'node-red/inject.svg',
+      align: 'right',
+    });
+    nodes.getType.mockImplementation(() => {
+      throw new Error('unavailable');
+    });
+    expect(await getNodeTypeDetail(adapter, 'inject')).toMatchObject({ icon: 'inject.svg' });
+  });
+
+  it('parses ports after regex literals, comments, and division in defaults', async () => {
+    const html = String.raw`RED.nodes.registerType('inject', {
+      category: 'common',
+      defaults: { props: { validate: function(v) {
+        // comment with }
+        /* another } */
+        var half = v.length / 2;
+        var ratio = half / 2;
+        if (/^\${[^}]+}$/.test(v[0].v)) { return /[}/\\]/.test(v[0].v); }
+        return ratio > 0;
+      } } },
+      inputs: 0, outputs: 1
+    });`;
+    expect(parseRegisterTypeFromHtml(html, 'inject')).toMatchObject({ inputs: 0, outputs: 1 });
+    const adapter = createStaticNodeTypesAdapter(['inject'], { configs: { inject: html } });
+    expect(await getNodeTypeDetail(adapter, 'inject')).toMatchObject({ inputs: 0, outputs: 1 });
+  });
+
+  it.each([undefined, '<div>unparsable</div>', "RED.nodes.registerType('inject', {"])(
+    'omits unknown port counts when HTML is %s',
+    async html => {
+      const adapter = createStaticNodeTypesAdapter(['inject'], {
+        configs: html === undefined ? {} : { inject: html },
+      });
+      const detail = await getNodeTypeDetail(adapter, 'inject');
+      expect(detail).not.toHaveProperty('inputs');
+      expect(detail).not.toHaveProperty('outputs');
+    }
+  );
 
   it('parseRegisterTypeFromHtml tolerates bad HTML', () => {
     expect(parseRegisterTypeFromHtml('<div>nope</div>')).toBeNull();
@@ -431,6 +532,10 @@ describe('node-types HTTP + MCP + docs', () => {
     const detail = await request(app).get('/mcp/api/v1/node-types/inject').set(auth);
     expect(detail.status).toBe(200);
     expect(detail.body.category).toBe('input');
+    expect(detail.body.icon).toBe('inject.svg');
+    const noHelp = await request(app).get('/mcp/api/v1/node-types/inject?help=0').set(auth);
+    expect(noHelp.body.icon).toBe('inject.svg');
+    expect(noHelp.body).not.toHaveProperty('help');
 
     const missing = await request(app).get('/mcp/api/v1/node-types/nope').set(auth);
     expect(missing.status).toBe(404);

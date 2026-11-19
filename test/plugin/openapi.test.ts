@@ -18,6 +18,13 @@ const specPath = join(root, 'docs/api/openapi.yaml');
 const yaml = readFileSync(specPath, 'utf8');
 
 describe('OpenAPI module location', () => {
+  it('documents optional registered palette icons and alignment without new required fields', () => {
+    const detail = JSON.parse(loadOpenApiJson()).components.schemas.NodeTypeDetail;
+    expect(detail.required).toEqual(['type', 'module']);
+    expect(detail.properties.icon.type).toBe('string');
+    expect(detail.properties.align.enum).toEqual(['left', 'right']);
+  });
+
   it('resolves and loads the specification under Vitest', () => {
     expect(resolveOpenApiYamlPath()).toBe(specPath);
     expect(loadOpenApiYaml()).toBe(yaml);

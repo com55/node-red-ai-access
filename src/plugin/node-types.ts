@@ -81,6 +81,7 @@ export interface NodeSetInfo {
 export interface NodeTypesAdapter {
   listNodeSets(): Promise<NodeSetInfo[]>;
   getNodeConfigHtml?(setId: string, lang?: string): Promise<string | null>;
+  getNodeDefinition?(type: string): unknown;
 }
 
 export interface NodeTypeListItem {
@@ -109,8 +110,11 @@ export interface NodeTypeDetail {
   enabled?: boolean;
   category?: string;
   color?: string;
-  inputs: number;
-  outputs: number;
+  /** Registered palette icon filename or module/file identifier, when static. */
+  icon?: string;
+  align?: 'left' | 'right';
+  inputs?: number;
+  outputs?: number;
   /** Property defaults from registerType (JSON values, not raw JS source). */
   defaults?: Record<string, unknown> | null;
   requiredConfigNodeTypes?: string[];
@@ -456,6 +460,7 @@ export class HttpNodeTypesAdapter implements NodeTypesAdapter {
  * Low-level registry helpers take `(id, lang)` — support both shapes.
  */
 interface RuntimeNodesApi {
+  getType?: (type: string) => unknown;
   getNodeList?: ((opts?: { user?: unknown; req?: unknown }) => unknown) | (() => unknown);
   getNodeConfig?:
     | ((opts: { id: string; lang?: string; user?: unknown; req?: unknown }) => unknown)
@@ -467,6 +472,10 @@ const EMPTY_API_OPTS = { user: null, req: null };
 /** In-process adapter over `@node-red/runtime`.nodes when settings.available(). */
 export class RedNodeTypesAdapter implements NodeTypesAdapter {
   constructor(private readonly nodes: RuntimeNodesApi) {}
+
+  getNodeDefinition(type: string): unknown {
+    return this.nodes.getType?.(type);
+  }
 
   async listNodeSets(): Promise<NodeSetInfo[]> {
     if (typeof this.nodes.getNodeList !== 'function') {
@@ -738,6 +747,8 @@ export function parseRegisterTypeFromHtml(
   type: string;
   category?: string;
   color?: string;
+  icon?: string;
+  align?: 'left' | 'right';
   inputs?: number;
   outputs?: number;
   defaults?: Record<string, unknown>;
@@ -791,6 +802,10 @@ function parseRegisterTypeAt(
 
   const category = matchStringProp(objectText, 'category');
   const color = matchStringProp(objectText, 'color');
+  const iconValue = registerTypeProperty(objectText, 'icon');
+  const icon = iconValue ? parseLooseValue(iconValue) : undefined;
+  const alignValue = registerTypeProperty(objectText, 'align');
+  const align = alignValue ? parseLooseValue(alignValue) : undefined;
   const inputs = matchNumberProp(objectText, 'inputs');
   const outputs = matchNumberProp(objectText, 'outputs');
   const defaults = parseDefaultsBlock(objectText);
@@ -819,6 +834,16 @@ function parseRegisterTypeAt(
   if (color) {
     result.color = color;
   }
+  if (typeof icon === 'string' && icon) result.icon = icon;
+  // Core link out selects between these registered icons at render time.
+  // Do not execute arbitrary JavaScript from palette HTML.
+  if (type === 'link out' && iconValue?.startsWith('function')) {
+    const body = extractBalancedObject(iconValue.slice(iconValue.indexOf('{')));
+    if (body?.includes('return "link-out.svg"') || body?.includes("return 'link-out.svg'")) {
+      result.icon = 'link-out.svg';
+    }
+  }
+  if (align === 'left' || align === 'right') result.align = align;
   if (inputs !== undefined) {
     result.inputs = inputs;
   }
@@ -879,6 +904,7 @@ function extractBalancedObject(text: string): string | null {
   let depth = 0;
   let inStr: '"' | "'" | '`' | null = null;
   let escaped = false;
+  let canStartRegex = true;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (inStr) {
@@ -892,13 +918,51 @@ function extractBalancedObject(text: string): string | null {
       }
       if (ch === inStr) {
         inStr = null;
+        canStartRegex = false;
       }
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '/') {
+      while (i + 1 < text.length && !/[\r\n]/.test(text[i + 1]!)) i++;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end < 0) return null;
+      i = end + 1;
+      continue;
+    }
+    if (ch === '/' && canStartRegex) {
+      let inClass = false;
+      for (i++; i < text.length; i++) {
+        const part = text[i];
+        if (part === '\\') {
+          i++;
+        } else if (part === '[') {
+          inClass = true;
+        } else if (part === ']') {
+          inClass = false;
+        } else if (part === '/' && !inClass) {
+          break;
+        }
+      }
+      while (/[a-z]/i.test(text[i + 1] ?? '')) i++;
+      canStartRegex = false;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === '`') {
       inStr = ch;
       continue;
     }
+    if (ch && /[a-zA-Z_$]/.test(ch)) {
+      const start = i;
+      while (/[\w$]/.test(text[i + 1] ?? '')) i++;
+      canStartRegex = /^(return|throw|case|delete|void|typeof|new|in|of|yield|await|else|do)$/.test(
+        text.slice(start, i + 1)
+      );
+      continue;
+    }
+    if (!ch || /\s/.test(ch)) continue;
     if (ch === '{') {
       depth += 1;
     } else if (ch === '}') {
@@ -907,6 +971,8 @@ function extractBalancedObject(text: string): string | null {
         return text.slice(0, i + 1);
       }
     }
+    // Values and closing delimiters imply division; operators expect an expression.
+    canStartRegex = /[([{:;,=!?&|+*%~^<>/-]/.test(ch);
   }
   return null;
 }
@@ -915,6 +981,48 @@ function matchStringProp(objectText: string, key: string): string | undefined {
   const re = new RegExp(`\\b${key}\\s*:\\s*['"]([^'"]+)['"]`);
   const m = objectText.match(re);
   return m?.[1];
+}
+
+/** Read only a definition's own properties, skipping nested defaults and callbacks. */
+function registerTypeProperty(objectText: string, key: string): string | undefined {
+  let i = 1;
+  let propertyStart = true;
+  let parentheses = 0;
+  while (i < objectText.length - 1) {
+    const rest = objectText.slice(i);
+    const ch = objectText[i];
+    if (/\s/.test(ch ?? '')) {
+      i++;
+    } else if (rest.startsWith('//')) {
+      const end = rest.search(/[\r\n]/);
+      i += end < 0 ? rest.length : end;
+    } else if (rest.startsWith('/*')) {
+      const end = rest.indexOf('*/', 2);
+      i += end < 0 ? rest.length : end + 2;
+    } else if (propertyStart) {
+      const match = /^(?:([\w$]+)|'([^']+)'|"([^"]+)")\s*:\s*/.exec(rest);
+      if (!match) return undefined;
+      i += match[0].length;
+      if ((match[1] ?? match[2] ?? match[3]) === key) return objectText.slice(i);
+      propertyStart = false;
+    } else if (ch === '{') {
+      const block = extractBalancedObject(rest);
+      if (!block) return undefined;
+      i += block.length;
+    } else if (ch === '[') {
+      const block = extractBalancedArray(rest);
+      if (!block) return undefined;
+      i += block.length;
+    } else if (ch === '"' || ch === "'") {
+      i += measureJsLiteralLength(rest);
+    } else {
+      if (ch === '(') parentheses++;
+      if (ch === ')') parentheses--;
+      if (ch === ',' && parentheses === 0) propertyStart = true;
+      i++;
+    }
+  }
+  return undefined;
 }
 
 function matchNumberProp(objectText: string, key: string): number | undefined {
@@ -1322,8 +1430,6 @@ export async function getNodeTypeDetail(
     type,
     module: exact.set.module,
     setId: exact.setId,
-    inputs: 1,
-    outputs: 1,
     defaults: null,
   };
   if (exact.set.version) {
@@ -1350,8 +1456,10 @@ export async function getNodeTypeDetail(
           if (parsed.color) {
             detail.color = parsed.color;
           }
-          detail.inputs = parsed.inputs ?? detail.inputs;
-          detail.outputs = parsed.outputs ?? detail.outputs;
+          if (parsed.icon) detail.icon = parsed.icon;
+          if (parsed.align) detail.align = parsed.align;
+          if (parsed.inputs !== undefined) detail.inputs = parsed.inputs;
+          if (parsed.outputs !== undefined) detail.outputs = parsed.outputs;
           if (parsed.defaults && Object.keys(parsed.defaults).length > 0) {
             detail.defaults = parsed.defaults;
           } else {
@@ -1368,6 +1476,19 @@ export async function getNodeTypeDetail(
     } catch {
       // Parsing/HTML failures must not crash — return metadata only.
     }
+  }
+
+  // Some in-process adapters expose editor definitions; runtime constructors
+  // normally have no palette fields, so HTML remains the usual source.
+  try {
+    const definition = adapter.getNodeDefinition?.(type) as
+      { icon?: unknown; align?: unknown } | undefined;
+    if (typeof definition?.icon === 'string' && definition.icon) detail.icon = definition.icon;
+    if (definition?.align === 'left' || definition?.align === 'right') {
+      detail.align = definition.align;
+    }
+  } catch {
+    // Optional registry metadata must not prevent discovery.
   }
 
   return detail;

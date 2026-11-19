@@ -736,7 +736,7 @@ describe('Node-RED 4/5 in-process plugin integration', { timeout: 30_000 }, () =
     expect(
       listed.body.proposals.find((p: { id: string }) => p.id === submitted.body.id)
     ).toMatchObject({
-      status: 'conflict',
+      status: 'pending',
       rebase: {
         state: 'conflict',
         conflicts: [expect.objectContaining({ kind: 'node_changed_both', nodeId: 'node-3' })],
@@ -756,6 +756,6 @@ describe('Node-RED 4/5 in-process plugin integration', { timeout: 30_000 }, () =
     const pending = await request(RED.httpAdmin)
       .get(`/mcp/api/v1/proposals/${submitted.body.id}`)
       .set(auth);
-    expect(pending.body.status).toBe('conflict');
+    expect(pending.body).toMatchObject({ status: 'pending', rebase: { state: 'conflict' } });
   });
 });

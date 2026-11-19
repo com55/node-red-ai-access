@@ -5,6 +5,7 @@ import {
   PRESENCE_SHORT_TEXT_MAX,
   defaultDiffMode,
   isCollapsiblePresenceText,
+  isLongTextProperty,
 } from '../../src/plugin/diff-ui.js';
 
 describe('defaultDiffMode', () => {
@@ -16,6 +17,24 @@ describe('defaultDiffMode', () => {
   it('defaults to unified below the narrow breakpoint', () => {
     expect(defaultDiffMode(DIFF_SPLIT_MIN_PX - 1)).toBe('unified');
     expect(defaultDiffMode(320)).toBe('unified');
+  });
+});
+
+describe('isLongTextProperty', () => {
+  it.each(['func', 'template', 'code'])('always uses line diffs for %s', key => {
+    expect(isLongTextProperty(key, '', 'x')).toBe(true);
+  });
+
+  it.each(['name', 'topic', 'format', 'syntax', 'custom'])('checks both values for %s', key => {
+    const short = 'x'.repeat(PRESENCE_SHORT_TEXT_MAX);
+    expect(isLongTextProperty(key, short, 'after')).toBe(false);
+    expect(isLongTextProperty(key, 1, 2)).toBe(false);
+    expect(isLongTextProperty(key, null, undefined)).toBe(false);
+    expect(isLongTextProperty(key, { value: 'x' }, { value: 'y' })).toBe(false);
+    expect(isLongTextProperty(key, short + 'x', 'after')).toBe(true);
+    expect(isLongTextProperty(key, 'before', short + 'x')).toBe(true);
+    expect(isLongTextProperty(key, 'before\nline', 'after')).toBe(true);
+    expect(isLongTextProperty(key, 'before', 'after\nline')).toBe(true);
   });
 });
 

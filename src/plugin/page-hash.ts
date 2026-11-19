@@ -1,8 +1,8 @@
 /**
- * /ai-access location-hash helpers for tab restore and one-shot proposal deep links.
+ * /ai-access location-hash helpers for tab restore and persistent proposal detail links.
  *
  * Tab fragments: #status (alias #overview) | #settings | #links (alias #tokens) | #oauth | #proposals | #audit
- * Deep link: #proposal=<id> (consumed after focus → #proposals)
+ * Detail: #/proposals/<id>; compatibility alias: #proposal=<id>
  */
 
 export type McpTabId = 'status' | 'settings' | 'links' | 'oauth' | 'proposals' | 'logs';
@@ -18,11 +18,11 @@ export function hashForTab(tab: string): string {
 
 /**
  * Parse a tab from `location.hash` (#status|#links|#proposals|#audit, plus
- * legacy #logs). Returns '' for empty, unknown, or #proposal=<id>.
+ * legacy #logs). Returns '' for empty, unknown, or a proposal detail URL.
  */
 export function tabFromHash(hash: string): McpTabId | '' {
   const raw = String(hash || '')
-    .replace(/^#/, '')
+    .replace(/^#\/?/, '')
     .replace(/^section-/, '');
   if (!raw || raw.startsWith('proposal=')) return '';
   if (raw === 'audit' || raw === 'logs') return 'logs';
@@ -32,12 +32,12 @@ export function tabFromHash(hash: string): McpTabId | '' {
   return '';
 }
 
-/** Read proposal id from `#proposal=<id>` (empty when absent/invalid). */
+/** Read canonical detail or compatibility proposal id (empty when absent/invalid). */
 export function readProposalHashId(hash: string): string {
   try {
-    const m = /^#proposal=([^&]+)/.exec(String(hash || ''));
-    if (!m?.[1]) return '';
-    return decodeURIComponent(m[1]);
+    const m = /^(?:#\/proposals\/([^/?#]+)\/?$|#proposal=([^&]+))/.exec(String(hash || ''));
+    if (!m) return '';
+    return decodeURIComponent(m[1] ?? m[2] ?? '');
   } catch {
     return '';
   }

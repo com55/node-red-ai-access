@@ -22,10 +22,10 @@ describe('title-disambiguate', () => {
         baseTitle: 'Replace Test Flow: deletes 4 nodes',
         createdAt: '2026-10-15T01:00:00.000Z',
       },
-      { id: 'b', baseTitle: 'Edit node in Main', createdAt: '2026-10-15T02:00:00.000Z' },
+      { id: 'b', baseTitle: 'Tighten parsing', createdAt: '2026-10-15T02:00:00.000Z' },
     ]);
     expect(map.a).toBe('Replace Test Flow: deletes 4 nodes');
-    expect(map.b).toBe('Edit node in Main');
+    expect(map.b).toBe('Tighten parsing');
   });
 
   it('appends · HH:mm when two stale cards share a base title', () => {
